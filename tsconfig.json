@@ -1,0 +1,15 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"outDir": "dist",
+		"declarationDir": "dist-types",
+		"rootDir": "src",
+		"types": ["vitest/globals", "node"],
+		"baseUrl": ".",
+		"paths": {
+			"flow-cli/*": ["../flow-cli/src/*"]
+		}
+	},
+	"include": ["src"],
+	"references": [{ "path": "../flow-cli" }]
+}

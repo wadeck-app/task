@@ -1,0 +1,27 @@
+{
+	"name": "task-cli",
+	"version": "0.0.1",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"build": "tsc --build tsconfig.json",
+		"bundle": "tsx scripts/bundle.ts",
+		"build-launcher": "node scripts/build-launcher.mjs",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"test:coverage": "vitest run --coverage",
+		"clean": "rimraf dist dist-types dist-bundle"
+	},
+	"dependencies": {
+		"js-yaml": "^4.1.1"
+	},
+	"devDependencies": {
+		"flow-cli": "*",
+		"@types/js-yaml": "^4.0.9",
+		"@types/node": "^20.11.0",
+		"esbuild": "^0.27.2",
+		"tsx": "^4.7.0",
+		"typescript": "^5.3.3",
+		"vitest": "^4.0.14"
+	}
+}

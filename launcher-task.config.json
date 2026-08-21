@@ -1,0 +1,7 @@
+{
+	"appName": "task",
+	"displayName": "Task CLI",
+	"nodeScript": "task.cjs",
+	"defaultConfigDir": "task-cli",
+	"cliFlags": []
+}
