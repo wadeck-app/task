@@ -8,10 +8,8 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { loadFlowConfig } from 'flow-cli/config/FlowConfig';
-import { HookDispatcher } from 'flow-cli/hooks/HookDispatcher';
-import { getConfigDir } from 'flow-cli/updater/configDir';
-import { VERSION_RE } from 'flow-cli/updater/versionValidation';
+import { ConfigDir, HookDispatcher, VersionValidation } from 'shared-cli/index';
+import { TaskConfigLoader } from '../../task/TaskConfigLoader.js';
 import { TaskStore } from '../../task/TaskStore.js';
 
 // Injected by esbuild at bundle time via define; falls back to package.json in dev mode (tsx).
@@ -22,7 +20,7 @@ const PKG_NAME = '@wadeck/task-cli';
 
 function readChannelFromConfig(): string {
 	try {
-		const configFile = path.join(getConfigDir(), 'config.yml');
+		const configFile = path.join(ConfigDir.get(), 'config.yml');
 		if (!fs.existsSync(configFile)) return 'edge';
 		const raw = fs.readFileSync(configFile, 'utf-8');
 		const match = /^\s*channel:\s*['"]?(\S+?)['"]?\s*$/m.exec(raw);
@@ -81,13 +79,13 @@ async function runSelfChecks(): Promise<CheckResult[]> {
 		}
 	}
 
-	// Check 2: Config loading -- load FlowConfig from a temp directory (no config file present)
+	// Check 2: Config loading -- load task config from a temp directory (no config file present, falls back to defaults)
 	{
 		const name = 'Config loading';
 		try {
-			const config = loadFlowConfig(path.join(os.tmpdir(), '.task-self-check-nonexistent-config.yaml'));
-			if (config.workspace.retainDays === undefined) {
-				throw new Error('workspace.retainDays is undefined');
+			const config = TaskConfigLoader.load({ configDir: os.tmpdir(), projectDir: os.tmpdir() });
+			if (!Array.isArray(config.statuses) || config.statuses.length === 0) {
+				throw new Error('statuses default is missing or empty');
 			}
 			results.push({ name, passed: true });
 		} catch (err) {
@@ -148,16 +146,16 @@ async function runSelfChecks(): Promise<CheckResult[]> {
 		}
 	}
 
-	// Check 6: Workspace config schema -- verify FlowConfig returns valid workspace cleanup defaults
+	// Check 6: Task config schema -- verify default statuses and priority are present
 	{
-		const name = 'Workspace config';
+		const name = 'Task config schema';
 		try {
-			const config = loadFlowConfig(path.join(os.tmpdir(), '.task-self-check-schema.yaml'));
-			if (typeof config.workspace.retainDays !== 'number' || config.workspace.retainDays <= 0) {
-				throw new Error(`workspace.retainDays is not a positive number: ${config.workspace.retainDays}`);
+			const config = TaskConfigLoader.load({ configDir: os.tmpdir(), projectDir: os.tmpdir() });
+			if (typeof config.defaults.priority !== 'string' || config.defaults.priority.length === 0) {
+				throw new Error(`defaults.priority is not a non-empty string: ${config.defaults.priority}`);
 			}
-			if (typeof config.workspace.maxWorkspaces !== 'number' || config.workspace.maxWorkspaces <= 0) {
-				throw new Error(`workspace.maxWorkspaces is not a positive number: ${config.workspace.maxWorkspaces}`);
+			if (!Array.isArray(config.statuses) || config.statuses.length === 0) {
+				throw new Error(`statuses default is missing or empty`);
 			}
 			results.push({ name, passed: true });
 		} catch (err) {
@@ -214,7 +212,7 @@ export async function runTaskCliVersion(): Promise<void> {
 
 export async function runTaskCliUpdate(opts: { check?: boolean; log?: boolean }): Promise<void> {
 	if (opts.log) {
-		const logFile = path.join(getConfigDir(), 'update-log.txt');
+		const logFile = path.join(ConfigDir.get(), 'update-log.txt');
 		if (fs.existsSync(logFile)) {
 			process.stdout.write(fs.readFileSync(logFile, 'utf-8'));
 		} else {
@@ -247,7 +245,7 @@ export async function runTaskCliUpdate(opts: { check?: boolean; log?: boolean })
 }
 
 export function runTaskCliRollback(): void {
-	const configDir = getConfigDir();
+	const configDir = ConfigDir.get();
 	const stateFile = path.join(configDir, 'update-state.json');
 	if (!fs.existsSync(stateFile)) {
 		process.stderr.write('No update state found. Nothing to roll back.\n');
@@ -263,7 +261,7 @@ export function runTaskCliRollback(): void {
 		process.exit(1);
 		return;
 	}
-	if (previousVersion === undefined || !VERSION_RE.test(previousVersion)) {
+	if (previousVersion === undefined || !VersionValidation.VERSION_RE.test(previousVersion)) {
 		process.stderr.write('Invalid or missing previousVersion in update state.\n');
 		process.exit(1);
 		return;
@@ -298,4 +296,13 @@ export function printTaskCliHelp(): void {
 			'  self-check           Run health checks to verify the CLI bundle is functional',
 		].join('\n') + '\n'
 	);
+}
+
+export class TaskCliCommand {
+	static getCurrentVersion = getCurrentTaskVersion;
+	static runVersion = runTaskCliVersion;
+	static runUpdate = runTaskCliUpdate;
+	static runRollback = runTaskCliRollback;
+	static runSelfCheck = runTaskCliSelfCheck;
+	static printHelp = printTaskCliHelp;
 }

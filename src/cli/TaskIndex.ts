@@ -4,10 +4,9 @@ import { createRequire } from 'node:module';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { HookConfig } from 'flow-cli/hooks/HookDispatcher';
-import { HookDispatcher } from 'flow-cli/hooks/HookDispatcher';
-import { getConfigDir, readAndClearUpdateState, scheduleBackgroundUpdate } from 'flow-cli/updater/UpdateManager';
-import { isProjectInitialized, loadTaskConfig } from '../task/TaskConfigLoader.js';
+import type { HookConfig } from 'shared-cli/HookDispatcher';
+import { HookDispatcher, UpdateManager } from 'shared-cli/index';
+import { TaskConfigLoader } from '../task/TaskConfigLoader.js';
 import type { TaskHookValue } from '../task/TaskConfigLoader.js';
 import { TaskStore } from '../task/TaskStore.js';
 import type { TaskStatus } from '../task/TaskStore.js';
@@ -163,7 +162,8 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 	const effectiveCwd = effectiveProjectDir ? path.resolve(cwd, effectiveProjectDir) : cwd;
 
 	// Show update notice from a previous background update run
-	const updateState = readAndClearUpdateState(getConfigDir());
+	const updateManager = new UpdateManager('@wadeck/task-cli');
+	const updateState = updateManager.readAndClearState();
 	if (updateState?.status === 'success') {
 		process.stderr.write(`[task] Updated to v${updateState.newVersion}\n`);
 	}
@@ -236,11 +236,11 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 		}
 	}
 
-	if (!isProjectInitialized(effectiveCwd)) {
+	if (!TaskConfigLoader.isInitialized(effectiveCwd)) {
 		return errorOutput(jsonMode, 'project not initialized', 'Run: task init');
 	}
 
-	const config = loadTaskConfig({ configDir: configDirArg, projectDir: effectiveCwd });
+	const config = TaskConfigLoader.load({ configDir: configDirArg, projectDir: effectiveCwd });
 	const tasksDir = path.join(effectiveCwd, '.task', 'tasks');
 	const store = new TaskStore(tasksDir);
 	const hookDispatcher = buildHookDispatcher(config.globalHooks, config.projectHooks);
@@ -351,7 +351,7 @@ async function main(): Promise<void> {
 
 	// Schedule background updater after command completes
 	const bundlePath = process.env['LAUNCHER_BUNDLE_OVERRIDE'] ?? fileURLToPath(import.meta.url);
-	scheduleBackgroundUpdate(bundlePath, '@wadeck/task-cli', 'task-updater.cjs');
+	new UpdateManager('@wadeck/task-cli').scheduleBackgroundUpdate(bundlePath, 'task-updater.cjs');
 
 	process.exit(exitCode);
 }

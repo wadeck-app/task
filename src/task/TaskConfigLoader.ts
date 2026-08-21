@@ -34,42 +34,45 @@ export interface TaskResolvedConfig {
 const DEFAULT_STATUSES = ['backlog', 'in-progress', 'done'];
 const DEFAULT_PRIORITY = 'medium';
 
-export function expandTilde(p: string): string {
-	if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) {
-		return path.join(os.homedir(), p.slice(1));
-	}
-	return p;
-}
-
-export function resolveGlobalConfigDir(configDirOverride?: string): string {
-	const raw = configDirOverride ?? process.env['TASK_CONFIG'] ?? path.join(os.homedir(), '.task');
-	return expandTilde(raw);
-}
-
 function loadYamlFile<T>(filePath: string): T | undefined {
 	if (!fs.existsSync(filePath)) return undefined;
 	const raw = fs.readFileSync(filePath, 'utf8');
 	return yaml.load(raw) as T;
 }
 
-export function isProjectInitialized(projectDir?: string): boolean {
-	const dir = projectDir ?? process.cwd();
-	return fs.existsSync(path.join(dir, '.task'));
+export class TaskConfigLoader {
+	static expandTilde(p: string): string {
+		if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) {
+			return path.join(os.homedir(), p.slice(1));
+		}
+		return p;
+	}
+
+	static resolveGlobalConfigDir(configDirOverride?: string): string {
+		const raw = configDirOverride ?? process.env['TASK_CONFIG'] ?? path.join(os.homedir(), '.task');
+		return TaskConfigLoader.expandTilde(raw);
+	}
+
+	static isInitialized(projectDir?: string): boolean {
+		const dir = projectDir ?? process.cwd();
+		return fs.existsSync(path.join(dir, '.task'));
+	}
+
+	static load(options?: { configDir?: string; projectDir?: string }): TaskResolvedConfig {
+		const globalConfigDir = TaskConfigLoader.resolveGlobalConfigDir(options?.configDir);
+		const projectDir = options?.projectDir ?? process.cwd();
+
+		const globalConfig = loadYamlFile<TaskGlobalConfig>(path.join(globalConfigDir, 'config.yml')) ?? {};
+		const projectConfig = loadYamlFile<TaskProjectConfig>(path.join(projectDir, '.task', 'config.yml')) ?? {};
+
+		return {
+			statuses: projectConfig.statuses ?? DEFAULT_STATUSES,
+			defaults: {
+				priority: projectConfig.defaults?.priority ?? globalConfig.defaults?.priority ?? DEFAULT_PRIORITY,
+			},
+			globalHooks: globalConfig.hooks ?? {},
+			projectHooks: projectConfig.hooks ?? {},
+		};
+	}
 }
 
-export function loadTaskConfig(options?: { configDir?: string; projectDir?: string }): TaskResolvedConfig {
-	const globalConfigDir = resolveGlobalConfigDir(options?.configDir);
-	const projectDir = options?.projectDir ?? process.cwd();
-
-	const globalConfig = loadYamlFile<TaskGlobalConfig>(path.join(globalConfigDir, 'config.yml')) ?? {};
-	const projectConfig = loadYamlFile<TaskProjectConfig>(path.join(projectDir, '.task', 'config.yml')) ?? {};
-
-	return {
-		statuses: projectConfig.statuses ?? DEFAULT_STATUSES,
-		defaults: {
-			priority: projectConfig.defaults?.priority ?? globalConfig.defaults?.priority ?? DEFAULT_PRIORITY,
-		},
-		globalHooks: globalConfig.hooks ?? {},
-		projectHooks: projectConfig.hooks ?? {},
-	};
-}

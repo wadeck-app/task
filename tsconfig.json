@@ -7,9 +7,10 @@
 		"types": ["vitest/globals", "node"],
 		"baseUrl": ".",
 		"paths": {
-			"flow-cli/*": ["../flow-cli/src/*"]
+			"shared-cli": ["../shared-cli/src/index"],
+			"shared-cli/*": ["../shared-cli/src/*"]
 		}
 	},
 	"include": ["src"],
-	"references": [{ "path": "../flow-cli" }]
+	"references": [{ "path": "../shared-cli" }]
 }

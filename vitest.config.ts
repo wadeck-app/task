@@ -32,7 +32,7 @@ export default defineConfig({
 	},
 	resolve: {
 		alias: {
-			'flow-cli': path.resolve(__dirname, '../flow-cli/src'),
+			'shared-cli': path.resolve(__dirname, '../shared-cli/src'),
 		},
 		extensions: ['.ts', '.tsx', '.js', '.jsx', '.json'],
 	},

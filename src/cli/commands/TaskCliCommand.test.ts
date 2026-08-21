@@ -18,9 +18,6 @@ vi.mock('node:child_process', () => ({
 	execFile: vi.fn(),
 	execFileSync: vi.fn(),
 }));
-vi.mock('flow-cli/updater/configDir', () => ({
-	getConfigDir: vi.fn(() => '/fake/config'),
-}));
 
 // Make execFileAsync (promisified execFile) resolve with a version string.
 // util.promisify expects cb(err, value) -- pass {stdout,stderr} as the single value.

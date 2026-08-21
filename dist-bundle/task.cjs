@@ -35,12 +35,27 @@ __export(TaskIndex_exports, {
   runTaskCommand: () => runTaskCommand
 });
 module.exports = __toCommonJS(TaskIndex_exports);
-var fs6 = __toESM(require("node:fs"), 1);
+var fs5 = __toESM(require("node:fs"), 1);
 var import_node_module2 = require("node:module");
 var path6 = __toESM(require("node:path"), 1);
 var import_node_url2 = require("node:url");
 
-// ../flow-cli/src/hooks/HookDispatcher.ts
+// ../cli-shared/src/ConfigDir.ts
+var os = __toESM(require("node:os"), 1);
+var path = __toESM(require("node:path"), 1);
+var ConfigDir = class {
+  static get() {
+    const xdg = process.env["XDG_CONFIG_HOME"];
+    if (xdg) return path.join(xdg, "flow");
+    if (process.platform === "win32") {
+      const appData = process.env["APPDATA"];
+      if (appData) return path.join(appData, "flow");
+    }
+    return path.join(process.env["HOME"] ?? os.homedir(), ".config", "flow");
+  }
+};
+
+// ../cli-shared/src/HookDispatcher.ts
 var import_node_child_process = require("node:child_process");
 var http = __toESM(require("node:http"), 1);
 var https = __toESM(require("node:https"), 1);
@@ -164,52 +179,57 @@ var HookDispatcher = class {
   }
 };
 
-// ../flow-cli/src/updater/UpdateManager.ts
+// ../cli-shared/src/UpdateManager.ts
 var import_node_child_process2 = require("node:child_process");
 var fs = __toESM(require("node:fs"), 1);
 var path2 = __toESM(require("node:path"), 1);
-
-// ../flow-cli/src/updater/configDir.ts
-var os = __toESM(require("node:os"), 1);
-var path = __toESM(require("node:path"), 1);
-function getConfigDir() {
-  const xdg = process.env["XDG_CONFIG_HOME"];
-  if (xdg) return path.join(xdg, "flow");
-  if (process.platform === "win32") {
-    const appData = process.env["APPDATA"];
-    if (appData) return path.join(appData, "flow");
+var UpdateManager = class {
+  configDir;
+  pkgName;
+  constructor(pkgName, configDir) {
+    this.pkgName = pkgName;
+    this.configDir = configDir ?? ConfigDir.get();
   }
-  return path.join(process.env["HOME"] ?? os.homedir(), ".config", "flow");
-}
-
-// ../flow-cli/src/updater/UpdateManager.ts
-function scheduleBackgroundUpdate(bundlePath, pkgName, updaterName = "flow-updater.cjs") {
-  const dir = path2.dirname(bundlePath);
-  const updaterPath = fs.existsSync(path2.join(dir, updaterName)) ? path2.join(dir, updaterName) : fs.existsSync(path2.join(dir, "flow-updater.cjs")) ? path2.join(dir, "flow-updater.cjs") : null;
-  if (!updaterPath) return;
-  const child = (0, import_node_child_process2.spawn)(process.execPath, [updaterPath], {
-    detached: true,
-    stdio: "ignore",
-    env: { ...process.env, LAUNCHER_BUNDLE_OVERRIDE: bundlePath, UPDATER_PKG_NAME: pkgName }
-  });
-  child.unref();
-}
-function readAndClearUpdateState(configDir) {
-  const stateFile = path2.join(configDir, "update-state.json");
-  try {
-    const raw = fs.readFileSync(stateFile, "utf-8");
-    const state = JSON.parse(raw);
-    if (state.status !== "applying") {
-      try {
-        fs.unlinkSync(stateFile);
-      } catch {
+  // Prefer the named updater; fall back to flow-updater.cjs (shared bundle handles both CLIs via UPDATER_PKG_NAME).
+  scheduleBackgroundUpdate(bundlePath, updaterName = "flow-updater.cjs") {
+    const dir = path2.dirname(bundlePath);
+    const updaterPath = fs.existsSync(path2.join(dir, updaterName)) ? path2.join(dir, updaterName) : fs.existsSync(path2.join(dir, "flow-updater.cjs")) ? path2.join(dir, "flow-updater.cjs") : null;
+    if (!updaterPath) return;
+    const child = (0, import_node_child_process2.spawn)(process.execPath, [updaterPath], {
+      detached: true,
+      stdio: "ignore",
+      env: { ...process.env, LAUNCHER_BUNDLE_OVERRIDE: bundlePath, UPDATER_PKG_NAME: this.pkgName }
+    });
+    child.unref();
+  }
+  readAndClearState() {
+    const stateFile = path2.join(this.configDir, "update-state.json");
+    try {
+      const raw = fs.readFileSync(stateFile, "utf-8");
+      const state = JSON.parse(raw);
+      if (state.status !== "applying") {
+        try {
+          fs.unlinkSync(stateFile);
+        } catch {
+        }
       }
+      return state;
+    } catch {
+      return null;
     }
-    return state;
-  } catch {
-    return null;
   }
-}
+};
+
+// ../cli-shared/src/VersionValidation.ts
+var VersionValidation = class _VersionValidation {
+  static VERSION_RE = /^\d+\.\d+\.\d+([-+][\w.-]+)?$/;
+  static validate(v) {
+    if (!_VersionValidation.VERSION_RE.test(v)) {
+      throw new Error(`Invalid version string: "${v}"`);
+    }
+    return v;
+  }
+};
 
 // ../../node_modules/js-yaml/dist/js-yaml.mjs
 function getDefaultExportFromCjs(x) {
@@ -3275,39 +3295,41 @@ var os2 = __toESM(require("node:os"), 1);
 var path3 = __toESM(require("node:path"), 1);
 var DEFAULT_STATUSES = ["backlog", "in-progress", "done"];
 var DEFAULT_PRIORITY = "medium";
-function expandTilde(p) {
-  if (p === "~" || p.startsWith("~/") || p.startsWith("~\\")) {
-    return path3.join(os2.homedir(), p.slice(1));
-  }
-  return p;
-}
-function resolveGlobalConfigDir(configDirOverride) {
-  const raw = configDirOverride ?? process.env["TASK_CONFIG"] ?? path3.join(os2.homedir(), ".task");
-  return expandTilde(raw);
-}
 function loadYamlFile(filePath) {
   if (!fs2.existsSync(filePath)) return void 0;
   const raw = fs2.readFileSync(filePath, "utf8");
   return load(raw);
 }
-function isProjectInitialized(projectDir) {
-  const dir = projectDir ?? process.cwd();
-  return fs2.existsSync(path3.join(dir, ".task"));
-}
-function loadTaskConfig(options) {
-  const globalConfigDir = resolveGlobalConfigDir(options?.configDir);
-  const projectDir = options?.projectDir ?? process.cwd();
-  const globalConfig = loadYamlFile(path3.join(globalConfigDir, "config.yml")) ?? {};
-  const projectConfig = loadYamlFile(path3.join(projectDir, ".task", "config.yml")) ?? {};
-  return {
-    statuses: projectConfig.statuses ?? DEFAULT_STATUSES,
-    defaults: {
-      priority: projectConfig.defaults?.priority ?? globalConfig.defaults?.priority ?? DEFAULT_PRIORITY
-    },
-    globalHooks: globalConfig.hooks ?? {},
-    projectHooks: projectConfig.hooks ?? {}
-  };
-}
+var TaskConfigLoader = class _TaskConfigLoader {
+  static expandTilde(p) {
+    if (p === "~" || p.startsWith("~/") || p.startsWith("~\\")) {
+      return path3.join(os2.homedir(), p.slice(1));
+    }
+    return p;
+  }
+  static resolveGlobalConfigDir(configDirOverride) {
+    const raw = configDirOverride ?? process.env["TASK_CONFIG"] ?? path3.join(os2.homedir(), ".task");
+    return _TaskConfigLoader.expandTilde(raw);
+  }
+  static isInitialized(projectDir) {
+    const dir = projectDir ?? process.cwd();
+    return fs2.existsSync(path3.join(dir, ".task"));
+  }
+  static load(options) {
+    const globalConfigDir = _TaskConfigLoader.resolveGlobalConfigDir(options?.configDir);
+    const projectDir = options?.projectDir ?? process.cwd();
+    const globalConfig = loadYamlFile(path3.join(globalConfigDir, "config.yml")) ?? {};
+    const projectConfig = loadYamlFile(path3.join(projectDir, ".task", "config.yml")) ?? {};
+    return {
+      statuses: projectConfig.statuses ?? DEFAULT_STATUSES,
+      defaults: {
+        priority: projectConfig.defaults?.priority ?? globalConfig.defaults?.priority ?? DEFAULT_PRIORITY
+      },
+      globalHooks: globalConfig.hooks ?? {},
+      projectHooks: projectConfig.hooks ?? {}
+    };
+  }
+};
 
 // src/task/TaskStore.ts
 var crypto = __toESM(require("node:crypto"), 1);
@@ -3419,57 +3441,19 @@ var TaskStore = class {
 
 // src/cli/commands/TaskCliCommand.ts
 var import_node_child_process3 = require("node:child_process");
-var fs5 = __toESM(require("node:fs"), 1);
+var fs4 = __toESM(require("node:fs"), 1);
 var import_node_module = require("node:module");
 var os3 = __toESM(require("node:os"), 1);
 var path5 = __toESM(require("node:path"), 1);
 var import_node_url = require("node:url");
 var import_node_util2 = require("node:util");
-
-// ../flow-cli/src/config/FlowConfig.ts
-var fs4 = __toESM(require("node:fs"), 1);
-var DEFAULT_CONFIG = {
-  queue: { concurrency: 1 },
-  logs: { retainDays: 30 },
-  worker: { wsPort: null },
-  security: { allowAbsolutePaths: false },
-  limits: {
-    maxInjectedSteps: 20,
-    maxStepsPerExecution: 50
-  },
-  workspace: { retainDays: 30, maxWorkspaces: 50 }
-};
-function loadFlowConfig(configFile) {
-  if (!fs4.existsSync(configFile)) return DEFAULT_CONFIG;
-  try {
-    const loaded = load(fs4.readFileSync(configFile, "utf8"), {
-      schema: JSON_SCHEMA
-    });
-    return {
-      queue: { ...DEFAULT_CONFIG.queue, ...loaded?.queue },
-      logs: { ...DEFAULT_CONFIG.logs, ...loaded?.logs },
-      worker: { ...DEFAULT_CONFIG.worker, ...loaded?.worker },
-      security: { ...DEFAULT_CONFIG.security, ...loaded?.security },
-      limits: { ...DEFAULT_CONFIG.limits, ...loaded?.limits },
-      workspace: { ...DEFAULT_CONFIG.workspace, ...loaded?.workspace }
-    };
-  } catch {
-    process.stderr.write("Warning: daemon config could not be parsed, using defaults.\n");
-    return DEFAULT_CONFIG;
-  }
-}
-
-// ../flow-cli/src/updater/versionValidation.ts
-var VERSION_RE = /^\d+\.\d+\.\d+([-+][\w.-]+)?$/;
-
-// src/cli/commands/TaskCliCommand.ts
 var execFileAsync2 = (0, import_node_util2.promisify)(import_node_child_process3.execFile);
 var PKG_NAME = "@wadeck/task-cli";
 function readChannelFromConfig() {
   try {
-    const configFile = path5.join(getConfigDir(), "config.yml");
-    if (!fs5.existsSync(configFile)) return "edge";
-    const raw = fs5.readFileSync(configFile, "utf-8");
+    const configFile = path5.join(ConfigDir.get(), "config.yml");
+    if (!fs4.existsSync(configFile)) return "edge";
+    const raw = fs4.readFileSync(configFile, "utf-8");
     const match = /^\s*channel:\s*['"]?(\S+?)['"]?\s*$/m.exec(raw);
     return match?.[1] ?? "edge";
   } catch {
@@ -3493,7 +3477,7 @@ function getUpdaterPath() {
   const dir = path5.dirname(bundlePath);
   const candidates = [path5.join(dir, "task-updater.cjs"), path5.join(dir, "flow-updater.cjs")];
   for (const candidate of candidates) {
-    if (fs5.existsSync(candidate)) return candidate;
+    if (fs4.existsSync(candidate)) return candidate;
   }
   return null;
 }
@@ -3513,9 +3497,9 @@ async function runSelfChecks() {
   {
     const name = "Config loading";
     try {
-      const config = loadFlowConfig(path5.join(os3.tmpdir(), ".task-self-check-nonexistent-config.yaml"));
-      if (config.workspace.retainDays === void 0) {
-        throw new Error("workspace.retainDays is undefined");
+      const config = TaskConfigLoader.load({ configDir: os3.tmpdir(), projectDir: os3.tmpdir() });
+      if (!Array.isArray(config.statuses) || config.statuses.length === 0) {
+        throw new Error("statuses default is missing or empty");
       }
       results.push({ name, passed: true });
     } catch (err) {
@@ -3539,7 +3523,7 @@ async function runSelfChecks() {
     const name = "TaskStore (temp)";
     let tmpDir;
     try {
-      tmpDir = fs5.mkdtempSync(path5.join(os3.tmpdir(), "task-self-check-"));
+      tmpDir = fs4.mkdtempSync(path5.join(os3.tmpdir(), "task-self-check-"));
       const store = new TaskStore(tmpDir);
       const task = store.create("test task");
       const found = store.findByPrefix(task.id.slice(0, 4));
@@ -3552,7 +3536,7 @@ async function runSelfChecks() {
     } finally {
       if (tmpDir !== void 0) {
         try {
-          fs5.rmSync(tmpDir, { recursive: true, force: true });
+          fs4.rmSync(tmpDir, { recursive: true, force: true });
         } catch {
         }
       }
@@ -3570,14 +3554,14 @@ async function runSelfChecks() {
     }
   }
   {
-    const name = "Workspace config";
+    const name = "Task config schema";
     try {
-      const config = loadFlowConfig(path5.join(os3.tmpdir(), ".task-self-check-schema.yaml"));
-      if (typeof config.workspace.retainDays !== "number" || config.workspace.retainDays <= 0) {
-        throw new Error(`workspace.retainDays is not a positive number: ${config.workspace.retainDays}`);
+      const config = TaskConfigLoader.load({ configDir: os3.tmpdir(), projectDir: os3.tmpdir() });
+      if (typeof config.defaults.priority !== "string" || config.defaults.priority.length === 0) {
+        throw new Error(`defaults.priority is not a non-empty string: ${config.defaults.priority}`);
       }
-      if (typeof config.workspace.maxWorkspaces !== "number" || config.workspace.maxWorkspaces <= 0) {
-        throw new Error(`workspace.maxWorkspaces is not a positive number: ${config.workspace.maxWorkspaces}`);
+      if (!Array.isArray(config.statuses) || config.statuses.length === 0) {
+        throw new Error(`statuses default is missing or empty`);
       }
       results.push({ name, passed: true });
     } catch (err) {
@@ -3635,9 +3619,9 @@ async function runTaskCliVersion() {
 }
 async function runTaskCliUpdate(opts) {
   if (opts.log) {
-    const logFile = path5.join(getConfigDir(), "update-log.txt");
-    if (fs5.existsSync(logFile)) {
-      process.stdout.write(fs5.readFileSync(logFile, "utf-8"));
+    const logFile = path5.join(ConfigDir.get(), "update-log.txt");
+    if (fs4.existsSync(logFile)) {
+      process.stdout.write(fs4.readFileSync(logFile, "utf-8"));
     } else {
       process.stdout.write("No update log found.\n");
     }
@@ -3668,16 +3652,16 @@ async function runTaskCliUpdate(opts) {
   });
 }
 function runTaskCliRollback() {
-  const configDir = getConfigDir();
+  const configDir = ConfigDir.get();
   const stateFile = path5.join(configDir, "update-state.json");
-  if (!fs5.existsSync(stateFile)) {
+  if (!fs4.existsSync(stateFile)) {
     process.stderr.write("No update state found. Nothing to roll back.\n");
     process.exit(1);
     return;
   }
   let previousVersion;
   try {
-    const state = JSON.parse(fs5.readFileSync(stateFile, "utf-8"));
+    const state = JSON.parse(fs4.readFileSync(stateFile, "utf-8"));
     previousVersion = state.previousVersion;
   } catch (err) {
     process.stderr.write(`Failed to read update state: ${String(err)}
@@ -3685,7 +3669,7 @@ function runTaskCliRollback() {
     process.exit(1);
     return;
   }
-  if (previousVersion === void 0 || !VERSION_RE.test(previousVersion)) {
+  if (previousVersion === void 0 || !VersionValidation.VERSION_RE.test(previousVersion)) {
     process.stderr.write("Invalid or missing previousVersion in update state.\n");
     process.exit(1);
     return;
@@ -3694,7 +3678,7 @@ function runTaskCliRollback() {
   process.stdout.write(`Rolled back to v${previousVersion}
 `);
   try {
-    fs5.unlinkSync(stateFile);
+    fs4.unlinkSync(stateFile);
   } catch {
   }
 }
@@ -3832,7 +3816,8 @@ async function runTaskCommand(args, cwd) {
   const { configDir: configDirArg, projectDir: projectDirArg, jsonMode, command, rest } = parseArgs(args);
   const effectiveProjectDir = projectDirArg ?? process.env["TASK_PROJECT_DIR"] ?? process.env["PROJECT_DIR"];
   const effectiveCwd = effectiveProjectDir ? path6.resolve(cwd, effectiveProjectDir) : cwd;
-  const updateState = readAndClearUpdateState(getConfigDir());
+  const updateManager = new UpdateManager("@wadeck/task-cli");
+  const updateState = updateManager.readAndClearState();
   if (updateState?.status === "success") {
     process.stderr.write(`[task] Updated to v${updateState.newVersion}
 `);
@@ -3865,11 +3850,11 @@ async function runTaskCommand(args, cwd) {
   }
   if (command === "init") {
     const taskDir = path6.join(effectiveCwd, ".task");
-    if (fs6.existsSync(taskDir)) {
+    if (fs5.existsSync(taskDir)) {
       return { exitCode: 0, output: "Project already initialized." };
     }
-    fs6.mkdirSync(path6.join(taskDir, "tasks"), { recursive: true });
-    fs6.writeFileSync(path6.join(taskDir, "config.yml"), PROJECT_CONFIG_TEMPLATE, "utf8");
+    fs5.mkdirSync(path6.join(taskDir, "tasks"), { recursive: true });
+    fs5.writeFileSync(path6.join(taskDir, "config.yml"), PROJECT_CONFIG_TEMPLATE, "utf8");
     return { exitCode: 0, output: `Initialized task project in ${taskDir}` };
   }
   if (command === "cli") {
@@ -3903,10 +3888,10 @@ async function runTaskCommand(args, cwd) {
         );
     }
   }
-  if (!isProjectInitialized(effectiveCwd)) {
+  if (!TaskConfigLoader.isInitialized(effectiveCwd)) {
     return errorOutput(jsonMode, "project not initialized", "Run: task init");
   }
-  const config = loadTaskConfig({ configDir: configDirArg, projectDir: effectiveCwd });
+  const config = TaskConfigLoader.load({ configDir: configDirArg, projectDir: effectiveCwd });
   const tasksDir = path6.join(effectiveCwd, ".task", "tasks");
   const store = new TaskStore(tasksDir);
   const hookDispatcher = buildHookDispatcher(config.globalHooks, config.projectHooks);
@@ -4012,7 +3997,7 @@ async function main() {
     process.stderr.write(output + "\n");
   }
   const bundlePath = process.env["LAUNCHER_BUNDLE_OVERRIDE"] ?? (0, import_node_url2.fileURLToPath)(__importMetaUrl);
-  scheduleBackgroundUpdate(bundlePath, "@wadeck/task-cli", "task-updater.cjs");
+  new UpdateManager("@wadeck/task-cli").scheduleBackgroundUpdate(bundlePath, "task-updater.cjs");
   process.exit(exitCode);
 }
 var isEntryPoint = process.argv[1] !== void 0 && (process.argv[1] === (0, import_node_url2.fileURLToPath)(__importMetaUrl) || process.argv[1].endsWith("TaskIndex.js") || process.argv[1].endsWith("TaskIndex.ts"));
