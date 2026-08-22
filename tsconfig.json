@@ -4,13 +4,8 @@
 		"outDir": "dist",
 		"declarationDir": "dist-types",
 		"rootDir": "src",
-		"types": ["vitest/globals", "node"],
-		"baseUrl": ".",
-		"paths": {
-			"shared-cli": ["../shared-cli/src/index"],
-			"shared-cli/*": ["../shared-cli/src/*"]
-		}
+		"types": ["vitest/globals", "node"]
 	},
 	"include": ["src"],
-	"references": [{ "path": "../shared-cli" }]
+	"references": []
 }

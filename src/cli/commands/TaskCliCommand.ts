@@ -1,4 +1,5 @@
 // task cli <subcommand> -- meta-commands for managing the task CLI itself.
+import { ConfigDir, HookDispatcher, VersionValidation } from '@wadeck/shared-cli';
 import * as yaml from 'js-yaml';
 import { execFile, execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
@@ -7,7 +8,6 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { ConfigDir, HookDispatcher, VersionValidation } from 'shared-cli/index';
 
 import { TaskConfigLoader } from '../../task/TaskConfigLoader.js';
 import { TaskStore } from '../../task/TaskStore.js';

@@ -1,10 +1,10 @@
 #!/usr/bin/env node
+import { HookDispatcher, UpdateManager } from '@wadeck/shared-cli';
+import type { HookConfig } from '@wadeck/shared-cli/HookDispatcher';
 import * as fs from 'node:fs';
 import { createRequire } from 'node:module';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { HookConfig } from 'shared-cli/HookDispatcher';
-import { HookDispatcher, UpdateManager } from 'shared-cli/index';
 
 import { TaskConfigLoader } from '../task/TaskConfigLoader.js';
 import type { TaskHookValue } from '../task/TaskConfigLoader.js';

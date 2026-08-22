@@ -16,12 +16,12 @@
 		"js-yaml": "^4.1.1"
 	},
 	"devDependencies": {
-		"shared-cli": "file:../shared-cli",
+		"@wadeck/shared-cli": "^2026.8.22-5-d3140e53",
 		"@types/js-yaml": "^4.0.9",
-		"@types/node": "^20.11.0",
+		"@types/node": "^24.0.0",
 		"esbuild": "^0.27.2",
 		"tsx": "^4.7.0",
-		"typescript": "^5.3.3",
+		"typescript": "^7.0.0",
 		"vitest": "^4.0.14"
 	}
 }
