@@ -18,9 +18,12 @@ declare const __TASK_CLI_VERSION__: string;
 const execFileAsync = promisify(execFile);
 const PKG_NAME = '@wadeck/task-cli';
 
+// Migrate legacy config dir on first load (runs once when this module is imported).
+ConfigDir.migrateIfNeeded('task');
+
 function readChannelFromConfig(): string {
 	try {
-		const configFile = path.join(ConfigDir.get(), 'config.yml');
+		const configFile = path.join(ConfigDir.get('task'), 'config.yml');
 		if (!fs.existsSync(configFile)) return 'edge';
 		const raw = fs.readFileSync(configFile, 'utf-8');
 		const match = /^\s*channel:\s*['"]?(\S+?)['"]?\s*$/m.exec(raw);
@@ -212,7 +215,7 @@ export async function runTaskCliVersion(): Promise<void> {
 
 export async function runTaskCliUpdate(opts: { check?: boolean; log?: boolean }): Promise<void> {
 	if (opts.log) {
-		const logFile = path.join(ConfigDir.get(), 'update-log.txt');
+		const logFile = path.join(ConfigDir.get('task'), 'update-log.txt');
 		if (fs.existsSync(logFile)) {
 			process.stdout.write(fs.readFileSync(logFile, 'utf-8'));
 		} else {
@@ -245,7 +248,7 @@ export async function runTaskCliUpdate(opts: { check?: boolean; log?: boolean })
 }
 
 export function runTaskCliRollback(): void {
-	const configDir = ConfigDir.get();
+	const configDir = ConfigDir.get('task');
 	const stateFile = path.join(configDir, 'update-state.json');
 	if (!fs.existsSync(stateFile)) {
 		process.stderr.write('No update state found. Nothing to roll back.\n');
