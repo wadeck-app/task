@@ -7,8 +7,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-
 import { ConfigDir, HookDispatcher, VersionValidation } from 'shared-cli/index';
+
 import { TaskConfigLoader } from '../../task/TaskConfigLoader.js';
 import { TaskStore } from '../../task/TaskStore.js';
 
