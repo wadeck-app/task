@@ -1,5 +1,5 @@
 // task cli <subcommand> -- meta-commands for managing the task CLI itself.
-import { ConfigDir, HookDispatcher, VersionValidation } from '@wadeck/shared-cli';
+import { ConfigDir, HookDispatcher, VersionValidation } from '@wadeck-app/shared-cli';
 import * as yaml from 'js-yaml';
 import { execFile, execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
@@ -16,7 +16,7 @@ import { TaskStore } from '../../task/TaskStore.js';
 declare const __TASK_CLI_VERSION__: string;
 
 const execFileAsync = promisify(execFile);
-const PKG_NAME = '@wadeck/task-cli';
+const PKG_NAME = '@wadeck-app/task-cli';
 
 // Migrate legacy config dir on first load (runs once when this module is imported).
 ConfigDir.migrateIfNeeded('task');

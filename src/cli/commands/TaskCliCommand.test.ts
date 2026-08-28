@@ -93,9 +93,13 @@ describe('runTaskCliRollback', () => {
 
 		runTaskCliRollback();
 
-		expect(vi.mocked(cp.execFileSync)).toHaveBeenCalledWith('npm', ['install', '-g', '@wadeck/task-cli@2.0.1'], {
-			stdio: 'inherit',
-		});
+		expect(vi.mocked(cp.execFileSync)).toHaveBeenCalledWith(
+			'npm',
+			['install', '-g', '@wadeck-app/task-cli@2.0.1'],
+			{
+				stdio: 'inherit',
+			}
+		);
 		expect(stdoutSpy).toHaveBeenCalledWith('Rolled back to v2.0.1\n');
 		expect(exitSpy).not.toHaveBeenCalled();
 	});

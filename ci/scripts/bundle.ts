@@ -22,8 +22,16 @@ function getCalVer(): string {
 	const time = `${pad2(now.getHours())}${pad2(now.getMinutes())}${pad2(now.getSeconds())}`;
 	let count = '0';
 	let hash = 'DEV';
-	try { count = execSync('git rev-list --count HEAD', { encoding: 'utf8' }).trim(); } catch { /* not a git repo */ }
-	try { hash = execSync('git rev-parse --short=8 HEAD', { encoding: 'utf8' }).trim(); } catch { /* not a git repo */ }
+	try {
+		count = execSync('git rev-list --count HEAD', { encoding: 'utf8' }).trim();
+	} catch {
+		/* not a git repo */
+	}
+	try {
+		hash = execSync('git rev-parse --short=8 HEAD', { encoding: 'utf8' }).trim();
+	} catch {
+		/* not a git repo */
+	}
 	return `${date}-${time}-${count}-${hash}`;
 }
 const version = process.env['BUNDLE_VERSION'] || getCalVer();
@@ -75,7 +83,7 @@ const updaterSize = statSync(updaterOutfile).size;
 if (updaterSize > MAX_UPDATER_SIZE) {
 	throw new Error(
 		`task-updater.cjs is ${updaterSize} bytes (${(updaterSize / 1024).toFixed(1)} KB) — exceeds 500 KB limit.\n` +
-		'The task runtime may have been accidentally included. Check task-updater-entry.ts imports.'
+			'The task runtime may have been accidentally included. Check task-updater-entry.ts imports.'
 	);
 }
 

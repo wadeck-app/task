@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { HookDispatcher, UpdateManager } from '@wadeck/shared-cli';
-import type { HookConfig } from '@wadeck/shared-cli/HookDispatcher';
+import { HookDispatcher, UpdateManager } from '@wadeck-app/shared-cli';
+import type { HookConfig } from '@wadeck-app/shared-cli/HookDispatcher';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -159,7 +159,7 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 	const effectiveCwd = effectiveProjectDir ? path.resolve(cwd, effectiveProjectDir) : cwd;
 
 	// Show update notice from a previous background update run
-	const updateManager = new UpdateManager('@wadeck/task-cli');
+	const updateManager = new UpdateManager('@wadeck-app/task-cli');
 	const updateState = updateManager.readAndClearState();
 	if (updateState?.status === 'success') {
 		process.stderr.write(`[task] Updated to v${updateState.newVersion}\n`);
@@ -341,7 +341,7 @@ async function main(): Promise<void> {
 
 	// Schedule background updater after command completes
 	const bundlePath = process.env['LAUNCHER_BUNDLE_OVERRIDE'] ?? fileURLToPath(import.meta.url);
-	new UpdateManager('@wadeck/task-cli').scheduleBackgroundUpdate(bundlePath, 'task-updater.cjs');
+	new UpdateManager('@wadeck-app/task-cli').scheduleBackgroundUpdate(bundlePath, 'task-updater.cjs');
 
 	process.exit(exitCode);
 }
