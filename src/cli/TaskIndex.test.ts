@@ -16,16 +16,16 @@ afterEach(() => {
 });
 
 describe('runTaskCommand — version and help', () => {
-	it('--version returns semver string without requiring project init', async () => {
+	it('--version returns CalVer string without requiring project init', async () => {
 		const result = await runTaskCommand(['--version'], tmpDir);
 		expect(result.exitCode).toBe(0);
-		expect(result.output).toMatch(/^\d+\.\d+\.\d+/);
+		expect(result.output).toMatch(/^\d{4}\.\d{2}\.\d{2}-\d{6}-\d+-[0-9a-zA-Z]+/);
 	});
 
-	it('-V returns semver string without requiring project init', async () => {
+	it('-V returns CalVer string without requiring project init', async () => {
 		const result = await runTaskCommand(['-V'], tmpDir);
 		expect(result.exitCode).toBe(0);
-		expect(result.output).toMatch(/^\d+\.\d+\.\d+/);
+		expect(result.output).toMatch(/^\d{4}\.\d{2}\.\d{2}-\d{6}-\d+-[0-9a-zA-Z]+/);
 	});
 
 	it('no args returns usage without requiring project init', async () => {
