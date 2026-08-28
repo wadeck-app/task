@@ -26,7 +26,7 @@ function getCalVer(): string {
 	try { hash = execSync('git rev-parse --short=8 HEAD', { encoding: 'utf8' }).trim(); } catch { /* not a git repo */ }
 	return `${date}-${time}-${count}-${hash}`;
 }
-const version = process.env['BUNDLE_VERSION'] ?? getCalVer();
+const version = process.env['BUNDLE_VERSION'] || getCalVer();
 // Resolve flow-cli source for bundling without requiring a prior flow-cli build step
 const flowCliSrc = path.resolve(root, '../flow-cli/src');
 
