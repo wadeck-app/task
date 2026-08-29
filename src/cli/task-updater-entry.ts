@@ -209,12 +209,18 @@ export async function main(): Promise<void> {
 		} catch (err: unknown) {
 			const msg = err instanceof Error ? err.message : String(err);
 			const reason = msg.includes('EUNAUTHORIZED') || msg.includes('401') ? 'auth' : 'network';
+			if (force) {
+				process.stderr.write(`[task] Update check failed (${reason}). Run: task cli update --log\n`);
+			}
 			writeState(statePath, { status: 'update-failed', reason, timestamp });
 			appendLog(logFile, `Update check failed: ${msg}`);
 			return;
 		}
 
 		if (!VERSION_RE.test(latestVersion)) {
+			if (force) {
+				process.stderr.write(`[task] Update check failed (invalid-version). Run: task cli update --log\n`);
+			}
 			writeState(statePath, { status: 'update-failed', reason: 'invalid-version', timestamp });
 			return;
 		}
@@ -227,9 +233,15 @@ export async function main(): Promise<void> {
 		}
 
 		if (semverLte(latestVersion, currentVersion)) {
+			if (force) {
+				process.stdout.write(`[task] Already up to date (v${currentVersion})\n`);
+			}
 			return;
 		}
 
+		if (force) {
+			process.stdout.write(`[task] Updating from v${currentVersion} to v${latestVersion}...\n`);
+		}
 		writeState(statePath, {
 			status: 'applying',
 			previousVersion: currentVersion,
@@ -242,6 +254,9 @@ export async function main(): Promise<void> {
 		} catch (err: unknown) {
 			const msg = err instanceof Error ? err.message : String(err);
 			const reason = msg.includes('EUNAUTHORIZED') || msg.includes('401') ? 'auth' : 'install-failed';
+			if (force) {
+				process.stderr.write(`[task] Update to v${latestVersion} failed: ${reason}\n`);
+			}
 			writeState(statePath, {
 				status: 'update-failed',
 				reason,
@@ -262,6 +277,9 @@ export async function main(): Promise<void> {
 				timeout: 15000,
 				env: { ...process.env, CLI_SELF_CHECK_QUIET: '1' },
 			});
+			if (force) {
+				process.stdout.write(`[task] Updated to v${latestVersion}\n`);
+			}
 			writeState(statePath, {
 				status: 'success',
 				newVersion: latestVersion,
@@ -270,6 +288,9 @@ export async function main(): Promise<void> {
 			});
 		} catch (healthErr: unknown) {
 			const msg = healthErr instanceof Error ? healthErr.message : String(healthErr);
+			if (force) {
+				process.stderr.write(`[task] Update to v${latestVersion} failed (self-check failed). Rolling back...\n`);
+			}
 			try {
 				await execFileAsync('npm', ['install', '-g', `${PKG_NAME}@${currentVersion}`], { timeout: 120000 });
 			} catch {
