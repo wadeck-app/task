@@ -21,8 +21,9 @@ const PKG_NAME = '@wadeck-app/task-cli';
 const NPM_CLI_JS = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
 const USE_NPM_CLI = fs.existsSync(NPM_CLI_JS);
 function execNpm(args: string[], opts: { timeout: number }): Promise<{ stdout: string }> {
-	if (USE_NPM_CLI) return execFileAsync(process.execPath, [NPM_CLI_JS, ...args], opts);
-	return execFileAsync('npm', args, opts);
+	const winHide = process.platform === 'win32' ? { windowsHide: true } : {};
+	if (USE_NPM_CLI) return execFileAsync(process.execPath, [NPM_CLI_JS, ...args], { ...opts, ...winHide });
+	return execFileAsync('npm', args, { ...opts, ...winHide });
 }
 
 // Migrate legacy config dir on first load (runs once when this module is imported).
