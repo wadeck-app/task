@@ -20,7 +20,7 @@ export default defineConfig({
 	plugins: [resolveJsToTs()],
 	// Replace the esbuild bundle-time constant so updater tests see a real version string.
 	define: {
-		__TASK_CLI_VERSION__: '"0.0.1"',
+		__TASK_CLI_VERSION__: '"2026.01.01-000000-0-TEST0000"',
 	},
 	test: {
 		globals: true,

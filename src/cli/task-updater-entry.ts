@@ -289,7 +289,9 @@ export async function main(): Promise<void> {
 		} catch (healthErr: unknown) {
 			const msg = healthErr instanceof Error ? healthErr.message : String(healthErr);
 			if (force) {
-				process.stderr.write(`[task] Update to v${latestVersion} failed (self-check failed). Rolling back...\n`);
+				process.stderr.write(
+					`[task] Update to v${latestVersion} failed (self-check failed). Rolling back...\n`
+				);
 			}
 			try {
 				await execFileAsync('npm', ['install', '-g', `${PKG_NAME}@${currentVersion}`], { timeout: 120000 });

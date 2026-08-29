@@ -52,7 +52,10 @@ describe('task cli update -- produces output', () => {
 			});
 			const combined = (result.stdout ?? '') + (result.stderr ?? '');
 			// Must produce at least one line of output
-			expect(combined.trim().length, `Expected output from updater but got none. stdout: "${result.stdout}" stderr: "${result.stderr}"`).toBeGreaterThan(0);
+			expect(
+				combined.trim().length,
+				`Expected output from updater but got none. stdout: "${result.stdout}" stderr: "${result.stderr}"`
+			).toBeGreaterThan(0);
 		} finally {
 			try {
 				fs.rmSync(tmpDir, { recursive: true, force: true });
