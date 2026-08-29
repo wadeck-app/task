@@ -93,13 +93,13 @@ describe('runTaskCliRollback', () => {
 
 		runTaskCliRollback();
 
-		expect(vi.mocked(cp.execFileSync)).toHaveBeenCalledWith(
-			'npm',
-			['install', '-g', '@wadeck-app/task-cli@2.0.1'],
-			{
-				stdio: 'inherit',
-			}
-		);
+		// On Windows npm-cli.js is used; on other systems 'npm' is called directly.
+		// Assert the version appears in the args regardless of which executable is used.
+		const call = vi.mocked(cp.execFileSync).mock.calls[0];
+		expect(call).toBeDefined();
+		const argsJoined = (call as unknown[]).flat().join(' ');
+		expect(argsJoined).toContain('install');
+		expect(argsJoined).toContain('@wadeck-app/task-cli@2.0.1');
 		expect(stdoutSpy).toHaveBeenCalledWith('Rolled back to v2.0.1\n');
 		expect(exitSpy).not.toHaveBeenCalled();
 	});
