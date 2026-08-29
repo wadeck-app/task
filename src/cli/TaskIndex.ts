@@ -158,6 +158,17 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 	const effectiveProjectDir = projectDirArg ?? process.env['TASK_PROJECT_DIR'] ?? process.env['PROJECT_DIR'];
 	const effectiveCwd = effectiveProjectDir ? path.resolve(cwd, effectiveProjectDir) : cwd;
 
+	// Log every CLI invocation so all task commands are traceable
+	try {
+		const logsDir = path.join(
+			process.env['TASK_CONFIG_DIR'] ?? path.join(require('os').homedir(), '.config', '.task-daemon', 'logs')
+		);
+		const today = new Date().toISOString().slice(0, 10);
+		const logFile = path.join(logsDir, `${today}.ndjson`);
+		fs.mkdirSync(logsDir, { recursive: true });
+		fs.appendFileSync(logFile, JSON.stringify({ ts: new Date().toISOString(), level: 'info', msg: `cmd: task ${args.join(' ')}` }) + '\n');
+	} catch { /* never block the CLI on logging failure */ }
+
 	// Show update notice from a previous background update run
 	const updateManager = new UpdateManager('@wadeck-app/task-cli');
 	const updateState = updateManager.readAndClearState();
