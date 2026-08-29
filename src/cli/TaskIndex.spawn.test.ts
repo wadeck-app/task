@@ -43,7 +43,10 @@ describe('task cli self-check (subprocess)', () => {
 			result.status,
 			`cli self-check exited with code ${String(result.status)}.\nstdout: ${result.stdout}\nstderr: ${result.stderr}`
 		).toBe(0);
-		expect(combined, `Expected [ok] lines in output.\nstdout: ${result.stdout}\nstderr: ${result.stderr}`).toContain('[ok]');
+		expect(
+			combined,
+			`Expected [ok] lines in output.\nstdout: ${result.stdout}\nstderr: ${result.stderr}`
+		).toContain('[ok]');
 	});
 
 	it('exits 0 when all checks pass', () => {

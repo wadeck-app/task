@@ -5,7 +5,6 @@
  * Usage:  npx tsx ci/scripts/bundle.ts
  */
 import { build } from 'esbuild';
-import { execSync } from 'node:child_process';
 import { statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,26 +14,11 @@ const root = path.join(__dirname, '../..');
 
 const MAX_UPDATER_SIZE = 500 * 1024; // 500 KB
 
-function getCalVer(): string {
-	const now = new Date();
-	const pad2 = (n: number) => String(n).padStart(2, '0');
-	const date = `${now.getFullYear()}.${pad2(now.getMonth() + 1)}.${pad2(now.getDate())}`;
-	const time = `${pad2(now.getHours())}${pad2(now.getMinutes())}${pad2(now.getSeconds())}`;
-	let count = '0';
-	let hash = 'DEV';
-	try {
-		count = execSync('git rev-list --count HEAD', { encoding: 'utf8' }).trim();
-	} catch {
-		/* not a git repo */
-	}
-	try {
-		hash = execSync('git rev-parse --short=8 HEAD', { encoding: 'utf8' }).trim();
-	} catch {
-		/* not a git repo */
-	}
-	return `${date}-${time}-${count}-${hash}`;
+const version = process.env['BUNDLE_VERSION'];
+if (!version) {
+	process.stderr.write('[bundle] ERROR: BUNDLE_VERSION env var not set — refusing to build without a version\n');
+	process.exit(1);
 }
-const version = process.env['BUNDLE_VERSION'] || getCalVer();
 // Resolve flow-cli source for bundling without requiring a prior flow-cli build step
 const flowCliSrc = path.resolve(root, '../flow-cli/src');
 
