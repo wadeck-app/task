@@ -297,8 +297,40 @@ export function printTaskCliHelp(): void {
 			'  update --log         Print the update log',
 			'  rollback             Restore the previously installed version',
 			'  self-check           Run health checks to verify the CLI bundle is functional',
+			'  logs [--follow]      Print today\'s log from ~/.config/task/logs/',
 		].join('\n') + '\n'
 	);
+}
+
+export function runTaskCliLogs(opts: { follow?: boolean }): void {
+	const logsDir = path.join(ConfigDir.get('task'), 'logs');
+	const today = new Date().toISOString().slice(0, 10);
+	const logFile = path.join(logsDir, `${today}.ndjson`);
+
+	if (!fs.existsSync(logFile)) {
+		process.stderr.write(`[task] No log file for today: ${logFile}\n`);
+		return;
+	}
+	if (!opts.follow) {
+		process.stdout.write(fs.readFileSync(logFile, 'utf-8'));
+		return;
+	}
+	process.stderr.write(`[task] Following ${logFile}\n`);
+	let offset = 0;
+	function readNewBytes(): void {
+		try {
+			const stat = fs.statSync(logFile);
+			if (stat.size <= offset) return;
+			const buf = Buffer.alloc(stat.size - offset);
+			const fd = fs.openSync(logFile, 'r');
+			fs.readSync(fd, buf, 0, buf.length, offset);
+			fs.closeSync(fd);
+			offset = stat.size;
+			process.stdout.write(buf.toString('utf-8'));
+		} catch { /* ignore */ }
+	}
+	readNewBytes();
+	fs.watch(logFile, () => { readNewBytes(); }).on('error', () => { /* ignore */ });
 }
 
 export class TaskCliCommand {
@@ -307,5 +339,6 @@ export class TaskCliCommand {
 	static runUpdate = runTaskCliUpdate;
 	static runRollback = runTaskCliRollback;
 	static runSelfCheck = runTaskCliSelfCheck;
+	static runLogs = runTaskCliLogs;
 	static printHelp = printTaskCliHelp;
 }

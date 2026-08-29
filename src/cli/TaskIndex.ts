@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { HookDispatcher, UpdateManager } from '@wadeck-app/shared-cli';
+import { ConfigDir, HookDispatcher, UpdateManager } from '@wadeck-app/shared-cli';
 import type { HookConfig } from '@wadeck-app/shared-cli/HookDispatcher';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -15,6 +15,7 @@ import {
 	runTaskCliSelfCheck,
 	runTaskCliUpdate,
 	runTaskCliVersion,
+	runTaskCliLogs,
 } from './commands/TaskCliCommand.js';
 import { VERSION } from './version.js';
 
@@ -158,11 +159,9 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 	const effectiveProjectDir = projectDirArg ?? process.env['TASK_PROJECT_DIR'] ?? process.env['PROJECT_DIR'];
 	const effectiveCwd = effectiveProjectDir ? path.resolve(cwd, effectiveProjectDir) : cwd;
 
-	// Log every CLI invocation so all task commands are traceable
+	// Log every CLI invocation to ~/.config/task/logs/YYYY-MM-DD.ndjson
 	try {
-		const logsDir = path.join(
-			process.env['TASK_CONFIG_DIR'] ?? path.join(require('os').homedir(), '.config', '.task-daemon', 'logs')
-		);
+		const logsDir = path.join(ConfigDir.get('task'), 'logs');
 		const today = new Date().toISOString().slice(0, 10);
 		const logFile = path.join(logsDir, `${today}.ndjson`);
 		fs.mkdirSync(logsDir, { recursive: true });
@@ -223,6 +222,11 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 			case 'self-check':
 				await runTaskCliSelfCheck();
 				return { exitCode: 0, output: '' };
+			case 'logs': {
+				const follow = rest.includes('--follow');
+				runTaskCliLogs({ follow });
+				return { exitCode: 0, output: '' };
+			}
 			case undefined:
 			case '--help':
 			case 'help':
@@ -232,7 +236,7 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 				return errorOutput(
 					jsonMode,
 					`unknown task cli subcommand: ${subCmd}`,
-					'Valid subcommands: version, update, rollback, self-check'
+					'Valid subcommands: version, update, rollback, self-check, logs'
 				);
 		}
 	}
