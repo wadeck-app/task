@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { ConfigDir, HookDispatcher, UpdateManager } from '@wadeck-app/shared-cli';
+import { logCliInvocation } from '@wadeck-app/shared-cli/CliLogger';
 import type { HookConfig } from '@wadeck-app/shared-cli/HookDispatcher';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -160,27 +161,21 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 	const effectiveCwd = effectiveProjectDir ? path.resolve(cwd, effectiveProjectDir) : cwd;
 
 	// Log every CLI invocation to ~/.config/task/logs/YYYY-MM-DD.ndjson
-	try {
-		const logsDir = path.join(ConfigDir.get('task'), 'logs');
-		const today = new Date().toISOString().slice(0, 10);
-		const logFile = path.join(logsDir, `${today}.ndjson`);
-		fs.mkdirSync(logsDir, { recursive: true });
-		fs.appendFileSync(logFile, JSON.stringify({ ts: new Date().toISOString(), level: 'info', msg: `cmd: task ${args.join(' ')}` }) + '\n');
-	} catch { /* never block the CLI on logging failure */ }
+	try { logCliInvocation(ConfigDir.get('task'), 'task', args); } catch { /* never block the CLI on logging failure */ }
 
 	// Show update notice from a previous background update run
 	const updateManager = new UpdateManager('@wadeck-app/task-cli');
 	const updateState = updateManager.readAndClearState();
 	if (updateState?.status === 'success') {
-		process.stderr.write(`[task] Updated to v${updateState.newVersion}\n`);
+		process.stderr.write(`[task] Updated to v${updateState.targetVersion ?? updateState.newVersion}\n`);
 	}
 	if (updateState?.status === 'rolled-back') {
 		process.stderr.write(
 			`[task] Update to v${updateState.targetVersion} failed (self-check failed). Rolled back to v${updateState.previousVersion}. Run: task cli update --log\n`
 		);
 	}
-	if (updateState?.status === 'update-failed') {
-		process.stderr.write(`[task] Update check failed (${updateState.reason}). Run: task cli update\n`);
+	if (updateState?.status === 'failed') {
+		process.stderr.write(`[task] Background update failed (${updateState.error ?? updateState.reason}). Run: task cli update\n`);
 	}
 
 	if (!command || command === '--help') {
@@ -213,18 +208,18 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 			case 'update': {
 				const hasCheck = rest.includes('--check');
 				const hasLog = rest.includes('--log');
-				await runTaskCliUpdate({ check: hasCheck, log: hasLog });
+				await runTaskCliUpdate({ check: hasCheck, log: hasLog, rawArgs: rest });
 				return { exitCode: 0, output: '' };
 			}
 			case 'rollback':
-				runTaskCliRollback();
+				await runTaskCliRollback();
 				return { exitCode: 0, output: '' };
 			case 'self-check':
 				await runTaskCliSelfCheck();
 				return { exitCode: 0, output: '' };
 			case 'logs': {
 				const follow = rest.includes('--follow');
-				runTaskCliLogs({ follow });
+				await runTaskCliLogs({ follow });
 				return { exitCode: 0, output: '' };
 			}
 			case undefined:

@@ -1,13 +1,13 @@
 // task cli <subcommand> -- meta-commands for managing the task CLI itself.
-import { ConfigDir, HookDispatcher, VersionValidation } from '@wadeck-app/shared-cli';
+import { ConfigDir, HookDispatcher } from '@wadeck-app/shared-cli';
+import { cliLogsCommand, cliRollbackCommand, cliUpdateCommand, cliVersionCommand, warnUnknownArgs } from '@wadeck-app/shared-cli/CliMetaCommands';
+import { readChannelFromConfig } from '@wadeck-app/shared-cli/ChannelConfig';
 import * as yaml from 'js-yaml';
-import { execFile, execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import { createRequire } from 'node:module';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
 
 import { TaskConfigLoader } from '../../task/TaskConfigLoader.js';
 import { TaskStore } from '../../task/TaskStore.js';
@@ -15,31 +15,10 @@ import { TaskStore } from '../../task/TaskStore.js';
 // Injected by esbuild at bundle time via define; falls back to package.json in dev mode (tsx).
 declare const __TASK_CLI_VERSION__: string;
 
-const execFileAsync = promisify(execFile);
 const PKG_NAME = '@wadeck-app/task-cli';
-
-const NPM_CLI_JS = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
-const USE_NPM_CLI = fs.existsSync(NPM_CLI_JS);
-function execNpm(args: string[], opts: { timeout: number }): Promise<{ stdout: string }> {
-	const winHide = process.platform === 'win32' ? { windowsHide: true } : {};
-	if (USE_NPM_CLI) return execFileAsync(process.execPath, [NPM_CLI_JS, ...args], { ...opts, ...winHide });
-	return execFileAsync('npm', args, { ...opts, ...winHide });
-}
 
 // Migrate legacy config dir on first load (runs once when this module is imported).
 ConfigDir.migrateIfNeeded('task');
-
-function readChannelFromConfig(): string {
-	try {
-		const configFile = path.join(ConfigDir.get('task'), 'config.yml');
-		if (!fs.existsSync(configFile)) return 'latest';
-		const raw = fs.readFileSync(configFile, 'utf-8');
-		const match = /^\s*channel:\s*['"]?(\S+?)['"]?\s*$/m.exec(raw);
-		return match?.[1] ?? 'latest';
-	} catch {
-		return 'latest';
-	}
-}
 
 export function getCurrentTaskVersion(): string {
 	try {
@@ -50,15 +29,9 @@ export function getCurrentTaskVersion(): string {
 	}
 }
 
-async function fetchLatestVersion(channel: string): Promise<string> {
-	const { stdout } = await execNpm(['view', PKG_NAME, `dist-tags.${channel}`], { timeout: 15000 });
-	return stdout.trim();
-}
-
 function getUpdaterPath(): string | null {
 	const bundlePath = process.env['LAUNCHER_BUNDLE_OVERRIDE'] ?? fileURLToPath(import.meta.url);
 	const dir = path.dirname(bundlePath);
-	// Prefer task-updater.cjs; fall back to flow-updater.cjs (shared bundle via UPDATER_PKG_NAME).
 	const candidates = [path.join(dir, 'task-updater.cjs'), path.join(dir, 'flow-updater.cjs')];
 	for (const candidate of candidates) {
 		if (fs.existsSync(candidate)) return candidate;
@@ -208,20 +181,16 @@ function printSelfCheckResults(results: CheckResult[], quiet: boolean, version: 
 
 export async function runTaskCliVersion(): Promise<void> {
 	const current = getCurrentTaskVersion();
-	const channel = readChannelFromConfig();
-	process.stdout.write(`task v${current} (installed)\n`);
-	try {
-		const latest = await fetchLatestVersion(channel);
-		process.stdout.write(`Latest (${channel}): v${latest}\n`);
-		if (current === latest) {
-			process.stdout.write('Up to date.\n');
-		}
-	} catch (err) {
-		process.stderr.write(`Could not fetch latest version: ${String(err)}\n`);
-	}
+	const channel = readChannelFromConfig(ConfigDir.get('task'));
+	await cliVersionCommand(PKG_NAME, current, channel);
 }
 
-export async function runTaskCliUpdate(opts: { check?: boolean; log?: boolean }): Promise<void> {
+export async function runTaskCliUpdate(opts: { check?: boolean; log?: boolean; rawArgs?: string[] }): Promise<void> {
+	warnUnknownArgs(
+		(opts.rawArgs ?? []).filter(a => a.startsWith('-')),
+		['--check', '--log'],
+		'task cli update',
+	);
 	if (opts.log) {
 		const logFile = path.join(ConfigDir.get('task'), 'update-log.txt');
 		if (fs.existsSync(logFile)) {
@@ -232,58 +201,22 @@ export async function runTaskCliUpdate(opts: { check?: boolean; log?: boolean })
 		return;
 	}
 	if (opts.check) {
-		const channel = readChannelFromConfig();
-		try {
-			const latest = await fetchLatestVersion(channel);
-			process.stdout.write(`Available (${channel}): v${latest}\n`);
-		} catch (err) {
-			process.stderr.write(`Could not check for updates: ${String(err)}\n`);
-			process.exit(1);
-		}
+		const current = getCurrentTaskVersion();
+		const channel = readChannelFromConfig(ConfigDir.get('task'));
+		await cliVersionCommand(PKG_NAME, current, channel);
 		return;
 	}
-	// Default: run the updater synchronously with UPDATER_FORCE=1 to bypass the cache check
 	const updaterPath = getUpdaterPath();
 	if (!updaterPath) {
 		process.stderr.write('Updater bundle not found (dev mode or missing build).\n');
 		process.exit(1);
 		return;
 	}
-	execFileSync(process.execPath, [updaterPath], {
-		stdio: 'inherit',
-		env: { ...process.env, UPDATER_FORCE: '1', UPDATER_PKG_NAME: PKG_NAME },
-	});
+	await cliUpdateCommand(updaterPath, PKG_NAME);
 }
 
-export function runTaskCliRollback(): void {
-	const configDir = ConfigDir.get('task');
-	const stateFile = path.join(configDir, 'update-state.json');
-	if (!fs.existsSync(stateFile)) {
-		process.stderr.write('No update state found. Nothing to roll back.\n');
-		process.exit(1);
-		return;
-	}
-	let previousVersion: string | undefined;
-	try {
-		const state = JSON.parse(fs.readFileSync(stateFile, 'utf-8')) as { previousVersion?: string };
-		previousVersion = state.previousVersion;
-	} catch (err) {
-		process.stderr.write(`Failed to read update state: ${String(err)}\n`);
-		process.exit(1);
-		return;
-	}
-	if (previousVersion === undefined || !VersionValidation.VERSION_RE.test(previousVersion)) {
-		process.stderr.write('Invalid or missing previousVersion in update state.\n');
-		process.exit(1);
-		return;
-	}
-	execFileSync(USE_NPM_CLI ? process.execPath : 'npm', USE_NPM_CLI ? [NPM_CLI_JS, 'install', '-g', `${PKG_NAME}@${previousVersion}`] : ['install', '-g', `${PKG_NAME}@${previousVersion}`], { stdio: 'inherit' });
-	process.stdout.write(`Rolled back to v${previousVersion}\n`);
-	try {
-		fs.unlinkSync(stateFile);
-	} catch {
-		// ignore
-	}
+export async function runTaskCliRollback(): Promise<void> {
+	await cliRollbackCommand(PKG_NAME, ConfigDir.get('task'));
 }
 
 export async function runTaskCliSelfCheck(): Promise<void> {
@@ -310,35 +243,8 @@ export function printTaskCliHelp(): void {
 	);
 }
 
-export function runTaskCliLogs(opts: { follow?: boolean }): void {
-	const logsDir = path.join(ConfigDir.get('task'), 'logs');
-	const today = new Date().toISOString().slice(0, 10);
-	const logFile = path.join(logsDir, `${today}.ndjson`);
-
-	if (!fs.existsSync(logFile)) {
-		process.stderr.write(`[task] No log file for today: ${logFile}\n`);
-		return;
-	}
-	if (!opts.follow) {
-		process.stdout.write(fs.readFileSync(logFile, 'utf-8'));
-		return;
-	}
-	process.stderr.write(`[task] Following ${logFile}\n`);
-	let offset = 0;
-	function readNewBytes(): void {
-		try {
-			const stat = fs.statSync(logFile);
-			if (stat.size <= offset) return;
-			const buf = Buffer.alloc(stat.size - offset);
-			const fd = fs.openSync(logFile, 'r');
-			fs.readSync(fd, buf, 0, buf.length, offset);
-			fs.closeSync(fd);
-			offset = stat.size;
-			process.stdout.write(buf.toString('utf-8'));
-		} catch { /* ignore */ }
-	}
-	readNewBytes();
-	fs.watch(logFile, () => { readNewBytes(); }).on('error', () => { /* ignore */ });
+export async function runTaskCliLogs(opts: { follow?: boolean }): Promise<void> {
+	await cliLogsCommand(ConfigDir.get('task'), { follow: opts.follow ?? false });
 }
 
 export class TaskCliCommand {
