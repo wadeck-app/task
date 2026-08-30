@@ -349,9 +349,9 @@ async function main(): Promise<void> {
 	const args = process.argv.slice(2);
 	const { exitCode, output } = await runTaskCommand(args, process.cwd());
 	if (exitCode === 0) {
-		process.stdout.write(output + '\n');
+		if (output.length > 0) process.stdout.write(output + '\n');
 	} else {
-		process.stderr.write(output + '\n');
+		if (output.length > 0) process.stderr.write(output + '\n');
 	}
 
 	// Schedule background updater after command completes
