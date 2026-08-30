@@ -8,12 +8,12 @@ function readBaseVersion(): string {
 	let count = '0';
 	let hash = 'DEV';
 	try {
-		count = execSync('git rev-list --count HEAD', { encoding: 'utf8' }).trim();
+		count = execSync('git rev-list --count HEAD', { encoding: 'utf8', windowsHide: true }).trim();
 	} catch {
 		/* not a git repo */
 	}
 	try {
-		hash = execSync('git rev-parse --short=8 HEAD', { encoding: 'utf8' }).trim();
+		hash = execSync('git rev-parse --short=8 HEAD', { encoding: 'utf8', windowsHide: true }).trim();
 	} catch {
 		/* not a git repo */
 	}
