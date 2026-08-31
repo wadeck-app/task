@@ -13,7 +13,7 @@
 		"clean": "rimraf dist dist-types dist-bundle"
 	},
 	"dependencies": {
-		"@wadeck-app/shared-updater": "^2026.8.30-003-5afad81b",
+		"@wadeck-app/shared-updater": "*",
 		"js-yaml": "^4.1.1"
 	},
 	"devDependencies": {
