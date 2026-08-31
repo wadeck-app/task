@@ -19,7 +19,7 @@
 	"devDependencies": {
 		"@types/js-yaml": "^4.0.9",
 		"@types/node": "^24.0.0",
-		"@wadeck-app/shared-cli": "^2026.8.30-019-02a40819",
+		"@wadeck-app/shared-cli": "^2026.8.31-022-55ef14e0",
 		"esbuild": "^0.27.2",
 		"tsx": "^4.7.0",
 		"typescript": "^7.0.0",

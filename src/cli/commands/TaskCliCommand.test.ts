@@ -50,13 +50,13 @@ describe('runTaskCliSelfCheck', () => {
 		expect(exitSpy).not.toHaveBeenCalled();
 	});
 
-	it('suppresses stdout output when CLI_SELF_CHECK_QUIET=1', async () => {
+	it('suppresses stderr output when CLI_SELF_CHECK_QUIET=1', async () => {
 		process.env['CLI_SELF_CHECK_QUIET'] = '1';
-		const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+		const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 
 		await runTaskCliSelfCheck();
 
-		expect(stdoutSpy).not.toHaveBeenCalled();
+		expect(stderrSpy).not.toHaveBeenCalled();
 		expect(exitSpy).not.toHaveBeenCalled();
 	});
 });

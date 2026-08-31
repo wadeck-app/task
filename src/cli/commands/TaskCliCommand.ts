@@ -1,5 +1,5 @@
 // task cli <subcommand> -- meta-commands for managing the task CLI itself.
-import { ConfigDir, HookDispatcher } from '@wadeck-app/shared-cli';
+import { ConfigDir, HookDispatcher, runSelfCheck } from '@wadeck-app/shared-cli';
 import { cliLogsCommand, cliRollbackCommand, cliUpdateCommand, cliVersionCommand, warnUnknownArgs } from '@wadeck-app/shared-cli/CliMetaCommands';
 import { readChannelFromConfig } from '@wadeck-app/shared-cli/ChannelConfig';
 import * as yaml from 'js-yaml';
@@ -41,141 +41,7 @@ function getUpdaterPath(): string | null {
 
 // ---- Self-check ----
 
-interface CheckResult {
-	name: string;
-	passed: boolean;
-	error?: string;
-}
-
-async function runSelfChecks(): Promise<CheckResult[]> {
-	const results: CheckResult[] = [];
-
-	// Check 1: Bundle integrity -- verify TaskStore is accessible (task CLI core module)
-	{
-		const name = 'Bundle integrity';
-		try {
-			if (typeof TaskStore !== 'function') {
-				throw new Error('TaskStore is not a constructor');
-			}
-			results.push({ name, passed: true });
-		} catch (err) {
-			results.push({ name, passed: false, error: String(err) });
-		}
-	}
-
-	// Check 2: Config loading -- load task config from a temp directory (no config file present, falls back to defaults)
-	{
-		const name = 'Config loading';
-		try {
-			const config = TaskConfigLoader.load({ configDir: os.tmpdir(), projectDir: os.tmpdir() });
-			if (!Array.isArray(config.statuses) || config.statuses.length === 0) {
-				throw new Error('statuses default is missing or empty');
-			}
-			results.push({ name, passed: true });
-		} catch (err) {
-			results.push({ name, passed: false, error: String(err) });
-		}
-	}
-
-	// Check 3: YAML flow parsing -- parse a minimal inline YAML definition string
-	{
-		const name = 'YAML parsing';
-		try {
-			const input = ['id: self-check-test', 'steps:', '  - id: step1'].join('\n');
-			const parsed = yaml.load(input) as { id?: string; steps?: unknown[] };
-			if (parsed?.id !== 'self-check-test') {
-				throw new Error(`Expected id 'self-check-test', got '${String(parsed?.id)}'`);
-			}
-			results.push({ name, passed: true });
-		} catch (err) {
-			results.push({ name, passed: false, error: String(err) });
-		}
-	}
-
-	// Check 4: TaskStore (temp dir) -- create, read, and delete a task in an isolated temp directory
-	{
-		const name = 'TaskStore (temp)';
-		let tmpDir: string | undefined;
-		try {
-			tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-self-check-'));
-			const store = new TaskStore(tmpDir);
-			const task = store.create('test task');
-			const found = store.findByPrefix(task.id.slice(0, 4));
-			if (found.id !== task.id) {
-				throw new Error(`findByPrefix returned wrong task: expected ${task.id}, got ${found.id}`);
-			}
-			results.push({ name, passed: true });
-		} catch (err) {
-			results.push({ name, passed: false, error: String(err) });
-		} finally {
-			if (tmpDir !== undefined) {
-				try {
-					fs.rmSync(tmpDir, { recursive: true, force: true });
-				} catch {
-					// ignore cleanup errors
-				}
-			}
-		}
-	}
-
-	// Check 5: HookDispatcher -- instantiate with empty config and dispatch a no-op event
-	{
-		const name = 'HookDispatcher';
-		try {
-			const dispatcher = new HookDispatcher({});
-			await dispatcher.dispatch('onTaskCreated', { taskId: 'test' }, () => {});
-			results.push({ name, passed: true });
-		} catch (err) {
-			results.push({ name, passed: false, error: String(err) });
-		}
-	}
-
-	// Check 6: Task config schema -- verify default statuses and priority are present
-	{
-		const name = 'Task config schema';
-		try {
-			const config = TaskConfigLoader.load({ configDir: os.tmpdir(), projectDir: os.tmpdir() });
-			if (typeof config.defaults.priority !== 'string' || config.defaults.priority.length === 0) {
-				throw new Error(`defaults.priority is not a non-empty string: ${config.defaults.priority}`);
-			}
-			if (!Array.isArray(config.statuses) || config.statuses.length === 0) {
-				throw new Error(`statuses default is missing or empty`);
-			}
-			results.push({ name, passed: true });
-		} catch (err) {
-			results.push({ name, passed: false, error: String(err) });
-		}
-	}
-
-	return results;
-}
-
-function printSelfCheckResults(results: CheckResult[], quiet: boolean, version: string): void {
-	if (!quiet) {
-		for (const result of results) {
-			if (result.passed) {
-				process.stdout.write(`[ok] ${result.name}\n`);
-			} else {
-				process.stdout.write(
-					`[FAIL] ${result.name}${result.error !== undefined ? ` -- ${result.error}` : ''}\n`
-				);
-			}
-		}
-	}
-	const failedCount = results.filter(r => !r.passed).length;
-	if (failedCount === 0) {
-		if (!quiet) {
-			process.stdout.write(`All checks passed. task v${version}\n`);
-		}
-	} else {
-		if (!quiet) {
-			process.stdout.write(
-				`Self-check failed (${failedCount}/${results.length} checks failed). Run: task cli update --log\n`
-			);
-		}
-		process.exit(1);
-	}
-}
+// Checks are defined inline in runTaskCliSelfCheck below.
 
 // ---- Exported functions (called by TaskIndex.ts switch/case routing) ----
 
@@ -220,10 +86,79 @@ export async function runTaskCliRollback(): Promise<void> {
 }
 
 export async function runTaskCliSelfCheck(): Promise<void> {
-	const quiet = process.env['CLI_SELF_CHECK_QUIET'] === '1';
-	const version = getCurrentTaskVersion();
-	const results = await runSelfChecks();
-	printSelfCheckResults(results, quiet, version);
+	await runSelfCheck([
+		// Check 1: Bundle integrity -- verify TaskStore is accessible (task CLI core module)
+		async () => {
+			try {
+				if (typeof TaskStore !== 'function') throw new Error('TaskStore is not a constructor');
+				return { name: 'Bundle integrity', ok: true };
+			} catch (err) {
+				return { name: 'Bundle integrity', ok: false, detail: String(err) };
+			}
+		},
+		// Check 2: Config loading -- load task config from a temp directory (no config file present, falls back to defaults)
+		async () => {
+			try {
+				const config = TaskConfigLoader.load({ configDir: os.tmpdir(), projectDir: os.tmpdir() });
+				if (!Array.isArray(config.statuses) || config.statuses.length === 0) throw new Error('statuses default is missing or empty');
+				return { name: 'Config loading', ok: true };
+			} catch (err) {
+				return { name: 'Config loading', ok: false, detail: String(err) };
+			}
+		},
+		// Check 3: YAML parsing -- parse a minimal inline YAML definition string
+		async () => {
+			try {
+				const input = ['id: self-check-test', 'steps:', '  - id: step1'].join('\n');
+				const parsed = yaml.load(input) as { id?: string; steps?: unknown[] };
+				if (parsed?.id !== 'self-check-test') throw new Error(`Expected id 'self-check-test', got '${String(parsed?.id)}'`);
+				return { name: 'YAML parsing', ok: true };
+			} catch (err) {
+				return { name: 'YAML parsing', ok: false, detail: String(err) };
+			}
+		},
+		// Check 4: TaskStore (temp dir) -- create, read, and delete a task in an isolated temp directory
+		async () => {
+			let tmpDir: string | undefined;
+			try {
+				tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-self-check-'));
+				const store = new TaskStore(tmpDir);
+				const task = store.create('test task');
+				const found = store.findByPrefix(task.id.slice(0, 4));
+				if (found.id !== task.id) throw new Error(`findByPrefix returned wrong task: expected ${task.id}, got ${found.id}`);
+				return { name: 'TaskStore (temp)', ok: true };
+			} catch (err) {
+				return { name: 'TaskStore (temp)', ok: false, detail: String(err) };
+			} finally {
+				if (tmpDir !== undefined) {
+					try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore cleanup errors */ }
+				}
+			}
+		},
+		// Check 5: HookDispatcher -- instantiate with empty config and dispatch a no-op event
+		async () => {
+			try {
+				const dispatcher = new HookDispatcher({});
+				await dispatcher.dispatch('onTaskCreated', { taskId: 'test' }, () => {});
+				return { name: 'HookDispatcher', ok: true };
+			} catch (err) {
+				return { name: 'HookDispatcher', ok: false, detail: String(err) };
+			}
+		},
+		// Check 6: Task config schema -- verify default statuses and priority are present
+		async () => {
+			try {
+				const config = TaskConfigLoader.load({ configDir: os.tmpdir(), projectDir: os.tmpdir() });
+				if (typeof config.defaults.priority !== 'string' || config.defaults.priority.length === 0) {
+					throw new Error(`defaults.priority is not a non-empty string: ${config.defaults.priority}`);
+				}
+				if (!Array.isArray(config.statuses) || config.statuses.length === 0) throw new Error('statuses default is missing or empty');
+				return { name: 'Task config schema', ok: true };
+			} catch (err) {
+				return { name: 'Task config schema', ok: false, detail: String(err) };
+			}
+		},
+	]);
 }
 
 export function printTaskCliHelp(): void {
