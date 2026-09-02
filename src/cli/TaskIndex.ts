@@ -1,13 +1,12 @@
 #!/usr/bin/env node
-import { ConfigDir, HookDispatcher, UpdateManager } from '@wadeck-app/shared-cli';
+import { ConfigDir, UpdateManager } from '@wadeck-app/shared-cli';
 import { logCliInvocation } from '@wadeck-app/shared-cli/CliLogger';
-import type { HookConfig } from '@wadeck-app/shared-cli/HookDispatcher';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { execFileSync, execSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { TaskConfigLoader } from '../task/TaskConfigLoader.js';
-import type { TaskHookValue } from '../task/TaskConfigLoader.js';
 import { TaskStore } from '../task/TaskStore.js';
 import type { TaskStatus } from '../task/TaskStore.js';
 import {
@@ -71,31 +70,46 @@ function suggest(input: string, candidates: string[]): string | undefined {
 	return bestDist <= 3 ? best : undefined;
 }
 
-function parseHookCommand(value: TaskHookValue): HookConfig {
-	const raw = typeof value === 'string' ? value : value.command;
-	const debug = typeof value === 'object' ? value.debug : undefined;
-	const parts = raw.trim().split(/\s+/);
-	if (!parts[0]) {
-		throw new Error(`Hook command cannot be empty. Got: "${raw}"`);
+// Lazily resolved path to queue's JS entry point — avoids shell and quoting issues.
+let _queueJsPath: string | undefined;
+function resolveQueueJsPath(): string {
+	if (_queueJsPath) return _queueJsPath;
+	// On Windows, use 'where queue.cmd' via shell to get a native Windows path.
+	// On Unix, use 'which queue' to get the script path.
+	let nativeDir: string;
+	if (process.platform === 'win32') {
+		const winPath = execSync('where queue.cmd', { encoding: 'utf8' }).trim().split('\n')[0]!.trim();
+		nativeDir = path.dirname(winPath);
+	} else {
+		nativeDir = path.dirname(execFileSync('which', ['queue'], { encoding: 'utf8' }).trim());
 	}
-	return { type: 'cli', command: parts[0], args: parts.slice(1), ...(debug !== undefined && { debug }) };
+	_queueJsPath = path.join(nativeDir, 'node_modules', '@wadeck-app', 'queue-cli', 'bin', 'queue.js');
+	return _queueJsPath;
 }
 
-function buildHookDispatcher(
-	globalHooks: Record<string, TaskHookValue>,
-	projectHooks: Record<string, TaskHookValue>
-): HookDispatcher {
-	const combined: Record<string, HookConfig[]> = {};
-	const allEvents = new Set([...Object.keys(globalHooks), ...Object.keys(projectHooks)]);
-	for (const event of allEvents) {
-		const list: HookConfig[] = [];
-		const globalCmd = globalHooks[event];
-		if (globalCmd) list.push(parseHookCommand(globalCmd));
-		const projectCmd = projectHooks[event];
-		if (projectCmd) list.push(parseHookCommand(projectCmd));
-		if (list.length > 0) combined[event] = list;
+async function pushToQueue(event: string, payload: Record<string, unknown>): Promise<void> {
+	const json = JSON.stringify(payload);
+	let queueJs: string;
+	try {
+		queueJs = resolveQueueJsPath();
+	} catch {
+		process.stderr.write(`[task] queue not found on PATH — event '${event}' not delivered\n`);
+		return;
 	}
-	return new HookDispatcher(combined);
+	// Spawn node directly with queue.js — no shell, args passed verbatim (no JSON quoting issues).
+	await new Promise<void>((resolve) => {
+		const child = spawn(process.execPath, [queueJs, 'push', event, json], { stdio: 'inherit' });
+		child.on('close', (code) => {
+			if (code !== 0) {
+				process.stderr.write(`[task] queue push '${event}' failed (exit ${code}) — event not delivered\n`);
+			}
+			resolve();
+		});
+		child.on('error', (err) => {
+			process.stderr.write(`[task] queue push '${event}' error: ${(err as Error).message}\n`);
+			resolve();
+		});
+	});
 }
 
 function parseArgs(args: string[]): {
@@ -181,7 +195,7 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 	if (!command || command === '--help') {
 		return {
 			exitCode: 0,
-			output: 'Usage: task [--config <dir>] [--json] <init|new|list|show|set-status>',
+			output: 'Usage: task [--config <dir>] [--json] <init|new|list|show|set-status|set-type|add-label|remove-label|set-meta>',
 		};
 	}
 
@@ -243,7 +257,6 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 	const config = TaskConfigLoader.load({ configDir: configDirArg, projectDir: effectiveCwd });
 	const tasksDir = path.join(effectiveCwd, '.task', 'tasks');
 	const store = new TaskStore(tasksDir);
-	const hookDispatcher = buildHookDispatcher(config.globalHooks, config.projectHooks);
 
 	const projectEnv = {
 		taskProjectName: path.basename(effectiveCwd),
@@ -257,17 +270,14 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 				return errorOutput(jsonMode, 'missing description', 'Usage: task new <description>');
 			}
 			const task = store.create(description);
-			await hookDispatcher.dispatch(
-				'onTaskCreated',
-				{
-					taskId: task.id,
-					status: task.status,
-					description: task.description,
-					taskFile: path.join(tasksDir, `${task.id}.json`),
-					...projectEnv,
-				},
-				() => process.stderr.write(`[task] hook 'onTaskCreated' failed\n`)
-			);
+			await pushToQueue('onTaskCreated', {
+				taskId: task.id,
+				status: task.status,
+				description: task.description,
+				type: task.type,
+				labels: task.labels ?? [],
+				...projectEnv,
+			});
 			return { exitCode: 0, output: JSON.stringify(task, null, 2) };
 		}
 
@@ -314,17 +324,72 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 			}
 			try {
 				const before = store.findByPrefix(id);
-				const updated = store.updateStatus(before.id, statusArg as TaskStatus);
-				await hookDispatcher.dispatch(
-					'onStatusChange',
-					{
-						taskId: updated.id,
-						oldStatus: before.status,
-						newStatus: updated.status,
-						...projectEnv,
-					},
-					() => process.stderr.write(`[task] hook 'onStatusChange' failed\n`)
-				);
+				const updated = store.updateStatus(before.id, statusArg as TaskStatus, before);
+				await pushToQueue('onStatusChange', {
+					taskId: updated.id,
+					oldStatus: before.status,
+					newStatus: updated.status,
+					type: updated.type,
+					labels: updated.labels ?? [],
+					...projectEnv,
+				});
+				return { exitCode: 0, output: JSON.stringify(updated, null, 2) };
+			} catch (error) {
+				return errorOutput(jsonMode, (error as Error).message);
+			}
+		}
+
+		case 'set-type': {
+			const id = rest[0];
+			const type = rest[1];
+			if (!id || !type) {
+				return errorOutput(jsonMode, 'missing arguments', 'Usage: task set-type <id> <type>');
+			}
+			try {
+				const updated = store.setType(store.findByPrefix(id).id, type);
+				return { exitCode: 0, output: JSON.stringify(updated, null, 2) };
+			} catch (error) {
+				return errorOutput(jsonMode, (error as Error).message);
+			}
+		}
+
+		case 'add-label': {
+			const id = rest[0];
+			const label = rest[1];
+			if (!id || !label) {
+				return errorOutput(jsonMode, 'missing arguments', 'Usage: task add-label <id> <label>');
+			}
+			try {
+				const updated = store.addLabel(store.findByPrefix(id).id, label);
+				return { exitCode: 0, output: JSON.stringify(updated, null, 2) };
+			} catch (error) {
+				return errorOutput(jsonMode, (error as Error).message);
+			}
+		}
+
+		case 'remove-label': {
+			const id = rest[0];
+			const label = rest[1];
+			if (!id || !label) {
+				return errorOutput(jsonMode, 'missing arguments', 'Usage: task remove-label <id> <label>');
+			}
+			try {
+				const updated = store.removeLabel(store.findByPrefix(id).id, label);
+				return { exitCode: 0, output: JSON.stringify(updated, null, 2) };
+			} catch (error) {
+				return errorOutput(jsonMode, (error as Error).message);
+			}
+		}
+
+		case 'set-meta': {
+			const id = rest[0];
+			const key = rest[1];
+			const value = rest[2];
+			if (!id || !key || value === undefined) {
+				return errorOutput(jsonMode, 'missing arguments', 'Usage: task set-meta <id> <key> <value>');
+			}
+			try {
+				const updated = store.setMeta(store.findByPrefix(id).id, key, value);
 				return { exitCode: 0, output: JSON.stringify(updated, null, 2) };
 			} catch (error) {
 				return errorOutput(jsonMode, (error as Error).message);
@@ -335,7 +400,7 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 			return errorOutput(
 				jsonMode,
 				`unknown command: ${command}`,
-				'Valid commands: init, new, list, show, set-status'
+				'Valid commands: init, new, list, show, set-status, set-type, add-label, remove-label, set-meta'
 			);
 	}
 }

@@ -22,6 +22,9 @@ export interface TaskRecord {
 	title: string;
 	description: string;
 	status: TaskStatus;
+	type?: string;
+	labels?: string[];
+	meta?: Record<string, string>;
 	createdAt: string;
 	updatedAt: string;
 	history: Array<{ status: TaskStatus; timestamp: string }>;
@@ -80,8 +83,8 @@ export class TaskStore {
 		return this.get(matches[0]!.id);
 	}
 
-	updateStatus(id: string, status: TaskStatus): TaskRecord {
-		const record = this.get(id);
+	updateStatus(id: string, status: TaskStatus, existing?: TaskRecord): TaskRecord {
+		const record = existing ?? this.get(id);
 		if (record.status === status) {
 			throw new Error(`Task "${id}" is already in status "${status}"`);
 		}
@@ -100,6 +103,42 @@ export class TaskStore {
 	list(): TaskSummary[] {
 		const index = this.readIndex();
 		return index.tasks;
+	}
+
+	setType(id: string, type: string): TaskRecord {
+		const record = this.get(id);
+		record.type = type;
+		record.updatedAt = new Date().toISOString();
+		fs.writeFileSync(this.taskFilePath(id), JSON.stringify(record, null, 2), 'utf8');
+		return record;
+	}
+
+	addLabel(id: string, label: string): TaskRecord {
+		const record = this.get(id);
+		record.labels = record.labels ?? [];
+		if (!record.labels.includes(label)) {
+			record.labels.push(label);
+		}
+		record.updatedAt = new Date().toISOString();
+		fs.writeFileSync(this.taskFilePath(id), JSON.stringify(record, null, 2), 'utf8');
+		return record;
+	}
+
+	removeLabel(id: string, label: string): TaskRecord {
+		const record = this.get(id);
+		record.labels = (record.labels ?? []).filter(l => l !== label);
+		record.updatedAt = new Date().toISOString();
+		fs.writeFileSync(this.taskFilePath(id), JSON.stringify(record, null, 2), 'utf8');
+		return record;
+	}
+
+	setMeta(id: string, key: string, value: string): TaskRecord {
+		const record = this.get(id);
+		record.meta = record.meta ?? {};
+		record.meta[key] = value;
+		record.updatedAt = new Date().toISOString();
+		fs.writeFileSync(this.taskFilePath(id), JSON.stringify(record, null, 2), 'utf8');
+		return record;
 	}
 
 	private ensureDirectory(): void {
@@ -140,9 +179,10 @@ export class TaskStore {
 	private updateIndexEntry(id: string, status: TaskStatus): void {
 		const index = this.readIndex();
 		const entry = index.tasks.find(t => t.id === id);
-		if (entry) {
-			entry.status = status;
+		if (!entry) {
+			throw new Error(`Task index out of sync: entry for "${id}" not found. The index may be corrupted.`);
 		}
+		entry.status = status;
 		this.writeIndex(index);
 	}
 }
