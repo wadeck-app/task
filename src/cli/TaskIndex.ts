@@ -81,7 +81,7 @@ function resolveQueueJsPath(): string {
 		const winPath = execSync('where queue.cmd', { encoding: 'utf8', windowsHide: true }).trim().split('\n')[0]!.trim();
 		nativeDir = path.dirname(winPath);
 	} else {
-		nativeDir = path.dirname(execFileSync('which', ['queue'], { encoding: 'utf8' }).trim());
+		nativeDir = path.dirname(execFileSync('which', ['queue'], { encoding: 'utf8', windowsHide: true }).trim());
 	}
 	_queueJsPath = path.join(nativeDir, 'node_modules', '@wadeck-app', 'queue-cli', 'bin', 'queue.js');
 	return _queueJsPath;
