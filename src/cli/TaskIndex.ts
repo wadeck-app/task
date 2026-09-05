@@ -78,7 +78,7 @@ function resolveQueueJsPath(): string {
 	// On Unix, use 'which queue' to get the script path.
 	let nativeDir: string;
 	if (process.platform === 'win32') {
-		const winPath = execSync('where queue.cmd', { encoding: 'utf8' }).trim().split('\n')[0]!.trim();
+		const winPath = execSync('where queue.cmd', { encoding: 'utf8', windowsHide: true }).trim().split('\n')[0]!.trim();
 		nativeDir = path.dirname(winPath);
 	} else {
 		nativeDir = path.dirname(execFileSync('which', ['queue'], { encoding: 'utf8' }).trim());
@@ -98,6 +98,7 @@ async function pushToQueue(event: string, payload: Record<string, unknown>): Pro
 	}
 	// Spawn node directly with queue.js — no shell, args passed verbatim (no JSON quoting issues).
 	await new Promise<void>((resolve) => {
+		// violations-suppress: cli/no-spawn-without-windows-hide stdio:inherit passes terminal to queue CLI intentionally
 		const child = spawn(process.execPath, [queueJs, 'push', event, json], { stdio: 'inherit' });
 		child.on('close', (code) => {
 			if (code !== 0) {
