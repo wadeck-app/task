@@ -98,8 +98,7 @@ async function pushToQueue(event: string, payload: Record<string, unknown>): Pro
 	}
 	// Spawn node directly with queue.js — no shell, args passed verbatim (no JSON quoting issues).
 	await new Promise<void>((resolve) => {
-		// violations-suppress: cli/no-spawn-without-windows-hide stdio:inherit passes terminal to queue CLI intentionally
-		const child = spawn(process.execPath, [queueJs, 'push', event, json], { stdio: 'inherit' });
+		const child = spawn(process.execPath, [queueJs, 'push', event, json], { stdio: 'inherit', windowsHide: true });
 		child.on('close', (code) => {
 			if (code !== 0) {
 				process.stderr.write(`[task] queue push '${event}' failed (exit ${code}) — event not delivered\n`);
