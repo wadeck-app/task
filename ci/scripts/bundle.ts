@@ -26,7 +26,7 @@ const sharedDefine = {
 	'import.meta.url': '__importMetaUrl',
 	__TASK_CLI_VERSION__: JSON.stringify(version),
 };
-const sharedBanner = { js: `const __importMetaUrl = require('url').pathToFileURL(__filename).href;` };
+const sharedBanner = { js: `const __importMetaUrl = require('node:url').pathToFileURL(__filename).href;` };
 
 const updaterOutfile = path.join(root, 'dist-bundle/task-updater.cjs');
 

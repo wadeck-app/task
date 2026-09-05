@@ -195,13 +195,13 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 	if (!command || command === '--help') {
 		return {
 			exitCode: 0,
-			output: `task ${VERSION} — task tracker CLI
+			output: `task ${VERSION} - task tracker CLI
 
 Concepts:
   task        A work item with id, description, status, type, labels, and metadata
   config      Project config at .task/config.yml (defines valid statuses; default: backlog, in-progress, done)
   init        Creates .task/ directory and config.yml in the current working directory
-  id          Short prefix of the task UUID — any unambiguous prefix is accepted
+  id          Short prefix of the task UUID - any unambiguous prefix is accepted
 
 Usage:
   task init                                  Initialize task project in current directory
