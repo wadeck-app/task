@@ -276,6 +276,7 @@ Environment variables:
 			case 'help':
 				printTaskCliHelp();
 				return { exitCode: 0, output: '' };
+			// violations-suppress: ts/no-switch-default-break returns a user-facing error, not a silent fallback
 			default:
 				return errorOutput(
 					jsonMode,
@@ -431,6 +432,7 @@ Environment variables:
 			}
 		}
 
+		// violations-suppress: ts/no-switch-default-break returns a user-facing error, not a silent fallback
 		default:
 			return errorOutput(
 				jsonMode,
