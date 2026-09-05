@@ -195,7 +195,42 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 	if (!command || command === '--help') {
 		return {
 			exitCode: 0,
-			output: 'Usage: task [--config <dir>] [--json] <init|new|list|show|set-status|set-type|add-label|remove-label|set-meta>',
+			output: `task ${VERSION} — task tracker CLI
+
+Concepts:
+  task        A work item with id, description, status, type, labels, and metadata
+  config      Project config at .task/config.yml (defines valid statuses; default: backlog, in-progress, done)
+  init        Creates .task/ directory and config.yml in the current working directory
+  id          Short prefix of the task UUID — any unambiguous prefix is accepted
+
+Usage:
+  task init                                  Initialize task project in current directory
+  task new <description>                     Create a new task; prints full task JSON
+  task list [--json]                         List all tasks as JSON array
+  task show <id> [--json]                    Show full task detail as JSON
+  task set-status <id> <status>              Update task status (valid values from .task/config.yml)
+  task set-type <id> <type>                  Update task type (free-form string)
+  task add-label <id> <label>               Add a label to a task
+  task remove-label <id> <label>            Remove a label from a task
+  task set-meta <id> <key> <value>          Set a metadata key/value on a task
+  task cli self-check                        Validate installation
+  task cli update [--check] [--log]         Update to latest version
+  task cli logs [--follow]                   Print today's invocation log
+
+Global flags:
+  --config <dir>       Global config directory (default: ~/.task)
+  --json               Force JSON output; errors become {"error":"..."}
+  --project-dir <dir>  Override project directory (also: TASK_PROJECT_DIR env var)
+
+Output: all commands output JSON (tasks are JSON objects with id, description, status, type, labels, meta)
+
+Exit codes:
+  0  success
+  1  error
+
+Environment variables:
+  TASK_CONFIG       Override global config directory (default: ~/.task)
+  TASK_PROJECT_DIR  Override project directory`,
 		};
 	}
 
