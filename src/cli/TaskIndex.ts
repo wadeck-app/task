@@ -70,7 +70,7 @@ function suggest(input: string, candidates: string[]): string | undefined {
 	return bestDist <= 3 ? best : undefined;
 }
 
-// Lazily resolved path to queue's JS entry point — avoids shell and quoting issues.
+// Lazily resolved path to queue's JS entry point -- avoids shell and quoting issues.
 let _queueJsPath: string | undefined;
 function resolveQueueJsPath(): string {
 	if (_queueJsPath) return _queueJsPath;
@@ -93,15 +93,15 @@ async function pushToQueue(event: string, payload: Record<string, unknown>): Pro
 	try {
 		queueJs = resolveQueueJsPath();
 	} catch {
-		process.stderr.write(`[task] queue not found on PATH — event '${event}' not delivered\n`);
+		process.stderr.write(`[task] queue not found on PATH -- event '${event}' not delivered\n`);
 		return;
 	}
-	// Spawn node directly with queue.js — no shell, args passed verbatim (no JSON quoting issues).
+	// Spawn node directly with queue.js -- no shell, args passed verbatim (no JSON quoting issues).
 	await new Promise<void>((resolve) => {
 		const child = spawn(process.execPath, [queueJs, 'push', event, json], { stdio: 'inherit', windowsHide: true });
 		child.on('close', (code) => {
 			if (code !== 0) {
-				process.stderr.write(`[task] queue push '${event}' failed (exit ${code}) — event not delivered\n`);
+				process.stderr.write(`[task] queue push '${event}' failed (exit ${code}) -- event not delivered\n`);
 			}
 			resolve();
 		});

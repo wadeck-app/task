@@ -16,7 +16,7 @@ const MAX_UPDATER_SIZE = 500 * 1024; // 500 KB
 
 const version = process.env['BUNDLE_VERSION'];
 if (!version) {
-	process.stderr.write('[bundle] ERROR: BUNDLE_VERSION env var not set — refusing to build without a version\n');
+	process.stderr.write('[bundle] ERROR: BUNDLE_VERSION env var not set -- refusing to build without a version\n');
 	process.exit(1);
 }
 // Resolve flow-cli source for bundling without requiring a prior flow-cli build step
@@ -66,9 +66,9 @@ await Promise.all([
 const updaterSize = statSync(updaterOutfile).size;
 if (updaterSize > MAX_UPDATER_SIZE) {
 	throw new Error(
-		`task-updater.cjs is ${updaterSize} bytes (${(updaterSize / 1024).toFixed(1)} KB) — exceeds 500 KB limit.\n` +
+		`task-updater.cjs is ${updaterSize} bytes (${(updaterSize / 1024).toFixed(1)} KB) -- exceeds 500 KB limit.\n` +
 			'The task runtime may have been accidentally included. Check task-updater-entry.ts imports.'
 	);
 }
 
-console.log(`Bundled task.cjs + task-updater.cjs (${(updaterSize / 1024).toFixed(1)} KB) — version: ${version}`);
+console.log(`Bundled task.cjs + task-updater.cjs (${(updaterSize / 1024).toFixed(1)} KB) -- version: ${version}`);
