@@ -215,6 +215,187 @@ describe('runTaskCommand — --project-dir flag', () => {
 	});
 });
 
+describe('runTaskCommand — delete', () => {
+	beforeEach(async () => {
+		await runTaskCommand(['init'], tmpDir);
+	});
+
+	it('deletes a task by full id', async () => {
+		const created = await runTaskCommand(['new', 'task to delete'], tmpDir);
+		const task = JSON.parse(created.output) as { id: string };
+
+		const result = await runTaskCommand(['delete', task.id], tmpDir);
+		expect(result.exitCode).toBe(0);
+		expect(result.output).toContain('Deleted 1 task(s).');
+
+		const listResult = await runTaskCommand(['list'], tmpDir);
+		const tasks = JSON.parse(listResult.output) as unknown[];
+		expect(tasks).toHaveLength(0);
+	});
+
+	it('deletes a task by id prefix', async () => {
+		const created = await runTaskCommand(['new', 'prefix delete'], tmpDir);
+		const task = JSON.parse(created.output) as { id: string };
+		const prefix = task.id.slice(0, 4);
+
+		const result = await runTaskCommand(['delete', prefix], tmpDir);
+		expect(result.exitCode).toBe(0);
+		expect(result.output).toContain('Deleted 1 task(s).');
+	});
+
+	it('deletes multiple tasks by comma-separated ids', async () => {
+		const a = JSON.parse((await runTaskCommand(['new', 'task A'], tmpDir)).output) as { id: string };
+		const b = JSON.parse((await runTaskCommand(['new', 'task B'], tmpDir)).output) as { id: string };
+		await runTaskCommand(['new', 'task C'], tmpDir);
+
+		const result = await runTaskCommand(['delete', `${a.id},${b.id}`], tmpDir);
+		expect(result.exitCode).toBe(0);
+		expect(result.output).toContain('Deleted 2 task(s).');
+
+		const listResult = await runTaskCommand(['list'], tmpDir);
+		const tasks = JSON.parse(listResult.output) as Array<{ title: string }>;
+		expect(tasks).toHaveLength(1);
+		expect(tasks[0]!.title).toBe('task C');
+	});
+
+	it('warns but continues when deleting a non-existent id', async () => {
+		await runTaskCommand(['new', 'real task'], tmpDir);
+
+		const result = await runTaskCommand(['delete', 'zzzzzzzz'], tmpDir);
+		expect(result.exitCode).toBe(0);
+		expect(result.output).toContain('Nothing to delete.');
+	});
+
+	it('deletes all tasks with --all', async () => {
+		await runTaskCommand(['new', 'alpha'], tmpDir);
+		await runTaskCommand(['new', 'beta'], tmpDir);
+		await runTaskCommand(['new', 'gamma'], tmpDir);
+
+		const result = await runTaskCommand(['delete', '--all'], tmpDir);
+		expect(result.exitCode).toBe(0);
+		expect(result.output).toContain('Deleted 3 task(s).');
+
+		const listResult = await runTaskCommand(['list'], tmpDir);
+		const tasks = JSON.parse(listResult.output) as unknown[];
+		expect(tasks).toHaveLength(0);
+	});
+
+	it('--all on empty store returns Nothing to delete', async () => {
+		const result = await runTaskCommand(['delete', '--all'], tmpDir);
+		expect(result.exitCode).toBe(0);
+		expect(result.output).toBe('Nothing to delete.');
+	});
+
+	it('deletes tasks by status filter', async () => {
+		const t1 = JSON.parse((await runTaskCommand(['new', 'done task'], tmpDir)).output) as { id: string };
+		await runTaskCommand(['set-status', t1.id, 'done'], tmpDir);
+		await runTaskCommand(['new', 'active task'], tmpDir);
+
+		const result = await runTaskCommand(['delete', '--filter', 'status=done'], tmpDir);
+		expect(result.exitCode).toBe(0);
+		expect(result.output).toContain('Deleted 1 task(s).');
+
+		const listResult = await runTaskCommand(['list'], tmpDir);
+		const tasks = JSON.parse(listResult.output) as Array<{ title: string }>;
+		expect(tasks).toHaveLength(1);
+		expect(tasks[0]!.title).toBe('active task');
+	});
+
+	it('deletes tasks matching multiple status values', async () => {
+		const t1 = JSON.parse((await runTaskCommand(['new', 'done task'], tmpDir)).output) as { id: string };
+		await runTaskCommand(['set-status', t1.id, 'done'], tmpDir);
+		const t2 = JSON.parse((await runTaskCommand(['new', 'in-progress task'], tmpDir)).output) as { id: string };
+		await runTaskCommand(['set-status', t2.id, 'in-progress'], tmpDir);
+		await runTaskCommand(['new', 'created task'], tmpDir);
+
+		const result = await runTaskCommand(['delete', '--filter', 'status=done,in-progress'], tmpDir);
+		expect(result.exitCode).toBe(0);
+		expect(result.output).toContain('Deleted 2 task(s).');
+	});
+
+	it('deletes tasks matching title glob', async () => {
+		await runTaskCommand(['new', 'hello world'], tmpDir);
+		await runTaskCommand(['new', 'hello there'], tmpDir);
+		await runTaskCommand(['new', 'goodbye'], tmpDir);
+
+		const result = await runTaskCommand(['delete', '--filter', 'title=hello*'], tmpDir);
+		expect(result.exitCode).toBe(0);
+		expect(result.output).toContain('Deleted 2 task(s).');
+
+		const listResult = await runTaskCommand(['list'], tmpDir);
+		const tasks = JSON.parse(listResult.output) as Array<{ title: string }>;
+		expect(tasks).toHaveLength(1);
+		expect(tasks[0]!.title).toBe('goodbye');
+	});
+
+	it('--dry-run shows tasks without deleting', async () => {
+		await runTaskCommand(['new', 'dry run target'], tmpDir);
+		const t2 = JSON.parse((await runTaskCommand(['new', 'another task'], tmpDir)).output) as { id: string };
+		await runTaskCommand(['set-status', t2.id, 'done'], tmpDir);
+
+		const result = await runTaskCommand(['delete', '--filter', 'status=done', '--dry-run'], tmpDir);
+		expect(result.exitCode).toBe(0);
+		expect(result.output).toContain('Would delete:');
+		expect(result.output).toContain('[done]');
+
+		// Tasks must still exist
+		const listResult = await runTaskCommand(['list'], tmpDir);
+		const tasks = JSON.parse(listResult.output) as unknown[];
+		expect(tasks).toHaveLength(2);
+	});
+
+	it('errors when --all and --filter are combined', async () => {
+		const result = await runTaskCommand(['delete', '--all', '--filter', 'status=done'], tmpDir);
+		expect(result.exitCode).toBe(1);
+		expect(result.output).toContain('--all and --filter cannot be combined');
+	});
+
+	it('errors when positional IDs and --all are combined', async () => {
+		const created = JSON.parse((await runTaskCommand(['new', 'task'], tmpDir)).output) as { id: string };
+		const result = await runTaskCommand(['delete', created.id, '--all'], tmpDir);
+		expect(result.exitCode).toBe(1);
+		expect(result.output).toContain('cannot be combined');
+	});
+
+	it('errors when positional IDs and --filter are combined', async () => {
+		const created = JSON.parse((await runTaskCommand(['new', 'task'], tmpDir)).output) as { id: string };
+		const result = await runTaskCommand(['delete', created.id, '--filter', 'status=done'], tmpDir);
+		expect(result.exitCode).toBe(1);
+		expect(result.output).toContain('cannot be combined');
+	});
+
+	it('errors on unknown filter field', async () => {
+		const result = await runTaskCommand(['delete', '--filter', 'priority=high'], tmpDir);
+		expect(result.exitCode).toBe(1);
+		expect(result.output).toContain('unknown filter field');
+		expect(result.output).toContain('id, title, status');
+	});
+
+	it('errors with missing arguments when no selector given', async () => {
+		const result = await runTaskCommand(['delete'], tmpDir);
+		expect(result.exitCode).toBe(1);
+		expect(result.output).toContain('missing arguments');
+	});
+
+	it('requires project initialization', async () => {
+		const uninitDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-delete-uninit-'));
+		try {
+			const result = await runTaskCommand(['delete', 'abc123'], uninitDir);
+			expect(result.exitCode).toBe(1);
+			expect(result.output).toContain('task init');
+		} finally {
+			fs.rmSync(uninitDir, { recursive: true, force: true });
+		}
+	});
+
+	it('--json returns JSON error for unknown filter field', async () => {
+		const result = await runTaskCommand(['--json', 'delete', '--filter', 'unknown=foo'], tmpDir);
+		expect(result.exitCode).toBe(1);
+		const parsed = JSON.parse(result.output) as { error: string };
+		expect(parsed.error).toContain('unknown filter field');
+	});
+});
+
 describe('runTaskCommand — TASK_PROJECT_DIR / PROJECT_DIR env vars', () => {
 	let projectDir: string;
 	const origEnv = process.env;

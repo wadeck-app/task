@@ -141,6 +141,20 @@ export class TaskStore {
 		return record;
 	}
 
+	/**
+	 * Deletes a task by its full ID.
+	 * Returns true if the task existed and was deleted, false if it was not found.
+	 */
+	deleteTask(id: string): boolean {
+		const filePath = this.taskFilePath(id);
+		if (!fs.existsSync(filePath)) {
+			return false;
+		}
+		fs.unlinkSync(filePath);
+		this.removeFromIndex(id);
+		return true;
+	}
+
 	private ensureDirectory(): void {
 		fs.mkdirSync(this.tasksDir, { recursive: true });
 	}
@@ -183,6 +197,12 @@ export class TaskStore {
 			throw new Error(`Task index out of sync: entry for "${id}" not found. The index may be corrupted.`);
 		}
 		entry.status = status;
+		this.writeIndex(index);
+	}
+
+	private removeFromIndex(id: string): void {
+		const index = this.readIndex();
+		index.tasks = index.tasks.filter(t => t.id !== id);
 		this.writeIndex(index);
 	}
 }

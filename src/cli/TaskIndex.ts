@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 import { TaskConfigLoader } from '../task/TaskConfigLoader.js';
 import { TaskStore } from '../task/TaskStore.js';
-import type { TaskStatus } from '../task/TaskStore.js';
+import type { TaskStatus, TaskSummary } from '../task/TaskStore.js';
 import {
 	printTaskCliHelp,
 	runTaskCliRollback,
@@ -55,6 +55,18 @@ function levenshtein(a: string, b: string): number {
 		}
 	}
 	return dp[m]![n]!;
+}
+
+/**
+ * Matches a glob pattern (supporting * as wildcard) against a value.
+ * The match is case-sensitive and anchored (full value must match).
+ */
+function matchGlob(pattern: string, value: string): boolean {
+	// Escape all regex metacharacters except *, then replace * with .*
+	const regexStr = pattern
+		.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+		.replace(/\*/g, '.*');
+	return new RegExp(`^${regexStr}$`).test(value);
 }
 
 function suggest(input: string, candidates: string[]): string | undefined {
@@ -213,6 +225,10 @@ Usage:
   task add-label <id> <label>               Add a label to a task
   task remove-label <id> <label>            Remove a label from a task
   task set-meta <id> <key> <value>          Set a metadata key/value on a task
+  task delete <id>[,<id2>,...]              Delete task(s) by ID (comma-separated)
+  task delete --all                          Delete all tasks
+  task delete --filter <field>=<value>       Delete tasks matching a filter (fields: id, title, status)
+  task delete --dry-run ...                  Show what would be deleted without deleting
   task cli self-check                        Validate installation
   task cli update [--check] [--log]         Update to latest version
   task cli logs [--follow]                   Print today's invocation log
@@ -432,12 +448,137 @@ Environment variables:
 			}
 		}
 
+		case 'delete': {
+			// Parse flags and positional args
+			let dryRun = false;
+			let hasAll = false;
+			let filterSpec: string | undefined;
+			const positionalIds: string[] = [];
+
+			let i = 0;
+			while (i < rest.length) {
+				const arg = rest[i]!;
+				if (arg === '--dry-run') {
+					dryRun = true;
+					i++;
+				} else if (arg === '--all') {
+					hasAll = true;
+					i++;
+				} else if (arg === '--filter') {
+					filterSpec = rest[i + 1];
+					i += 2;
+				} else if (arg.startsWith('--')) {
+					return errorOutput(jsonMode, `unknown flag: ${arg}`, 'Valid flags: --all, --filter <field>=<value>, --dry-run');
+				} else {
+					// Comma-separated IDs allowed in a single positional arg
+					positionalIds.push(...arg.split(',').filter(s => s.length > 0));
+					i++;
+				}
+			}
+
+			// Error: --all and --filter both specified
+			if (hasAll && filterSpec !== undefined) {
+				return errorOutput(jsonMode, '--all and --filter cannot be combined');
+			}
+
+			// Error: positional IDs combined with --all or --filter
+			if (positionalIds.length > 0 && (hasAll || filterSpec !== undefined)) {
+				return errorOutput(jsonMode, 'positional IDs cannot be combined with --all or --filter');
+			}
+
+			// No selector provided at all
+			if (!hasAll && filterSpec === undefined && positionalIds.length === 0) {
+				return errorOutput(
+					jsonMode,
+					'missing arguments',
+					'Usage: task delete <id>[,<id2>,...] | --all | --filter <field>=<value>'
+				);
+			}
+
+			const VALID_FILTER_FIELDS = ['id', 'title', 'status'] as const;
+			type FilterableField = (typeof VALID_FILTER_FIELDS)[number];
+
+			let tasksToDelete: TaskSummary[] = [];
+			const warnings: string[] = [];
+
+			if (hasAll) {
+				tasksToDelete = store.list();
+			} else if (filterSpec !== undefined) {
+				const eqIdx = filterSpec.indexOf('=');
+				if (eqIdx === -1) {
+					return errorOutput(
+						jsonMode,
+						`invalid filter: "${filterSpec}" (expected field=value)`,
+						`Valid fields: ${VALID_FILTER_FIELDS.join(', ')}`
+					);
+				}
+				const field = filterSpec.slice(0, eqIdx) as FilterableField;
+				const valuesStr = filterSpec.slice(eqIdx + 1);
+				const values = valuesStr.split(',').filter(v => v.length > 0);
+
+				if (!(VALID_FILTER_FIELDS as ReadonlyArray<string>).includes(field)) {
+					return errorOutput(
+						jsonMode,
+						`unknown filter field: "${field}"`,
+						`Valid fields: ${VALID_FILTER_FIELDS.join(', ')}`
+					);
+				}
+
+				const all = store.list();
+				tasksToDelete = all.filter(t =>
+					values.some(v => matchGlob(v, t[field]))
+				);
+			} else {
+				// Positional IDs: resolve by prefix
+				const all = store.list();
+				for (const rawId of positionalIds) {
+					const matches = all.filter(t => t.id.startsWith(rawId));
+					if (matches.length === 0) {
+						warnings.push(`Warning: task not found: ${rawId}`);
+					} else if (matches.length > 1) {
+						return errorOutput(
+							jsonMode,
+							`ambiguous prefix "${rawId}" matches: ${matches.map(t => t.id).join(', ')}`
+						);
+					} else {
+						tasksToDelete.push(matches[0]!);
+					}
+				}
+				// Print warnings to stderr (warn but continue)
+				for (const w of warnings) {
+					process.stderr.write(w + '\n');
+				}
+			}
+
+			if (tasksToDelete.length === 0) {
+				return { exitCode: 0, output: 'Nothing to delete.' };
+			}
+
+			if (dryRun) {
+				const lines = ['Would delete:'];
+				for (const t of tasksToDelete) {
+					lines.push(`  ${t.id}  ${t.title}  [${t.status}]`);
+				}
+				lines.push(`Total: ${tasksToDelete.length} task(s).`);
+				return { exitCode: 0, output: lines.join('\n') };
+			}
+
+			let deletedCount = 0;
+			for (const t of tasksToDelete) {
+				if (store.deleteTask(t.id)) {
+					deletedCount++;
+				}
+			}
+
+			return { exitCode: 0, output: `Deleted ${deletedCount} task(s).` };
+		}
+
 		// violations-suppress: ts/no-switch-default-break returns a user-facing error, not a silent fallback
 		default:
 			return errorOutput(
 				jsonMode,
 				`unknown command: ${command}`,
-				'Valid commands: init, new, list, show, set-status, set-type, add-label, remove-label, set-meta'
+				'Valid commands: init, new, list, show, set-status, set-type, add-label, remove-label, set-meta, delete'
 			);
 	}
 }

@@ -139,4 +139,47 @@ describe('TaskStore', () => {
 			expect(titles).toContain('Task three');
 		});
 	});
+
+	describe('deleteTask()', () => {
+		it('deletes an existing task and returns true', () => {
+			const record = store.create('Task to delete');
+			const result = store.deleteTask(record.id);
+
+			expect(result).toBe(true);
+			expect(fs.existsSync(path.join(tmpDir, `${record.id}.json`))).toBe(false);
+		});
+
+		it('removes the task from the index', () => {
+			const record = store.create('Index removal task');
+			store.deleteTask(record.id);
+
+			const tasks = store.list();
+			expect(tasks.find(t => t.id === record.id)).toBeUndefined();
+		});
+
+		it('returns false for a non-existent id', () => {
+			const result = store.deleteTask('nonexistent');
+			expect(result).toBe(false);
+		});
+
+		it('does not affect other tasks when deleting one', () => {
+			const a = store.create('Task A');
+			const b = store.create('Task B');
+			store.deleteTask(a.id);
+
+			const tasks = store.list();
+			expect(tasks).toHaveLength(1);
+			expect(tasks[0]!.id).toBe(b.id);
+		});
+
+		it('allows creating a new task after deleting all tasks', () => {
+			const record = store.create('Lonely task');
+			store.deleteTask(record.id);
+			const newRecord = store.create('New task after delete');
+
+			const tasks = store.list();
+			expect(tasks).toHaveLength(1);
+			expect(tasks[0]!.id).toBe(newRecord.id);
+		});
+	});
 });
