@@ -15,6 +15,7 @@ export interface TaskGlobalConfig {
 
 export interface TaskProjectConfig {
 	statuses?: string[];
+	types?: string[];
 	fields?: Array<{ name: string; type: string; required?: boolean }>;
 	defaults?: {
 		priority?: string;
@@ -24,6 +25,8 @@ export interface TaskProjectConfig {
 
 export interface TaskResolvedConfig {
 	statuses: string[];
+	/** Valid task types. Empty array means no validation (any string accepted). */
+	types: string[];
 	defaults: {
 		priority: string;
 	};
@@ -67,11 +70,31 @@ export class TaskConfigLoader {
 
 		return {
 			statuses: projectConfig.statuses ?? DEFAULT_STATUSES,
+			types: projectConfig.types ?? [],
 			defaults: {
 				priority: projectConfig.defaults?.priority ?? globalConfig.defaults?.priority ?? DEFAULT_PRIORITY,
 			},
 			globalHooks: globalConfig.hooks ?? {},
 			projectHooks: projectConfig.hooks ?? {},
 		};
+	}
+
+	static addType(projectDir: string, typeName: string): void {
+		const configPath = path.join(projectDir, '.task', 'config.yml');
+		const projectConfig = loadYamlFile<TaskProjectConfig>(configPath) ?? {};
+		const types = projectConfig.types ?? [];
+		if (!types.includes(typeName)) {
+			types.push(typeName);
+		}
+		projectConfig.types = types;
+		fs.writeFileSync(configPath, yaml.dump(projectConfig), 'utf8');
+	}
+
+	static removeType(projectDir: string, typeName: string): void {
+		const configPath = path.join(projectDir, '.task', 'config.yml');
+		const projectConfig = loadYamlFile<TaskProjectConfig>(configPath) ?? {};
+		const types = projectConfig.types ?? [];
+		projectConfig.types = types.filter(t => t !== typeName);
+		fs.writeFileSync(configPath, yaml.dump(projectConfig), 'utf8');
 	}
 }

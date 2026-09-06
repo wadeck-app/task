@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { TaskConfigLoader } from '../task/TaskConfigLoader.js';
 import { TaskStore } from '../task/TaskStore.js';
 import type { TaskStatus, TaskSummary } from '../task/TaskStore.js';
+import { resolveTypeValidationStrategy } from '../task/TypeValidationStrategy.js';
 import {
 	printTaskCliHelp,
 	runTaskCliRollback,
@@ -221,7 +222,10 @@ Usage:
   task list [--json]                         List all tasks as JSON array
   task show <id> [--json]                    Show full task detail as JSON
   task set-status <id> <status>              Update task status (valid values from .task/config.yml)
-  task set-type <id> <type>                  Update task type (free-form string)
+  task set-type <id> <type>                  Update task type (validated if types configured)
+  task type list                             List valid types for this project
+  task type add <name>                       Add a valid type
+  task type remove <name>                    Remove a valid type
   task add-label <id> <label>               Add a label to a task
   task remove-label <id> <label>            Remove a label from a task
   task set-meta <id> <key> <value>          Set a metadata key/value on a task
@@ -396,6 +400,11 @@ Environment variables:
 			const type = rest[1];
 			if (!id || !type) {
 				return errorOutput(jsonMode, 'missing arguments', 'Usage: task set-type <id> <type>');
+			}
+			const typeStrategy = resolveTypeValidationStrategy(config.types);
+			const typeValidation = typeStrategy.validate(type);
+			if (!typeValidation.valid) {
+				return errorOutput(jsonMode, typeValidation.error);
 			}
 			try {
 				const updated = store.setType(store.findByPrefix(id).id, type);
@@ -573,12 +582,63 @@ Environment variables:
 			return { exitCode: 0, output: `Deleted ${deletedCount} task(s).` };
 		}
 
+		case 'type': {
+			const subCmd = rest[0];
+			if (!subCmd || subCmd === '--help') {
+				return {
+					exitCode: 0,
+					output: `task type - manage valid task types for this project
+
+Usage:
+  task type list              List valid types configured for this project
+  task type add <name>        Add a valid type
+  task type remove <name>     Remove a valid type
+  task type --help            Show this help
+
+Types are stored in .task/config.yml under the 'types' key.
+When types are configured, 'task set-type' validates against this list.
+When no types are configured, any string is accepted (backwards compatible).`,
+				};
+			}
+			switch (subCmd) {
+				case 'list': {
+					if (config.types.length === 0) {
+						return { exitCode: 0, output: '(no types configured — any string is accepted)' };
+					}
+					return { exitCode: 0, output: config.types.join('\n') };
+				}
+				case 'add': {
+					const typeName = rest[1];
+					if (!typeName) {
+						return errorOutput(jsonMode, 'missing type name', 'Usage: task type add <name>');
+					}
+					TaskConfigLoader.addType(effectiveCwd, typeName);
+					return { exitCode: 0, output: `Added type: ${typeName}` };
+				}
+				case 'remove': {
+					const typeName = rest[1];
+					if (!typeName) {
+						return errorOutput(jsonMode, 'missing type name', 'Usage: task type remove <name>');
+					}
+					TaskConfigLoader.removeType(effectiveCwd, typeName);
+					return { exitCode: 0, output: `Removed type: ${typeName}` };
+				}
+				// violations-suppress: ts/no-switch-default-break returns a user-facing error, not a silent fallback
+				default:
+					return errorOutput(
+						jsonMode,
+						`unknown task type subcommand: ${subCmd}`,
+						'Valid subcommands: list, add, remove'
+					);
+			}
+		}
+
 		// violations-suppress: ts/no-switch-default-break returns a user-facing error, not a silent fallback
 		default:
 			return errorOutput(
 				jsonMode,
 				`unknown command: ${command}`,
-				'Valid commands: init, new, list, show, set-status, set-type, add-label, remove-label, set-meta, delete'
+				'Valid commands: init, new, list, show, set-status, set-type, add-label, remove-label, set-meta, delete, type'
 			);
 	}
 }
