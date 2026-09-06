@@ -164,7 +164,7 @@ export class TaskStore {
 	}
 
 	private indexFilePath(): string {
-		return path.join(this.tasksDir, 'index.json');
+		return path.join(this.tasksDir, '..', 'task-index.json');
 	}
 
 	private readIndex(): TaskIndex {
