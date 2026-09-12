@@ -612,7 +612,7 @@ When no types are configured, any string is accepted (backwards compatible).`,
 			switch (subCmd) {
 				case 'list': {
 					if (config.types.length === 0) {
-						return { exitCode: 0, output: '(no types configured — any string is accepted)' };
+						return { exitCode: 0, output: '(no types configured -- any string is accepted)' };
 					}
 					return { exitCode: 0, output: config.types.join('\n') };
 				}
