@@ -46,12 +46,14 @@ function loadYamlFile<T>(filePath: string): T | undefined {
 export class TaskConfigLoader {
 	static expandTilde(p: string): string {
 		if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) {
+			// violations-suppress: shared/no-out-of-repo-path expanding a user-written "~" prefix requires the home directory by definition; this resolves user-level CLI config, not a build artefact path
 			return path.join(os.homedir(), p.slice(1));
 		}
 		return p;
 	}
 
 	static resolveGlobalConfigDir(configDirOverride?: string): string {
+		// violations-suppress: shared/no-out-of-repo-path the default global config dir is "~/.task" by design (overridable via configDirOverride or the TASK_CONFIG env var); user-level config lives under the home directory, it is not a build artefact path
 		const raw = configDirOverride ?? process.env['TASK_CONFIG'] ?? path.join(os.homedir(), '.task');
 		return TaskConfigLoader.expandTilde(raw);
 	}
