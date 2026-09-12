@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { type Plugin, defineConfig } from 'vitest/config';
 
-// Resolve .js imports to .ts source files during testing (ESM → TypeScript)
+// Resolve .js imports to .ts source files during testing (ESM -> TypeScript)
 function resolveJsToTs(): Plugin {
 	return {
 		name: 'resolve-js-to-ts',

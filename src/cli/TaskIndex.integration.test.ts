@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// agent-fleet root (4 levels up from src/cli/: src/cli → src → task-cli → packages → agent-fleet)
+// agent-fleet root (4 levels up from src/cli/: src/cli -> src -> task-cli -> packages -> agent-fleet)
 const agentFleetRoot = path.resolve(__dirname, '../../../..');
 const updaterBundlePath = path.resolve(agentFleetRoot, 'packages/task-cli/dist-bundle/task-updater.cjs');
 

@@ -106,14 +106,14 @@ describe('TaskStore', () => {
 			// Force two tasks with a shared prefix by manipulating IDs via create+direct file write
 			const a = store.create('Task A');
 			const b = store.create('Task B');
-			// Only test ambiguity if IDs happen to share a prefix — use first char
+			// Only test ambiguity if IDs happen to share a prefix -- use first char
 			const sharedPrefix = a.id[0]!;
 			if (b.id.startsWith(sharedPrefix)) {
 				expect(() => store.findByPrefix(sharedPrefix)).toThrow('Ambiguous prefix');
 			} else {
-				// IDs differ at first char — find by that char unambiguously
+				// IDs differ at first char -- find by that char unambiguously
 				const found = store.findByPrefix(a.id[0]!);
-				// just verify no crash — result depends on IDs
+				// just verify no crash -- result depends on IDs
 				expect(found).toBeDefined();
 			}
 		});
