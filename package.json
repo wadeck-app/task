@@ -13,13 +13,13 @@
 		"clean": "rimraf dist dist-types dist-bundle"
 	},
 	"dependencies": {
-		"@wadeck-app/shared-updater": "*",
+		"@wadeck-app/shared-updater": "latest",
 		"js-yaml": "^4.1.1"
 	},
 	"devDependencies": {
 		"@types/js-yaml": "^4.0.9",
 		"@types/node": "^24.0.0",
-		"@wadeck-app/shared-cli": "^2026.9.1-028-247c1709",
+		"@wadeck-app/shared-cli": "latest",
 		"esbuild": "^0.27.2",
 		"tsx": "^4.7.0",
 		"typescript": "^7.0.0",
