@@ -1,7 +1,13 @@
 // task cli <subcommand> -- meta-commands for managing the task CLI itself.
 import { ConfigDir, HookDispatcher, runSelfCheck } from '@wadeck-app/shared-cli';
-import { cliLogsCommand, cliRollbackCommand, cliUpdateCommand, cliVersionCommand, warnUnknownArgs } from '@wadeck-app/shared-cli/CliMetaCommands';
 import { readChannelFromConfig } from '@wadeck-app/shared-cli/ChannelConfig';
+import {
+	cliLogsCommand,
+	cliRollbackCommand,
+	cliUpdateCommand,
+	cliVersionCommand,
+	warnUnknownArgs,
+} from '@wadeck-app/shared-cli/CliMetaCommands';
 import * as yaml from 'js-yaml';
 import * as fs from 'node:fs';
 import { createRequire } from 'node:module';
@@ -12,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 // violations-suppress-start: ts/no-deep-relative no path alias configured for intra-package imports in task-cli
 import { TaskConfigLoader } from '../../task/TaskConfigLoader.js';
 import { TaskStore } from '../../task/TaskStore.js';
+
 // violations-suppress-end: ts/no-deep-relative
 
 // Injected by esbuild at bundle time via define; falls back to package.json in dev mode (tsx).
@@ -57,7 +64,7 @@ export async function runTaskCliUpdate(opts: { check?: boolean; log?: boolean; r
 	warnUnknownArgs(
 		(opts.rawArgs ?? []).filter(a => a.startsWith('-')),
 		['--check', '--log'],
-		'task cli update',
+		'task cli update'
 	);
 	if (opts.log) {
 		const logFile = path.join(ConfigDir.get('task'), 'update-log.txt');
@@ -102,7 +109,8 @@ export async function runTaskCliSelfCheck(): Promise<void> {
 		async () => {
 			try {
 				const config = TaskConfigLoader.load({ configDir: os.tmpdir(), projectDir: os.tmpdir() });
-				if (!Array.isArray(config.statuses) || config.statuses.length === 0) throw new Error('statuses default is missing or empty');
+				if (!Array.isArray(config.statuses) || config.statuses.length === 0)
+					throw new Error('statuses default is missing or empty');
 				return { name: 'Config loading', ok: true };
 			} catch (err) {
 				return { name: 'Config loading', ok: false, detail: String(err) };
@@ -113,7 +121,8 @@ export async function runTaskCliSelfCheck(): Promise<void> {
 			try {
 				const input = ['id: self-check-test', 'steps:', '  - id: step1'].join('\n');
 				const parsed = yaml.load(input) as { id?: string; steps?: unknown[] };
-				if (parsed?.id !== 'self-check-test') throw new Error(`Expected id 'self-check-test', got '${String(parsed?.id)}'`);
+				if (parsed?.id !== 'self-check-test')
+					throw new Error(`Expected id 'self-check-test', got '${String(parsed?.id)}'`);
 				return { name: 'YAML parsing', ok: true };
 			} catch (err) {
 				return { name: 'YAML parsing', ok: false, detail: String(err) };
@@ -127,13 +136,18 @@ export async function runTaskCliSelfCheck(): Promise<void> {
 				const store = new TaskStore(tmpDir);
 				const task = store.create('test task');
 				const found = store.findByPrefix(task.id.slice(0, 4));
-				if (found.id !== task.id) throw new Error(`findByPrefix returned wrong task: expected ${task.id}, got ${found.id}`);
+				if (found.id !== task.id)
+					throw new Error(`findByPrefix returned wrong task: expected ${task.id}, got ${found.id}`);
 				return { name: 'TaskStore (temp)', ok: true };
 			} catch (err) {
 				return { name: 'TaskStore (temp)', ok: false, detail: String(err) };
 			} finally {
 				if (tmpDir !== undefined) {
-					try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore cleanup errors */ }
+					try {
+						fs.rmSync(tmpDir, { recursive: true, force: true });
+					} catch {
+						/* ignore cleanup errors */
+					}
 				}
 			}
 		},
@@ -154,7 +168,8 @@ export async function runTaskCliSelfCheck(): Promise<void> {
 				if (typeof config.defaults.priority !== 'string' || config.defaults.priority.length === 0) {
 					throw new Error(`defaults.priority is not a non-empty string: ${config.defaults.priority}`);
 				}
-				if (!Array.isArray(config.statuses) || config.statuses.length === 0) throw new Error('statuses default is missing or empty');
+				if (!Array.isArray(config.statuses) || config.statuses.length === 0)
+					throw new Error('statuses default is missing or empty');
 				return { name: 'Task config schema', ok: true };
 			} catch (err) {
 				return { name: 'Task config schema', ok: false, detail: String(err) };
@@ -175,7 +190,7 @@ export function printTaskCliHelp(): void {
 			'  update --log         Print the update log',
 			'  rollback             Restore the previously installed version',
 			'  self-check           Run health checks to verify the CLI bundle is functional',
-			'  logs [--follow]      Print today\'s log from ~/.config/task/logs/',
+			"  logs [--follow]      Print today's log from ~/.config/task/logs/",
 		].join('\n') + '\n'
 	);
 }

@@ -1,7 +1,7 @@
 // task-updater entry point -- bundled separately as task-updater.cjs.
 // Must NOT import any task runtime modules.
-import { runUpdater, execNpm } from '@wadeck-app/shared-updater';
 import { ConfigDir } from '@wadeck-app/shared-cli/ConfigDir';
+import { execNpm, runUpdater } from '@wadeck-app/shared-updater';
 import { join } from 'node:path';
 
 declare const __TASK_CLI_VERSION__: string;

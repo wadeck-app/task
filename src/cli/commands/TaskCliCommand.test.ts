@@ -62,7 +62,9 @@ describe('runTaskCliSelfCheck', () => {
 });
 
 describe('runTaskCliRollback', () => {
-	afterEach(() => { vi.restoreAllMocks(); });
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
 
 	it('delegates to cliRollbackCommand', async () => {
 		const { cliRollbackCommand } = await import('@wadeck-app/shared-cli/CliMetaCommands');
@@ -72,7 +74,9 @@ describe('runTaskCliRollback', () => {
 });
 
 describe('runTaskCliVersion', () => {
-	afterEach(() => { vi.restoreAllMocks(); });
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
 
 	it('delegates to cliVersionCommand with pkgName and channel', async () => {
 		const { cliVersionCommand } = await import('@wadeck-app/shared-cli/CliMetaCommands');

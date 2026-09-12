@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { ConfigDir, UpdateManager } from '@wadeck-app/shared-cli';
 import { logCliInvocation } from '@wadeck-app/shared-cli/CliLogger';
+import { execFileSync, execSync, spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { execFileSync, execSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { TaskConfigLoader } from '../task/TaskConfigLoader.js';
@@ -12,11 +12,11 @@ import type { TaskStatus, TaskSummary } from '../task/TaskStore.js';
 import { resolveTypeValidationStrategy } from '../task/TypeValidationStrategy.js';
 import {
 	printTaskCliHelp,
+	runTaskCliLogs,
 	runTaskCliRollback,
 	runTaskCliSelfCheck,
 	runTaskCliUpdate,
 	runTaskCliVersion,
-	runTaskCliLogs,
 } from './commands/TaskCliCommand.js';
 import { VERSION } from './version.js';
 
@@ -64,9 +64,7 @@ function levenshtein(a: string, b: string): number {
  */
 function matchGlob(pattern: string, value: string): boolean {
 	// Escape all regex metacharacters except *, then replace * with .*
-	const regexStr = pattern
-		.replace(/[.+^${}()|[\]\\]/g, '\\$&')
-		.replace(/\*/g, '.*');
+	const regexStr = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
 	return new RegExp(`^${regexStr}$`).test(value);
 }
 
@@ -91,7 +89,10 @@ function resolveQueueJsPath(): string {
 	// On Unix, use 'which queue' to get the script path.
 	let nativeDir: string;
 	if (process.platform === 'win32') {
-		const winPath = execSync('where queue.cmd', { encoding: 'utf8', windowsHide: true }).trim().split('\n')[0]!.trim();
+		const winPath = execSync('where queue.cmd', { encoding: 'utf8', windowsHide: true })
+			.trim()
+			.split('\n')[0]!
+			.trim();
 		nativeDir = path.dirname(winPath);
 	} else {
 		nativeDir = path.dirname(execFileSync('which', ['queue'], { encoding: 'utf8', windowsHide: true }).trim());
@@ -110,15 +111,15 @@ async function pushToQueue(event: string, payload: Record<string, unknown>): Pro
 		return;
 	}
 	// Spawn node directly with queue.js -- no shell, args passed verbatim (no JSON quoting issues).
-	await new Promise<void>((resolve) => {
+	await new Promise<void>(resolve => {
 		const child = spawn(process.execPath, [queueJs, 'push', event, json], { stdio: 'inherit', windowsHide: true });
-		child.on('close', (code) => {
+		child.on('close', code => {
 			if (code !== 0) {
 				process.stderr.write(`[task] queue push '${event}' failed (exit ${code}) -- event not delivered\n`);
 			}
 			resolve();
 		});
-		child.on('error', (err) => {
+		child.on('error', err => {
 			process.stderr.write(`[task] queue push '${event}' error: ${(err as Error).message}\n`);
 			resolve();
 		});
@@ -188,7 +189,11 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 	const effectiveCwd = effectiveProjectDir ? path.resolve(cwd, effectiveProjectDir) : cwd;
 
 	// Log every CLI invocation to ~/.config/task/logs/YYYY-MM-DD.ndjson
-	try { logCliInvocation(ConfigDir.get('task'), 'task', args); } catch { /* never block the CLI on logging failure */ }
+	try {
+		logCliInvocation(ConfigDir.get('task'), 'task', args);
+	} catch {
+		/* never block the CLI on logging failure */
+	}
 
 	// Show update notice from a previous background update run
 	const updateManager = new UpdateManager('@wadeck-app/task-cli');
@@ -202,7 +207,9 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 		);
 	}
 	if (updateState?.status === 'failed') {
-		process.stderr.write(`[task] Background update failed (${updateState.error ?? updateState.reason}). Run: task cli update\n`);
+		process.stderr.write(
+			`[task] Background update failed (${updateState.error ?? updateState.reason}). Run: task cli update\n`
+		);
 	}
 
 	if (!command || command === '--help') {
@@ -477,7 +484,11 @@ Environment variables:
 					filterSpec = rest[i + 1];
 					i += 2;
 				} else if (arg.startsWith('--')) {
-					return errorOutput(jsonMode, `unknown flag: ${arg}`, 'Valid flags: --all, --filter <field>=<value>, --dry-run');
+					return errorOutput(
+						jsonMode,
+						`unknown flag: ${arg}`,
+						'Valid flags: --all, --filter <field>=<value>, --dry-run'
+					);
 				} else {
 					// Comma-separated IDs allowed in a single positional arg
 					positionalIds.push(...arg.split(',').filter(s => s.length > 0));
@@ -534,9 +545,7 @@ Environment variables:
 				}
 
 				const all = store.list();
-				tasksToDelete = all.filter(t =>
-					values.some(v => matchGlob(v, t[field]))
-				);
+				tasksToDelete = all.filter(t => values.some(v => matchGlob(v, t[field])));
 			} else {
 				// Positional IDs: resolve by prefix
 				const all = store.list();
