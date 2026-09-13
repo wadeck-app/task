@@ -5,11 +5,13 @@ import { execFileSync, execSync, spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveOwnBundlePath } from 'shared-common/utils/resolveOwnBundlePath';
 
 import { TaskConfigLoader } from '../task/TaskConfigLoader.js';
 import { TaskStore } from '../task/TaskStore.js';
 import type { TaskStatus, TaskSummary } from '../task/TaskStore.js';
 import { resolveTypeValidationStrategy } from '../task/TypeValidationStrategy.js';
+import { TASK_BUNDLE_NAME } from './TaskBundleName.js';
 import {
 	printTaskCliHelp,
 	runTaskCliLogs,
@@ -662,7 +664,7 @@ async function main(): Promise<void> {
 	}
 
 	// Schedule background updater after command completes
-	const bundlePath = process.env['LAUNCHER_BUNDLE_OVERRIDE'] ?? fileURLToPath(import.meta.url);
+	const bundlePath = resolveOwnBundlePath(TASK_BUNDLE_NAME, fileURLToPath(import.meta.url));
 	new UpdateManager('@wadeck-app/task-cli').scheduleBackgroundUpdate(bundlePath, 'task-updater.cjs');
 
 	process.exit(exitCode);

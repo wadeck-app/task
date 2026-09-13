@@ -14,10 +14,12 @@ import { createRequire } from 'node:module';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveOwnBundlePath } from 'shared-common/utils/resolveOwnBundlePath';
 
 // violations-suppress-start: ts/no-deep-relative no path alias configured for intra-package imports in task-cli
 import { TaskConfigLoader } from '../../task/TaskConfigLoader.js';
 import { TaskStore } from '../../task/TaskStore.js';
+import { TASK_BUNDLE_NAME } from '../TaskBundleName.js';
 
 // violations-suppress-end: ts/no-deep-relative
 
@@ -39,7 +41,7 @@ export function getCurrentTaskVersion(): string {
 }
 
 function getUpdaterPath(): string | null {
-	const bundlePath = process.env['LAUNCHER_BUNDLE_OVERRIDE'] ?? fileURLToPath(import.meta.url);
+	const bundlePath = resolveOwnBundlePath(TASK_BUNDLE_NAME, fileURLToPath(import.meta.url));
 	const dir = path.dirname(bundlePath);
 	const candidates = [path.join(dir, 'task-updater.cjs'), path.join(dir, 'flow-updater.cjs')];
 	for (const candidate of candidates) {

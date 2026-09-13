@@ -14,7 +14,8 @@
 	},
 	"dependencies": {
 		"@wadeck-app/shared-updater": "latest",
-		"js-yaml": "^4.1.1"
+		"js-yaml": "^4.1.1",
+		"shared-common": "file:../shared-common"
 	},
 	"devDependencies": {
 		"@types/js-yaml": "^4.0.9",
