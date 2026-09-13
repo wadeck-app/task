@@ -89,7 +89,10 @@ export async function runTaskCliUpdate(opts: { check?: boolean; log?: boolean; r
 		process.exit(1);
 		return;
 	}
+	// Flag manual invocation so the updater bypasses autoUpdate:false in config
+	process.env['UPDATER_MANUAL'] = '1';
 	await cliUpdateCommand(updaterPath, PKG_NAME);
+	delete process.env['UPDATER_MANUAL'];
 }
 
 export async function runTaskCliRollback(): Promise<void> {
@@ -135,7 +138,13 @@ export async function runTaskCliSelfCheck(): Promise<void> {
 			let tmpDir: string | undefined;
 			try {
 				tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-self-check-'));
-				const store = new TaskStore(tmpDir);
+				// TaskStore writes its index to `<tasksDir>/../task-index.json`, so the directory handed
+				// to it must be nested inside tmpDir. Passing tmpDir itself would append every
+				// self-check run to a shared `<os.tmpdir()>/task-index.json` that nothing cleans up,
+				// and findByPrefix below would then search that accumulated index.
+				const tasksDir = path.join(tmpDir, 'tasks');
+				fs.mkdirSync(tasksDir, { recursive: true });
+				const store = new TaskStore(tasksDir);
 				const task = store.create('test task');
 				const found = store.findByPrefix(task.id.slice(0, 4));
 				if (found.id !== task.id)

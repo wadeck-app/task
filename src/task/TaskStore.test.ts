@@ -5,17 +5,33 @@ import * as path from 'node:path';
 import { TaskStore } from './TaskStore';
 
 describe('TaskStore', () => {
+	// Per-test root that owns BOTH the tasks directory and the index file.
+	let rootDir: string;
+	// Directory handed to TaskStore; must be nested inside rootDir because TaskStore writes its
+	// index to `<tasksDir>/../task-index.json`. Passing a bare mkdtemp directory would place the
+	// index in the shared OS temp root, where it is reused by every test and every run.
 	let tmpDir: string;
 	let store: TaskStore;
 
 	beforeEach(() => {
-		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-store-'));
+		rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-store-'));
+		// Mirrors the production layout `<project>/.task/tasks` (see TaskIndex.ts tasksDir).
+		tmpDir = path.join(rootDir, 'tasks');
+		fs.mkdirSync(tmpDir, { recursive: true });
 		store = new TaskStore(tmpDir);
 	});
 
 	afterEach(() => {
 		vi.restoreAllMocks();
-		fs.rmSync(tmpDir, { recursive: true, force: true });
+		fs.rmSync(rootDir, { recursive: true, force: true });
+	});
+
+	it('keeps its index inside the per-test root so runs cannot leak into each other', () => {
+		store.create('Isolation probe');
+
+		// The index must land in the disposable root, not in the shared OS temp directory.
+		expect(fs.existsSync(path.join(rootDir, 'task-index.json'))).toBe(true);
+		expect(path.dirname(tmpDir)).toBe(rootDir);
 	});
 
 	describe('create()', () => {
