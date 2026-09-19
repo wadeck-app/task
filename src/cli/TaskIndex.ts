@@ -20,6 +20,7 @@ import {
 	runTaskCliUpdate,
 	runTaskCliVersion,
 } from './commands/TaskCliCommand.js';
+import { runPluginsCommand } from './commands/PluginsCommand.js';
 import { VERSION } from './version.js';
 
 const PROJECT_CONFIG_TEMPLATE = `# Task configuration for this project
@@ -242,6 +243,8 @@ Usage:
   task delete --all                          Delete all tasks
   task delete --filter <field>=<value>       Delete tasks matching a filter (fields: id, title, status)
   task delete --dry-run ...                  Show what would be deleted without deleting
+  task plugins list [--json]                 List available built-in flow plugins
+  task plugins config <id> [--json]         Show config snippet for a plugin
   task cli self-check                        Validate installation
   task cli update [--check] [--log]         Update to latest version
   task cli logs [--follow]                   Print today's invocation log
@@ -313,6 +316,10 @@ Environment variables:
 					'Valid subcommands: version, update, rollback, self-check, logs'
 				);
 		}
+	}
+
+	if (command === 'plugins') {
+		return runPluginsCommand(rest, jsonMode);
 	}
 
 	if (!TaskConfigLoader.isInitialized(effectiveCwd)) {
@@ -649,7 +656,7 @@ When no types are configured, any string is accepted (backwards compatible).`,
 			return errorOutput(
 				jsonMode,
 				`unknown command: ${command}`,
-				'Valid commands: init, new, list, show, set-status, set-type, add-label, remove-label, set-meta, delete, type'
+				'Valid commands: init, new, list, show, set-status, set-type, add-label, remove-label, set-meta, delete, type, plugins'
 			);
 	}
 }
