@@ -82,6 +82,101 @@ describe('task cli update -- produces output', () => {
 			// The outcome must be attributed to the updater and name the failure, not just be non-empty.
 			expect(combined).toContain('[task-updater]');
 			expect(combined).toContain('version fetch failed');
+			// The status block is always printed, and never the old vague "unexpected" message.
+			expect(combined).toContain('[task-updater] current:');
+			expect(combined).toContain('[task-updater] latest:');
+			expect(combined).toContain('[task-updater] status:  update check failed --');
+			expect(combined).not.toContain('unexpected');
+		} finally {
+			try {
+				fs.rmSync(tmpDir, { recursive: true, force: true });
+			} catch {
+				// ignore
+			}
+		}
+	});
+
+	it('reports autoUpdate disabled explicitly, not a silent/vague message', () => {
+		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-update-test-'));
+		try {
+			fs.writeFileSync(path.join(tmpDir, 'config.yml'), 'autoUpdate: false\n');
+			const npmrcPath = path.join(tmpDir, 'npmrc');
+			const deadRegistry = 'http://127.0.0.1:1/';
+			fs.writeFileSync(
+				npmrcPath,
+				`registry=${deadRegistry}\n@wadeck-app:registry=${deadRegistry}\nfetch-retries=0\n`
+			);
+			const childEnv: Record<string, string | undefined> = {};
+			for (const [key, value] of Object.entries(process.env)) {
+				if (!/^npm_config_userconfig$/i.test(key)) childEnv[key] = value;
+			}
+
+			// UPDATER_FORCE without UPDATER_MANUAL: force bypasses the check-interval, but the
+			// autoUpdate:false flag in config.yml is only bypassed by UPDATER_MANUAL.
+			const result = spawnSync(process.execPath, [updaterBundlePath], {
+				env: {
+					...childEnv,
+					UPDATER_FORCE: '1',
+					UPDATER_PKG_NAME: '@wadeck-app/task-cli',
+					TASK_CONFIG_DIR: tmpDir,
+					NPM_CONFIG_USERCONFIG: npmrcPath,
+				},
+				timeout: 30000,
+				encoding: 'utf-8',
+			});
+			const combined = (result.stdout ?? '') + (result.stderr ?? '');
+			expect(combined).toContain('[task-updater] status:  skipped -- autoUpdate is disabled in');
+			expect(combined).not.toContain('unexpected');
+		} finally {
+			try {
+				fs.rmSync(tmpDir, { recursive: true, force: true });
+			} catch {
+				// ignore
+			}
+		}
+	});
+
+	it('ignores a stale state file left over from a previous run', () => {
+		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-update-test-'));
+		try {
+			// Simulate a prior run that successfully updated, long before this run starts.
+			fs.writeFileSync(
+				path.join(tmpDir, 'update-state.json'),
+				JSON.stringify({
+					status: 'success',
+					currentVersion: '0.0.0-ancient',
+					targetVersion: '0.0.0-also-ancient',
+					timestamp: Date.now() - 60 * 60 * 1000,
+				})
+			);
+			const npmrcPath = path.join(tmpDir, 'npmrc');
+			const deadRegistry = 'http://127.0.0.1:1/';
+			fs.writeFileSync(
+				npmrcPath,
+				`registry=${deadRegistry}\n@wadeck-app:registry=${deadRegistry}\nfetch-retries=0\n`
+			);
+			const childEnv: Record<string, string | undefined> = {};
+			for (const [key, value] of Object.entries(process.env)) {
+				if (!/^npm_config_userconfig$/i.test(key)) childEnv[key] = value;
+			}
+
+			const result = spawnSync(process.execPath, [updaterBundlePath], {
+				env: {
+					...childEnv,
+					UPDATER_FORCE: '1',
+					UPDATER_PKG_NAME: '@wadeck-app/task-cli',
+					TASK_CONFIG_DIR: tmpDir,
+					NPM_CONFIG_USERCONFIG: npmrcPath,
+				},
+				timeout: 30000,
+				encoding: 'utf-8',
+			});
+			const combined = (result.stdout ?? '') + (result.stderr ?? '');
+			// This run's own outcome (fetch failed, since the registry is unreachable) must win
+			// over the stale leftover 'success' state -- never report a success that didn't happen.
+			expect(combined).toContain('[task-updater] status:  update check failed --');
+			expect(combined).not.toContain('status:  updated to');
+			expect(combined).not.toContain('unexpected');
 		} finally {
 			try {
 				fs.rmSync(tmpDir, { recursive: true, force: true });

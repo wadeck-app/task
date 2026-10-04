@@ -1,7 +1,15 @@
 // task-updater entry point -- bundled separately as task-updater.cjs.
 // Must NOT import any task runtime modules.
 import { ConfigDir } from '@wadeck-app/shared-cli/ConfigDir';
-import { execNpm, readUpdateConfig, runUpdater } from '@wadeck-app/shared-updater';
+import {
+	cacheFilePath,
+	execNpm,
+	readCache,
+	readState,
+	readUpdateConfig,
+	runUpdater,
+	stateFilePath,
+} from '@wadeck-app/shared-updater';
 import { cpSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import * as os from 'node:os';
 import { join } from 'node:path';
@@ -56,17 +64,23 @@ function logSize(file: string): number {
 	return existsSync(file) ? statSync(file).size : 0;
 }
 
+interface LogEntry {
+	level: string;
+	msg: string;
+}
+
 /**
- * Echo every log entry appended during this run. Returns the number of entries echoed so the
- * caller can report an explicit reason when the updater produced nothing at all.
+ * Echo every log entry appended during this run and return them so reportOutcome can fall back
+ * on raw log signal for the handful of paths that touch neither the cache nor the state file
+ * (fetch failure, lock contention).
  */
-function echoUpdaterLog(startPath: string, startSize: number): number {
+function echoUpdaterLog(startPath: string, startSize: number): LogEntry[] {
 	const endPath = updaterLogPath();
 	// A run straddling midnight rolls over to a new file, which must be read from the start.
 	const offset = endPath === startPath ? startSize : 0;
-	if (!existsSync(endPath)) return 0;
+	if (!existsSync(endPath)) return [];
 	const appended = readFileSync(endPath, 'utf8').slice(offset);
-	let count = 0;
+	const entries: LogEntry[] = [];
 	for (const line of appended.split('\n')) {
 		if (line.trim() === '') continue;
 		let level = 'info';
@@ -80,31 +94,77 @@ function echoUpdaterLog(startPath: string, startSize: number): number {
 		}
 		const stream = level === 'warn' || level === 'error' ? process.stderr : process.stdout;
 		stream.write(`[task-updater] ${msg}\n`);
-		count += 1;
+		entries.push({ level, msg });
 	}
-	return count;
+	return entries;
 }
 
 /**
- * Explains the one outcome shared-updater exits on without logging anything: autoUpdate is
- * disabled in config.yml and UPDATER_MANUAL was not set to bypass it.
+ * Always prints current/latest/status. Cache + state files are shared-updater's authoritative
+ * record of this run's outcome (readState/readCache -- see @wadeck-app/shared-updater); the log
+ * is only consulted as a fallback for the paths that write neither (version fetch failed, lock
+ * held by a concurrent run). Never prints the old vague "unexpected" message -- an outcome that
+ * truly cannot be determined says so explicitly, with the paths that were checked.
  */
-function reportSilentOutcome(): void {
+function reportOutcome(startedAt: number, logEntries: LogEntry[]): void {
+	const cache = readCache(cacheFilePath(configDir));
+	const state = readState(stateFilePath(configDir));
+	const latest = cache?.latestVersion ?? 'unknown (no cache file)';
+
+	let status: string;
 	if (readUpdateConfig(configDir).disabled) {
-		process.stderr.write(
-			`[task-updater] Update skipped: autoUpdate is disabled in ${join(configDir, 'config.yml')}.\n` +
-				`[task-updater] Run \`task cli update\` to update anyway, or set \`autoUpdate: true\` in that file.\n`
-		);
-		return;
+		status =
+			`skipped -- autoUpdate is disabled in ${join(configDir, 'config.yml')}. ` +
+			'Run `task cli update` to update anyway, or set `autoUpdate: true` in that file.';
+	} else if (state && state.timestamp >= startedAt) {
+		// This run wrote a terminal state -- it is authoritative over any older state file left
+		// over from a previous run.
+		switch (state.status) {
+			case 'success':
+				status = `updated to ${state.targetVersion}`;
+				break;
+			case 'deferred': {
+				const retryInMinutes = Math.round(((state.retryAt ?? state.timestamp) - state.timestamp) / 60_000);
+				status = `deferred -- a flow execution is active on the daemon; will retry automatically in ${retryInMinutes} minute${retryInMinutes === 1 ? '' : 's'}`;
+				break;
+			}
+			case 'failed':
+				status = `update failed -- ${state.error}`;
+				break;
+			case 'rolled-back':
+				status = `update rolled back to ${state.previousVersion} -- new version failed its self-check`;
+				break;
+			default:
+				// 'update-available' exists on UpdateState but is only written by the
+				// 'with-daemon' strategy -- this entry point always uses 'without-daemon'.
+				throw new Error(`[task-updater] unrecognized state status: ${state.status}`);
+		}
+	} else if (cache && cache.lastCheckedAt >= startedAt) {
+		// Cache was refreshed this run but no state was written: the only code path that does
+		// that is "latest version is not newer than current".
+		status = 'up to date';
+	} else {
+		const fetchFailed = logEntries.find(e => e.msg.includes('version fetch failed'));
+		const alreadyRunning = logEntries.find(e => e.msg.includes('already running'));
+		if (fetchFailed) {
+			status = `update check failed -- ${fetchFailed.msg}`;
+		} else if (alreadyRunning) {
+			status = 'skipped -- another update check is already running';
+		} else {
+			status =
+				`unknown -- no cache or state file found at ${cacheFilePath(configDir)} or ${stateFilePath(configDir)}, ` +
+				'and no matching log entry for this run';
+		}
 	}
-	process.stderr.write(
-		`[task-updater] Update check produced no result and no log entry. This is unexpected.\n` +
-			`[task-updater] Inspect ${updaterLogPath()} and report it.\n`
-	);
+
+	process.stdout.write(`[task-updater] current: ${currentVersion}\n`);
+	process.stdout.write(`[task-updater] latest:  ${latest}\n`);
+	process.stdout.write(`[task-updater] status:  ${status}\n`);
 }
 
 const logPathBeforeRun = updaterLogPath();
 const logSizeBeforeRun = logSize(logPathBeforeRun);
+const startedAt = Date.now();
 
 runUpdater({
 	pkgName: PKG_NAME,
@@ -115,11 +175,11 @@ runUpdater({
 })
 	.then(() => {
 		if (!force) return;
-		if (echoUpdaterLog(logPathBeforeRun, logSizeBeforeRun) === 0) reportSilentOutcome();
+		reportOutcome(startedAt, echoUpdaterLog(logPathBeforeRun, logSizeBeforeRun));
 	})
 	.catch(err => {
 		// Surface whatever the updater managed to log before failing, then the failure itself.
-		if (force) echoUpdaterLog(logPathBeforeRun, logSizeBeforeRun);
+		if (force) reportOutcome(startedAt, echoUpdaterLog(logPathBeforeRun, logSizeBeforeRun));
 		process.stderr.write(`[task-updater] fatal: ${err}\n`);
 		process.exit(1);
 	});
