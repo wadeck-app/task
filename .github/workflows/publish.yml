@@ -1,0 +1,119 @@
+name: Publish @wadeck-app/task-cli
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
+    workflow_dispatch:
+        inputs:
+            version:
+                description: 'Stable version (e.g. 1.2.0)'
+                required: false
+                default: ''
+            breaking:
+                description: 'Breaking change? (true/false)'
+                required: false
+                default: 'false'
+
+permissions:
+    contents: read
+    packages: write
+
+jobs:
+    build-and-test:
+        runs-on: ubuntu-latest
+        outputs:
+            dist_tag: ${{ steps.version.outputs.dist_tag }}
+            version: ${{ steps.version.outputs.version }}
+        steps:
+            - uses: actions/checkout@v5
+              with:
+                  fetch-depth: 0
+
+            - uses: actions/setup-node@v5
+              with:
+                  node-version: '24'
+                  registry-url: 'https://npm.pkg.github.com'
+                  scope: '@wadeck-app'
+
+            - name: Install dependencies
+              run: npm ci
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Build TypeScript
+              run: npm run build
+
+            - name: Lint
+              run: npm run lint
+
+            - name: Test
+              run: npm test
+
+            - name: Build Go launchers
+              run: npm run build-launcher
+
+            - name: Compute version
+              id: version
+              uses: wadeck-app/ci-templates/.github/actions/compute-version@main
+              with:
+                  version-input: ${{ github.event.inputs.version || '' }}
+                  breaking-input: ${{ github.event.inputs.breaking || 'false' }}
+
+            - name: Bundle
+              run: npm run bundle
+              env:
+                  BUNDLE_VERSION: ${{ steps.version.outputs.version }}
+
+            - name: Generate platform package directories
+              run: bash ci/scripts/generate-platform-packages.sh
+
+            - name: Copy artifacts to platform packages
+              run: bash ci/scripts/copy-binaries.sh
+
+            - name: Set version in all packages
+              run: |
+                  for pkg in task-cli-dist task-cli-win32-x64 task-cli-darwin-arm64 task-cli-darwin-x64; do
+                    (cd "packages/$pkg" && npm pkg set version="${{ steps.version.outputs.version }}")
+                  done
+
+            - name: Upload artifacts
+              uses: actions/upload-artifact@v4
+              with:
+                  name: task-cli-packages
+                  path: packages/task-cli-*
+                  retention-days: 1
+
+    publish:
+        needs: build-and-test
+        if: github.event_name == 'push'
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v5
+
+            - uses: actions/setup-node@v5
+              with:
+                  node-version: '24'
+                  registry-url: 'https://npm.pkg.github.com'
+                  scope: '@wadeck-app'
+
+            - name: Download artifacts
+              uses: actions/download-artifact@v4
+              with:
+                  name: task-cli-packages
+                  path: packages
+
+            - name: Publish platform packages
+              run: |
+                  for pkg in task-cli-win32-x64 task-cli-darwin-arm64 task-cli-darwin-x64; do
+                    (cd "packages/$pkg" && npm publish --tag ${{ needs.build-and-test.outputs.dist_tag }})
+                  done
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Publish main package
+              working-directory: packages/task-cli-dist
+              run: npm publish --tag ${{ needs.build-and-test.outputs.dist_tag }}
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

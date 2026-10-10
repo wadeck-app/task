@@ -31,9 +31,6 @@ export default defineConfig({
 		restoreMocks: true,
 	},
 	resolve: {
-		alias: {
-			'shared-cli': path.resolve(__dirname, '../shared-cli/src'),
-		},
 		extensions: ['.ts', '.tsx', '.js', '.jsx', '.json'],
 	},
 	esbuild: {

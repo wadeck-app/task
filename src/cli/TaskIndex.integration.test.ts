@@ -9,16 +9,16 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// agent-fleet root (4 levels up from src/cli/: src/cli -> src -> task-cli -> packages -> agent-fleet)
-const agentFleetRoot = path.resolve(__dirname, '../../../..');
-const updaterBundlePath = path.resolve(agentFleetRoot, 'packages/task-cli/dist-bundle/task-updater.cjs');
+// repo root (2 levels up from src/cli/: src/cli -> src -> repo root)
+const repoRoot = path.resolve(__dirname, '../..');
+const updaterBundlePath = path.resolve(repoRoot, 'dist-bundle/task-updater.cjs');
 
 const TEST_VERSION = '0.0.0-test-integration';
 
 beforeAll(() => {
 	// Use shell: true so npm resolves correctly on Windows (npm.cmd)
-	execFileSync('npm', ['run', 'bundle', '--workspace', 'packages/task-cli'], {
-		cwd: agentFleetRoot,
+	execFileSync('npm', ['run', 'bundle'], {
+		cwd: repoRoot,
 		encoding: 'utf-8',
 		timeout: 120000,
 		env: { ...process.env, BUNDLE_VERSION: TEST_VERSION },
