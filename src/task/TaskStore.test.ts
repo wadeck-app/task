@@ -77,7 +77,12 @@ describe('TaskStore', () => {
 	describe('updateStatus()', () => {
 		it('updates status and adds a history entry', () => {
 			const record = store.create('Status task');
+			// Force a distinct updatedAt: on a fast CI runner, create() and updateStatus()
+			// can land in the same millisecond, making the real clock an unreliable fixture.
+			vi.useFakeTimers();
+			vi.setSystemTime(new Date(record.updatedAt).getTime() + 1);
 			const updated = store.updateStatus(record.id, 'in-progress');
+			vi.useRealTimers();
 
 			expect(updated.status).toBe('in-progress');
 			expect(updated.history).toHaveLength(2);
