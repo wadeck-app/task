@@ -14,6 +14,7 @@ export default tseslint.config(
 			'**/*.d.ts',
 			'ci/**',
 			'scripts/**',
+			'packages/**',
 			'*.config.mjs',
 			'*.config.ts',
 		],
