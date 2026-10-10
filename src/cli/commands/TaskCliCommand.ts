@@ -8,13 +8,13 @@ import {
 	cliVersionCommand,
 	warnUnknownArgs,
 } from '@wadeck-app/shared-cli/CliMetaCommands';
+import { resolveOwnBundlePath } from '@wadeck-app/shared-cli/resolveOwnBundlePath';
 import * as yaml from 'js-yaml';
 import * as fs from 'node:fs';
 import { createRequire } from 'node:module';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveOwnBundlePath } from 'shared-common/utils/resolveOwnBundlePath';
 
 // violations-suppress-start: ts/no-deep-relative no path alias configured for intra-package imports in task-cli
 import { TaskConfigLoader } from '../../task/TaskConfigLoader.js';

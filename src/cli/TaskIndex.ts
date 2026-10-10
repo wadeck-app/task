@@ -1,17 +1,18 @@
 #!/usr/bin/env node
 import { ConfigDir, UpdateManager } from '@wadeck-app/shared-cli';
 import { logCliInvocation } from '@wadeck-app/shared-cli/CliLogger';
+import { resolveOwnBundlePath } from '@wadeck-app/shared-cli/resolveOwnBundlePath';
 import { execFileSync, execSync, spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveOwnBundlePath } from 'shared-common/utils/resolveOwnBundlePath';
 
 import { TaskConfigLoader } from '../task/TaskConfigLoader.js';
 import { TaskStore } from '../task/TaskStore.js';
 import type { TaskStatus, TaskSummary } from '../task/TaskStore.js';
 import { resolveTypeValidationStrategy } from '../task/TypeValidationStrategy.js';
 import { TASK_BUNDLE_NAME } from './TaskBundleName.js';
+import { runPluginsCommand } from './commands/PluginsCommand.js';
 import {
 	printTaskCliHelp,
 	runTaskCliLogs,
@@ -20,7 +21,6 @@ import {
 	runTaskCliUpdate,
 	runTaskCliVersion,
 } from './commands/TaskCliCommand.js';
-import { runPluginsCommand } from './commands/PluginsCommand.js';
 import { VERSION } from './version.js';
 
 const PROJECT_CONFIG_TEMPLATE = `# Task configuration for this project

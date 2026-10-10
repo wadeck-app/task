@@ -19,9 +19,6 @@ if (!version) {
 	process.stderr.write('[bundle] ERROR: BUNDLE_VERSION env var not set -- refusing to build without a version\n');
 	process.exit(1);
 }
-// Resolve flow-cli source for bundling without requiring a prior flow-cli build step
-const flowCliSrc = path.resolve(root, '../flow-cli/src');
-
 const sharedDefine = {
 	'import.meta.url': '__importMetaUrl',
 	__TASK_CLI_VERSION__: JSON.stringify(version),
@@ -42,10 +39,6 @@ await Promise.all([
 		supported: { 'top-level-await': false },
 		define: sharedDefine,
 		banner: sharedBanner,
-		// Resolve 'flow-cli' package imports to flow-cli source for standalone bundling
-		alias: {
-			'flow-cli': flowCliSrc,
-		},
 		logLevel: 'warning',
 	}),
 	build({

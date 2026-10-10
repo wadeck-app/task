@@ -14,13 +14,13 @@
 	},
 	"dependencies": {
 		"@wadeck-app/shared-updater": "latest",
-		"js-yaml": "^4.1.1",
-		"shared-common": "file:../shared-common"
+		"@wadeck-app/singleton-daemon-kit": "latest",
+		"js-yaml": "^4.1.1"
 	},
 	"devDependencies": {
 		"@types/js-yaml": "^4.0.9",
 		"@types/node": "^24.0.0",
-		"@wadeck-app/shared-cli": "^2026.10.3-035-1e4adce3",
+		"@wadeck-app/shared-cli": "^2026.10.10-036-4b70545a",
 		"esbuild": "^0.27.2",
 		"tsx": "^4.7.0",
 		"typescript": "^7.0.0",

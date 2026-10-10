@@ -4,12 +4,7 @@
 		"outDir": "dist",
 		"declarationDir": "dist-types",
 		"rootDir": "src",
-		"types": ["vitest/globals", "node"],
-		"paths": {
-			"shared-common": ["../shared-common/src"],
-			"shared-common/*": ["../shared-common/src/*"]
-		}
+		"types": ["vitest/globals", "node"]
 	},
-	"include": ["src"],
-	"references": [{ "path": "../shared-common" }]
+	"include": ["src"]
 }
