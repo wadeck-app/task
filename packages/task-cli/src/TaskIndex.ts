@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { TaskConfigLoader, TaskStore, resolveTypeValidationStrategy } from '@wadeck-app/task-core';
 import type { TaskRecord, TaskSummary } from '@wadeck-app/task-core';
 import { TASK_BUNDLE_NAME } from './TaskBundleName.js';
-import { diffHistoryEntries, diffTaskListSnapshot } from './commands/HistoryFollower.js';
+import { diffAppendOnlyLog, diffSnapshot } from '@wadeck-app/shared-cli/FollowSnapshot';
 import { runPluginsCommand } from './commands/PluginsCommand.js';
 import {
 	printTaskCliHelp,
@@ -138,12 +138,12 @@ async function runTaskListFollow(store: TaskStore, showAll: boolean, terminalSta
 	for (const task of initialAll.filter(passesFilter)) {
 		process.stdout.write(JSON.stringify(task) + '\n');
 	}
-	let snapshot = diffTaskListSnapshot(new Map(), initialAll).snapshot;
+	let snapshot = diffSnapshot(new Map(), initialAll, t => t.id).snapshot;
 
 	process.stderr.write('[task] Following task list -- Ctrl+C to stop\n');
 	await new Promise<void>(resolve => {
 		const interval = setInterval(() => {
-			const { changed, snapshot: next } = diffTaskListSnapshot(snapshot, store.list());
+			const { changed, snapshot: next } = diffSnapshot(snapshot, store.list(), t => t.id);
 			snapshot = next;
 			for (const task of changed.filter(passesFilter)) {
 				process.stdout.write(JSON.stringify(task) + '\n');
@@ -166,7 +166,7 @@ async function runTaskHistoryFollow(store: TaskStore, taskId: string, initial: T
 	process.stderr.write(`[task] Following history of ${taskId} -- Ctrl+C to stop\n`);
 	await new Promise<void>(resolve => {
 		const interval = setInterval(() => {
-			const { changed, count: nextCount } = diffHistoryEntries(count, store.get(taskId).history);
+			const { changed, count: nextCount } = diffAppendOnlyLog(count, store.get(taskId).history);
 			count = nextCount;
 			for (const entry of changed) {
 				process.stdout.write(JSON.stringify(entry) + '\n');
