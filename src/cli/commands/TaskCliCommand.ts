@@ -145,7 +145,7 @@ export async function runTaskCliSelfCheck(): Promise<void> {
 				const tasksDir = path.join(tmpDir, 'tasks');
 				fs.mkdirSync(tasksDir, { recursive: true });
 				const store = new TaskStore(tasksDir);
-				const task = store.create('test task');
+				const task = store.create('test task', 'backlog');
 				const found = store.findByPrefix(task.id.slice(0, 4));
 				if (found.id !== task.id)
 					throw new Error(`findByPrefix returned wrong task: expected ${task.id}, got ${found.id}`);

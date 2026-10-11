@@ -6,6 +6,13 @@ import * as path from 'node:path';
 // Task hook value: simple string "command arg1 arg2" or object for advanced options.
 export type TaskHookValue = string | { command: string; debug?: boolean };
 
+/**
+ * A status entry in .task/config.yml: either a bare name, or an object carrying
+ * `terminal` (hidden from `task list` by default, e.g. "done") and/or `default`
+ * (the status assigned to newly created tasks).
+ */
+export type TaskStatusEntry = string | { name: string; terminal?: boolean; default?: boolean };
+
 export interface TaskGlobalConfig {
 	defaults?: {
 		priority?: string;
@@ -14,7 +21,7 @@ export interface TaskGlobalConfig {
 }
 
 export interface TaskProjectConfig {
-	statuses?: string[];
+	statuses?: TaskStatusEntry[];
 	types?: string[];
 	fields?: Array<{ name: string; type: string; required?: boolean }>;
 	defaults?: {
@@ -25,6 +32,10 @@ export interface TaskProjectConfig {
 
 export interface TaskResolvedConfig {
 	statuses: string[];
+	/** Status assigned to newly created tasks (explicit `default: true` entry, else the first status). */
+	defaultStatus: string;
+	/** Statuses hidden from `task list` unless `--all` is passed (e.g. "done"). */
+	terminalStatuses: string[];
 	/** Valid task types. Empty array means no validation (any string accepted). */
 	types: string[];
 	defaults: {
@@ -34,13 +45,47 @@ export interface TaskResolvedConfig {
 	projectHooks: Record<string, TaskHookValue>;
 }
 
-const DEFAULT_STATUSES = ['backlog', 'in-progress', 'done'];
+const DEFAULT_STATUSES: TaskStatusEntry[] = ['backlog', 'in-progress', 'done'];
 const DEFAULT_PRIORITY = 'medium';
 
 function loadYamlFile<T>(filePath: string): T | undefined {
 	if (!fs.existsSync(filePath)) return undefined;
 	const raw = fs.readFileSync(filePath, 'utf8');
 	return yaml.load(raw) as T;
+}
+
+/**
+ * Resolves the raw `statuses` entries from config.yml into plain names plus the
+ * derived default/terminal statuses. At most one entry may be marked `default: true`;
+ * when none is, the first entry in the list is the implicit default.
+ */
+function resolveStatuses(entries: TaskStatusEntry[]): {
+	statuses: string[];
+	defaultStatus: string;
+	terminalStatuses: string[];
+} {
+	if (entries.length === 0) {
+		throw new Error('"statuses" in .task/config.yml must list at least one status.');
+	}
+
+	const normalized = entries.map(entry =>
+		typeof entry === 'string'
+			? { name: entry, terminal: false, default: false }
+			: { name: entry.name, terminal: entry.terminal ?? false, default: entry.default ?? false }
+	);
+
+	const defaultEntries = normalized.filter(e => e.default);
+	if (defaultEntries.length > 1) {
+		throw new Error(
+			`Multiple statuses marked "default: true" in .task/config.yml: ${defaultEntries.map(e => e.name).join(', ')}. Only one status can be the default.`
+		);
+	}
+
+	return {
+		statuses: normalized.map(e => e.name),
+		defaultStatus: defaultEntries[0]?.name ?? normalized[0]!.name,
+		terminalStatuses: normalized.filter(e => e.terminal).map(e => e.name),
+	};
 }
 
 export class TaskConfigLoader {
@@ -70,8 +115,12 @@ export class TaskConfigLoader {
 		const globalConfig = loadYamlFile<TaskGlobalConfig>(path.join(globalConfigDir, 'config.yml')) ?? {};
 		const projectConfig = loadYamlFile<TaskProjectConfig>(path.join(projectDir, '.task', 'config.yml')) ?? {};
 
+		const { statuses, defaultStatus, terminalStatuses } = resolveStatuses(projectConfig.statuses ?? DEFAULT_STATUSES);
+
 		return {
-			statuses: projectConfig.statuses ?? DEFAULT_STATUSES,
+			statuses,
+			defaultStatus,
+			terminalStatuses,
 			types: projectConfig.types ?? [],
 			defaults: {
 				priority: projectConfig.defaults?.priority ?? globalConfig.defaults?.priority ?? DEFAULT_PRIORITY,

@@ -27,7 +27,7 @@ describe('TaskStore', () => {
 	});
 
 	it('keeps its index inside the per-test root so runs cannot leak into each other', () => {
-		store.create('Isolation probe');
+		store.create('Isolation probe', 'backlog');
 
 		// The index must land in the disposable root, not in the shared OS temp directory.
 		expect(fs.existsSync(path.join(rootDir, 'task-index.json'))).toBe(true);
@@ -35,13 +35,13 @@ describe('TaskStore', () => {
 	});
 
 	describe('create()', () => {
-		it('creates a task record with status created and initial history entry', () => {
-			const record = store.create('My first task');
+		it('creates a task record with the given initial status and initial history entry', () => {
+			const record = store.create('My first task', 'backlog');
 
 			expect(record.title).toBe('My first task');
-			expect(record.status).toBe('created');
+			expect(record.status).toBe('backlog');
 			expect(record.history).toHaveLength(1);
-			expect(record.history[0].status).toBe('created');
+			expect(record.history[0].status).toBe('backlog');
 			expect(record.id).toMatch(/^[a-z0-9]{8}$/);
 
 			const filePath = path.join(tmpDir, `${record.id}.json`);
@@ -49,24 +49,24 @@ describe('TaskStore', () => {
 		});
 
 		it('adds the task to the index', () => {
-			const record = store.create('Indexed task');
+			const record = store.create('Indexed task', 'backlog');
 			const tasks = store.list();
 
 			expect(tasks).toHaveLength(1);
 			expect(tasks[0].id).toBe(record.id);
 			expect(tasks[0].title).toBe('Indexed task');
-			expect(tasks[0].status).toBe('created');
+			expect(tasks[0].status).toBe('backlog');
 		});
 	});
 
 	describe('get()', () => {
 		it('retrieves an existing task by id', () => {
-			const created = store.create('Fetchable task');
+			const created = store.create('Fetchable task', 'backlog');
 			const fetched = store.get(created.id);
 
 			expect(fetched.id).toBe(created.id);
 			expect(fetched.title).toBe('Fetchable task');
-			expect(fetched.status).toBe('created');
+			expect(fetched.status).toBe('backlog');
 		});
 
 		it('throws Task not found: <id> on missing id', () => {
@@ -76,7 +76,7 @@ describe('TaskStore', () => {
 
 	describe('updateStatus()', () => {
 		it('updates status and adds a history entry', () => {
-			const record = store.create('Status task');
+			const record = store.create('Status task', 'backlog');
 			// Force a distinct updatedAt: on a fast CI runner, create() and updateStatus()
 			// can land in the same millisecond, making the real clock an unreliable fixture.
 			vi.useFakeTimers();
@@ -91,13 +91,13 @@ describe('TaskStore', () => {
 		});
 
 		it('throws if task is already in the requested status', () => {
-			const record = store.create('Already in status task');
+			const record = store.create('Already in status task', 'backlog');
 			store.updateStatus(record.id, 'in-progress');
 			expect(() => store.updateStatus(record.id, 'in-progress')).toThrow('already in status "in-progress"');
 		});
 
 		it('updates the index entry status', () => {
-			const record = store.create('Index-status task');
+			const record = store.create('Index-status task', 'backlog');
 			store.updateStatus(record.id, 'done');
 
 			const tasks = store.list();
@@ -108,13 +108,13 @@ describe('TaskStore', () => {
 
 	describe('findByPrefix()', () => {
 		it('finds a task by full id', () => {
-			const record = store.create('Full id task');
+			const record = store.create('Full id task', 'backlog');
 			const found = store.findByPrefix(record.id);
 			expect(found.id).toBe(record.id);
 		});
 
 		it('finds a task by prefix', () => {
-			const record = store.create('Prefix task');
+			const record = store.create('Prefix task', 'backlog');
 			const found = store.findByPrefix(record.id.slice(0, 4));
 			expect(found.id).toBe(record.id);
 		});
@@ -125,8 +125,8 @@ describe('TaskStore', () => {
 
 		it('throws ambiguous error when prefix matches multiple tasks', () => {
 			// Force two tasks with a shared prefix by manipulating IDs via create+direct file write
-			const a = store.create('Task A');
-			const b = store.create('Task B');
+			const a = store.create('Task A', 'backlog');
+			const b = store.create('Task B', 'backlog');
 			// Only test ambiguity if IDs happen to share a prefix -- use first char
 			const sharedPrefix = a.id[0]!;
 			if (b.id.startsWith(sharedPrefix)) {
@@ -147,9 +147,9 @@ describe('TaskStore', () => {
 		});
 
 		it('returns all created tasks', () => {
-			store.create('Task one');
-			store.create('Task two');
-			store.create('Task three');
+			store.create('Task one', 'backlog');
+			store.create('Task two', 'backlog');
+			store.create('Task three', 'backlog');
 
 			const tasks = store.list();
 			expect(tasks).toHaveLength(3);
@@ -163,7 +163,7 @@ describe('TaskStore', () => {
 
 	describe('deleteTask()', () => {
 		it('deletes an existing task and returns true', () => {
-			const record = store.create('Task to delete');
+			const record = store.create('Task to delete', 'backlog');
 			const result = store.deleteTask(record.id);
 
 			expect(result).toBe(true);
@@ -171,7 +171,7 @@ describe('TaskStore', () => {
 		});
 
 		it('removes the task from the index', () => {
-			const record = store.create('Index removal task');
+			const record = store.create('Index removal task', 'backlog');
 			store.deleteTask(record.id);
 
 			const tasks = store.list();
@@ -184,8 +184,8 @@ describe('TaskStore', () => {
 		});
 
 		it('does not affect other tasks when deleting one', () => {
-			const a = store.create('Task A');
-			const b = store.create('Task B');
+			const a = store.create('Task A', 'backlog');
+			const b = store.create('Task B', 'backlog');
 			store.deleteTask(a.id);
 
 			const tasks = store.list();
@@ -194,9 +194,9 @@ describe('TaskStore', () => {
 		});
 
 		it('allows creating a new task after deleting all tasks', () => {
-			const record = store.create('Lonely task');
+			const record = store.create('Lonely task', 'backlog');
 			store.deleteTask(record.id);
-			const newRecord = store.create('New task after delete');
+			const newRecord = store.create('New task after delete', 'backlog');
 
 			const tasks = store.list();
 			expect(tasks).toHaveLength(1);

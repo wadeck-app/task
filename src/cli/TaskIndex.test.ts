@@ -338,8 +338,8 @@ describe('runTaskCommand — delete', () => {
 		expect(result.output).toContain('Would delete:');
 		expect(result.output).toContain('[done]');
 
-		// Tasks must still exist
-		const listResult = await runTaskCommand(['list'], tmpDir);
+		// Tasks must still exist (--all needed: one of them is 'done', a terminal status hidden by default)
+		const listResult = await runTaskCommand(['list', '--all'], tmpDir);
 		const tasks = JSON.parse(listResult.output) as unknown[];
 		expect(tasks).toHaveLength(2);
 	});
@@ -393,6 +393,30 @@ describe('runTaskCommand — delete', () => {
 		expect(result.exitCode).toBe(1);
 		const parsed = JSON.parse(result.output) as { error: string };
 		expect(parsed.error).toContain('unknown filter field');
+	});
+});
+
+describe('runTaskCommand — list hides terminal statuses by default', () => {
+	beforeEach(async () => {
+		await runTaskCommand(['init'], tmpDir);
+	});
+
+	it('list omits tasks in a terminal status (done) unless --all is passed', async () => {
+		const t1 = JSON.parse((await runTaskCommand(['new', 'done task'], tmpDir)).output) as { id: string };
+		await runTaskCommand(['set-status', t1.id, 'done'], tmpDir);
+		await runTaskCommand(['new', 'active task'], tmpDir);
+
+		const defaultList = JSON.parse((await runTaskCommand(['list'], tmpDir)).output) as Array<{ title: string }>;
+		expect(defaultList).toHaveLength(1);
+		expect(defaultList[0]!.title).toBe('active task');
+
+		const fullList = JSON.parse((await runTaskCommand(['list', '--all'], tmpDir)).output) as unknown[];
+		expect(fullList).toHaveLength(2);
+	});
+
+	it('new tasks start in the configured default status (backlog)', async () => {
+		const created = JSON.parse((await runTaskCommand(['new', 'fresh task'], tmpDir)).output) as { status: string };
+		expect(created.status).toBe('backlog');
 	});
 });
 

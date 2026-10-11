@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 import { TaskConfigLoader } from '../task/TaskConfigLoader.js';
 import { TaskStore } from '../task/TaskStore.js';
-import type { TaskStatus, TaskSummary } from '../task/TaskStore.js';
+import type { TaskSummary } from '../task/TaskStore.js';
 import { resolveTypeValidationStrategy } from '../task/TypeValidationStrategy.js';
 import { TASK_BUNDLE_NAME } from './TaskBundleName.js';
 import { runPluginsCommand } from './commands/PluginsCommand.js';
@@ -29,7 +29,8 @@ const PROJECT_CONFIG_TEMPLATE = `# Task configuration for this project
 statuses:
   - backlog
   - in-progress
-  - done
+  - name: done
+    terminal: true
 
 # fields:
 #   - name: component
@@ -229,7 +230,7 @@ Concepts:
 Usage:
   task init                                  Initialize task project in current directory
   task new <description>                     Create a new task; prints full task JSON
-  task list [--json]                         List all tasks as JSON array
+  task list [--json] [--all]                 List tasks as JSON array (hides terminal statuses unless --all)
   task show <id> [--json]                    Show full task detail as JSON
   task set-status <id> <status>              Update task status (valid values from .task/config.yml)
   task set-type <id> <type>                  Update task type (validated if types configured)
@@ -326,7 +327,12 @@ Environment variables:
 		return errorOutput(jsonMode, 'project not initialized', 'Run: task init');
 	}
 
-	const config = TaskConfigLoader.load({ configDir: configDirArg, projectDir: effectiveCwd });
+	let config: ReturnType<typeof TaskConfigLoader.load>;
+	try {
+		config = TaskConfigLoader.load({ configDir: configDirArg, projectDir: effectiveCwd });
+	} catch (error) {
+		return errorOutput(jsonMode, (error as Error).message);
+	}
 	const tasksDir = path.join(effectiveCwd, '.task', 'tasks');
 	const store = new TaskStore(tasksDir);
 
@@ -341,7 +347,7 @@ Environment variables:
 			if (!description) {
 				return errorOutput(jsonMode, 'missing description', 'Usage: task new <description>');
 			}
-			const task = store.create(description);
+			const task = store.create(description, config.defaultStatus);
 			await pushToQueue('onTaskCreated', {
 				taskId: task.id,
 				status: task.status,
@@ -354,7 +360,10 @@ Environment variables:
 		}
 
 		case 'list': {
-			const tasks = store.list();
+			const showAll = rest.includes('--all');
+			const tasks = showAll
+				? store.list()
+				: store.list().filter(t => !config.terminalStatuses.includes(t.status));
 			return { exitCode: 0, output: JSON.stringify(tasks, null, 2) };
 		}
 
@@ -396,7 +405,7 @@ Environment variables:
 			}
 			try {
 				const before = store.findByPrefix(id);
-				const updated = store.updateStatus(before.id, statusArg as TaskStatus, before);
+				const updated = store.updateStatus(before.id, statusArg, before);
 				await pushToQueue('onStatusChange', {
 					taskId: updated.id,
 					oldStatus: before.status,

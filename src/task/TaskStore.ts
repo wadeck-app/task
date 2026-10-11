@@ -8,7 +8,9 @@ function generateExecutionId(): string {
 	return parseInt(hex.slice(0, 11), 16).toString(36).padStart(8, '0').slice(-8);
 }
 
-export type TaskStatus = 'created' | 'elaborating' | 'flow-review' | 'approved' | 'in-progress' | 'failed' | 'done';
+// Status is validated against the project's configured `statuses` list (see TaskConfigLoader),
+// not a fixed enum: task-cli's status set is project-defined, unlike flow-cli's execution lifecycle.
+export type TaskStatus = string;
 
 export interface TaskSummary {
 	id: string;
@@ -37,7 +39,7 @@ interface TaskIndex {
 export class TaskStore {
 	constructor(private readonly tasksDir: string) {}
 
-	create(title: string): TaskRecord {
+	create(title: string, initialStatus: TaskStatus): TaskRecord {
 		this.ensureDirectory();
 
 		const now = new Date().toISOString();
@@ -47,14 +49,14 @@ export class TaskStore {
 			id,
 			title,
 			description: title,
-			status: 'created',
+			status: initialStatus,
 			createdAt: now,
 			updatedAt: now,
-			history: [{ status: 'created', timestamp: now }],
+			history: [{ status: initialStatus, timestamp: now }],
 		};
 
 		fs.writeFileSync(this.taskFilePath(id), JSON.stringify(record, null, 2), 'utf8');
-		this.addToIndex({ id, title, status: 'created', createdAt: now });
+		this.addToIndex({ id, title, status: initialStatus, createdAt: now });
 
 		return record;
 	}

@@ -61,6 +61,8 @@ describe('TaskConfigLoader', () => {
 		it('returns defaults when no config files exist', () => {
 			const config = TaskConfigLoader.load({ configDir: tmpDir, projectDir: tmpDir });
 			expect(config.statuses).toEqual(['backlog', 'in-progress', 'done']);
+			expect(config.defaultStatus).toBe('backlog');
+			expect(config.terminalStatuses).toEqual([]);
 			expect(config.defaults.priority).toBe('medium');
 			expect(config.globalHooks).toEqual({});
 			expect(config.projectHooks).toEqual({});
@@ -85,6 +87,46 @@ describe('TaskConfigLoader', () => {
 			fs.writeFileSync(path.join(tmpDir, '.task', 'config.yml'), 'statuses:\n  - todo\n  - doing\n  - done\n');
 			const config = TaskConfigLoader.load({ configDir: tmpDir, projectDir: tmpDir });
 			expect(config.statuses).toEqual(['todo', 'doing', 'done']);
+		});
+
+		it('accepts a mix of plain-string and object status entries', () => {
+			fs.mkdirSync(path.join(tmpDir, '.task'), { recursive: true });
+			fs.writeFileSync(
+				path.join(tmpDir, '.task', 'config.yml'),
+				'statuses:\n  - backlog\n  - in-progress\n  - name: done\n    terminal: true\n'
+			);
+			const config = TaskConfigLoader.load({ configDir: tmpDir, projectDir: tmpDir });
+			expect(config.statuses).toEqual(['backlog', 'in-progress', 'done']);
+			expect(config.terminalStatuses).toEqual(['done']);
+			expect(config.defaultStatus).toBe('backlog');
+		});
+
+		it('uses the status explicitly marked default: true, even if not first', () => {
+			fs.mkdirSync(path.join(tmpDir, '.task'), { recursive: true });
+			fs.writeFileSync(
+				path.join(tmpDir, '.task', 'config.yml'),
+				'statuses:\n  - backlog\n  - name: in-progress\n    default: true\n  - name: done\n    terminal: true\n'
+			);
+			const config = TaskConfigLoader.load({ configDir: tmpDir, projectDir: tmpDir });
+			expect(config.defaultStatus).toBe('in-progress');
+		});
+
+		it('falls back to the first status when none is marked default', () => {
+			fs.mkdirSync(path.join(tmpDir, '.task'), { recursive: true });
+			fs.writeFileSync(path.join(tmpDir, '.task', 'config.yml'), 'statuses:\n  - todo\n  - doing\n  - done\n');
+			const config = TaskConfigLoader.load({ configDir: tmpDir, projectDir: tmpDir });
+			expect(config.defaultStatus).toBe('todo');
+		});
+
+		it('throws when more than one status is marked default: true', () => {
+			fs.mkdirSync(path.join(tmpDir, '.task'), { recursive: true });
+			fs.writeFileSync(
+				path.join(tmpDir, '.task', 'config.yml'),
+				'statuses:\n  - name: backlog\n    default: true\n  - name: done\n    default: true\n'
+			);
+			expect(() => TaskConfigLoader.load({ configDir: tmpDir, projectDir: tmpDir })).toThrow(
+				/Multiple statuses marked "default: true"/
+			);
 		});
 
 		it('loads global hooks', () => {
