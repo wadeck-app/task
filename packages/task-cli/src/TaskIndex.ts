@@ -8,8 +8,9 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { TaskConfigLoader, TaskStore, resolveTypeValidationStrategy } from '@wadeck-app/task-core';
-import type { TaskSummary } from '@wadeck-app/task-core';
+import type { TaskRecord, TaskSummary } from '@wadeck-app/task-core';
 import { TASK_BUNDLE_NAME } from './TaskBundleName.js';
+import { diffHistoryEntries, diffTaskListSnapshot } from './commands/HistoryFollower.js';
 import { runPluginsCommand } from './commands/PluginsCommand.js';
 import {
 	printTaskCliHelp,
@@ -128,6 +129,56 @@ async function pushToQueue(event: string, payload: Record<string, unknown>): Pro
 	});
 }
 
+const FOLLOW_POLL_INTERVAL_MS = 500;
+
+/** `task list --follow`: polls the task index and prints newly-created or status-changed tasks. */
+async function runTaskListFollow(store: TaskStore, showAll: boolean, terminalStatuses: string[]): Promise<void> {
+	const passesFilter = (t: TaskSummary) => showAll || !terminalStatuses.includes(t.status);
+	const initialAll = store.list();
+	for (const task of initialAll.filter(passesFilter)) {
+		process.stdout.write(JSON.stringify(task) + '\n');
+	}
+	let snapshot = diffTaskListSnapshot(new Map(), initialAll).snapshot;
+
+	process.stderr.write('[task] Following task list -- Ctrl+C to stop\n');
+	await new Promise<void>(resolve => {
+		const interval = setInterval(() => {
+			const { changed, snapshot: next } = diffTaskListSnapshot(snapshot, store.list());
+			snapshot = next;
+			for (const task of changed.filter(passesFilter)) {
+				process.stdout.write(JSON.stringify(task) + '\n');
+			}
+		}, FOLLOW_POLL_INTERVAL_MS);
+		process.on('SIGINT', () => {
+			clearInterval(interval);
+			resolve();
+		});
+	});
+}
+
+/** `task history <id> --follow`: polls one task's history array and prints newly-appended entries. */
+async function runTaskHistoryFollow(store: TaskStore, taskId: string, initial: TaskRecord['history']): Promise<void> {
+	for (const entry of initial) {
+		process.stdout.write(JSON.stringify(entry) + '\n');
+	}
+	let count = initial.length;
+
+	process.stderr.write(`[task] Following history of ${taskId} -- Ctrl+C to stop\n`);
+	await new Promise<void>(resolve => {
+		const interval = setInterval(() => {
+			const { changed, count: nextCount } = diffHistoryEntries(count, store.get(taskId).history);
+			count = nextCount;
+			for (const entry of changed) {
+				process.stdout.write(JSON.stringify(entry) + '\n');
+			}
+		}, FOLLOW_POLL_INTERVAL_MS);
+		process.on('SIGINT', () => {
+			clearInterval(interval);
+			resolve();
+		});
+	});
+}
+
 function parseArgs(args: string[]): {
 	configDir: string | undefined;
 	projectDir: string | undefined;
@@ -228,8 +279,9 @@ Concepts:
 Usage:
   task init                                  Initialize task project in current directory
   task new <description>                     Create a new task; prints full task JSON
-  task list [--json] [--all]                 List tasks as JSON array (hides terminal statuses unless --all)
+  task list [--json] [--all] [--follow|-f]   List tasks as JSON array (hides terminal statuses unless --all)
   task show <id> [--json]                    Show full task detail as JSON
+  task history <id> [--json] [--follow|-f]   Show status-change history for a task
   task set-status <id> <status>              Update task status (valid values from .task/config.yml)
   task set-type <id> <type>                  Update task type (validated if types configured)
   task type list                             List valid types for this project
@@ -359,6 +411,10 @@ Environment variables:
 
 		case 'list': {
 			const showAll = rest.includes('--all');
+			if (rest.includes('--follow') || rest.includes('-f')) {
+				await runTaskListFollow(store, showAll, config.terminalStatuses);
+				return { exitCode: 0, output: '' };
+			}
 			const tasks = showAll
 				? store.list()
 				: store.list().filter(t => !config.terminalStatuses.includes(t.status));
@@ -376,6 +432,24 @@ Environment variables:
 			} catch (error) {
 				return errorOutput(jsonMode, (error as Error).message);
 			}
+		}
+
+		case 'history': {
+			const id = rest[0];
+			if (!id) {
+				return errorOutput(jsonMode, 'missing id', 'Usage: task history <id> [--follow|-f]');
+			}
+			let task: TaskRecord;
+			try {
+				task = store.findByPrefix(id);
+			} catch (error) {
+				return errorOutput(jsonMode, (error as Error).message);
+			}
+			if (rest.includes('--follow') || rest.includes('-f')) {
+				await runTaskHistoryFollow(store, task.id, task.history);
+				return { exitCode: 0, output: '' };
+			}
+			return { exitCode: 0, output: JSON.stringify(task.history, null, 2) };
 		}
 
 		case 'set-status': {
@@ -663,7 +737,7 @@ When no types are configured, any string is accepted (backwards compatible).`,
 			return errorOutput(
 				jsonMode,
 				`unknown command: ${command}`,
-				'Valid commands: init, new, list, show, set-status, set-type, add-label, remove-label, set-meta, delete, type, plugins'
+				'Valid commands: init, new, list, show, history, set-status, set-type, add-label, remove-label, set-meta, delete, type, plugins'
 			);
 	}
 }
