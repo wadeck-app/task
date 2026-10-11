@@ -7,10 +7,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { TaskConfigLoader } from '../task/TaskConfigLoader.js';
-import { TaskStore } from '../task/TaskStore.js';
-import type { TaskSummary } from '../task/TaskStore.js';
-import { resolveTypeValidationStrategy } from '../task/TypeValidationStrategy.js';
+import { TaskConfigLoader, TaskStore, resolveTypeValidationStrategy } from '@wadeck-app/task-core';
+import type { TaskSummary } from '@wadeck-app/task-core';
 import { TASK_BUNDLE_NAME } from './TaskBundleName.js';
 import { runPluginsCommand } from './commands/PluginsCommand.js';
 import {

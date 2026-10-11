@@ -9,16 +9,16 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// repo root (2 levels up from src/cli/: src/cli -> src -> repo root)
-const repoRoot = path.resolve(__dirname, '../..');
-const updaterBundlePath = path.resolve(repoRoot, 'dist-bundle/task-updater.cjs');
+// packages/task-cli package root (1 level up from src/)
+const packageRoot = path.resolve(__dirname, '..');
+const updaterBundlePath = path.resolve(packageRoot, 'dist-bundle/task-updater.cjs');
 
 const TEST_VERSION = '0.0.0-test-integration';
 
 beforeAll(() => {
 	// Use shell: true so npm resolves correctly on Windows (npm.cmd)
 	execFileSync('npm', ['run', 'bundle'], {
-		cwd: repoRoot,
+		cwd: packageRoot,
 		encoding: 'utf-8',
 		timeout: 120000,
 		env: { ...process.env, BUNDLE_VERSION: TEST_VERSION },

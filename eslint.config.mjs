@@ -12,9 +12,8 @@ export default tseslint.config(
 			'**/node_modules/**',
 			'**/coverage/**',
 			'**/*.d.ts',
-			'ci/**',
+			'**/ci/**',
 			'scripts/**',
-			'packages/**',
 			'*.config.mjs',
 			'*.config.ts',
 		],
@@ -22,7 +21,7 @@ export default tseslint.config(
 	eslint.configs.recommended,
 	...tseslint.configs.recommended,
 	{
-		files: ['src/**/*.ts'],
+		files: ['packages/*/src/**/*.ts'],
 		languageOptions: {
 			parser: tseslint.parser,
 			parserOptions: {
@@ -71,7 +70,7 @@ export default tseslint.config(
 		},
 	},
 	{
-		files: ['src/**/*.test.ts', 'src/**/*.spec.ts'],
+		files: ['packages/*/src/**/*.test.ts', 'packages/*/src/**/*.spec.ts'],
 		rules: {
 			'@typescript-eslint/no-explicit-any': 'off',
 			'@typescript-eslint/no-unused-vars': 'off',

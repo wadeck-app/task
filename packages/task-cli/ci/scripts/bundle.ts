@@ -29,7 +29,7 @@ const updaterOutfile = path.join(root, 'dist-bundle/task-updater.cjs');
 
 await Promise.all([
 	build({
-		entryPoints: [path.join(root, 'src/cli/TaskIndex.ts')],
+		entryPoints: [path.join(root, 'src/TaskIndex.ts')],
 		bundle: true,
 		platform: 'node',
 		target: 'node22',
@@ -42,7 +42,7 @@ await Promise.all([
 		logLevel: 'warning',
 	}),
 	build({
-		entryPoints: [path.join(root, 'src/cli/task-updater-entry.ts')],
+		entryPoints: [path.join(root, 'src/task-updater-entry.ts')],
 		bundle: true,
 		format: 'cjs',
 		platform: 'node',

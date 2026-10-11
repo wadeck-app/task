@@ -16,12 +16,9 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// violations-suppress-start: ts/no-deep-relative no path alias configured for intra-package imports in task-cli
-import { TaskConfigLoader } from '../../task/TaskConfigLoader.js';
-import { TaskStore } from '../../task/TaskStore.js';
-import { TASK_BUNDLE_NAME } from '../TaskBundleName.js';
+import { TaskConfigLoader, TaskStore } from '@wadeck-app/task-core';
 
-// violations-suppress-end: ts/no-deep-relative
+import { TASK_BUNDLE_NAME } from '../TaskBundleName.js';
 
 // Injected by esbuild at bundle time via define; falls back to package.json in dev mode (tsx).
 declare const __TASK_CLI_VERSION__: string;

@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Generates platform package directories for npm publish.
 # Called by CI before copy-binaries.sh. Not needed locally.
-# Usage: bash ci/scripts/generate-platform-packages.sh
+# Usage: bash packages/task-cli/ci/scripts/generate-platform-packages.sh (run from repo root)
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TEMPLATES_DIR="$SCRIPT_DIR/../templates"
 REGISTRY="https://npm.pkg.github.com/"
 
 generate() {
@@ -44,7 +46,7 @@ generate_dist() {
   mkdir -p "$dir/bin"
 
   # Generate bin/${cli}.js from template
-  sed -e "s/{{CLI_NAME}}/${cli}/g" -e "s/{{PKG_PREFIX}}/${cli}-cli/g" ci/templates/bin-launcher.js.tmpl > "$dir/bin/${cli}.js"
+  sed -e "s/{{CLI_NAME}}/${cli}/g" -e "s/{{PKG_PREFIX}}/${cli}-cli/g" "$TEMPLATES_DIR/bin-launcher.js.tmpl" > "$dir/bin/${cli}.js"
   chmod +x "$dir/bin/${cli}.js"
   echo "generated $dir/bin/${cli}.js"
 
