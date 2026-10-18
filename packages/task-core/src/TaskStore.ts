@@ -12,11 +12,31 @@ function generateExecutionId(): string {
 // not a fixed enum: task-cli's status set is project-defined, unlike flow-cli's execution lifecycle.
 export type TaskStatus = string;
 
+// Directional links, stored on the source task only. Each type has a derived, read-only inverse name
+// (see INVERSE_LINK_NAMES) computed from the other tasks' links: A blockedBy B <=> B blocks A.
+export const LINK_TYPES = ['blockedBy', 'duplicateOf', 'causedBy'] as const;
+export type LinkType = (typeof LINK_TYPES)[number];
+export type InverseLinkName = 'blocks' | 'duplicates' | 'causes';
+export const INVERSE_LINK_NAMES: Record<LinkType, InverseLinkName> = {
+	blockedBy: 'blocks',
+	duplicateOf: 'duplicates',
+	causedBy: 'causes',
+};
+// A task is a duplicate of at most one canonical task.
+const SINGLE_TARGET_LINK_TYPES: ReadonlySet<LinkType> = new Set<LinkType>(['duplicateOf']);
+
+export interface TaskLink {
+	type: LinkType;
+	target: string;
+}
+
 export interface TaskSummary {
 	id: string;
 	title: string;
 	status: TaskStatus;
 	createdAt: string;
+	// Absent when the task has no outgoing link. Mirrored from TaskRecord so graph queries never read task files.
+	links?: TaskLink[];
 	// Absent for root tasks. Mirrored from TaskRecord so hierarchy queries never need to read task files.
 	parentId?: string;
 }
@@ -27,11 +47,15 @@ export interface TaskTreeNode extends TaskSummary {
 	selected?: true;
 }
 
+export type TaskLinks = Record<LinkType | InverseLinkName, TaskSummary[]>;
+
 export interface TaskRecord {
 	id: string;
 	title: string;
 	description: string;
 	status: TaskStatus;
+	// Outgoing links only; absent when empty. Acyclic per link type (enforced by addLink()).
+	links?: TaskLink[];
 	// Absent for root tasks. Hierarchy depth is unlimited; cycles are rejected by setParent().
 	parentId?: string;
 	type?: string;
@@ -91,9 +115,12 @@ export class TaskStore {
 			throw new Error(`Task "${id}" cannot be its own parent`);
 		}
 		this.requireParent(parentId);
-		if (this.ancestorIds(parentId).includes(id)) {
+		const parentAncestors = this.ancestorIds(parentId);
+		if (parentAncestors.includes(id)) {
+			// Each arrow reads "has as parent": id -> parentId -> ... -> id.
+			const cyclePath = [id, parentId, ...parentAncestors.slice(0, parentAncestors.indexOf(id) + 1)];
 			throw new Error(
-				`Cannot set parent of "${id}" to "${parentId}": it would create a cycle ("${parentId}" is a descendant of "${id}")`
+				`Cannot set parent of "${id}" to "${parentId}": it would create a cycle (${cyclePath.join(' → ')}); "${parentId}" is a descendant of "${id}"`
 			);
 		}
 		return this.writeParent(record, parentId);
@@ -105,6 +132,117 @@ export class TaskStore {
 			throw new Error(`Task "${id}" has no parent`);
 		}
 		return this.writeParent(record, undefined);
+	}
+
+	/**
+	 * Adds an outgoing link `id <type> targetId`. Throws on an unknown type, a missing task, a
+	 * self-link, a duplicate, a second duplicateOf target, or if it would close a cycle in the
+	 * graph of that link type (checked transitively over the whole graph).
+	 */
+	addLink(id: string, type: LinkType, targetId: string): TaskRecord {
+		if (!(LINK_TYPES as readonly string[]).includes(type)) {
+			throw new Error(`Unknown link type "${type}". Valid types: ${LINK_TYPES.join(', ')}`);
+		}
+		const record = this.get(id);
+		if (id === targetId) {
+			throw new Error(`Task "${id}" cannot be linked to itself`);
+		}
+		if (!fs.existsSync(this.taskFilePath(targetId))) {
+			throw new Error(`Target task not found: ${targetId}`);
+		}
+		const links = record.links ?? [];
+		if (links.some(l => l.type === type && l.target === targetId)) {
+			throw new Error(`Task "${id}" is already ${type} "${targetId}"`);
+		}
+		const sameType = links.find(l => l.type === type);
+		if (SINGLE_TARGET_LINK_TYPES.has(type) && sameType) {
+			throw new Error(
+				`Task "${id}" is already a ${type} of "${sameType.target}". Run: task unlink ${id} ${type} ${sameType.target} first`
+			);
+		}
+		const cyclePath = this.findLinkPath(type, targetId, id);
+		if (cyclePath) {
+			throw new Error(
+				`Cannot link "${id}" ${type} "${targetId}": it would create a cycle (${[id, ...cyclePath].join(' → ')})`
+			);
+		}
+		return this.writeLinks(record, [...links, { type, target: targetId }]);
+	}
+
+	removeLink(id: string, type: LinkType, targetId: string): TaskRecord {
+		const record = this.get(id);
+		const links = record.links ?? [];
+		if (!links.some(l => l.type === type && l.target === targetId)) {
+			throw new Error(`Task "${id}" is not ${type} "${targetId}"`);
+		}
+		return this.writeLinks(
+			record,
+			links.filter(l => !(l.type === type && l.target === targetId))
+		);
+	}
+
+	/** Outgoing links (by type) and their derived inverses (blocks, duplicates, causes) as summaries. */
+	getLinks(id: string): TaskLinks {
+		const tasks = this.readIndex().tasks;
+		const byId = new Map(tasks.map(t => [t.id, t]));
+		if (!byId.has(id)) {
+			throw new Error(`Task not found: ${id}`);
+		}
+		const result: TaskLinks = {
+			blockedBy: [],
+			blocks: [],
+			duplicateOf: [],
+			duplicates: [],
+			causedBy: [],
+			causes: [],
+		};
+		for (const task of tasks) {
+			for (const link of task.links ?? []) {
+				if (task.id === id) {
+					const target = byId.get(link.target);
+					if (!target) {
+						throw new Error(`Task index is corrupted: link target "${link.target}" of "${id}" not found`);
+					}
+					result[link.type].push(target);
+				}
+				if (link.target === id) {
+					result[INVERSE_LINK_NAMES[link.type]].push(task);
+				}
+			}
+		}
+		return result;
+	}
+
+	/** Direct blockers of a task that are not in a terminal status. */
+	getOpenBlockers(id: string, isTerminal: (status: TaskStatus) => boolean): TaskSummary[] {
+		return this.getLinks(id).blockedBy.filter(t => !isTerminal(t.status));
+	}
+
+	/**
+	 * Tasks that `blockerId` was the last open blocker of: still open themselves, blocked by it, and
+	 * with every blocker (including it) now terminal. Empty while `blockerId` itself is not terminal.
+	 */
+	getUnblockedBy(blockerId: string, isTerminal: (status: TaskStatus) => boolean): TaskSummary[] {
+		const tasks = this.readIndex().tasks;
+		const byId = new Map(tasks.map(t => [t.id, t]));
+		const blocker = byId.get(blockerId);
+		if (!blocker) {
+			throw new Error(`Task not found: ${blockerId}`);
+		}
+		if (!isTerminal(blocker.status)) {
+			return [];
+		}
+		return tasks.filter(t => {
+			const blockerIds = (t.links ?? []).filter(l => l.type === 'blockedBy').map(l => l.target);
+			return (
+				blockerIds.includes(blockerId) &&
+				!isTerminal(t.status) &&
+				blockerIds.every(b => {
+					const other = byId.get(b);
+					return other !== undefined && isTerminal(other.status);
+				})
+			);
+		});
 	}
 
 	/** Direct children only. */
@@ -321,7 +459,75 @@ export class TaskStore {
 		fs.unlinkSync(filePath);
 		this.removeFromIndex(id);
 		this.orphanChildrenOf(id);
+		this.removeLinksTo(id);
 		return true;
+	}
+
+	// Links pointing to a deleted task would dangle: drop them from the tasks that held them.
+	private removeLinksTo(targetId: string): void {
+		for (const holder of this.readIndex().tasks.filter(t => t.links?.some(l => l.target === targetId))) {
+			const record = this.get(holder.id);
+			this.writeLinks(
+				record,
+				(record.links ?? []).filter(l => l.target !== targetId)
+			);
+		}
+	}
+
+	/**
+	 * Breadth-first search along `type` links from `from` to `to`, over the whole graph in the index.
+	 * Returns the path [from, ..., to], or undefined when `to` is unreachable.
+	 */
+	private findLinkPath(type: LinkType, from: string, to: string): string[] | undefined {
+		const edges = new Map<string, string[]>();
+		for (const task of this.readIndex().tasks) {
+			const targets = (task.links ?? []).filter(l => l.type === type).map(l => l.target);
+			if (targets.length > 0) {
+				edges.set(task.id, targets);
+			}
+		}
+		const cameFrom = new Map<string, string | undefined>([[from, undefined]]);
+		const queue = [from];
+		for (let head = 0; head < queue.length; head++) {
+			const node = queue[head]!;
+			if (node === to) {
+				const path: string[] = [];
+				for (let step: string | undefined = node; step !== undefined; step = cameFrom.get(step)) {
+					path.unshift(step);
+				}
+				return path;
+			}
+			for (const next of edges.get(node) ?? []) {
+				if (!cameFrom.has(next)) {
+					cameFrom.set(next, node);
+					queue.push(next);
+				}
+			}
+		}
+		return undefined;
+	}
+
+	private writeLinks(record: TaskRecord, links: TaskLink[]): TaskRecord {
+		if (links.length === 0) {
+			delete record.links;
+		} else {
+			record.links = links;
+		}
+		record.updatedAt = new Date().toISOString();
+		fs.writeFileSync(this.taskFilePath(record.id), JSON.stringify(record, null, 2), 'utf8');
+
+		const index = this.readIndex();
+		const entry = index.tasks.find(t => t.id === record.id);
+		if (!entry) {
+			throw new Error(`Task index out of sync: entry for "${record.id}" not found. The index may be corrupted.`);
+		}
+		if (links.length === 0) {
+			delete entry.links;
+		} else {
+			entry.links = links;
+		}
+		this.writeIndex(index);
+		return record;
 	}
 
 	// Children of a deleted task become roots; their own subtrees stay attached to them.

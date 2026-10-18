@@ -7,8 +7,14 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { TaskConfigLoader, TaskStore, resolveTypeValidationStrategy } from '@wadeck-app/task-core';
-import type { TaskRecord, TaskSummary } from '@wadeck-app/task-core';
+import {
+	INVERSE_LINK_NAMES,
+	LINK_TYPES,
+	TaskConfigLoader,
+	TaskStore,
+	resolveTypeValidationStrategy,
+} from '@wadeck-app/task-core';
+import type { LinkType, TaskRecord, TaskSummary } from '@wadeck-app/task-core';
 import { TASK_BUNDLE_NAME } from './TaskBundleName.js';
 import { diffAppendOnlyLog, diffSnapshot } from '@wadeck-app/shared-cli/FollowSnapshot';
 import { runPluginsCommand } from './commands/PluginsCommand.js';
@@ -69,6 +75,16 @@ function matchGlob(pattern: string, value: string): boolean {
 	// Escape all regex metacharacters except *, then replace * with .*
 	const regexStr = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
 	return new RegExp(`^${regexStr}$`).test(value);
+}
+
+const ALL_LINK_NAMES: string[] = [...LINK_TYPES, ...Object.values(INVERSE_LINK_NAMES)];
+
+/** Resolves a user-typed link name; an inverse name ("blocks") means the link is stored on the other task. */
+function parseLinkType(input: string): { type: LinkType; inverse: boolean } | undefined {
+	const stored = LINK_TYPES.find(t => t === input);
+	if (stored) return { type: stored, inverse: false };
+	const inverse = LINK_TYPES.find(t => INVERSE_LINK_NAMES[t] === input);
+	return inverse ? { type: inverse, inverse: true } : undefined;
 }
 
 function suggest(input: string, candidates: string[]): string | undefined {
@@ -273,6 +289,7 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 Concepts:
   task        A work item with id, description, status, type, labels, and metadata
   parent      Optional parentId on a task; hierarchy depth is unlimited (delete a parent: children become roots, or --cascade-delete)
+  link        Typed, directional, acyclic relation between two tasks: blockedBy, duplicateOf, causedBy (inverses blocks, duplicates, causes are derived)
   config      Project config at .task/config.yml (defines valid statuses; default: backlog, in-progress, done)
   init        Creates .task/ directory and config.yml in the current working directory
   id          Short prefix of the task UUID - any unambiguous prefix is accepted
@@ -293,6 +310,9 @@ Usage:
   task set-parent <id> <parent-id>           Attach a task under a parent (cycles are rejected)
   task remove-parent <id>                    Detach a task from its parent (it becomes a root task)
   task children <id> [--recursive]           List direct children (--recursive: nested subtree, any depth)
+  task link <id> <type> <target-id>          Link a task to another (blockedBy, duplicateOf, causedBy; inverse names blocks, duplicates, causes also accepted)
+  task unlink <id> <type> <target-id>        Remove a link
+  task links <id>                            Show a task's links and their derived inverses
   task parents <id>                          List all ancestors, from the direct parent up to the root
   task tree <id>                             Complete tree containing the task (from its topmost ancestor); the task is flagged "selected"
   task add-label <id> <label>               Add a label to a task
@@ -581,16 +601,90 @@ Environment variables:
 			}
 			try {
 				const before = store.findByPrefix(id);
+				// updateStatus() mutates `before` in place: read the previous status first.
+				const oldStatus = before.status;
 				const updated = store.updateStatus(before.id, statusArg, before);
 				await pushToQueue('onStatusChange', {
 					taskId: updated.id,
-					oldStatus: before.status,
+					oldStatus,
 					newStatus: updated.status,
 					type: updated.type,
 					labels: updated.labels ?? [],
 					...projectEnv,
 				});
+
+				const isTerminal = (status: string): boolean => config.terminalStatuses.includes(status);
+				if (isTerminal(updated.status) && !isTerminal(oldStatus)) {
+					const openBlockers = store.getOpenBlockers(updated.id, isTerminal);
+					if (openBlockers.length > 0) {
+						const lines = openBlockers.map(b => `  ${b.id}  ${b.title}  [${b.status}]`);
+						process.stderr.write(
+							`Warning: task ${updated.id} is now ${updated.status} but still blocked by ${openBlockers.length} open task(s):\n${lines.join('\n')}\n`
+						);
+					}
+					// Tasks whose last open blocker was this one can now move forward.
+					for (const unblocked of store.getUnblockedBy(updated.id, isTerminal)) {
+						const record = store.get(unblocked.id);
+						await pushToQueue('onTaskUnblocked', {
+							taskId: record.id,
+							blockerId: updated.id,
+							status: record.status,
+							type: record.type,
+							labels: record.labels ?? [],
+							...projectEnv,
+						});
+					}
+				}
 				return { exitCode: 0, output: JSON.stringify(updated, null, 2) };
+			} catch (error) {
+				return errorOutput(jsonMode, (error as Error).message);
+			}
+		}
+
+		case 'link':
+		case 'unlink': {
+			const usage = `Usage: task ${command} <id> <type> <target-id>`;
+			const [idArg, typeArg, targetArg] = rest;
+			if (!idArg || !typeArg || !targetArg) {
+				return errorOutput(jsonMode, 'missing arguments', usage);
+			}
+			const spec = parseLinkType(typeArg);
+			if (!spec) {
+				const hint = suggest(typeArg, ALL_LINK_NAMES);
+				return errorOutput(
+					jsonMode,
+					`unknown link type "${typeArg}"`,
+					`Valid types: ${ALL_LINK_NAMES.join(', ')}${hint ? `\nDid you mean: ${hint}?` : ''}`
+				);
+			}
+			try {
+				const first = store.findByPrefix(idArg).id;
+				const second = store.findByPrefix(targetArg).id;
+				// "A blocks B" is stored on B as "B blockedBy A": the holder is the task that owns the stored link.
+				const [holder, target] = spec.inverse ? [second, first] : [first, second];
+				const updated =
+					command === 'link'
+						? store.addLink(holder, spec.type, target)
+						: store.removeLink(holder, spec.type, target);
+				await pushToQueue(command === 'link' ? 'onTaskLinked' : 'onTaskUnlinked', {
+					taskId: holder,
+					linkType: spec.type,
+					targetId: target,
+					...projectEnv,
+				});
+				return { exitCode: 0, output: JSON.stringify(updated, null, 2) };
+			} catch (error) {
+				return errorOutput(jsonMode, (error as Error).message);
+			}
+		}
+
+		case 'links': {
+			const id = rest[0];
+			if (!id) {
+				return errorOutput(jsonMode, 'missing id', 'Usage: task links <id>');
+			}
+			try {
+				return { exitCode: 0, output: JSON.stringify(store.getLinks(store.findByPrefix(id).id), null, 2) };
 			} catch (error) {
 				return errorOutput(jsonMode, (error as Error).message);
 			}
@@ -858,6 +952,12 @@ Environment variables:
 			const orphanCount = store
 				.list()
 				.filter(t => t.parentId !== undefined && deletedIds.has(t.parentId) && !deletedIds.has(t.id)).length;
+			// Links held by surviving tasks that point to a deleted task are removed with it.
+			const danglingLinkCount = store
+				.list()
+				.filter(t => !deletedIds.has(t.id))
+				.flatMap(t => t.links ?? [])
+				.filter(l => deletedIds.has(l.target)).length;
 
 			if (dryRun) {
 				const lines = ['Would delete:'];
@@ -867,6 +967,9 @@ Environment variables:
 				lines.push(`Total: ${tasksToDelete.length} task(s).`);
 				if (orphanCount > 0) {
 					lines.push(`${orphanCount} child task(s) would become root tasks (their parent is deleted).`);
+				}
+				if (danglingLinkCount > 0) {
+					lines.push(`${danglingLinkCount} link(s) pointing to deleted tasks would be removed.`);
 				}
 				return { exitCode: 0, output: lines.join('\n') };
 			}
@@ -880,7 +983,9 @@ Environment variables:
 
 			const orphanNote =
 				orphanCount > 0 ? `\n${orphanCount} child task(s) became root tasks (their parent was deleted).` : '';
-			return { exitCode: 0, output: `Deleted ${deletedCount} task(s).${orphanNote}` };
+			const linkNote =
+				danglingLinkCount > 0 ? `\n${danglingLinkCount} link(s) pointing to deleted tasks were removed.` : '';
+			return { exitCode: 0, output: `Deleted ${deletedCount} task(s).${orphanNote}${linkNote}` };
 		}
 
 		case 'type': {
@@ -939,7 +1044,7 @@ When no types are configured, any string is accepted (backwards compatible).`,
 			return errorOutput(
 				jsonMode,
 				`unknown command: ${command}`,
-				'Valid commands: init, new, list, show, history, set-status, set-type, set-parent, remove-parent, children, parents, tree, add-label, remove-label, set-meta, delete, type, plugins'
+				'Valid commands: init, new, list, show, history, set-status, set-type, set-parent, remove-parent, children, parents, tree, link, unlink, links, add-label, remove-label, set-meta, delete, type, plugins'
 			);
 	}
 }

@@ -294,6 +294,65 @@ describe('TaskStore', () => {
 				expect(() => store.setParent(a.id, d.id)).toThrow(/cycle/);
 			});
 
+			it('rejects closing a chain: A parent of B parent of C, then C as parent of A', () => {
+				const a = store.create('A', 'backlog');
+				const b = store.create('B', 'backlog', a.id);
+				const c = store.create('C', 'backlog', b.id);
+
+				expect(() => store.setParent(a.id, c.id)).toThrow(/cycle/);
+				expect(store.get(a.id).parentId).toBeUndefined();
+			});
+
+			it('names the whole cycle path in the error so it is actionable', () => {
+				const a = store.create('A', 'backlog');
+				const b = store.create('B', 'backlog', a.id);
+				const c = store.create('C', 'backlog', b.id);
+
+				expect(() => store.setParent(a.id, c.id)).toThrow(new RegExp(`${a.id} → ${c.id} → ${b.id} → ${a.id}`));
+			});
+
+			it('rejects moving a middle task under one of its own descendants', () => {
+				const a = store.create('A', 'backlog');
+				const b = store.create('B', 'backlog', a.id);
+				const c = store.create('C', 'backlog', b.id);
+				const d = store.create('D', 'backlog', c.id);
+
+				expect(() => store.setParent(b.id, d.id)).toThrow(/cycle/);
+				expect(() => store.setParent(b.id, c.id)).toThrow(/cycle/);
+				expect(store.get(b.id).parentId).toBe(a.id);
+			});
+
+			it('rejects closing a long chain (60 levels) end to start', () => {
+				let current = store.create('L0', 'backlog');
+				const rootId = current.id;
+				for (let i = 1; i < 60; i++) {
+					current = store.create(`L${i}`, 'backlog', current.id);
+				}
+
+				expect(() => store.setParent(rootId, current.id)).toThrow(/cycle/);
+			});
+
+			it('allows moving a subtree under an unrelated task or a sibling branch', () => {
+				const root = store.create('Root', 'backlog');
+				const left = store.create('Left', 'backlog', root.id);
+				const leftChild = store.create('Left child', 'backlog', left.id);
+				const right = store.create('Right', 'backlog', root.id);
+
+				expect(() => store.setParent(left.id, right.id)).not.toThrow();
+				expect(store.getAncestors(leftChild.id).map(t => t.id)).toEqual([left.id, right.id, root.id]);
+			});
+
+			it('allows the move again once the path that formed the cycle is removed', () => {
+				const a = store.create('A', 'backlog');
+				const b = store.create('B', 'backlog', a.id);
+				const c = store.create('C', 'backlog', b.id);
+				expect(() => store.setParent(a.id, c.id)).toThrow(/cycle/);
+
+				store.removeParent(c.id);
+
+				expect(() => store.setParent(a.id, c.id)).not.toThrow();
+			});
+
 			it('throws when the parent does not exist', () => {
 				const child = store.create('Child', 'backlog');
 
