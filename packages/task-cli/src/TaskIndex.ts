@@ -272,28 +272,37 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 
 Concepts:
   task        A work item with id, description, status, type, labels, and metadata
+  parent      Optional parentId on a task; hierarchy depth is unlimited (delete a parent: children become roots, or --cascade-delete)
   config      Project config at .task/config.yml (defines valid statuses; default: backlog, in-progress, done)
   init        Creates .task/ directory and config.yml in the current working directory
   id          Short prefix of the task UUID - any unambiguous prefix is accepted
 
 Usage:
   task init                                  Initialize task project in current directory
-  task new <description>                     Create a new task; prints full task JSON
+  task new <description> [--parent <id>]     Create a new task (optionally under a parent); prints full task JSON
   task list [--json] [--all] [--follow|-f]   List tasks as JSON array (hides terminal statuses unless --all)
-  task show <id> [--json]                    Show full task detail as JSON
+  task list --parent <id>                    List only the direct children of a task
+  task list --tree                           List tasks as a nested forest (kept: matching tasks + the ancestors leading to them)
+  task show <id> [--json] [--with-parent] [--with-children]   Show task detail (always incl. parentId, childrenIds); flags add parent/children summaries
   task history <id> [--json] [--follow|-f]   Show status-change history for a task
   task set-status <id> <status>              Update task status (valid values from .task/config.yml)
   task set-type <id> <type>                  Update task type (validated if types configured)
   task type list                             List valid types for this project
   task type add <name>                       Add a valid type
   task type remove <name>                    Remove a valid type
+  task set-parent <id> <parent-id>           Attach a task under a parent (cycles are rejected)
+  task remove-parent <id>                    Detach a task from its parent (it becomes a root task)
+  task children <id> [--recursive]           List direct children (--recursive: nested subtree, any depth)
+  task parents <id>                          List all ancestors, from the direct parent up to the root
+  task tree <id>                             Complete tree containing the task (from its topmost ancestor); the task is flagged "selected"
   task add-label <id> <label>               Add a label to a task
   task remove-label <id> <label>            Remove a label from a task
   task set-meta <id> <key> <value>          Set a metadata key/value on a task
   task delete <id>[,<id2>,...]              Delete task(s) by ID (comma-separated)
   task delete --all                          Delete all tasks
-  task delete --filter <field>=<value>       Delete tasks matching a filter (fields: id, title, status)
+  task delete --filter <field>=<value>       Delete tasks matching a filter (fields: id, title, status, parentId; glob * allowed)
   task delete --dry-run ...                  Show what would be deleted without deleting
+  task delete ... --cascade-delete           Also delete all descendants of the matched tasks (default: children become root tasks)
   task plugins list [--json]                 List available built-in flow plugins
   task plugins config <id> [--json]         Show config snippet for a plugin
   task cli self-check                        Validate installation
@@ -393,15 +402,38 @@ Environment variables:
 
 	switch (command) {
 		case 'new': {
-			const description = rest[0];
-			if (!description) {
-				return errorOutput(jsonMode, 'missing description', 'Usage: task new <description>');
+			const NEW_USAGE = 'Usage: task new <description> [--parent <id>]';
+			let description: string | undefined;
+			let parentArg: string | undefined;
+			for (let i = 0; i < rest.length; i++) {
+				const arg = rest[i]!;
+				if (arg === '--parent') {
+					parentArg = rest[i + 1];
+					if (!parentArg) {
+						return errorOutput(jsonMode, '--parent requires a task id', NEW_USAGE);
+					}
+					i++;
+				} else if (arg.startsWith('--')) {
+					return errorOutput(jsonMode, `unknown flag: ${arg}`, NEW_USAGE);
+				} else if (description === undefined) {
+					description = arg;
+				}
 			}
-			const task = store.create(description, config.defaultStatus);
+			if (!description) {
+				return errorOutput(jsonMode, 'missing description', NEW_USAGE);
+			}
+			let task: TaskRecord;
+			try {
+				const parentId = parentArg === undefined ? undefined : store.findByPrefix(parentArg).id;
+				task = store.create(description, config.defaultStatus, parentId);
+			} catch (error) {
+				return errorOutput(jsonMode, (error as Error).message);
+			}
 			await pushToQueue('onTaskCreated', {
 				taskId: task.id,
 				status: task.status,
 				description: task.description,
+				parentId: task.parentId,
 				type: task.type,
 				labels: task.labels ?? [],
 				...projectEnv,
@@ -410,25 +442,97 @@ Environment variables:
 		}
 
 		case 'list': {
-			const showAll = rest.includes('--all');
-			if (rest.includes('--follow') || rest.includes('-f')) {
+			const LIST_USAGE = 'Usage: task list [--all] [--parent <id>] [--tree] [--follow|-f]';
+			let showAll = false;
+			let follow = false;
+			let tree = false;
+			let parentArg: string | undefined;
+			for (let i = 0; i < rest.length; i++) {
+				const arg = rest[i]!;
+				if (arg === '--all') {
+					showAll = true;
+				} else if (arg === '--follow' || arg === '-f') {
+					follow = true;
+				} else if (arg === '--tree') {
+					tree = true;
+				} else if (arg === '--parent') {
+					parentArg = rest[i + 1];
+					if (!parentArg) {
+						return errorOutput(jsonMode, '--parent requires a task id', LIST_USAGE);
+					}
+					i++;
+				} else if (arg.startsWith('-')) {
+					return errorOutput(jsonMode, `unknown flag: ${arg}`, LIST_USAGE);
+				}
+			}
+			if (follow && (tree || parentArg !== undefined)) {
+				const conflicting = tree ? '--tree' : '--parent';
+				return errorOutput(
+					jsonMode,
+					`--follow cannot be combined with ${conflicting}`,
+					'--follow streams new/changed tasks as flat JSON lines; run the list again without --follow to see the hierarchy.'
+				);
+			}
+			if (follow) {
 				await runTaskListFollow(store, showAll, config.terminalStatuses);
 				return { exitCode: 0, output: '' };
 			}
-			const tasks = showAll
-				? store.list()
-				: store.list().filter(t => !config.terminalStatuses.includes(t.status));
-			return { exitCode: 0, output: JSON.stringify(tasks, null, 2) };
+			const passesFilter = (t: TaskSummary): boolean => showAll || !config.terminalStatuses.includes(t.status);
+			try {
+				const parentId = parentArg === undefined ? undefined : store.findByPrefix(parentArg).id;
+				if (tree) {
+					return {
+						exitCode: 0,
+						output: JSON.stringify(store.getForest({ parentId, predicate: passesFilter }), null, 2),
+					};
+				}
+				const tasks = (parentId === undefined ? store.list() : store.getChildren(parentId)).filter(
+					passesFilter
+				);
+				return { exitCode: 0, output: JSON.stringify(tasks, null, 2) };
+			} catch (error) {
+				return errorOutput(jsonMode, (error as Error).message);
+			}
 		}
 
 		case 'show': {
-			const id = rest[0];
+			const SHOW_USAGE = 'Usage: task show <id> [--with-parent] [--with-children]';
+			let id: string | undefined;
+			let withParent = false;
+			let withChildren = false;
+			for (const arg of rest) {
+				if (arg === '--with-parent') {
+					withParent = true;
+				} else if (arg === '--with-children') {
+					withChildren = true;
+				} else if (arg.startsWith('--')) {
+					return errorOutput(jsonMode, `unknown flag: ${arg}`, 'Valid flags: --with-parent, --with-children');
+				} else if (id === undefined) {
+					id = arg;
+				}
+			}
 			if (!id) {
-				return errorOutput(jsonMode, 'missing id', 'Usage: task show <id>');
+				return errorOutput(jsonMode, 'missing id', SHOW_USAGE);
 			}
 			try {
 				const task = store.findByPrefix(id);
-				return { exitCode: 0, output: JSON.stringify(task, null, 2) };
+				const children = store.getChildren(task.id);
+				const detail: Record<string, unknown> = { ...task, childrenIds: children.map(c => c.id) };
+				if (withParent) {
+					const parent = task.parentId === undefined ? null : store.list().find(t => t.id === task.parentId);
+					if (parent === undefined) {
+						return errorOutput(
+							jsonMode,
+							`parent "${task.parentId}" of task "${task.id}" does not exist`,
+							`Fix with: task remove-parent ${task.id}`
+						);
+					}
+					detail['parent'] = parent;
+				}
+				if (withChildren) {
+					detail['children'] = children;
+				}
+				return { exitCode: 0, output: JSON.stringify(detail, null, 2) };
 			} catch (error) {
 				return errorOutput(jsonMode, (error as Error).message);
 			}
@@ -539,6 +643,75 @@ Environment variables:
 			}
 		}
 
+		case 'set-parent': {
+			const id = rest[0];
+			const parentArg = rest[1];
+			if (!id || !parentArg) {
+				return errorOutput(jsonMode, 'missing arguments', 'Usage: task set-parent <id> <parent-id>');
+			}
+			try {
+				const updated = store.setParent(store.findByPrefix(id).id, store.findByPrefix(parentArg).id);
+				return { exitCode: 0, output: JSON.stringify(updated, null, 2) };
+			} catch (error) {
+				return errorOutput(jsonMode, (error as Error).message);
+			}
+		}
+
+		case 'remove-parent': {
+			const id = rest[0];
+			if (!id) {
+				return errorOutput(jsonMode, 'missing id', 'Usage: task remove-parent <id>');
+			}
+			try {
+				const updated = store.removeParent(store.findByPrefix(id).id);
+				return { exitCode: 0, output: JSON.stringify(updated, null, 2) };
+			} catch (error) {
+				return errorOutput(jsonMode, (error as Error).message);
+			}
+		}
+
+		case 'children': {
+			const id = rest[0];
+			if (!id) {
+				return errorOutput(jsonMode, 'missing id', 'Usage: task children <id> [--recursive]');
+			}
+			try {
+				const taskId = store.findByPrefix(id).id;
+				const result = rest.includes('--recursive')
+					? store.getTree(taskId).children
+					: store.getChildren(taskId);
+				return { exitCode: 0, output: JSON.stringify(result, null, 2) };
+			} catch (error) {
+				return errorOutput(jsonMode, (error as Error).message);
+			}
+		}
+
+		case 'parents': {
+			const id = rest[0];
+			if (!id) {
+				return errorOutput(jsonMode, 'missing id', 'Usage: task parents <id>');
+			}
+			try {
+				const ancestors = store.getAncestors(store.findByPrefix(id).id);
+				return { exitCode: 0, output: JSON.stringify(ancestors, null, 2) };
+			} catch (error) {
+				return errorOutput(jsonMode, (error as Error).message);
+			}
+		}
+
+		case 'tree': {
+			const id = rest[0];
+			if (!id) {
+				return errorOutput(jsonMode, 'missing id', 'Usage: task tree <id>');
+			}
+			try {
+				const tree = store.getFullTree(store.findByPrefix(id).id);
+				return { exitCode: 0, output: JSON.stringify(tree, null, 2) };
+			} catch (error) {
+				return errorOutput(jsonMode, (error as Error).message);
+			}
+		}
+
 		case 'set-meta': {
 			const id = rest[0];
 			const key = rest[1];
@@ -558,6 +731,8 @@ Environment variables:
 			// Parse flags and positional args
 			let dryRun = false;
 			let hasAll = false;
+			// Like SQL's ON DELETE CASCADE: also delete every descendant (default: children become root tasks).
+			let cascade = false;
 			let filterSpec: string | undefined;
 			const positionalIds: string[] = [];
 
@@ -570,6 +745,9 @@ Environment variables:
 				} else if (arg === '--all') {
 					hasAll = true;
 					i++;
+				} else if (arg === '--cascade-delete') {
+					cascade = true;
+					i++;
 				} else if (arg === '--filter') {
 					filterSpec = rest[i + 1];
 					i += 2;
@@ -577,7 +755,7 @@ Environment variables:
 					return errorOutput(
 						jsonMode,
 						`unknown flag: ${arg}`,
-						'Valid flags: --all, --filter <field>=<value>, --dry-run'
+						'Valid flags: --all, --filter <field>=<value>, --dry-run, --cascade-delete'
 					);
 				} else {
 					// Comma-separated IDs allowed in a single positional arg
@@ -605,7 +783,7 @@ Environment variables:
 				);
 			}
 
-			const VALID_FILTER_FIELDS = ['id', 'title', 'status'] as const;
+			const VALID_FILTER_FIELDS = ['id', 'title', 'status', 'parentId'] as const;
 			type FilterableField = (typeof VALID_FILTER_FIELDS)[number];
 
 			let tasksToDelete: TaskSummary[] = [];
@@ -635,7 +813,8 @@ Environment variables:
 				}
 
 				const all = store.list();
-				tasksToDelete = all.filter(t => values.some(v => matchGlob(v, t[field])));
+				// A root task has no parentId: it never matches a parentId pattern.
+				tasksToDelete = all.filter(t => t[field] !== undefined && values.some(v => matchGlob(v, t[field]!)));
 			} else {
 				// Positional IDs: resolve by prefix
 				const all = store.list();
@@ -662,12 +841,33 @@ Environment variables:
 				return { exitCode: 0, output: 'Nothing to delete.' };
 			}
 
+			if (cascade) {
+				const selected = new Set(tasksToDelete.map(t => t.id));
+				for (const t of [...tasksToDelete]) {
+					for (const descendant of store.getDescendants(t.id)) {
+						if (!selected.has(descendant.id)) {
+							selected.add(descendant.id);
+							tasksToDelete.push(descendant);
+						}
+					}
+				}
+			}
+
+			// Children that survive the deletion lose their parent and become root tasks.
+			const deletedIds = new Set(tasksToDelete.map(t => t.id));
+			const orphanCount = store
+				.list()
+				.filter(t => t.parentId !== undefined && deletedIds.has(t.parentId) && !deletedIds.has(t.id)).length;
+
 			if (dryRun) {
 				const lines = ['Would delete:'];
 				for (const t of tasksToDelete) {
 					lines.push(`  ${t.id}  ${t.title}  [${t.status}]`);
 				}
 				lines.push(`Total: ${tasksToDelete.length} task(s).`);
+				if (orphanCount > 0) {
+					lines.push(`${orphanCount} child task(s) would become root tasks (their parent is deleted).`);
+				}
 				return { exitCode: 0, output: lines.join('\n') };
 			}
 
@@ -678,7 +878,9 @@ Environment variables:
 				}
 			}
 
-			return { exitCode: 0, output: `Deleted ${deletedCount} task(s).` };
+			const orphanNote =
+				orphanCount > 0 ? `\n${orphanCount} child task(s) became root tasks (their parent was deleted).` : '';
+			return { exitCode: 0, output: `Deleted ${deletedCount} task(s).${orphanNote}` };
 		}
 
 		case 'type': {
@@ -737,7 +939,7 @@ When no types are configured, any string is accepted (backwards compatible).`,
 			return errorOutput(
 				jsonMode,
 				`unknown command: ${command}`,
-				'Valid commands: init, new, list, show, history, set-status, set-type, add-label, remove-label, set-meta, delete, type, plugins'
+				'Valid commands: init, new, list, show, history, set-status, set-type, set-parent, remove-parent, children, parents, tree, add-label, remove-label, set-meta, delete, type, plugins'
 			);
 	}
 }

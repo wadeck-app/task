@@ -32,6 +32,10 @@ export default defineConfig({
 	},
 	resolve: {
 		extensions: ['.ts', '.tsx', '.js', '.jsx', '.json'],
+		// Load task-core from source so tests never run against a stale or missing dist/.
+		alias: {
+			'@wadeck-app/task-core': path.resolve(import.meta.dirname, '../task-core/src/index.ts'),
+		},
 	},
 	esbuild: {
 		target: 'es2022',

@@ -17,6 +17,14 @@ export interface TaskSummary {
 	title: string;
 	status: TaskStatus;
 	createdAt: string;
+	// Absent for root tasks. Mirrored from TaskRecord so hierarchy queries never need to read task files.
+	parentId?: string;
+}
+
+export interface TaskTreeNode extends TaskSummary {
+	children: TaskTreeNode[];
+	// Only set by getFullTree(), on the requested task.
+	selected?: true;
 }
 
 export interface TaskRecord {
@@ -24,6 +32,8 @@ export interface TaskRecord {
 	title: string;
 	description: string;
 	status: TaskStatus;
+	// Absent for root tasks. Hierarchy depth is unlimited; cycles are rejected by setParent().
+	parentId?: string;
 	type?: string;
 	labels?: string[];
 	meta?: Record<string, string>;
@@ -39,7 +49,10 @@ interface TaskIndex {
 export class TaskStore {
 	constructor(private readonly tasksDir: string) {}
 
-	create(title: string, initialStatus: TaskStatus): TaskRecord {
+	create(title: string, initialStatus: TaskStatus, parentId?: string): TaskRecord {
+		if (parentId !== undefined) {
+			this.requireParent(parentId);
+		}
 		this.ensureDirectory();
 
 		const now = new Date().toISOString();
@@ -50,15 +63,168 @@ export class TaskStore {
 			title,
 			description: title,
 			status: initialStatus,
+			...(parentId !== undefined && { parentId }),
 			createdAt: now,
 			updatedAt: now,
 			history: [{ status: initialStatus, timestamp: now }],
 		};
 
 		fs.writeFileSync(this.taskFilePath(id), JSON.stringify(record, null, 2), 'utf8');
-		this.addToIndex({ id, title, status: initialStatus, createdAt: now });
+		this.addToIndex({
+			id,
+			title,
+			status: initialStatus,
+			createdAt: now,
+			...(parentId !== undefined && { parentId }),
+		});
 
 		return record;
+	}
+
+	/**
+	 * Attaches a task under a parent. Throws if either task is missing, if the task would be its own
+	 * parent, or if the parent is already a descendant of the task (which would create a cycle).
+	 */
+	setParent(id: string, parentId: string): TaskRecord {
+		const record = this.get(id);
+		if (id === parentId) {
+			throw new Error(`Task "${id}" cannot be its own parent`);
+		}
+		this.requireParent(parentId);
+		if (this.ancestorIds(parentId).includes(id)) {
+			throw new Error(
+				`Cannot set parent of "${id}" to "${parentId}": it would create a cycle ("${parentId}" is a descendant of "${id}")`
+			);
+		}
+		return this.writeParent(record, parentId);
+	}
+
+	removeParent(id: string): TaskRecord {
+		const record = this.get(id);
+		if (record.parentId === undefined) {
+			throw new Error(`Task "${id}" has no parent`);
+		}
+		return this.writeParent(record, undefined);
+	}
+
+	/** Direct children only. */
+	getChildren(id: string): TaskSummary[] {
+		return this.readIndex().tasks.filter(t => t.parentId === id);
+	}
+
+	/** The full subtree below a task (unlimited depth), built iteratively from the index. */
+	getTree(id: string): TaskTreeNode {
+		const tasks = this.readIndex().tasks;
+		const root = tasks.find(t => t.id === id);
+		if (!root) {
+			throw new Error(`Task not found: ${id}`);
+		}
+		const childrenByParent = new Map<string, TaskSummary[]>();
+		for (const t of tasks) {
+			if (t.parentId !== undefined) {
+				const siblings = childrenByParent.get(t.parentId) ?? [];
+				siblings.push(t);
+				childrenByParent.set(t.parentId, siblings);
+			}
+		}
+		const rootNode: TaskTreeNode = { ...root, children: [] };
+		const pending: TaskTreeNode[] = [rootNode];
+		const visited = new Set<string>([id]);
+		while (pending.length > 0) {
+			const node = pending.pop()!;
+			for (const child of childrenByParent.get(node.id) ?? []) {
+				if (visited.has(child.id)) {
+					throw new Error(`Task index is corrupted: cycle detected at "${child.id}"`);
+				}
+				visited.add(child.id);
+				const childNode: TaskTreeNode = { ...child, children: [] };
+				node.children.push(childNode);
+				pending.push(childNode);
+			}
+		}
+		return rootNode;
+	}
+
+	/**
+	 * All root tasks (or, with `parentId`, the children of that task) with their full subtrees.
+	 * With `predicate`, a node is kept if it matches or if any of its descendants does, so a
+	 * matching task is never detached from the ancestors that give it context.
+	 */
+	getForest(options: { parentId?: string; predicate?: (task: TaskSummary) => boolean } = {}): TaskTreeNode[] {
+		const { parentId, predicate } = options;
+		const tasks = this.readIndex().tasks;
+		if (parentId !== undefined && !tasks.some(t => t.id === parentId)) {
+			throw new Error(`Task not found: ${parentId}`);
+		}
+		const childrenByParent = new Map<string | undefined, TaskSummary[]>();
+		for (const t of tasks) {
+			const siblings = childrenByParent.get(t.parentId) ?? [];
+			siblings.push(t);
+			childrenByParent.set(t.parentId, siblings);
+		}
+		const roots: TaskTreeNode[] = (childrenByParent.get(parentId) ?? []).map(t => ({ ...t, children: [] }));
+		// Preorder list of every node: iterating it backwards visits children before their parents.
+		const preorder: TaskTreeNode[] = [];
+		const visited = new Set<string>();
+		const pending = [...roots].reverse();
+		while (pending.length > 0) {
+			const node = pending.pop()!;
+			if (visited.has(node.id)) {
+				throw new Error(`Task index is corrupted: cycle detected at "${node.id}"`);
+			}
+			visited.add(node.id);
+			preorder.push(node);
+			node.children = (childrenByParent.get(node.id) ?? []).map(t => ({ ...t, children: [] }));
+			pending.push(...[...node.children].reverse());
+		}
+		if (!predicate) {
+			return roots;
+		}
+		const keep = new Set<string>();
+		for (const node of [...preorder].reverse()) {
+			node.children = node.children.filter(c => keep.has(c.id));
+			if (node.children.length > 0 || predicate(node)) {
+				keep.add(node.id);
+			}
+		}
+		return roots.filter(r => keep.has(r.id));
+	}
+
+	/** Every descendant (unlimited depth), flat, each parent listed before its own children. */
+	getDescendants(id: string): TaskSummary[] {
+		const descendants: TaskSummary[] = [];
+		const pending: TaskTreeNode[] = [...this.getTree(id).children].reverse();
+		while (pending.length > 0) {
+			const { children, ...summary } = pending.pop()!;
+			descendants.push(summary);
+			pending.push(...[...children].reverse());
+		}
+		return descendants;
+	}
+
+	/**
+	 * The complete tree containing a task: rooted at its topmost ancestor, with the requested
+	 * task flagged `selected` so it can be located in the output.
+	 */
+	getFullTree(id: string): TaskTreeNode {
+		const ancestors = this.ancestorIds(id);
+		const tree = this.getTree(ancestors[ancestors.length - 1] ?? id);
+		const pending: TaskTreeNode[] = [tree];
+		while (pending.length > 0) {
+			const node = pending.pop()!;
+			if (node.id === id) {
+				node.selected = true;
+				break;
+			}
+			pending.push(...node.children);
+		}
+		return tree;
+	}
+
+	/** Ancestors ordered from the direct parent up to the root. */
+	getAncestors(id: string): TaskSummary[] {
+		const byId = new Map(this.readIndex().tasks.map(t => [t.id, t]));
+		return this.ancestorIds(id).map(ancestorId => byId.get(ancestorId)!);
 	}
 
 	get(id: string): TaskRecord {
@@ -154,7 +320,61 @@ export class TaskStore {
 		}
 		fs.unlinkSync(filePath);
 		this.removeFromIndex(id);
+		this.orphanChildrenOf(id);
 		return true;
+	}
+
+	// Children of a deleted task become roots; their own subtrees stay attached to them.
+	private orphanChildrenOf(parentId: string): void {
+		for (const child of this.getChildren(parentId)) {
+			this.removeParent(child.id);
+		}
+	}
+
+	private requireParent(parentId: string): void {
+		if (!fs.existsSync(this.taskFilePath(parentId))) {
+			throw new Error(`Parent task not found: ${parentId}`);
+		}
+	}
+
+	/** Walks parentId links via the index; the visited guard turns a corrupted (cyclic) index into an error. */
+	private ancestorIds(id: string): string[] {
+		const parentOf = new Map(this.readIndex().tasks.map(t => [t.id, t.parentId]));
+		const ancestors: string[] = [];
+		const visited = new Set<string>([id]);
+		let current = parentOf.get(id);
+		while (current !== undefined) {
+			if (visited.has(current)) {
+				throw new Error(`Task index is corrupted: parent cycle detected at "${current}"`);
+			}
+			visited.add(current);
+			ancestors.push(current);
+			current = parentOf.get(current);
+		}
+		return ancestors;
+	}
+
+	private writeParent(record: TaskRecord, parentId: string | undefined): TaskRecord {
+		if (parentId === undefined) {
+			delete record.parentId;
+		} else {
+			record.parentId = parentId;
+		}
+		record.updatedAt = new Date().toISOString();
+		fs.writeFileSync(this.taskFilePath(record.id), JSON.stringify(record, null, 2), 'utf8');
+
+		const index = this.readIndex();
+		const entry = index.tasks.find(t => t.id === record.id);
+		if (!entry) {
+			throw new Error(`Task index out of sync: entry for "${record.id}" not found. The index may be corrupted.`);
+		}
+		if (parentId === undefined) {
+			delete entry.parentId;
+		} else {
+			entry.parentId = parentId;
+		}
+		this.writeIndex(index);
+		return record;
 	}
 
 	private ensureDirectory(): void {

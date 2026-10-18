@@ -3,6 +3,8 @@
 		"target": "ES2022",
 		"module": "ESNext",
 		"moduleResolution": "bundler",
+		// Resolve task-core from source (tsx, esbuild, IDE) instead of its built dist/.
+		"paths": { "@wadeck-app/task-core": ["../task-core/src/index.ts"] },
 		"lib": ["ES2022"],
 		"strict": true,
 		"skipLibCheck": true,
