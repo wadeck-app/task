@@ -120,28 +120,50 @@ function resolveQueueJsPath(): string {
 	return _queueJsPath;
 }
 
+/**
+ * Reports an event that did not reach the queue, on stderr AND in today's task log
+ * (`task cli logs`, level "error"): stderr is lost when task runs inside a flow step, the log is not.
+ * The log line carries the exact command that replays the event.
+ */
+function reportUndeliveredEvent(event: string, payload: Record<string, unknown>, reason: string): void {
+	const taskPart = typeof payload['taskId'] === 'string' ? ` for task ${payload['taskId']}` : '';
+	const msg = `queue push '${event}'${taskPart} not delivered: ${reason}. Replay with: queue push ${event} '${JSON.stringify(payload)}'`;
+	process.stderr.write(
+		`[task] queue push '${event}'${taskPart} not delivered: ${reason} (details and replay command: task cli logs)\n`
+	);
+	try {
+		const logFile = path.join(ConfigDir.get('task'), 'logs', `${new Date().toISOString().slice(0, 10)}.ndjson`);
+		fs.mkdirSync(path.dirname(logFile), { recursive: true });
+		fs.appendFileSync(logFile, JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg }) + '\n');
+	} catch (error) {
+		process.stderr.write(
+			`[task] could not record the undelivered event in the task log: ${(error as Error).message}\n`
+		);
+	}
+}
+
 async function pushToQueue(event: string, payload: Record<string, unknown>): Promise<void> {
 	const json = JSON.stringify(payload);
 	let queueJs: string;
 	try {
 		queueJs = resolveQueueJsPath();
-	} catch {
-		process.stderr.write(`[task] queue not found on PATH -- event '${event}' not delivered\n`);
+	} catch (error) {
+		reportUndeliveredEvent(event, payload, `queue not found on PATH (${(error as Error).message.split('\n')[0]})`);
 		return;
 	}
 	// Spawn node directly with queue.js -- no shell, args passed verbatim (no JSON quoting issues).
 	await new Promise<void>(resolve => {
+		// 'error' and 'close' can both fire for one child: report only the first outcome.
+		let settled = false;
+		const settle = (failure?: string): void => {
+			if (settled) return;
+			settled = true;
+			if (failure !== undefined) reportUndeliveredEvent(event, payload, failure);
+			resolve();
+		};
 		const child = spawn(process.execPath, [queueJs, 'push', event, json], { stdio: 'inherit', windowsHide: true });
-		child.on('close', code => {
-			if (code !== 0) {
-				process.stderr.write(`[task] queue push '${event}' failed (exit ${code}) -- event not delivered\n`);
-			}
-			resolve();
-		});
-		child.on('error', err => {
-			process.stderr.write(`[task] queue push '${event}' error: ${(err as Error).message}\n`);
-			resolve();
-		});
+		child.on('close', code => settle(code === 0 ? undefined : `exit ${code}`));
+		child.on('error', err => settle((err as Error).message));
 	});
 }
 

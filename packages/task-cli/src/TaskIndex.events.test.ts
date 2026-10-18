@@ -25,6 +25,9 @@ interface PushedEvent {
 }
 
 let tmpDir: string;
+// Redirects ~/.config/task (CLI invocation + failure logs) so tests never write to the real log.
+let configHome: string;
+let previousXdg: string | undefined;
 
 function pushedEvents(): PushedEvent[] {
 	return spawnMock.mock.calls.map(call => {
@@ -35,6 +38,9 @@ function pushedEvents(): PushedEvent[] {
 
 beforeEach(async () => {
 	tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-events-test-'));
+	configHome = fs.mkdtempSync(path.join(os.tmpdir(), 'task-events-config-'));
+	previousXdg = process.env['XDG_CONFIG_HOME'];
+	process.env['XDG_CONFIG_HOME'] = configHome;
 	// mockReset (vitest config) clears implementations between tests: re-arm the fake child process.
 	spawnMock.mockImplementation(() => {
 		const child = new EventEmitter();
@@ -46,6 +52,9 @@ beforeEach(async () => {
 
 afterEach(() => {
 	fs.rmSync(tmpDir, { recursive: true, force: true });
+	fs.rmSync(configHome, { recursive: true, force: true });
+	if (previousXdg === undefined) delete process.env['XDG_CONFIG_HOME'];
+	else process.env['XDG_CONFIG_HOME'] = previousXdg;
 });
 
 describe('queue events — onTaskCreated carries the hierarchy', () => {
@@ -84,6 +93,113 @@ describe('queue events — onTaskCreated carries the hierarchy', () => {
 async function newTask(title: string): Promise<{ id: string }> {
 	return JSON.parse((await runTaskCommand(['new', title], tmpDir)).output) as { id: string };
 }
+
+describe('queue events — an undelivered event leaves a trace in the task log', () => {
+	let stderr: string[];
+
+	const errorLogLines = (): Array<{ level: string; msg: string }> => {
+		const logDir = path.join(configHome, 'task', 'logs');
+		if (!fs.existsSync(logDir)) return [];
+		return fs
+			.readdirSync(logDir)
+			.flatMap(f => fs.readFileSync(path.join(logDir, f), 'utf8').split('\n'))
+			.filter(l => l.length > 0)
+			.map(l => JSON.parse(l) as { level: string; msg: string })
+			.filter(l => l.level === 'error');
+	};
+
+	beforeEach(() => {
+		stderr = [];
+		vi.spyOn(process.stderr, 'write').mockImplementation(chunk => {
+			stderr.push(String(chunk));
+			return true;
+		});
+	});
+
+	const failNextSpawn = (how: 'exit' | 'error'): void => {
+		spawnMock.mockImplementation(() => {
+			const child = new EventEmitter();
+			setImmediate(() =>
+				how === 'exit' ? child.emit('close', 1) : child.emit('error', new Error('spawn EPERM'))
+			);
+			return child;
+		});
+	};
+
+	it('logs an error line (event, task, reason, replay command) when queue push exits non-zero', async () => {
+		const task = await newTask('task');
+		failNextSpawn('exit');
+
+		const result = await runTaskCommand(['set-status', task.id, 'in-progress'], tmpDir);
+
+		expect(result.exitCode).toBe(0);
+		const lines = errorLogLines();
+		expect(lines).toHaveLength(1);
+		expect(lines[0]!.msg).toContain(`queue push 'onStatusChange' for task ${task.id} not delivered: exit 1`);
+		expect(lines[0]!.msg).toContain(`Replay with: queue push onStatusChange '{`);
+		expect(lines[0]!.msg).toContain(`"taskId":"${task.id}"`);
+		expect(stderr.join('')).toContain(`for task ${task.id} not delivered: exit 1`);
+		expect(stderr.join('')).toContain('task cli logs');
+	});
+
+	it('logs an error line when the queue process cannot be spawned', async () => {
+		const task = await newTask('task');
+		failNextSpawn('error');
+
+		await runTaskCommand(['set-status', task.id, 'in-progress'], tmpDir);
+
+		const lines = errorLogLines();
+		expect(lines).toHaveLength(1);
+		expect(lines[0]!.msg).toContain('not delivered: spawn EPERM');
+	});
+
+	it('logs an error line when queue cannot be found on PATH', async () => {
+		const { execSync, execFileSync } = await import('node:child_process');
+		vi.mocked(execSync).mockImplementation(() => {
+			throw new Error('not found');
+		});
+		vi.mocked(execFileSync).mockImplementation(() => {
+			throw new Error('not found');
+		});
+		// The resolved queue path is cached per module instance: load a fresh one.
+		vi.resetModules();
+		const fresh = await import('./TaskIndex.js');
+		const task = JSON.parse((await fresh.runTaskCommand(['new', 'lonely'], tmpDir)).output) as { id: string };
+
+		const lines = errorLogLines();
+		expect(
+			lines.some(l =>
+				l.msg.includes(`queue push 'onTaskCreated' for task ${task.id} not delivered: queue not found on PATH`)
+			)
+		).toBe(true);
+		expect(stderr.join('')).toContain('queue not found on PATH');
+		expect(stderr.join('')).toContain('task cli logs');
+	});
+
+	it('writes no error line when the event is delivered', async () => {
+		const task = await newTask('task');
+
+		await runTaskCommand(['set-status', task.id, 'in-progress'], tmpDir);
+
+		expect(errorLogLines()).toEqual([]);
+	});
+
+	it('does not double-report when the child emits both error and close', async () => {
+		const task = await newTask('task');
+		spawnMock.mockImplementation(() => {
+			const child = new EventEmitter();
+			setImmediate(() => {
+				child.emit('error', new Error('spawn EPERM'));
+				child.emit('close', 1);
+			});
+			return child;
+		});
+
+		await runTaskCommand(['set-status', task.id, 'in-progress'], tmpDir);
+
+		expect(errorLogLines()).toHaveLength(1);
+	});
+});
 
 describe('queue events — onStatusChange', () => {
 	it('carries the previous status as oldStatus and the new one as newStatus', async () => {
