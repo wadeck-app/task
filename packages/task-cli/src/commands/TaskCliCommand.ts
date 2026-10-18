@@ -199,6 +199,8 @@ export function printTaskCliHelp(): void {
 			'  rollback             Restore the previously installed version',
 			'  self-check           Run health checks to verify the CLI bundle is functional',
 			"  logs [--follow]      Print today's log from ~/.config/task/logs/",
+			'  register [--json]    Tell app-core where the task app-module is (update does it too; app-core absent is not an error)',
+			'  unregister [--json]  Remove the task app-module from app-core',
 		].join('\n') + '\n'
 	);
 }

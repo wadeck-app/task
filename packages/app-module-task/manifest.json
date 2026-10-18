@@ -1,0 +1,34 @@
+{
+	"id": "task",
+	"extensionPoints": [
+		{
+			"kind": "widget",
+			"slot": "dashboard",
+			"label": "Open Tasks",
+			"view": {
+				"type": "path",
+				"value": "./src/dsl-views/tasks-widget.yaml"
+			}
+		},
+		{
+			"kind": "page",
+			"slot": "nav",
+			"label": "Tasks",
+			"path": "/tasks",
+			"view": {
+				"type": "path",
+				"value": "./src/dsl-views/tasks-page.yaml"
+			}
+		},
+		{
+			"kind": "page",
+			"slot": "route",
+			"label": "Task",
+			"path": "/tasks/:id",
+			"view": {
+				"type": "path",
+				"value": "./src/dsl-views/task-page.yaml"
+			}
+		}
+	]
+}

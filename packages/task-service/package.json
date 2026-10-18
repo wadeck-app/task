@@ -1,0 +1,27 @@
+{
+	"name": "@wadeck-app/task-service",
+	"version": "0.0.1",
+	"type": "module",
+	"private": true,
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"scripts": {
+		"build": "tsc --build tsconfig.json",
+		"test": "vitest run --bail=1",
+		"test:watch": "vitest",
+		"test:coverage": "vitest run --coverage",
+		"clean": "rimraf dist dist-types"
+	},
+	"dependencies": {
+		"@wadeck-app/task-core": "*"
+	},
+	"devDependencies": {
+		"@types/node": "^24.0.0",
+		"rimraf": "^6.1.2",
+		"typescript": "^7.0.0",
+		"vitest": "^4.0.14"
+	},
+	"engines": {
+		"node": ">=22"
+	}
+}

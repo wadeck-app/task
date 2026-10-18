@@ -12,4 +12,5 @@ cp "$TASK_LAUNCHER_DIST/task_darwin_amd64_release"  packages/task-cli-darwin-x64
 chmod +x packages/task-cli-darwin-arm64/task packages/task-cli-darwin-x64/task
 cp "$TASK_DIST_BUNDLE/task.cjs"           packages/task-cli-dist/task.cjs
 cp "$TASK_DIST_BUNDLE/task-updater.cjs"   packages/task-cli-dist/task-updater.cjs
+cp -r "$TASK_DIST_BUNDLE/app-module"      packages/task-cli-dist/app-module
 echo "task artifacts copied"

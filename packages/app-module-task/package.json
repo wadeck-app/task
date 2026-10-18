@@ -1,0 +1,34 @@
+{
+	"name": "@wadeck-app/app-module-task",
+	"version": "0.1.0",
+	"type": "module",
+	"private": true,
+	"files": [
+		"dist-module"
+	],
+	"scripts": {
+		"build": "tsc -p tsconfig.json --noEmit",
+		"check": "app-core-cli check .",
+		"bundle": "app-core-cli package .",
+		"pretest": "cd ../task-service && npm run build",
+		"test": "vitest run --bail=1",
+		"test:watch": "vitest",
+		"test:coverage": "vitest run --coverage",
+		"clean": "rimraf dist-module"
+	},
+	"dependencies": {
+		"@wadeck-app/task-core": "*",
+		"@wadeck-app/task-service": "*"
+	},
+	"devDependencies": {
+		"@types/node": "^26.2.0",
+		"@wadeck-app/app-core-cli": "latest",
+		"@wadeck-app/app-core-sdk": "latest",
+		"rimraf": "^6.0.1",
+		"typescript": "^7.0.0",
+		"vitest": "^4.0.14"
+	},
+	"engines": {
+		"node": ">=22"
+	}
+}

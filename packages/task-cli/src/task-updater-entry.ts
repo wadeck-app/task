@@ -13,6 +13,8 @@ import {
 import { cpSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import * as os from 'node:os';
 import { join } from 'node:path';
+import { registerWithAppCore } from './AppCoreRegistration.js';
+import { readAppModuleVersion, registerAfterUpdate } from './registerAfterUpdate.js';
 
 declare const __TASK_CLI_VERSION__: string;
 
@@ -39,8 +41,9 @@ const configDir = (() => {
 
 const currentVersion = typeof __TASK_CLI_VERSION__ !== 'undefined' ? __TASK_CLI_VERSION__ : '0.0.0-dev';
 
+let npmRoot: string | undefined;
 try {
-	const npmRoot = execNpm(['root', '-g'], { timeout: 10_000 }).trim();
+	npmRoot = execNpm(['root', '-g'], { timeout: 10_000 }).trim();
 	const selfCheckCmd = `${process.execPath} ${join(npmRoot, PKG_NAME, 'task.cjs')} cli self-check`;
 	if (!process.env['UPDATER_SELF_CHECK_CMD']) {
 		process.env['UPDATER_SELF_CHECK_CMD'] = selfCheckCmd;
@@ -162,6 +165,29 @@ function reportOutcome(startedAt: number, logEntries: LogEntry[]): void {
 	process.stdout.write(`[task-updater] status:  ${status}\n`);
 }
 
+const appModuleManifest = npmRoot === undefined ? undefined : join(npmRoot, PKG_NAME, 'app-module', 'manifest.json');
+// Read before the install replaces the files: registerAfterUpdate registers only if this changed.
+const appModuleBefore = appModuleManifest === undefined ? undefined : readAppModuleVersion(appModuleManifest);
+
+/**
+ * Task has no daemon that registers at start, so a running app-core would keep the previous app-module (and
+ * a manifest path that npm just replaced) until told: do it now, from the new install.
+ */
+async function registerAppModuleAfterUpdate(): Promise<void> {
+	if (appModuleManifest === undefined || appModuleBefore === undefined) {
+		process.stderr.write(
+			'[task-updater] app-core: not re-registering the app-module, "npm root -g" failed earlier. Once npm works, run: task cli register\n'
+		);
+		return;
+	}
+	await registerAfterUpdate({
+		manifestPath: appModuleManifest,
+		before: appModuleBefore,
+		register: registerWithAppCore,
+		log: line => process.stdout.write(`[task-updater] ${line}\n`),
+	});
+}
+
 const logPathBeforeRun = updaterLogPath();
 const logSizeBeforeRun = logSize(logPathBeforeRun);
 const startedAt = Date.now();
@@ -173,9 +199,9 @@ runUpdater({
 	strategy: 'without-daemon',
 	onUpdateAvailable: async (_newVersion: string) => 'apply-now' as const,
 })
-	.then(() => {
-		if (!force) return;
-		reportOutcome(startedAt, echoUpdaterLog(logPathBeforeRun, logSizeBeforeRun));
+	.then(async () => {
+		if (force) reportOutcome(startedAt, echoUpdaterLog(logPathBeforeRun, logSizeBeforeRun));
+		await registerAppModuleAfterUpdate();
 	})
 	.catch(err => {
 		// Surface whatever the updater managed to log before failing, then the failure itself.

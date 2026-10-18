@@ -2,21 +2,56 @@
 import { ConfigDir, UpdateManager } from '@wadeck-app/shared-cli';
 import { logCliInvocation } from '@wadeck-app/shared-cli/CliLogger';
 import { resolveOwnBundlePath } from '@wadeck-app/shared-cli/resolveOwnBundlePath';
-import { execFileSync, execSync, spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { TaskConfigLoader, TaskStore } from '@wadeck-app/task-core';
+import type { TaskRecord, TaskSummary } from '@wadeck-app/task-core';
 import {
-	INVERSE_LINK_NAMES,
-	LINK_TYPES,
-	TaskConfigLoader,
-	TaskStore,
-	resolveTypeValidationStrategy,
-} from '@wadeck-app/task-core';
-import type { LinkType, TaskRecord, TaskSummary } from '@wadeck-app/task-core';
+	InvalidStatusError,
+	TaskServiceError,
+	addLabel,
+	addType,
+	createQueueEventSink,
+	createStatusFilter,
+	createTask,
+	deliverEvents,
+	executeDelete,
+	getFullTree,
+	getTaskHistory,
+	getTaskLinks,
+	linkTasks,
+	listAncestors,
+	listChildren,
+	listForest,
+	listTasks,
+	listTypes,
+	parseDeleteFilter,
+	planDelete,
+	removeLabel,
+	removeParent,
+	registerProject,
+	removeType,
+	setMeta,
+	setParent,
+	setStatus,
+	setType,
+	showTask,
+	unlinkTasks,
+} from '@wadeck-app/task-service';
+import type {
+	CreateTaskResult,
+	DeletePlan,
+	DeleteSelector,
+	LinkTasksResult,
+	SetStatusResult,
+	TaskHistory,
+	TaskServiceContext,
+} from '@wadeck-app/task-service';
 import { TASK_BUNDLE_NAME } from './TaskBundleName.js';
 import { diffAppendOnlyLog, diffSnapshot } from '@wadeck-app/shared-cli/FollowSnapshot';
+import { runAppCoreCommand } from './commands/AppCoreCommand.js';
 import { runPluginsCommand } from './commands/PluginsCommand.js';
 import {
 	printTaskCliHelp,
@@ -50,128 +85,10 @@ statuses:
 #   onStatusChange: ""
 `;
 
-function levenshtein(a: string, b: string): number {
-	const m = a.length;
-	const n = b.length;
-	const dp: number[][] = Array.from({ length: m + 1 }, (_, i) =>
-		Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0))
-	);
-	for (let i = 1; i <= m; i++) {
-		for (let j = 1; j <= n; j++) {
-			dp[i]![j] =
-				a[i - 1] === b[j - 1]
-					? dp[i - 1]![j - 1]!
-					: 1 + Math.min(dp[i - 1]![j]!, dp[i]![j - 1]!, dp[i - 1]![j - 1]!);
-		}
-	}
-	return dp[m]![n]!;
-}
-
-/**
- * Matches a glob pattern (supporting * as wildcard) against a value.
- * The match is case-sensitive and anchored (full value must match).
- */
-function matchGlob(pattern: string, value: string): boolean {
-	// Escape all regex metacharacters except *, then replace * with .*
-	const regexStr = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
-	return new RegExp(`^${regexStr}$`).test(value);
-}
-
-const ALL_LINK_NAMES: string[] = [...LINK_TYPES, ...Object.values(INVERSE_LINK_NAMES)];
-
-/** Resolves a user-typed link name; an inverse name ("blocks") means the link is stored on the other task. */
-function parseLinkType(input: string): { type: LinkType; inverse: boolean } | undefined {
-	const stored = LINK_TYPES.find(t => t === input);
-	if (stored) return { type: stored, inverse: false };
-	const inverse = LINK_TYPES.find(t => INVERSE_LINK_NAMES[t] === input);
-	return inverse ? { type: inverse, inverse: true } : undefined;
-}
-
-function suggest(input: string, candidates: string[]): string | undefined {
-	let best: string | undefined;
-	let bestDist = Infinity;
-	for (const c of candidates) {
-		const d = levenshtein(input.toLowerCase(), c.toLowerCase());
-		if (d < bestDist) {
-			bestDist = d;
-			best = c;
-		}
-	}
-	return bestDist <= 3 ? best : undefined;
-}
-
-// Lazily resolved path to queue's JS entry point -- avoids shell and quoting issues.
-let _queueJsPath: string | undefined;
-function resolveQueueJsPath(): string {
-	if (_queueJsPath) return _queueJsPath;
-	// On Windows, use 'where queue.cmd' via shell to get a native Windows path.
-	// On Unix, use 'which queue' to get the script path.
-	let nativeDir: string;
-	if (process.platform === 'win32') {
-		const winPath = execSync('where queue.cmd', { encoding: 'utf8', windowsHide: true })
-			.trim()
-			.split('\n')[0]!
-			.trim();
-		nativeDir = path.dirname(winPath);
-	} else {
-		nativeDir = path.dirname(execFileSync('which', ['queue'], { encoding: 'utf8', windowsHide: true }).trim());
-	}
-	_queueJsPath = path.join(nativeDir, 'node_modules', '@wadeck-app', 'queue-cli', 'bin', 'queue.js');
-	return _queueJsPath;
-}
-
-/**
- * Reports an event that did not reach the queue, on stderr AND in today's task log
- * (`task cli logs`, level "error"): stderr is lost when task runs inside a flow step, the log is not.
- * The log line carries the exact command that replays the event.
- */
-function reportUndeliveredEvent(event: string, payload: Record<string, unknown>, reason: string): void {
-	const taskPart = typeof payload['taskId'] === 'string' ? ` for task ${payload['taskId']}` : '';
-	const msg = `queue push '${event}'${taskPart} not delivered: ${reason}. Replay with: queue push ${event} '${JSON.stringify(payload)}'`;
-	process.stderr.write(
-		`[task] queue push '${event}'${taskPart} not delivered: ${reason} (details and replay command: task cli logs)\n`
-	);
-	try {
-		const logFile = path.join(ConfigDir.get('task'), 'logs', `${new Date().toISOString().slice(0, 10)}.ndjson`);
-		fs.mkdirSync(path.dirname(logFile), { recursive: true });
-		fs.appendFileSync(logFile, JSON.stringify({ ts: new Date().toISOString(), level: 'error', msg }) + '\n');
-	} catch (error) {
-		process.stderr.write(
-			`[task] could not record the undelivered event in the task log: ${(error as Error).message}\n`
-		);
-	}
-}
-
-async function pushToQueue(event: string, payload: Record<string, unknown>): Promise<void> {
-	const json = JSON.stringify(payload);
-	let queueJs: string;
-	try {
-		queueJs = resolveQueueJsPath();
-	} catch (error) {
-		reportUndeliveredEvent(event, payload, `queue not found on PATH (${(error as Error).message.split('\n')[0]})`);
-		return;
-	}
-	// Spawn node directly with queue.js -- no shell, args passed verbatim (no JSON quoting issues).
-	await new Promise<void>(resolve => {
-		// 'error' and 'close' can both fire for one child: report only the first outcome.
-		let settled = false;
-		const settle = (failure?: string): void => {
-			if (settled) return;
-			settled = true;
-			if (failure !== undefined) reportUndeliveredEvent(event, payload, failure);
-			resolve();
-		};
-		const child = spawn(process.execPath, [queueJs, 'push', event, json], { stdio: 'inherit', windowsHide: true });
-		child.on('close', code => settle(code === 0 ? undefined : `exit ${code}`));
-		child.on('error', err => settle((err as Error).message));
-	});
-}
-
 const FOLLOW_POLL_INTERVAL_MS = 500;
 
 /** `task list --follow`: polls the task index and prints newly-created or status-changed tasks. */
-async function runTaskListFollow(store: TaskStore, showAll: boolean, terminalStatuses: string[]): Promise<void> {
-	const passesFilter = (t: TaskSummary) => showAll || !terminalStatuses.includes(t.status);
+async function runTaskListFollow(store: TaskStore, passesFilter: (task: TaskSummary) => boolean): Promise<void> {
 	const initialAll = store.list();
 	for (const task of initialAll.filter(passesFilter)) {
 		process.stdout.write(JSON.stringify(task) + '\n');
@@ -265,6 +182,11 @@ export interface CommandResult {
 	output: string;
 }
 
+/** Actionable follow-up line carried by a task-service domain error, if any. */
+function serviceErrorHint(error: unknown): string | undefined {
+	return error instanceof TaskServiceError ? error.hint : undefined;
+}
+
 function errorOutput(jsonMode: boolean, message: string, hint?: string): CommandResult {
 	if (jsonMode) {
 		return { exitCode: 1, output: JSON.stringify({ error: message }) };
@@ -272,6 +194,22 @@ function errorOutput(jsonMode: boolean, message: string, hint?: string): Command
 	const lines = [`Error: ${message}`];
 	if (hint) lines.push(hint);
 	return { exitCode: 1, output: lines.join('\n') };
+}
+
+/**
+ * Records the project in <config dir>/projects.json so the task app-module can find it. Never fails the command:
+ * the project is initialized either way, so a registry problem is only a warning with its fix.
+ */
+function registerProjectOrWarn(projectDir: string): void {
+	try {
+		registerProject(ConfigDir.get('task'), projectDir);
+	} catch (error) {
+		const hint = serviceErrorHint(error);
+		process.stderr.write(
+			`[task] warning: could not register this project for the task app-module: ${(error as Error).message}${hint ? ` (${hint})` : ''}
+`
+		);
+	}
 }
 
 export async function runTaskCommand(args: string[], cwd: string): Promise<CommandResult> {
@@ -350,6 +288,8 @@ Usage:
   task cli self-check                        Validate installation
   task cli update [--check] [--log]         Update to latest version
   task cli logs [--follow]                   Print today's invocation log
+  task cli register [--json]                 Tell app-core where the task app-module is (also done by task cli update)
+  task cli unregister [--json]               Remove the task app-module from app-core
 
 Global flags:
   --config <dir>       Global config directory (default: ~/.task)
@@ -375,10 +315,13 @@ Environment variables:
 	if (command === 'init') {
 		const taskDir = path.join(effectiveCwd, '.task');
 		if (fs.existsSync(taskDir)) {
+			// Re-running init is how an already initialized project gets registered.
+			registerProjectOrWarn(effectiveCwd);
 			return { exitCode: 0, output: 'Project already initialized.' };
 		}
 		fs.mkdirSync(path.join(taskDir, 'tasks'), { recursive: true });
 		fs.writeFileSync(path.join(taskDir, 'config.yml'), PROJECT_CONFIG_TEMPLATE, 'utf8');
+		registerProjectOrWarn(effectiveCwd);
 		return { exitCode: 0, output: `Initialized task project in ${taskDir}` };
 	}
 
@@ -400,6 +343,9 @@ Environment variables:
 			case 'self-check':
 				await runTaskCliSelfCheck();
 				return { exitCode: 0, output: '' };
+			case 'register':
+			case 'unregister':
+				return runAppCoreCommand(subCmd, jsonMode);
 			case 'logs': {
 				const follow = rest.includes('--follow');
 				await runTaskCliLogs({ follow });
@@ -415,7 +361,7 @@ Environment variables:
 				return errorOutput(
 					jsonMode,
 					`unknown task cli subcommand: ${subCmd}`,
-					'Valid subcommands: version, update, rollback, self-check, logs'
+					'Valid subcommands: version, update, rollback, self-check, logs, register, unregister'
 				);
 		}
 	}
@@ -441,6 +387,12 @@ Environment variables:
 		taskProjectName: path.basename(effectiveCwd),
 		taskProjectPath: effectiveCwd,
 	};
+	const ctx: TaskServiceContext = {
+		store,
+		config,
+		project: { name: projectEnv.taskProjectName, path: projectEnv.taskProjectPath },
+	};
+	const eventSink = createQueueEventSink({ getLogDir: () => path.join(ConfigDir.get('task'), 'logs') });
 
 	switch (command) {
 		case 'new': {
@@ -464,23 +416,14 @@ Environment variables:
 			if (!description) {
 				return errorOutput(jsonMode, 'missing description', NEW_USAGE);
 			}
-			let task: TaskRecord;
+			let created: CreateTaskResult;
 			try {
-				const parentId = parentArg === undefined ? undefined : store.findByPrefix(parentArg).id;
-				task = store.create(description, config.defaultStatus, parentId);
+				created = createTask(ctx, { description, parent: parentArg });
 			} catch (error) {
 				return errorOutput(jsonMode, (error as Error).message);
 			}
-			await pushToQueue('onTaskCreated', {
-				taskId: task.id,
-				status: task.status,
-				description: task.description,
-				parentId: task.parentId,
-				type: task.type,
-				labels: task.labels ?? [],
-				...projectEnv,
-			});
-			return { exitCode: 0, output: JSON.stringify(task, null, 2) };
+			await deliverEvents(eventSink, created.events);
+			return { exitCode: 0, output: JSON.stringify(created.task, null, 2) };
 		}
 
 		case 'list': {
@@ -516,22 +459,15 @@ Environment variables:
 				);
 			}
 			if (follow) {
-				await runTaskListFollow(store, showAll, config.terminalStatuses);
+				await runTaskListFollow(store, createStatusFilter(config, showAll));
 				return { exitCode: 0, output: '' };
 			}
-			const passesFilter = (t: TaskSummary): boolean => showAll || !config.terminalStatuses.includes(t.status);
 			try {
-				const parentId = parentArg === undefined ? undefined : store.findByPrefix(parentArg).id;
-				if (tree) {
-					return {
-						exitCode: 0,
-						output: JSON.stringify(store.getForest({ parentId, predicate: passesFilter }), null, 2),
-					};
-				}
-				const tasks = (parentId === undefined ? store.list() : store.getChildren(parentId)).filter(
-					passesFilter
-				);
-				return { exitCode: 0, output: JSON.stringify(tasks, null, 2) };
+				const input = { showAll, parent: parentArg };
+				return {
+					exitCode: 0,
+					output: JSON.stringify(tree ? listForest(ctx, input) : listTasks(ctx, input), null, 2),
+				};
 			} catch (error) {
 				return errorOutput(jsonMode, (error as Error).message);
 			}
@@ -557,26 +493,10 @@ Environment variables:
 				return errorOutput(jsonMode, 'missing id', SHOW_USAGE);
 			}
 			try {
-				const task = store.findByPrefix(id);
-				const children = store.getChildren(task.id);
-				const detail: Record<string, unknown> = { ...task, childrenIds: children.map(c => c.id) };
-				if (withParent) {
-					const parent = task.parentId === undefined ? null : store.list().find(t => t.id === task.parentId);
-					if (parent === undefined) {
-						return errorOutput(
-							jsonMode,
-							`parent "${task.parentId}" of task "${task.id}" does not exist`,
-							`Fix with: task remove-parent ${task.id}`
-						);
-					}
-					detail['parent'] = parent;
-				}
-				if (withChildren) {
-					detail['children'] = children;
-				}
+				const detail = showTask(ctx, { id, withParent, withChildren });
 				return { exitCode: 0, output: JSON.stringify(detail, null, 2) };
 			} catch (error) {
-				return errorOutput(jsonMode, (error as Error).message);
+				return errorOutput(jsonMode, (error as Error).message, serviceErrorHint(error));
 			}
 		}
 
@@ -585,9 +505,9 @@ Environment variables:
 			if (!id) {
 				return errorOutput(jsonMode, 'missing id', 'Usage: task history <id> [--follow|-f]');
 			}
-			let task: TaskRecord;
+			let task: TaskHistory;
 			try {
-				task = store.findByPrefix(id);
+				task = getTaskHistory(ctx, { id });
 			} catch (error) {
 				return errorOutput(jsonMode, (error as Error).message);
 			}
@@ -604,63 +524,31 @@ Environment variables:
 			if (!id || !statusArg) {
 				return errorOutput(jsonMode, 'missing arguments', 'Usage: task set-status <id> <status>');
 			}
-			if (!config.statuses.includes(statusArg)) {
-				const hint = suggest(statusArg, config.statuses);
-				const validLine = `Valid statuses: ${config.statuses.join(', ')}`;
-				const hintLine = hint ? `\nDid you mean: ${hint}?` : '';
-				if (jsonMode) {
+			let result: SetStatusResult;
+			try {
+				result = setStatus(ctx, { id, status: statusArg });
+			} catch (error) {
+				if (error instanceof InvalidStatusError && jsonMode) {
 					return {
 						exitCode: 1,
 						output: JSON.stringify({
-							error: `Invalid status: ${statusArg}. Valid values: ${config.statuses.join(', ')}`,
+							error: `Invalid status: ${error.status}. Valid values: ${error.validStatuses.join(', ')}`,
 						}),
 					};
 				}
-				return {
-					exitCode: 1,
-					output: `Error: unknown status "${statusArg}"\n${validLine}${hintLine}`,
-				};
+				return errorOutput(jsonMode, (error as Error).message, serviceErrorHint(error));
 			}
-			try {
-				const before = store.findByPrefix(id);
-				// updateStatus() mutates `before` in place: read the previous status first.
-				const oldStatus = before.status;
-				const updated = store.updateStatus(before.id, statusArg, before);
-				await pushToQueue('onStatusChange', {
-					taskId: updated.id,
-					oldStatus,
-					newStatus: updated.status,
-					type: updated.type,
-					labels: updated.labels ?? [],
-					...projectEnv,
-				});
-
-				const isTerminal = (status: string): boolean => config.terminalStatuses.includes(status);
-				if (isTerminal(updated.status) && !isTerminal(oldStatus)) {
-					const openBlockers = store.getOpenBlockers(updated.id, isTerminal);
-					if (openBlockers.length > 0) {
-						const lines = openBlockers.map(b => `  ${b.id}  ${b.title}  [${b.status}]`);
-						process.stderr.write(
-							`Warning: task ${updated.id} is now ${updated.status} but still blocked by ${openBlockers.length} open task(s):\n${lines.join('\n')}\n`
-						);
-					}
-					// Tasks whose last open blocker was this one can now move forward.
-					for (const unblocked of store.getUnblockedBy(updated.id, isTerminal)) {
-						const record = store.get(unblocked.id);
-						await pushToQueue('onTaskUnblocked', {
-							taskId: record.id,
-							blockerId: updated.id,
-							status: record.status,
-							type: record.type,
-							labels: record.labels ?? [],
-							...projectEnv,
-						});
-					}
-				}
-				return { exitCode: 0, output: JSON.stringify(updated, null, 2) };
-			} catch (error) {
-				return errorOutput(jsonMode, (error as Error).message);
+			// The status change is delivered before the open-blocker warning, the unblocked events after it.
+			const [statusChange, ...unblockedEvents] = result.events;
+			await deliverEvents(eventSink, [statusChange!]);
+			if (result.openBlockers.length > 0) {
+				const lines = result.openBlockers.map(b => `  ${b.id}  ${b.title}  [${b.status}]`);
+				process.stderr.write(
+					`Warning: task ${result.task.id} is now ${result.task.status} but still blocked by ${result.openBlockers.length} open task(s):\n${lines.join('\n')}\n`
+				);
 			}
+			await deliverEvents(eventSink, unblockedEvents);
+			return { exitCode: 0, output: JSON.stringify(result.task, null, 2) };
 		}
 
 		case 'link':
@@ -670,34 +558,15 @@ Environment variables:
 			if (!idArg || !typeArg || !targetArg) {
 				return errorOutput(jsonMode, 'missing arguments', usage);
 			}
-			const spec = parseLinkType(typeArg);
-			if (!spec) {
-				const hint = suggest(typeArg, ALL_LINK_NAMES);
-				return errorOutput(
-					jsonMode,
-					`unknown link type "${typeArg}"`,
-					`Valid types: ${ALL_LINK_NAMES.join(', ')}${hint ? `\nDid you mean: ${hint}?` : ''}`
-				);
-			}
+			let result: LinkTasksResult;
 			try {
-				const first = store.findByPrefix(idArg).id;
-				const second = store.findByPrefix(targetArg).id;
-				// "A blocks B" is stored on B as "B blockedBy A": the holder is the task that owns the stored link.
-				const [holder, target] = spec.inverse ? [second, first] : [first, second];
-				const updated =
-					command === 'link'
-						? store.addLink(holder, spec.type, target)
-						: store.removeLink(holder, spec.type, target);
-				await pushToQueue(command === 'link' ? 'onTaskLinked' : 'onTaskUnlinked', {
-					taskId: holder,
-					linkType: spec.type,
-					targetId: target,
-					...projectEnv,
-				});
-				return { exitCode: 0, output: JSON.stringify(updated, null, 2) };
+				const input = { id: idArg, type: typeArg, target: targetArg };
+				result = command === 'link' ? linkTasks(ctx, input) : unlinkTasks(ctx, input);
 			} catch (error) {
-				return errorOutput(jsonMode, (error as Error).message);
+				return errorOutput(jsonMode, (error as Error).message, serviceErrorHint(error));
 			}
+			await deliverEvents(eventSink, result.events);
+			return { exitCode: 0, output: JSON.stringify(result.task, null, 2) };
 		}
 
 		case 'links': {
@@ -706,7 +575,7 @@ Environment variables:
 				return errorOutput(jsonMode, 'missing id', 'Usage: task links <id>');
 			}
 			try {
-				return { exitCode: 0, output: JSON.stringify(store.getLinks(store.findByPrefix(id).id), null, 2) };
+				return { exitCode: 0, output: JSON.stringify(getTaskLinks(ctx, { id }), null, 2) };
 			} catch (error) {
 				return errorOutput(jsonMode, (error as Error).message);
 			}
@@ -718,16 +587,10 @@ Environment variables:
 			if (!id || !type) {
 				return errorOutput(jsonMode, 'missing arguments', 'Usage: task set-type <id> <type>');
 			}
-			const typeStrategy = resolveTypeValidationStrategy(config.types);
-			const typeValidation = typeStrategy.validate(type);
-			if (!typeValidation.valid) {
-				return errorOutput(jsonMode, typeValidation.error);
-			}
 			try {
-				const updated = store.setType(store.findByPrefix(id).id, type);
-				return { exitCode: 0, output: JSON.stringify(updated, null, 2) };
+				return { exitCode: 0, output: JSON.stringify(setType(ctx, { id, type }), null, 2) };
 			} catch (error) {
-				return errorOutput(jsonMode, (error as Error).message);
+				return errorOutput(jsonMode, (error as Error).message, serviceErrorHint(error));
 			}
 		}
 
@@ -738,10 +601,9 @@ Environment variables:
 				return errorOutput(jsonMode, 'missing arguments', 'Usage: task add-label <id> <label>');
 			}
 			try {
-				const updated = store.addLabel(store.findByPrefix(id).id, label);
-				return { exitCode: 0, output: JSON.stringify(updated, null, 2) };
+				return { exitCode: 0, output: JSON.stringify(addLabel(ctx, { id, label }), null, 2) };
 			} catch (error) {
-				return errorOutput(jsonMode, (error as Error).message);
+				return errorOutput(jsonMode, (error as Error).message, serviceErrorHint(error));
 			}
 		}
 
@@ -752,10 +614,9 @@ Environment variables:
 				return errorOutput(jsonMode, 'missing arguments', 'Usage: task remove-label <id> <label>');
 			}
 			try {
-				const updated = store.removeLabel(store.findByPrefix(id).id, label);
-				return { exitCode: 0, output: JSON.stringify(updated, null, 2) };
+				return { exitCode: 0, output: JSON.stringify(removeLabel(ctx, { id, label }), null, 2) };
 			} catch (error) {
-				return errorOutput(jsonMode, (error as Error).message);
+				return errorOutput(jsonMode, (error as Error).message, serviceErrorHint(error));
 			}
 		}
 
@@ -766,10 +627,9 @@ Environment variables:
 				return errorOutput(jsonMode, 'missing arguments', 'Usage: task set-parent <id> <parent-id>');
 			}
 			try {
-				const updated = store.setParent(store.findByPrefix(id).id, store.findByPrefix(parentArg).id);
-				return { exitCode: 0, output: JSON.stringify(updated, null, 2) };
+				return { exitCode: 0, output: JSON.stringify(setParent(ctx, { id, parent: parentArg }), null, 2) };
 			} catch (error) {
-				return errorOutput(jsonMode, (error as Error).message);
+				return errorOutput(jsonMode, (error as Error).message, serviceErrorHint(error));
 			}
 		}
 
@@ -779,10 +639,9 @@ Environment variables:
 				return errorOutput(jsonMode, 'missing id', 'Usage: task remove-parent <id>');
 			}
 			try {
-				const updated = store.removeParent(store.findByPrefix(id).id);
-				return { exitCode: 0, output: JSON.stringify(updated, null, 2) };
+				return { exitCode: 0, output: JSON.stringify(removeParent(ctx, { id }), null, 2) };
 			} catch (error) {
-				return errorOutput(jsonMode, (error as Error).message);
+				return errorOutput(jsonMode, (error as Error).message, serviceErrorHint(error));
 			}
 		}
 
@@ -792,13 +651,12 @@ Environment variables:
 				return errorOutput(jsonMode, 'missing id', 'Usage: task children <id> [--recursive]');
 			}
 			try {
-				const taskId = store.findByPrefix(id).id;
-				const result = rest.includes('--recursive')
-					? store.getTree(taskId).children
-					: store.getChildren(taskId);
-				return { exitCode: 0, output: JSON.stringify(result, null, 2) };
+				return {
+					exitCode: 0,
+					output: JSON.stringify(listChildren(ctx, { id, recursive: rest.includes('--recursive') }), null, 2),
+				};
 			} catch (error) {
-				return errorOutput(jsonMode, (error as Error).message);
+				return errorOutput(jsonMode, (error as Error).message, serviceErrorHint(error));
 			}
 		}
 
@@ -808,10 +666,9 @@ Environment variables:
 				return errorOutput(jsonMode, 'missing id', 'Usage: task parents <id>');
 			}
 			try {
-				const ancestors = store.getAncestors(store.findByPrefix(id).id);
-				return { exitCode: 0, output: JSON.stringify(ancestors, null, 2) };
+				return { exitCode: 0, output: JSON.stringify(listAncestors(ctx, { id }), null, 2) };
 			} catch (error) {
-				return errorOutput(jsonMode, (error as Error).message);
+				return errorOutput(jsonMode, (error as Error).message, serviceErrorHint(error));
 			}
 		}
 
@@ -821,10 +678,9 @@ Environment variables:
 				return errorOutput(jsonMode, 'missing id', 'Usage: task tree <id>');
 			}
 			try {
-				const tree = store.getFullTree(store.findByPrefix(id).id);
-				return { exitCode: 0, output: JSON.stringify(tree, null, 2) };
+				return { exitCode: 0, output: JSON.stringify(getFullTree(ctx, { id }), null, 2) };
 			} catch (error) {
-				return errorOutput(jsonMode, (error as Error).message);
+				return errorOutput(jsonMode, (error as Error).message, serviceErrorHint(error));
 			}
 		}
 
@@ -836,10 +692,9 @@ Environment variables:
 				return errorOutput(jsonMode, 'missing arguments', 'Usage: task set-meta <id> <key> <value>');
 			}
 			try {
-				const updated = store.setMeta(store.findByPrefix(id).id, key, value);
-				return { exitCode: 0, output: JSON.stringify(updated, null, 2) };
+				return { exitCode: 0, output: JSON.stringify(setMeta(ctx, { id, key, value }), null, 2) };
 			} catch (error) {
-				return errorOutput(jsonMode, (error as Error).message);
+				return errorOutput(jsonMode, (error as Error).message, serviceErrorHint(error));
 			}
 		}
 
@@ -899,87 +754,30 @@ Environment variables:
 				);
 			}
 
-			const VALID_FILTER_FIELDS = ['id', 'title', 'status', 'parentId'] as const;
-			type FilterableField = (typeof VALID_FILTER_FIELDS)[number];
-
-			let tasksToDelete: TaskSummary[] = [];
-			const warnings: string[] = [];
-
-			if (hasAll) {
-				tasksToDelete = store.list();
-			} else if (filterSpec !== undefined) {
-				const eqIdx = filterSpec.indexOf('=');
-				if (eqIdx === -1) {
-					return errorOutput(
-						jsonMode,
-						`invalid filter: "${filterSpec}" (expected field=value)`,
-						`Valid fields: ${VALID_FILTER_FIELDS.join(', ')}`
-					);
+			let plan: DeletePlan;
+			try {
+				const selector: DeleteSelector = hasAll
+					? { kind: 'all' }
+					: filterSpec !== undefined
+						? parseDeleteFilter(filterSpec)
+						: { kind: 'ids', ids: positionalIds };
+				plan = planDelete(ctx, { selector, cascade });
+			} catch (error) {
+				if (error instanceof TaskServiceError) {
+					return errorOutput(jsonMode, error.message, error.hint);
 				}
-				const field = filterSpec.slice(0, eqIdx) as FilterableField;
-				const valuesStr = filterSpec.slice(eqIdx + 1);
-				const values = valuesStr.split(',').filter(v => v.length > 0);
-
-				if (!(VALID_FILTER_FIELDS as ReadonlyArray<string>).includes(field)) {
-					return errorOutput(
-						jsonMode,
-						`unknown filter field: "${field}"`,
-						`Valid fields: ${VALID_FILTER_FIELDS.join(', ')}`
-					);
-				}
-
-				const all = store.list();
-				// A root task has no parentId: it never matches a parentId pattern.
-				tasksToDelete = all.filter(t => t[field] !== undefined && values.some(v => matchGlob(v, t[field]!)));
-			} else {
-				// Positional IDs: resolve by prefix
-				const all = store.list();
-				for (const rawId of positionalIds) {
-					const matches = all.filter(t => t.id.startsWith(rawId));
-					if (matches.length === 0) {
-						warnings.push(`Warning: task not found: ${rawId}`);
-					} else if (matches.length > 1) {
-						return errorOutput(
-							jsonMode,
-							`ambiguous prefix "${rawId}" matches: ${matches.map(t => t.id).join(', ')}`
-						);
-					} else {
-						tasksToDelete.push(matches[0]!);
-					}
-				}
-				// Print warnings to stderr (warn but continue)
-				for (const w of warnings) {
-					process.stderr.write(w + '\n');
-				}
+				throw error;
 			}
+			// Print warnings to stderr (warn but continue)
+			for (const rawId of plan.notFound) {
+				process.stderr.write(`Warning: task not found: ${rawId}\n`);
+			}
+			const tasksToDelete = plan.tasks;
+			const { orphanCount, danglingLinkCount } = plan;
 
 			if (tasksToDelete.length === 0) {
 				return { exitCode: 0, output: 'Nothing to delete.' };
 			}
-
-			if (cascade) {
-				const selected = new Set(tasksToDelete.map(t => t.id));
-				for (const t of [...tasksToDelete]) {
-					for (const descendant of store.getDescendants(t.id)) {
-						if (!selected.has(descendant.id)) {
-							selected.add(descendant.id);
-							tasksToDelete.push(descendant);
-						}
-					}
-				}
-			}
-
-			// Children that survive the deletion lose their parent and become root tasks.
-			const deletedIds = new Set(tasksToDelete.map(t => t.id));
-			const orphanCount = store
-				.list()
-				.filter(t => t.parentId !== undefined && deletedIds.has(t.parentId) && !deletedIds.has(t.id)).length;
-			// Links held by surviving tasks that point to a deleted task are removed with it.
-			const danglingLinkCount = store
-				.list()
-				.filter(t => !deletedIds.has(t.id))
-				.flatMap(t => t.links ?? [])
-				.filter(l => deletedIds.has(l.target)).length;
 
 			if (dryRun) {
 				const lines = ['Would delete:'];
@@ -996,12 +794,7 @@ Environment variables:
 				return { exitCode: 0, output: lines.join('\n') };
 			}
 
-			let deletedCount = 0;
-			for (const t of tasksToDelete) {
-				if (store.deleteTask(t.id)) {
-					deletedCount++;
-				}
-			}
+			const { deletedCount } = executeDelete(ctx, plan);
 
 			const orphanNote =
 				orphanCount > 0 ? `\n${orphanCount} child task(s) became root tasks (their parent was deleted).` : '';
@@ -1030,17 +823,18 @@ When no types are configured, any string is accepted (backwards compatible).`,
 			}
 			switch (subCmd) {
 				case 'list': {
-					if (config.types.length === 0) {
+					const types = listTypes(ctx);
+					if (types.length === 0) {
 						return { exitCode: 0, output: '(no types configured -- any string is accepted)' };
 					}
-					return { exitCode: 0, output: config.types.join('\n') };
+					return { exitCode: 0, output: types.join('\n') };
 				}
 				case 'add': {
 					const typeName = rest[1];
 					if (!typeName) {
 						return errorOutput(jsonMode, 'missing type name', 'Usage: task type add <name>');
 					}
-					TaskConfigLoader.addType(effectiveCwd, typeName);
+					addType(ctx, { name: typeName });
 					return { exitCode: 0, output: `Added type: ${typeName}` };
 				}
 				case 'remove': {
@@ -1048,7 +842,7 @@ When no types are configured, any string is accepted (backwards compatible).`,
 					if (!typeName) {
 						return errorOutput(jsonMode, 'missing type name', 'Usage: task type remove <name>');
 					}
-					TaskConfigLoader.removeType(effectiveCwd, typeName);
+					removeType(ctx, { name: typeName });
 					return { exitCode: 0, output: `Removed type: ${typeName}` };
 				}
 				// violations-suppress: ts/no-switch-default-break returns a user-facing error, not a silent fallback

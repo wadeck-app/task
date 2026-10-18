@@ -1,6 +1,7 @@
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { AmbiguousTaskPrefixError, TaskConflictError, TaskNotFoundError } from './errors.js';
 
 // Inlined from flow-cli/storage/ExecutionStore to avoid pulling in flow-specific dependencies.
 function generateExecutionId(): string {
@@ -112,14 +113,14 @@ export class TaskStore {
 	setParent(id: string, parentId: string): TaskRecord {
 		const record = this.get(id);
 		if (id === parentId) {
-			throw new Error(`Task "${id}" cannot be its own parent`);
+			throw new TaskConflictError(`Task "${id}" cannot be its own parent`);
 		}
 		this.requireParent(parentId);
 		const parentAncestors = this.ancestorIds(parentId);
 		if (parentAncestors.includes(id)) {
 			// Each arrow reads "has as parent": id -> parentId -> ... -> id.
 			const cyclePath = [id, parentId, ...parentAncestors.slice(0, parentAncestors.indexOf(id) + 1)];
-			throw new Error(
+			throw new TaskConflictError(
 				`Cannot set parent of "${id}" to "${parentId}": it would create a cycle (${cyclePath.join(' → ')}); "${parentId}" is a descendant of "${id}"`
 			);
 		}
@@ -129,7 +130,7 @@ export class TaskStore {
 	removeParent(id: string): TaskRecord {
 		const record = this.get(id);
 		if (record.parentId === undefined) {
-			throw new Error(`Task "${id}" has no parent`);
+			throw new TaskConflictError(`Task "${id}" has no parent`);
 		}
 		return this.writeParent(record, undefined);
 	}
@@ -145,24 +146,24 @@ export class TaskStore {
 		}
 		const record = this.get(id);
 		if (id === targetId) {
-			throw new Error(`Task "${id}" cannot be linked to itself`);
+			throw new TaskConflictError(`Task "${id}" cannot be linked to itself`);
 		}
 		if (!fs.existsSync(this.taskFilePath(targetId))) {
 			throw new Error(`Target task not found: ${targetId}`);
 		}
 		const links = record.links ?? [];
 		if (links.some(l => l.type === type && l.target === targetId)) {
-			throw new Error(`Task "${id}" is already ${type} "${targetId}"`);
+			throw new TaskConflictError(`Task "${id}" is already ${type} "${targetId}"`);
 		}
 		const sameType = links.find(l => l.type === type);
 		if (SINGLE_TARGET_LINK_TYPES.has(type) && sameType) {
-			throw new Error(
+			throw new TaskConflictError(
 				`Task "${id}" is already a ${type} of "${sameType.target}". Run: task unlink ${id} ${type} ${sameType.target} first`
 			);
 		}
 		const cyclePath = this.findLinkPath(type, targetId, id);
 		if (cyclePath) {
-			throw new Error(
+			throw new TaskConflictError(
 				`Cannot link "${id}" ${type} "${targetId}": it would create a cycle (${[id, ...cyclePath].join(' → ')})`
 			);
 		}
@@ -173,7 +174,7 @@ export class TaskStore {
 		const record = this.get(id);
 		const links = record.links ?? [];
 		if (!links.some(l => l.type === type && l.target === targetId)) {
-			throw new Error(`Task "${id}" is not ${type} "${targetId}"`);
+			throw new TaskConflictError(`Task "${id}" is not ${type} "${targetId}"`);
 		}
 		return this.writeLinks(
 			record,
@@ -186,7 +187,7 @@ export class TaskStore {
 		const tasks = this.readIndex().tasks;
 		const byId = new Map(tasks.map(t => [t.id, t]));
 		if (!byId.has(id)) {
-			throw new Error(`Task not found: ${id}`);
+			throw new TaskNotFoundError(id);
 		}
 		const result: TaskLinks = {
 			blockedBy: [],
@@ -227,7 +228,7 @@ export class TaskStore {
 		const byId = new Map(tasks.map(t => [t.id, t]));
 		const blocker = byId.get(blockerId);
 		if (!blocker) {
-			throw new Error(`Task not found: ${blockerId}`);
+			throw new TaskNotFoundError(blockerId);
 		}
 		if (!isTerminal(blocker.status)) {
 			return [];
@@ -255,7 +256,7 @@ export class TaskStore {
 		const tasks = this.readIndex().tasks;
 		const root = tasks.find(t => t.id === id);
 		if (!root) {
-			throw new Error(`Task not found: ${id}`);
+			throw new TaskNotFoundError(id);
 		}
 		const childrenByParent = new Map<string, TaskSummary[]>();
 		for (const t of tasks) {
@@ -292,7 +293,7 @@ export class TaskStore {
 		const { parentId, predicate } = options;
 		const tasks = this.readIndex().tasks;
 		if (parentId !== undefined && !tasks.some(t => t.id === parentId)) {
-			throw new Error(`Task not found: ${parentId}`);
+			throw new TaskNotFoundError(parentId);
 		}
 		const childrenByParent = new Map<string | undefined, TaskSummary[]>();
 		for (const t of tasks) {
@@ -368,7 +369,7 @@ export class TaskStore {
 	get(id: string): TaskRecord {
 		const filePath = this.taskFilePath(id);
 		if (!fs.existsSync(filePath)) {
-			throw new Error(`Task not found: ${id}`);
+			throw new TaskNotFoundError(id);
 		}
 		try {
 			return JSON.parse(fs.readFileSync(filePath, 'utf8')) as TaskRecord;
@@ -381,10 +382,13 @@ export class TaskStore {
 		const lower = prefix.toLowerCase();
 		const matches = this.readIndex().tasks.filter(t => t.id.toLowerCase().startsWith(lower));
 		if (matches.length === 0) {
-			throw new Error(`Task not found: ${prefix}`);
+			throw new TaskNotFoundError(prefix);
 		}
 		if (matches.length > 1) {
-			throw new Error(`Ambiguous prefix "${prefix}" matches: ${matches.map(t => t.id).join(', ')}`);
+			throw new AmbiguousTaskPrefixError(
+				prefix,
+				matches.map(t => t.id)
+			);
 		}
 		return this.get(matches[0]!.id);
 	}
@@ -392,7 +396,7 @@ export class TaskStore {
 	updateStatus(id: string, status: TaskStatus, existing?: TaskRecord): TaskRecord {
 		const record = existing ?? this.get(id);
 		if (record.status === status) {
-			throw new Error(`Task "${id}" is already in status "${status}"`);
+			throw new TaskConflictError(`Task "${id}" is already in status "${status}"`);
 		}
 		const now = new Date().toISOString();
 

@@ -1,0 +1,24 @@
+# Tasks of one project. Select it with ?project=<absolute dir>; optional without it when a single project is registered.
+# showAll=true also lists the tasks in a terminal status.
+# Each row carries `href` (built by the route, project query included): the row click opens the detail page.
+$sources:
+    tasks:
+        url: GET /api/modules/task/tasks
+        params:
+            project: $urlParam.project
+            showAll: $urlParam.showAll
+
+$type: PageContent
+sections:
+    - $type: PageHeader
+      title: Tasks
+      subtitle: $sources.tasks.project.name
+    - $type: DataTable
+      rows: $sources.tasks.tasks
+      navigateTo: '{href}'
+      emptyMessage: No open tasks (add ?showAll=true to include the closed ones)
+      columns:
+          - { key: 'id', label: 'ID', mono: true }
+          - { key: 'title', label: 'Title' }
+          - { key: 'status', label: 'Status' }
+          - { key: 'createdAt', label: 'Created', format: 'datetime' }

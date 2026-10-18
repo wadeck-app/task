@@ -61,6 +61,9 @@ jobs:
                   version-input: ${{ github.event.inputs.version || '' }}
                   breaking-input: ${{ github.event.inputs.breaking || 'false' }}
 
+            - name: Check app-module layout and manifest
+              run: npm run check --workspace=packages/app-module-task
+
             - name: Bundle
               run: npm run bundle
               env:

@@ -1,0 +1,18 @@
+# Dashboard widget: open tasks (non-terminal statuses) and the count per status.
+# No ?project: the route aggregates every registered project; it answers 404 with the fix (`task init`) when none is registered.
+$sources:
+    summary:
+        url: GET /api/modules/task/summary
+
+$type: VerticalStack
+gap: gap-3
+items:
+    - $type: StatTile
+      label: Open tasks
+      value: $sources.summary.open
+    - $type: DataTable
+      rows: $sources.summary.byStatus
+      emptyMessage: No tasks
+      columns:
+          - { key: 'status', label: 'Status' }
+          - { key: 'count', label: 'Tasks' }

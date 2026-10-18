@@ -14,7 +14,9 @@
 		"clean": "rimraf dist dist-types dist-bundle"
 	},
 	"dependencies": {
+		"@wadeck-app/app-core-sdk": "latest",
 		"@wadeck-app/task-core": "*",
+		"@wadeck-app/task-service": "*",
 		"@wadeck-app/shared-updater": "latest",
 		"@wadeck-app/singleton-daemon-kit": "latest",
 		"js-yaml": "^4.1.1"

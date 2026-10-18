@@ -29,12 +29,15 @@ export default defineConfig({
 		exclude: ['**/node_modules/**', '**/dist/**'],
 		mockReset: true,
 		restoreMocks: true,
+		// Points XDG_CONFIG_HOME at a temp dir so no test touches the real ~/.config/task.
+		setupFiles: ['./vitest.setup.ts'],
 	},
 	resolve: {
 		extensions: ['.ts', '.tsx', '.js', '.jsx', '.json'],
-		// Load task-core from source so tests never run against a stale or missing dist/.
+		// Load task-core and task-service from source so tests never run against a stale or missing dist/.
 		alias: {
 			'@wadeck-app/task-core': path.resolve(import.meta.dirname, '../task-core/src/index.ts'),
+			'@wadeck-app/task-service': path.resolve(import.meta.dirname, '../task-service/src/index.ts'),
 		},
 	},
 	esbuild: {

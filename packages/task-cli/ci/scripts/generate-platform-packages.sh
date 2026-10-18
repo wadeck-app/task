@@ -79,4 +79,4 @@ EOF
   echo "generated $dir/package.json"
 }
 
-generate_dist "task"
+generate_dist "task" "app-module/"

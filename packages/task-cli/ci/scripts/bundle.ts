@@ -1,11 +1,12 @@
 /**
  * Bundles the task CLI into a single CommonJS file.
  * Bundles directly from TypeScript source (no prior tsc build required).
- * Output: dist-bundle/task.cjs and dist-bundle/task-updater.cjs
+ * Output: dist-bundle/task.cjs, dist-bundle/task-updater.cjs and dist-bundle/app-module/ (packaged app-module-task)
  * Usage:  npx tsx ci/scripts/bundle.ts
  */
 import { build } from 'esbuild';
-import { statSync } from 'node:fs';
+import { execSync } from 'node:child_process';
+import { cpSync, existsSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -55,6 +56,26 @@ await Promise.all([
 		logLevel: 'warning',
 	}),
 ]);
+
+// The app-module is built by its own package: `npm run bundle` there runs `app-core-cli package` (backend bundle,
+// views, packaged manifest stamped with BUNDLE_VERSION). task-cli only copies the resulting dist-module/ next to
+// task.cjs, where `task cli register` and the updater look for it.
+const appModuleDir = path.join(root, '../app-module-task');
+const appModuleOutDir = path.join(root, 'dist-bundle/app-module');
+execSync('npm run bundle', {
+	cwd: appModuleDir,
+	env: { ...process.env, BUNDLE_VERSION: version },
+	stdio: 'inherit',
+	windowsHide: true,
+});
+const packagedModule = path.join(appModuleDir, 'dist-module');
+if (!existsSync(path.join(packagedModule, 'manifest.json'))) {
+	throw new Error(
+		`app-module-task produced no ${packagedModule}/manifest.json: run "npm run bundle" in packages/app-module-task and read its output.`
+	);
+}
+rmSync(appModuleOutDir, { recursive: true, force: true });
+cpSync(packagedModule, appModuleOutDir, { recursive: true });
 
 const updaterSize = statSync(updaterOutfile).size;
 if (updaterSize > MAX_UPDATER_SIZE) {

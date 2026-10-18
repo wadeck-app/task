@@ -11,6 +11,6 @@ Two unrelated things both use the name `--follow`/`-f` across the CLI family —
 
 `task`'s own `--follow` support (`list`, `history`) is **list/snapshot diffing only** — it does not tail any log file. It polls `TaskStore` every `FOLLOW_POLL_INTERVAL_MS` (500ms), diffs the result against the previous poll, and prints only what changed — never a full redraw.
 
-Implementation: `packages/task-cli/src/commands/HistoryFollower.ts` (`diffTaskListSnapshot`, `diffHistoryEntries`). This is a local, bespoke copy of the same pattern `@wadeck-app/shared-cli`'s `diffSnapshot<T>(previous, current, keyOf)` now generalizes (published `2026.10.11-037-aa0ba3e8`, after queue-cli and task-cli had independently reimplemented it). Migrating to `diffSnapshot` is a drop-in replacement — not urgent, but preferred over keeping a third bespoke copy alive.
+Implementation: `diffSnapshot` / `diffAppendOnlyLog` from `@wadeck-app/shared-cli/FollowSnapshot`, used in `packages/task-cli/src/TaskIndex.ts` (the local `HistoryFollower.ts` was replaced, commit 53739b5).
 
 See `@wadeck-app/shared-cli`'s own `.claude/guiding-principles.md` for the full `--follow` convention (poll interval, stderr banner, `SIGINT` handling) shared across the CLI family.

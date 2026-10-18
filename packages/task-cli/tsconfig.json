@@ -3,8 +3,11 @@
 		"target": "ES2022",
 		"module": "ESNext",
 		"moduleResolution": "bundler",
-		// Resolve task-core from source (tsx, esbuild, IDE) instead of its built dist/.
-		"paths": { "@wadeck-app/task-core": ["../task-core/src/index.ts"] },
+		// Resolve task-core and task-service from source (tsx, esbuild, IDE) instead of their built dist/.
+		"paths": {
+			"@wadeck-app/task-core": ["../task-core/src/index.ts"],
+			"@wadeck-app/task-service": ["../task-service/src/index.ts"]
+		},
 		"lib": ["ES2022"],
 		"strict": true,
 		"skipLibCheck": true,
@@ -23,5 +26,5 @@
 		"types": ["vitest/globals", "node"]
 	},
 	"include": ["src"],
-	"references": [{ "path": "../task-core" }]
+	"references": [{ "path": "../task-core" }, { "path": "../task-service" }]
 }

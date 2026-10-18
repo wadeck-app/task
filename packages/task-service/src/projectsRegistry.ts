@@ -1,0 +1,101 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+
+import { ProjectsRegistryError } from './errors.js';
+
+/** Location of the registry: a JSON array of absolute project directories. */
+export function projectsRegistryPath(configDir: string): string {
+	return path.join(configDir, 'projects.json');
+}
+
+function corrupt(file: string, reason: string): ProjectsRegistryError {
+	return new ProjectsRegistryError(
+		`projects registry ${file} is invalid: ${reason}`,
+		`Fix or delete ${file} (expected a JSON array of absolute project directories), then run \`task init\` in your projects again if you delete it.`
+	);
+}
+
+/** Comparison key: Windows paths are case-insensitive. */
+function keyOf(dir: string): string {
+	return process.platform === 'win32' ? dir.toLowerCase() : dir;
+}
+
+function normalize(dir: string): string {
+	if (!path.isAbsolute(dir)) {
+		throw new ProjectsRegistryError(
+			`project directory "${dir}" is not absolute`,
+			'Pass an absolute path (the projects registry only holds absolute directories).'
+		);
+	}
+	const resolved = path.resolve(dir);
+	return resolved;
+}
+
+/** Registered project directories, in registration order. No file means nothing registered; a corrupt file throws. */
+export function listRegisteredProjects(configDir: string): string[] {
+	const file = projectsRegistryPath(configDir);
+	let raw: string;
+	try {
+		raw = fs.readFileSync(file, 'utf8');
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+		throw new ProjectsRegistryError(
+			`cannot read projects registry ${file}: ${(error as Error).message}`,
+			`Check the permissions of ${file}.`
+		);
+	}
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch (error) {
+		throw corrupt(file, (error as Error).message || 'not valid JSON');
+	}
+	if (!Array.isArray(parsed)) {
+		throw corrupt(file, 'the top level is not a JSON array');
+	}
+	for (const entry of parsed) {
+		if (typeof entry !== 'string') {
+			throw corrupt(file, `entry ${JSON.stringify(entry)} is not a string`);
+		}
+		if (!path.isAbsolute(entry)) {
+			throw corrupt(file, `entry "${entry}" is not an absolute path`);
+		}
+	}
+	return parsed as string[];
+}
+
+/** Write to a sibling temp file then rename: a crash never leaves a half-written registry. */
+function writeRegistry(configDir: string, projects: string[]): void {
+	const file = projectsRegistryPath(configDir);
+	fs.mkdirSync(configDir, { recursive: true });
+	const tmp = `${file}.${process.pid}.tmp`;
+	try {
+		fs.writeFileSync(tmp, JSON.stringify(projects, null, 2) + '\n', 'utf8');
+		fs.renameSync(tmp, file);
+	} catch (error) {
+		fs.rmSync(tmp, { force: true });
+		throw new ProjectsRegistryError(
+			`cannot write projects registry ${file}: ${(error as Error).message}`,
+			`Check that ${configDir} is writable.`
+		);
+	}
+}
+
+/** Adds a project directory. Idempotent: `added` is false when it was already registered. */
+export function registerProject(configDir: string, dir: string): { added: boolean } {
+	const target = normalize(dir);
+	const projects = listRegisteredProjects(configDir);
+	if (projects.some(p => keyOf(path.resolve(p)) === keyOf(target))) return { added: false };
+	writeRegistry(configDir, [...projects, target]);
+	return { added: true };
+}
+
+/** Removes a project directory. `removed` is false when it was not registered (nothing is written). */
+export function unregisterProject(configDir: string, dir: string): { removed: boolean } {
+	const target = normalize(dir);
+	const projects = listRegisteredProjects(configDir);
+	const kept = projects.filter(p => keyOf(path.resolve(p)) !== keyOf(target));
+	if (kept.length === projects.length) return { removed: false };
+	writeRegistry(configDir, kept);
+	return { removed: true };
+}

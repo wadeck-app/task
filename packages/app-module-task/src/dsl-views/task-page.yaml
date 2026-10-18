@@ -1,0 +1,44 @@
+# Detail of one task (/modules/task/tasks/:id). ":id" of the manifest path is $route.id; the project comes from ?project=.
+$sources:
+    detail:
+        url: GET /api/modules/task/tasks/{id}
+        params:
+            id: $route.id
+            project: $urlParam.project
+    history:
+        url: GET /api/modules/task/tasks/{id}/history
+        params:
+            id: $route.id
+            project: $urlParam.project
+
+$type: PageContent
+sections:
+    - $type: PageHeader
+      title: $sources.detail.task.title
+      subtitle: $sources.detail.task.description
+    - $type: HorizontalStack
+      gap: gap-3
+      items:
+          - $type: Badge
+            label: $sources.detail.task.status
+            variant: info
+    - $type: PageHeader
+      title: Children
+      size: sm
+    - $type: DataTable
+      rows: $sources.detail.children
+      navigateTo: '{href}'
+      emptyMessage: No children
+      columns:
+          - { key: 'id', label: 'ID', mono: true }
+          - { key: 'title', label: 'Title' }
+          - { key: 'status', label: 'Status' }
+    - $type: PageHeader
+      title: History
+      size: sm
+    - $type: DataTable
+      rows: $sources.history.history
+      emptyMessage: No history
+      columns:
+          - { key: 'timestamp', label: 'Time', format: 'datetime' }
+          - { key: 'status', label: 'Status' }

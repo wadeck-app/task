@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { runTaskCommand } from './TaskIndex.js';
 
@@ -79,6 +79,70 @@ describe('runTaskCommand — init', () => {
 		expect(result.exitCode).toBe(0);
 		expect(fs.existsSync(path.join(tmpDir, '.task', 'tasks'))).toBe(true);
 		expect(fs.existsSync(path.join(tmpDir, '.task', 'config.yml'))).toBe(true);
+	});
+
+	describe('project registration (projects.json read by the task app-module)', () => {
+		let stderr: string;
+
+		beforeEach(() => {
+			stderr = '';
+			vi.spyOn(process.stderr, 'write').mockImplementation(chunk => {
+				stderr += String(chunk);
+				return true;
+			});
+		});
+
+		afterEach(() => {
+			fs.rmSync(registryFile(), { force: true });
+		});
+
+		const registryFile = (): string => path.join(process.env['XDG_CONFIG_HOME']!, 'task', 'projects.json');
+
+		it('registers the project dir and keeps stdout and stderr unchanged', async () => {
+			const result = await runTaskCommand(['init'], tmpDir);
+			expect(result).toEqual({
+				exitCode: 0,
+				output: `Initialized task project in ${path.join(tmpDir, '.task')}`,
+			});
+			expect(JSON.parse(fs.readFileSync(registryFile(), 'utf8'))).toContain(tmpDir);
+			expect(stderr).not.toContain('projects registry');
+		});
+
+		it('registers an already initialized project too (re-running init is the way to register an old project)', async () => {
+			fs.mkdirSync(path.join(tmpDir, '.task', 'tasks'), { recursive: true });
+			const result = await runTaskCommand(['init'], tmpDir);
+			expect(result).toEqual({ exitCode: 0, output: 'Project already initialized.' });
+			expect(JSON.parse(fs.readFileSync(registryFile(), 'utf8'))).toContain(tmpDir);
+		});
+
+		it('registers once when init is run twice', async () => {
+			await runTaskCommand(['init'], tmpDir);
+			await runTaskCommand(['init'], tmpDir);
+			expect(
+				(JSON.parse(fs.readFileSync(registryFile(), 'utf8')) as string[]).filter(p => p === tmpDir)
+			).toHaveLength(1);
+		});
+
+		it('registers the --project-dir target, not the cwd', async () => {
+			const target = path.join(tmpDir, 'sub');
+			fs.mkdirSync(target);
+			await runTaskCommand(['init', '--project-dir', target], tmpDir);
+			expect(JSON.parse(fs.readFileSync(registryFile(), 'utf8'))).toContain(target);
+		});
+
+		it('warns on stderr when the registry is corrupt, never fails init, and leaves the file untouched', async () => {
+			fs.mkdirSync(path.dirname(registryFile()), { recursive: true });
+			fs.writeFileSync(registryFile(), '{not json');
+			const result = await runTaskCommand(['init'], tmpDir);
+			expect(result).toEqual({
+				exitCode: 0,
+				output: `Initialized task project in ${path.join(tmpDir, '.task')}`,
+			});
+			expect(fs.existsSync(path.join(tmpDir, '.task', 'config.yml'))).toBe(true);
+			expect(stderr).toContain('[task] warning: could not register this project');
+			expect(stderr).toContain(registryFile());
+			expect(fs.readFileSync(registryFile(), 'utf8')).toBe('{not json');
+		});
 	});
 
 	it('is idempotent — does not fail if already initialized', async () => {
