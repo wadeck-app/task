@@ -47,15 +47,8 @@ export function toHttpError(error: unknown): HttpErrorResult {
 	if (error instanceof TaskNotFoundError) {
 		return { status: 404, body: withHint(error.message, undefined) };
 	}
-	if (error instanceof AmbiguousTaskPrefixError) {
-		return {
-			status: 409,
-			body: withHint(error.message, 'Use a longer id prefix, or one of the full ids in "matches".', {
-				matches: error.matches,
-			}),
-		};
-	}
-	if (error instanceof AmbiguousDeletePrefixError) {
+	// Two classes on purpose: the delete one is a TaskServiceError whose CLI text (lowercase "ambiguous") must not change.
+	if (error instanceof AmbiguousTaskPrefixError || error instanceof AmbiguousDeletePrefixError) {
 		return {
 			status: 409,
 			body: withHint(error.message, 'Use a longer id prefix, or one of the full ids in "matches".', {

@@ -5,7 +5,7 @@ import type { EventSink } from '@wadeck-app/task-service';
 import type { ModuleContext, ModuleRouteHandler } from '@wadeck-app/app-core-sdk';
 
 import backend from './index.js';
-import { registerTaskRoutes } from './routes.js';
+import { registerTaskRoutes, type TaskRoutesOptions } from './routes.js';
 import { createRecordingSink, createTestWorld, type RecordingSink, type TestWorld } from './testHelpers.js';
 
 const EXPECTED_ROUTES = [
@@ -55,11 +55,11 @@ function collectRoutes(): { routes: Map<string, ModuleRouteHandler>; ctx: Module
 	return { routes, ctx };
 }
 
-function setup(eventSink?: EventSink): Harness {
+function setup(eventSink?: EventSink, extra: Partial<TaskRoutesOptions> = {}): Harness {
 	const world = createTestWorld();
 	const sink = createRecordingSink();
 	const { routes, ctx } = collectRoutes();
-	registerTaskRoutes(ctx, { configDir: world.configDir, eventSink: eventSink ?? sink });
+	registerTaskRoutes(ctx, { configDir: world.configDir, eventSink: eventSink ?? sink, ...extra });
 	return {
 		world,
 		sink,
@@ -267,6 +267,34 @@ describe('GET /tasks/:id', () => {
 		);
 	});
 
+	it('has no warnings for a healthy task', async () => {
+		const id = await createTask('fine');
+		const answer = await h.call('GET /tasks/:id', { params: { id }, query: { project } });
+		expect(answer.body['warnings']).toEqual([]);
+		expect(answer.body['warningText']).toBeNull();
+	});
+
+	it('a dangling parentId still answers 200 with parent null and an actionable warning (the task stays reachable)', async () => {
+		const parent = await createTask('parent');
+		const child = await createTask('child', { parent });
+		// Corrupt the hierarchy on purpose: drop the parent from the index only.
+		const indexPath = `${project}/.task/task-index.json`;
+		const index = JSON.parse(fs.readFileSync(indexPath, 'utf8')) as { tasks: Array<{ id: string }> };
+		index.tasks = index.tasks.filter(x => x.id !== parent);
+		fs.writeFileSync(indexPath, JSON.stringify(index));
+
+		const answer = await h.call('GET /tasks/:id', { params: { id: child }, query: { project } });
+
+		expect(answer.status).toBe(200);
+		expect(answer.body['task']).toMatchObject({ id: child, parentId: parent });
+		expect(answer.body['parent']).toBeNull();
+		expect(answer.body['warnings']).toHaveLength(1);
+		expect(answer.body['warnings'][0]).toContain(`parent "${parent}" of task "${child}" does not exist`);
+		expect(answer.body['warnings'][0]).toContain(`task remove-parent ${child}`);
+		expect(answer.body['warningText']).toBe(answer.body['warnings'][0]);
+		expect(answer.body['links']).toMatchObject({ blockedBy: [] });
+	});
+
 	it('404 for an unknown id', async () => {
 		const answer = await h.call('GET /tasks/:id', { params: { id: 'nope' }, query: { project } });
 		expect(answer.status).toBe(404);
@@ -358,6 +386,41 @@ describe('GET /summary', () => {
 		expect(answer.body['skipped']).toEqual([
 			{ path: gone, error: expect.stringContaining('not initialized') as unknown },
 		]);
+	});
+
+	it('a partial aggregate states how many projects were skipped and why, in a ready-to-display warning', async () => {
+		await createTask('in alpha');
+		const gone = h.world.createProject('gone');
+		fs.rmSync(`${gone}/.task`, { recursive: true });
+		const answer = await h.call('GET /summary');
+		expect(answer.status).toBe(200);
+		expect(answer.body['skippedCount']).toBe(1);
+		expect(answer.body['warning']).toContain('1 project');
+		expect(answer.body['warning']).toContain('not counted');
+		expect(answer.body['warning']).toContain('task init');
+		expect(answer.body['warning']).toContain(gone);
+	});
+
+	it('a complete aggregate has skippedCount 0 and no warning', async () => {
+		await createTask('in alpha');
+		const answer = await h.call('GET /summary');
+		expect(answer.body['skippedCount']).toBe(0);
+		expect(answer.body['warning']).toBeNull();
+	});
+
+	it('the aggregate answers 500 (not zeros) when every registered project is unreadable, with the reasons and a hint', async () => {
+		fs.rmSync(`${project}/.task`, { recursive: true });
+		const gone = h.world.createProject('gone');
+		fs.rmSync(`${gone}/.task`, { recursive: true });
+		const answer = await h.call('GET /summary');
+		expect(answer.status).toBe(500);
+		expect(answer.body['error']).toContain('none of the 2 registered projects');
+		expect(answer.body['hint']).toContain('task init');
+		expect(answer.body['skipped']).toHaveLength(2);
+		expect(answer.body['skipped'][0]).toMatchObject({
+			path: project,
+			error: expect.stringContaining('not initialized'),
+		});
 	});
 
 	it('the aggregate with no registered project is 404 with the task init fix', async () => {
@@ -669,6 +732,44 @@ describe('event delivery', () => {
 		}
 	});
 
+	it('lists the undelivered events (reason + replay command) in a 2xx body when the sink reports them', async () => {
+		const unreachable: EventSink = { deliver: () => Promise.resolve({ delivered: false, reason: 'exit 3' }) };
+		const failingHarness = setup(unreachable);
+		try {
+			const dir = failingHarness.world.createProject('alpha', { configYml: STATUSES_YML });
+
+			const created = await failingHarness.call('POST /tasks', {
+				query: { project: dir },
+				body: { description: 'kept' },
+			});
+
+			expect(created.status).toBe(201);
+			expect(created.body['task']).toBeDefined();
+			const undelivered = created.body['undelivered'] as Array<Record<string, unknown>>;
+			expect(undelivered).toHaveLength(1);
+			expect(undelivered[0]).toMatchObject({ event: 'onTaskCreated', reason: 'exit 3' });
+			expect(undelivered[0]!['taskId']).toBe(created.body['task'].id);
+			expect(undelivered[0]!['replay']).toMatch(/^queue push onTaskCreated '\{.*\}'$/);
+
+			const status = await failingHarness.call('POST /tasks/:id/status', {
+				params: { id: created.body['task'].id },
+				query: { project: dir },
+				body: { status: 'in-progress' },
+			});
+			expect(status.status).toBe(200);
+			expect((status.body['undelivered'] as unknown[]).length).toBeGreaterThan(0);
+		} finally {
+			failingHarness.world.cleanup();
+		}
+	});
+
+	it('answers an empty undelivered array on mutating routes when everything was delivered', async () => {
+		const answer = await h.call('POST /tasks', { query: { project }, body: { description: 'fine' } });
+
+		expect(answer.status).toBe(201);
+		expect(answer.body['undelivered']).toEqual([]);
+	});
+
 	it('builds without an injected sink (the queue sink is the default and is only used on delivery)', () => {
 		const world = createTestWorld();
 		try {
@@ -678,5 +779,80 @@ describe('event delivery', () => {
 		} finally {
 			world.cleanup();
 		}
+	});
+});
+
+describe('server-side logging of unexpected errors (5xx)', () => {
+	let stderr: string[];
+	let failing: Harness;
+
+	function logLines(h: Harness): Array<{ ts: string; level: string; msg: string }> {
+		const dir = `${h.world.configDir}/logs`;
+		if (!fs.existsSync(dir)) return [];
+		return fs
+			.readdirSync(dir)
+			.flatMap(file => fs.readFileSync(`${dir}/${file}`, 'utf8').split('\n'))
+			.filter(line => line !== '')
+			.map(line => JSON.parse(line) as { ts: string; level: string; msg: string });
+	}
+
+	beforeEach(() => {
+		stderr = [];
+		const sink: EventSink = { deliver: () => Promise.reject(new Error('queue exploded')) };
+		failing = setup(sink, { writeStderr: text => void stderr.push(text) });
+	});
+	afterEach(() => failing.world.cleanup());
+
+	it('records a 5xx in the task log (same line format as undelivered events) and on stderr, with route, method, message and stack', async () => {
+		const dir = failing.world.createProject('alpha');
+
+		const answer = await failing.call('POST /tasks', { query: { project: dir }, body: { description: 'kept' } });
+
+		expect(answer.status).toBe(500);
+		const lines = logLines(failing);
+		expect(lines).toHaveLength(1);
+		expect(lines[0]).toMatchObject({ level: 'error', ts: expect.any(String) as unknown });
+		expect(lines[0]!.msg).toContain('POST /tasks');
+		expect(lines[0]!.msg).toContain('500');
+		expect(lines[0]!.msg).toContain('queue exploded');
+		expect(lines[0]!.msg).toMatch(/\n\s+at /);
+		expect(stderr.join('')).toContain('[task] POST /tasks failed (500)');
+		expect(stderr.join('')).toContain('queue exploded');
+	});
+
+	it('records an unexpected (non-HTTP) error thrown by an operation, with its stack', async () => {
+		const dir = failing.world.createProject('alpha');
+		// A corrupt index makes the store throw a plain Error.
+		fs.writeFileSync(`${dir}/.task/task-index.json`, '{not json');
+
+		const answer = await failing.call('GET /tasks', { query: { project: dir } });
+
+		expect(answer.status).toBe(500);
+		const lines = logLines(failing);
+		expect(lines).toHaveLength(1);
+		expect(lines[0]!.msg).toContain('GET /tasks');
+		expect(lines[0]!.msg).toContain(answer.body['error']);
+	});
+
+	it('does not log expected 4xx answers', async () => {
+		const dir = failing.world.createProject('alpha');
+
+		const notFound = await failing.call('GET /tasks/:id', { params: { id: 'nope' }, query: { project: dir } });
+		const invalid = await failing.call('POST /tasks', { query: { project: dir }, body: {} });
+
+		expect([notFound.status, invalid.status]).toEqual([404, 400]);
+		expect(logLines(failing)).toEqual([]);
+		expect(stderr).toEqual([]);
+	});
+
+	it('still answers the 500 when the log directory cannot be written, and says so on stderr', async () => {
+		const dir = failing.world.createProject('alpha');
+		// A file where the logs directory should be.
+		fs.writeFileSync(`${failing.world.configDir}/logs`, 'x');
+
+		const answer = await failing.call('POST /tasks', { query: { project: dir }, body: { description: 'kept' } });
+
+		expect(answer.status).toBe(500);
+		expect(stderr.join('')).toContain('could not record the error in the task log');
 	});
 });

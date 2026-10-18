@@ -54,14 +54,41 @@ export interface TaskUnblockedEvent {
 export type TaskEvent =
 	TaskCreatedEvent | TaskStatusChangeEvent | TaskLinkedEvent | TaskUnlinkedEvent | TaskUnblockedEvent;
 
-/** Destination of task events (the queue, a test recorder, ...). Must not throw for undeliverable events: it reports them. */
+/** Result of delivering one event. A sink reports an undeliverable event this way instead of throwing. */
+export type EventDelivery = { delivered: true } | { delivered: false; reason: string };
+
+/** Destination of task events (the queue, a test recorder, ...). Reports undeliverable events in its result; throws only on unexpected failures. */
 export interface EventSink {
-	deliver(event: TaskEvent): Promise<void>;
+	deliver(event: TaskEvent): Promise<EventDelivery>;
 }
 
-/** Delivers events sequentially, in order. */
-export async function deliverEvents(sink: EventSink, events: readonly TaskEvent[]): Promise<void> {
+export interface UndeliveredEvent {
+	event: TaskEvent;
+	reason: string;
+	/** Shell command that replays the event once the cause is fixed. */
+	replay: string;
+}
+
+export interface DeliveryOutcome {
+	delivered: number;
+	undelivered: UndeliveredEvent[];
+}
+
+/** The `queue push` command that redelivers `event`. */
+export function replayCommand(event: TaskEvent): string {
+	return `queue push ${event.name} '${JSON.stringify(event.payload)}'`;
+}
+
+/** Delivers events sequentially, in order, and reports which ones did not arrive. */
+export async function deliverEvents(sink: EventSink, events: readonly TaskEvent[]): Promise<DeliveryOutcome> {
+	const outcome: DeliveryOutcome = { delivered: 0, undelivered: [] };
 	for (const event of events) {
-		await sink.deliver(event);
+		const result = await sink.deliver(event);
+		if (result.delivered) {
+			outcome.delivered++;
+		} else {
+			outcome.undelivered.push({ event, reason: result.reason, replay: replayCommand(event) });
+		}
 	}
+	return outcome;
 }

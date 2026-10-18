@@ -6,6 +6,7 @@ import {
 	addLabel,
 	createQueueEventSink,
 	createTask,
+	DanglingParentError,
 	deliverEvents,
 	getFullTree,
 	getTaskConfigDir,
@@ -19,9 +20,10 @@ import {
 	showTask,
 	unlinkTasks,
 } from '@wadeck-app/task-service';
-import type { EventSink, TaskEvent, TaskServiceContext } from '@wadeck-app/task-service';
+import type { EventSink, TaskEvent, TaskServiceContext, UndeliveredEvent } from '@wadeck-app/task-service';
 
 import { RequestError, toHttpError } from './errors.js';
+import { recordServerError } from './serverErrorLog.js';
 import { listProjects, openProject, requireRegisteredProjects } from './projects.js';
 
 export interface TaskRoutesOptions {
@@ -29,6 +31,8 @@ export interface TaskRoutesOptions {
 	configDir?: string;
 	/** Destination of the events produced by mutating routes. Default: the queue sink, logging under `<configDir>/logs`. */
 	eventSink?: EventSink;
+	/** Where 5xx failures are reported besides the task log. Default: process.stderr (app-core's own output). */
+	writeStderr?: (text: string) => void;
 }
 
 interface RouteRequest {
@@ -99,6 +103,24 @@ const LABEL_USAGE = 'Send a JSON body { "label": string }.';
 const LINK_USAGE =
 	'Send { "type": string, "target": string } (type: blockedBy, duplicateOf, causedBy, blocks, duplicates, causes), as a JSON body or, for DELETE, as query parameters.';
 
+/** An event the queue did not receive, as reported in the body of a mutating route. */
+interface UndeliveredAnswer {
+	event: string;
+	taskId: string | undefined;
+	reason: string;
+	/** Command that replays the event once the cause is fixed. */
+	replay: string;
+}
+
+function toUndeliveredAnswer(undelivered: UndeliveredEvent): UndeliveredAnswer {
+	return {
+		event: undelivered.event.name,
+		taskId: undelivered.event.payload.taskId,
+		reason: undelivered.reason,
+		replay: undelivered.replay,
+	};
+}
+
 function detailHref(project: { path: string }, taskId: string): string {
 	return `/modules/${MODULE_ID}/tasks/${taskId}?project=${encodeURIComponent(project.path)}`;
 }
@@ -129,9 +151,18 @@ function countByStatus(ctx: TaskServiceContext): StatusCount[] {
 	return [...counts.values()];
 }
 
+/** One display line for the projects the all-projects summary could not read; null when there is none. */
+function skippedWarning(skipped: readonly { path: string; error: string }[]): string | null {
+	if (skipped.length === 0) return null;
+	const noun = skipped.length === 1 ? 'project' : 'projects';
+	const details = skipped.map(entry => `${entry.path} (${entry.error})`).join('; ');
+	return `${skipped.length} ${noun} not counted: ${details}. Run \`task init\` in the project directory or check that it still exists.`;
+}
+
 /** Registers the task routes (`/api/modules/task/...`) on the module context. */
 export function registerTaskRoutes(ctx: ModuleContext, options: TaskRoutesOptions = {}): void {
 	const configDir = options.configDir ?? getTaskConfigDir();
+	const writeStderr = options.writeStderr ?? ((text: string) => void process.stderr.write(text));
 	const eventSink = options.eventSink ?? createQueueEventSink({ getLogDir: () => path.join(configDir, 'logs') });
 
 	/** Runs the route, turning every thrown error into its HTTP answer (see errors.ts). */
@@ -147,6 +178,14 @@ export function registerTaskRoutes(ctx: ModuleContext, options: TaskRoutesOption
 				return out.code(answer.status).send(answer.body);
 			} catch (error) {
 				const failure = toHttpError(error);
+				// Only unexpected failures: a 4xx is the caller's mistake and is already in its answer.
+				if (failure.status >= 500) {
+					recordServerError(
+						path.join(configDir, 'logs'),
+						{ method, route: subPath, status: failure.status, error },
+						writeStderr
+					);
+				}
 				return out.code(failure.status).send(failure.body);
 			}
 		});
@@ -155,9 +194,14 @@ export function registerTaskRoutes(ctx: ModuleContext, options: TaskRoutesOption
 	const open = (req: RouteRequest): TaskServiceContext => openProject(configDir, queryValue(req.query, 'project'));
 	const id = (req: RouteRequest): string => req.params?.['id'] ?? '';
 
-	async function deliver(events: readonly TaskEvent[]): Promise<void> {
+	/**
+	 * Hands the events to the sink. Events the sink could not deliver do not fail the request (the change is applied):
+	 * they are returned for the JSON body. A sink that throws is a 500.
+	 */
+	async function deliver(events: readonly TaskEvent[]): Promise<UndeliveredAnswer[]> {
 		try {
-			await deliverEvents(eventSink, events);
+			const outcome = await deliverEvents(eventSink, events);
+			return outcome.undelivered.map(toUndeliveredAnswer);
 		} catch (error) {
 			throw new RequestError(
 				500,
@@ -196,6 +240,15 @@ export function registerTaskRoutes(ctx: ModuleContext, options: TaskRoutesOption
 				if (!entry.terminal) open += entry.count;
 			}
 		}
+		// Zeros from a registry whose every project failed would read as "no tasks": answer the failure instead.
+		if (projectCount === 0 && skipped.length > 0) {
+			throw new RequestError(
+				500,
+				`none of the ${skipped.length} registered projects could be read: ${skipped.map(s => `${s.path} (${s.error})`).join('; ')}`,
+				'Run `task init` in each project directory to recreate its .task directory, or fix the cause above.',
+				{ skipped }
+			);
+		}
 		return {
 			status: 200,
 			body: {
@@ -205,6 +258,8 @@ export function registerTaskRoutes(ctx: ModuleContext, options: TaskRoutesOption
 				total,
 				byStatus: [...merged.values()],
 				skipped,
+				skippedCount: skipped.length,
+				warning: skippedWarning(skipped),
 			},
 		};
 	});
@@ -217,13 +272,25 @@ export function registerTaskRoutes(ctx: ModuleContext, options: TaskRoutesOption
 
 	route('GET', '/tasks/:id', req => {
 		const project = open(req);
-		const { parent, children, ...task } = showTask(project, { id: id(req), withParent: true, withChildren: true });
+		const warnings: string[] = [];
+		let detail: Record<string, unknown>;
+		try {
+			detail = showTask(project, { id: id(req), withParent: true, withChildren: true });
+		} catch (error) {
+			if (!(error instanceof DanglingParentError)) throw error;
+			// A task must stay reachable to be repaired: show it without its parent and say how to fix it.
+			warnings.push(`${error.message}. ${error.hint}`);
+			detail = { ...showTask(project, { id: id(req), withChildren: true }), parent: null };
+		}
+		const { parent, children, ...task } = detail;
 		return {
 			status: 200,
 			body: {
 				project: project.project,
 				task,
 				parent,
+				warnings,
+				warningText: warnings.length === 0 ? null : warnings.join(' '),
 				children: withRowLinks(project, children as TaskSummary[]),
 				links: getTaskLinks(project, { id: id(req) }),
 			},
@@ -253,17 +320,17 @@ export function registerTaskRoutes(ctx: ModuleContext, options: TaskRoutesOption
 			parent: optionalString(body, 'parent', CREATE_USAGE),
 		};
 		const created = createTask(project, input);
-		await deliver(created.events);
-		return { status: 201, body: { task: created.task } };
+		const undelivered = await deliver(created.events);
+		return { status: 201, body: { task: created.task, undelivered } };
 	});
 
 	route('POST', '/tasks/:id/status', async req => {
 		const project = open(req);
 		const body = bodyObject(req.body, STATUS_USAGE);
 		const result = setStatus(project, { id: id(req), status: requiredString(body, 'status', STATUS_USAGE) });
-		await deliver(result.events);
+		const undelivered = await deliver(result.events);
 		const { events: _events, ...answer } = result;
-		return { status: 200, body: answer };
+		return { status: 200, body: { ...answer, undelivered } };
 	});
 
 	route('POST', '/tasks/:id/labels', req => {
@@ -297,14 +364,14 @@ export function registerTaskRoutes(ctx: ModuleContext, options: TaskRoutesOption
 	route('POST', '/tasks/:id/links', async req => {
 		const project = open(req);
 		const result = linkTasks(project, linkInput(req, false));
-		await deliver(result.events);
-		return { status: 200, body: { task: result.task } };
+		const undelivered = await deliver(result.events);
+		return { status: 200, body: { task: result.task, undelivered } };
 	});
 
 	route('DELETE', '/tasks/:id/links', async req => {
 		const project = open(req);
 		const result = unlinkTasks(project, linkInput(req, true));
-		await deliver(result.events);
-		return { status: 200, body: { task: result.task } };
+		const undelivered = await deliver(result.events);
+		return { status: 200, body: { task: result.task, undelivered } };
 	});
 }

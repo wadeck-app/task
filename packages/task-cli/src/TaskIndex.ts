@@ -30,6 +30,7 @@ import {
 	parseDeleteFilter,
 	planDelete,
 	removeLabel,
+	resolveQueueJsPath,
 	removeParent,
 	registerProject,
 	removeType,
@@ -392,7 +393,11 @@ Environment variables:
 		config,
 		project: { name: projectEnv.taskProjectName, path: projectEnv.taskProjectPath },
 	};
-	const eventSink = createQueueEventSink({ getLogDir: () => path.join(ConfigDir.get('task'), 'logs') });
+	// A one-shot CLI has no event loop to keep responsive: the synchronous lookup is kept (the HTTP routes use the async default).
+	const eventSink = createQueueEventSink({
+		getLogDir: () => path.join(ConfigDir.get('task'), 'logs'),
+		resolveQueueJs: resolveQueueJsPath,
+	});
 
 	switch (command) {
 		case 'new': {

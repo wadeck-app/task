@@ -47,6 +47,17 @@ describe('planDelete / executeDelete', () => {
 		expect(plan.notFound).toEqual(['zzzz']);
 	});
 
+	it('plans a task once when several selectors (prefixes, repeated ids) resolve to it, keeping first-occurrence order', () => {
+		const a = t.ctx.store.create('a', 'backlog');
+		const b = t.ctx.store.create('b', 'backlog');
+
+		const plan = planDelete(t.ctx, {
+			selector: { kind: 'ids', ids: [a.id.slice(0, 5), b.id, a.id, b.id.slice(0, 6), a.id] },
+		});
+
+		expect(plan.tasks.map(x => x.id)).toEqual([a.id, b.id]);
+	});
+
 	it('throws AmbiguousDeletePrefixError when a prefix matches several tasks', () => {
 		t.ctx.store.create('a', 'backlog');
 		t.ctx.store.create('b', 'backlog');

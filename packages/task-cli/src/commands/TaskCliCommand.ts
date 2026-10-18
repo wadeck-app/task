@@ -18,6 +18,8 @@ import { fileURLToPath } from 'node:url';
 
 import { TaskConfigLoader, TaskStore } from '@wadeck-app/task-core';
 
+import { attemptRegistration, type AppCoreAttempt } from '../AppCoreRegistration.js';
+import { resolveAppModuleManifest } from '../appModuleManifest.js';
 import { TASK_BUNDLE_NAME } from '../TaskBundleName.js';
 
 // Injected by esbuild at bundle time via define; falls back to package.json in dev mode (tsx).
@@ -92,8 +94,41 @@ export async function runTaskCliUpdate(opts: { check?: boolean; log?: boolean; r
 	delete process.env['UPDATER_MANUAL'];
 }
 
-export async function runTaskCliRollback(): Promise<void> {
+export interface RollbackAppCoreDeps {
+	resolveManifest: () => string;
+	register: (manifestPath: string) => Promise<AppCoreAttempt>;
+}
+
+const defaultRollbackDeps: RollbackAppCoreDeps = {
+	resolveManifest: () => resolveAppModuleManifest(),
+	register: attemptRegistration,
+};
+
+/**
+ * shared-cli's rollback only reinstalls the previous package (and exits the process when it cannot): it has no hook,
+ * so the wrapper tells app-core afterwards, otherwise a running app-core keeps the rolled-back-from module while the CLI
+ * is on the old one. Best effort: the rollback is done at that point, nothing here fails it.
+ */
+export async function runTaskCliRollback(deps: Partial<RollbackAppCoreDeps> = {}): Promise<void> {
+	const { resolveManifest, register } = { ...defaultRollbackDeps, ...deps };
 	await cliRollbackCommand(PKG_NAME, ConfigDir.get('task'));
+	let manifestPath: string;
+	try {
+		manifestPath = resolveManifest();
+	} catch (error) {
+		process.stderr.write(
+			`app-core: not re-registering the app-module after the rollback: ${error instanceof Error ? error.message : String(error)}\n` +
+				'If the rolled-back version ships no app-module, remove the stale one from app-core with: task cli unregister\n'
+		);
+		return;
+	}
+	const attempt = await register(manifestPath);
+	if (attempt.ok) {
+		process.stdout.write(`${attempt.message}\n`);
+		return;
+	}
+	const retry = attempt.message.includes('task cli register') ? '' : ' Fix it, then run: task cli register';
+	process.stderr.write(`${attempt.message}${retry}\n`);
 }
 
 export async function runTaskCliSelfCheck(): Promise<void> {
@@ -196,7 +231,7 @@ export function printTaskCliHelp(): void {
 			'  update               Force synchronous update (bypass cache)',
 			'  update --check       Show available version, do not apply',
 			'  update --log         Print the update log',
-			'  rollback             Restore the previously installed version',
+			'  rollback             Restore the previously installed version and re-register the app-module with app-core',
 			'  self-check           Run health checks to verify the CLI bundle is functional',
 			"  logs [--follow]      Print today's log from ~/.config/task/logs/",
 			'  register [--json]    Tell app-core where the task app-module is (update does it too; app-core absent is not an error)',

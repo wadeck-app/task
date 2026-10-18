@@ -2,6 +2,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { ProjectsRegistryError } from './errors.js';
+import { withRegistryLock } from './registryLock.js';
+import type { RegistryLockOptions } from './registryLock.js';
 
 /** Location of the registry: a JSON array of absolute project directories. */
 export function projectsRegistryPath(configDir: string): string {
@@ -27,8 +29,7 @@ function normalize(dir: string): string {
 			'Pass an absolute path (the projects registry only holds absolute directories).'
 		);
 	}
-	const resolved = path.resolve(dir);
-	return resolved;
+	return path.resolve(dir);
 }
 
 /** Registered project directories, in registration order. No file means nothing registered; a corrupt file throws. */
@@ -67,7 +68,6 @@ export function listRegisteredProjects(configDir: string): string[] {
 /** Write to a sibling temp file then rename: a crash never leaves a half-written registry. */
 function writeRegistry(configDir: string, projects: string[]): void {
 	const file = projectsRegistryPath(configDir);
-	fs.mkdirSync(configDir, { recursive: true });
 	const tmp = `${file}.${process.pid}.tmp`;
 	try {
 		fs.writeFileSync(tmp, JSON.stringify(projects, null, 2) + '\n', 'utf8');
@@ -81,21 +81,37 @@ function writeRegistry(configDir: string, projects: string[]): void {
 	}
 }
 
-/** Adds a project directory. Idempotent: `added` is false when it was already registered. */
-export function registerProject(configDir: string, dir: string): { added: boolean } {
+/** Adds a project directory. Idempotent: `added` is false when it was already registered. Safe against concurrent writers. */
+export function registerProject(configDir: string, dir: string, lockOptions?: RegistryLockOptions): { added: boolean } {
 	const target = normalize(dir);
-	const projects = listRegisteredProjects(configDir);
-	if (projects.some(p => keyOf(path.resolve(p)) === keyOf(target))) return { added: false };
-	writeRegistry(configDir, [...projects, target]);
-	return { added: true };
+	return withRegistryLock(
+		configDir,
+		() => {
+			const projects = listRegisteredProjects(configDir);
+			if (projects.some(p => keyOf(path.resolve(p)) === keyOf(target))) return { added: false };
+			writeRegistry(configDir, [...projects, target]);
+			return { added: true };
+		},
+		lockOptions
+	);
 }
 
-/** Removes a project directory. `removed` is false when it was not registered (nothing is written). */
-export function unregisterProject(configDir: string, dir: string): { removed: boolean } {
+/** Removes a project directory. `removed` is false when it was not registered (nothing is written). Safe against concurrent writers. */
+export function unregisterProject(
+	configDir: string,
+	dir: string,
+	lockOptions?: RegistryLockOptions
+): { removed: boolean } {
 	const target = normalize(dir);
-	const projects = listRegisteredProjects(configDir);
-	const kept = projects.filter(p => keyOf(path.resolve(p)) !== keyOf(target));
-	if (kept.length === projects.length) return { removed: false };
-	writeRegistry(configDir, kept);
-	return { removed: true };
+	return withRegistryLock(
+		configDir,
+		() => {
+			const projects = listRegisteredProjects(configDir);
+			const kept = projects.filter(p => keyOf(path.resolve(p)) !== keyOf(target));
+			if (kept.length === projects.length) return { removed: false };
+			writeRegistry(configDir, kept);
+			return { removed: true };
+		},
+		lockOptions
+	);
 }

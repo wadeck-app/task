@@ -59,6 +59,8 @@ export function planDelete(ctx: TaskServiceContext, input: PlanDeleteInput): Del
 		tasks = store.list().filter(t => t[field] !== undefined && values.some(v => matchGlob(v, t[field]!)));
 	} else {
 		const all = store.list();
+		// Several prefixes (or a repeated id) can resolve to the same task: plan it once, in first-occurrence order.
+		const seen = new Set<string>();
 		for (const rawId of selector.ids) {
 			const matches = all.filter(t => t.id.startsWith(rawId));
 			if (matches.length === 0) {
@@ -68,7 +70,8 @@ export function planDelete(ctx: TaskServiceContext, input: PlanDeleteInput): Del
 					rawId,
 					matches.map(t => t.id)
 				);
-			} else {
+			} else if (!seen.has(matches[0]!.id)) {
+				seen.add(matches[0]!.id);
 				tasks.push(matches[0]!);
 			}
 		}

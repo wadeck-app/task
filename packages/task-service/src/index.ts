@@ -21,10 +21,19 @@ export type {
 	TaskUnblockedEvent,
 	TaskEvent,
 	EventSink,
+	EventDelivery,
+	UndeliveredEvent,
+	DeliveryOutcome,
 } from './events.js';
-export { deliverEvents } from './events.js';
+export { deliverEvents, replayCommand } from './events.js';
 export type { QueueEventSinkOptions } from './queueEventSink.js';
-export { createQueueEventSink, resolveQueueJsPath } from './queueEventSink.js';
+export {
+	createQueueEventSink,
+	resolveQueueJsPath,
+	resolveQueueJsPathAsync,
+	DEFAULT_RESOLVE_FAILURE_TTL_MS,
+	DEFAULT_PUSH_TIMEOUT_MS,
+} from './queueEventSink.js';
 export { levenshtein, suggest, matchGlob } from './text.js';
 export type { CreateTaskInput, CreateTaskResult } from './createTask.js';
 export { createTask } from './createTask.js';

@@ -16,6 +16,11 @@ sections:
     - $type: PageHeader
       title: $sources.detail.task.title
       subtitle: $sources.detail.task.description
+    # Repairable inconsistencies of this task (dangling parent...), with the command that fixes them.
+    - $type: Badge
+      $if: $sources.detail.warningText
+      label: $sources.detail.warningText
+      variant: warning
     - $type: HorizontalStack
       gap: gap-3
       items:

@@ -7,6 +7,11 @@ $sources:
 $type: VerticalStack
 gap: gap-3
 items:
+    # Projects the route could not read are not counted: say so instead of showing an undercount.
+    - $type: Badge
+      $if: $sources.summary.skippedCount
+      label: $sources.summary.warning
+      variant: warning
     - $type: StatTile
       label: Open tasks
       value: $sources.summary.open

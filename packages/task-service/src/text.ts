@@ -35,6 +35,6 @@ export function suggest(input: string, candidates: string[]): string | undefined
  */
 export function matchGlob(pattern: string, value: string): boolean {
 	// Escape all regex metacharacters except *, then replace * with .*
-	const regexStr = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+	const regexStr = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
 	return new RegExp(`^${regexStr}$`).test(value);
 }

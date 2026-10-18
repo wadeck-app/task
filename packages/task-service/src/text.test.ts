@@ -31,4 +31,21 @@ describe('matchGlob', () => {
 		expect(matchGlob('a.b', 'a.b')).toBe(true);
 		expect(matchGlob('Fix', 'fix')).toBe(false);
 	});
+
+	it('matches a literal ? only against itself (no regex quantifier)', () => {
+		expect(matchGlob('Why?', 'Why?')).toBe(true);
+		expect(matchGlob('Why?', 'Wh')).toBe(false);
+		expect(matchGlob('Why?', 'Why')).toBe(false);
+		expect(matchGlob('Why?', 'Whyy')).toBe(false);
+		expect(matchGlob('a?*', 'a? and more')).toBe(true);
+	});
+
+	it('treats every other regex metacharacter literally', () => {
+		for (const literal of ['[x]', '(a|b)', 'a+b', '^a$', '{2}', 'a\\b', '[', ']', '(', ')']) {
+			expect(matchGlob(literal, literal)).toBe(true);
+		}
+		expect(matchGlob('[ab]', 'a')).toBe(false);
+		expect(matchGlob('(a|b)', 'a')).toBe(false);
+		expect(matchGlob('a+', 'aa')).toBe(false);
+	});
 });

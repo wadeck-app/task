@@ -408,6 +408,16 @@ describe('runTaskCommand — delete', () => {
 		expect(tasks).toHaveLength(2);
 	});
 
+	it('--dry-run counts a task once when it is given twice (full id and prefix)', async () => {
+		const created = JSON.parse((await runTaskCommand(['new', 'given twice'], tmpDir)).output) as { id: string };
+
+		const result = await runTaskCommand(['delete', '--dry-run', created.id, created.id.slice(0, 5)], tmpDir);
+
+		expect(result.exitCode).toBe(0);
+		expect(result.output).toContain('Total: 1 task(s).');
+		expect(result.output.match(new RegExp(created.id, 'g'))).toHaveLength(1);
+	});
+
 	it('errors when --all and --filter are combined', async () => {
 		const result = await runTaskCommand(['delete', '--all', '--filter', 'status=done'], tmpDir);
 		expect(result.exitCode).toBe(1);

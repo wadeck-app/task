@@ -17,6 +17,9 @@ vi.mock('node:child_process', async importOriginal => {
 	};
 });
 
+// The setup file swaps the queue sink for an instant fake: this file tests the real one (with a faked child process).
+vi.unmock('@wadeck-app/task-service');
+
 import { runTaskCommand } from './TaskIndex.js';
 
 interface PushedEvent {

@@ -45,7 +45,7 @@ export function createRecordingSink(): RecordingSink {
 		events,
 		deliver(event) {
 			events.push(event);
-			return Promise.resolve();
+			return Promise.resolve({ delivered: true });
 		},
 	};
 }

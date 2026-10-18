@@ -60,3 +60,21 @@ describe('package layout (module-authoring.md)', () => {
 		expect(lines).toContain('.app-core-dev');
 	});
 });
+
+describe('dashboard widget (src/dsl-views/tasks-widget.yaml)', () => {
+	const widget = readFileSync(join(packageDir, 'src/dsl-views/tasks-widget.yaml'), 'utf8');
+
+	it('shows the skipped-projects warning only when /summary reports skipped projects (no silent undercount)', () => {
+		expect(widget).toContain('$if: $sources.summary.skippedCount');
+		expect(widget).toContain('$sources.summary.warning');
+	});
+});
+
+describe('task detail page (src/dsl-views/task-page.yaml)', () => {
+	const page = readFileSync(join(packageDir, 'src/dsl-views/task-page.yaml'), 'utf8');
+
+	it('shows the route warnings (dangling parent, ...) only when there are some', () => {
+		expect(page).toContain('$if: $sources.detail.warningText');
+		expect(page).toContain('$sources.detail.warningText');
+	});
+});

@@ -13,6 +13,13 @@ vi.mock('node:fs', async () => {
 	};
 });
 
+const sdk = vi.hoisted(() => ({
+	registerModule: vi.fn(),
+	unregisterModule: vi.fn(),
+	describeRegistration: vi.fn(),
+}));
+vi.mock('@wadeck-app/app-core-sdk/register', () => sdk);
+
 vi.mock('@wadeck-app/shared-cli/CliMetaCommands', () => ({
 	cliVersionCommand: vi.fn().mockResolvedValue(undefined),
 	cliUpdateCommand: vi.fn().mockResolvedValue(undefined),
@@ -62,14 +69,99 @@ describe('runTaskCliSelfCheck', () => {
 });
 
 describe('runTaskCliRollback', () => {
+	let written: string[];
+
+	beforeEach(() => {
+		written = [];
+		vi.spyOn(process.stdout, 'write').mockImplementation(chunk => {
+			written.push(String(chunk));
+			return true;
+		});
+		vi.spyOn(process.stderr, 'write').mockImplementation(chunk => {
+			written.push(String(chunk));
+			return true;
+		});
+		sdk.describeRegistration.mockImplementation(
+			(outcome: { status: string }) => `app-core: described ${outcome.status}`
+		);
+	});
+
 	afterEach(() => {
 		vi.restoreAllMocks();
 	});
 
 	it('delegates to cliRollbackCommand', async () => {
 		const { cliRollbackCommand } = await import('@wadeck-app/shared-cli/CliMetaCommands');
-		await runTaskCliRollback();
+		sdk.registerModule.mockResolvedValue({ status: 'skipped' });
+		await runTaskCliRollback({ resolveManifest: () => '/pkg/app-module/manifest.json' });
 		expect(cliRollbackCommand).toHaveBeenCalledWith('@wadeck-app/task-cli', expect.any(String));
+	});
+
+	it('tells app-core about the restored app-module once the files are back, and prints the answer', async () => {
+		const { cliRollbackCommand } = await import('@wadeck-app/shared-cli/CliMetaCommands');
+		const order: string[] = [];
+		vi.mocked(cliRollbackCommand).mockImplementation(() => {
+			order.push('rollback');
+			return Promise.resolve();
+		});
+		sdk.registerModule.mockImplementation(() => {
+			order.push('register');
+			return Promise.resolve({ status: 'registered' });
+		});
+
+		await runTaskCliRollback({ resolveManifest: () => '/pkg/app-module/manifest.json' });
+
+		expect(order).toEqual(['rollback', 'register']);
+		expect(sdk.registerModule).toHaveBeenCalledWith({ id: 'task', manifestPath: '/pkg/app-module/manifest.json' });
+		expect(written.join('')).toContain('app-core: described registered');
+	});
+
+	it('does not touch app-core when the rollback itself fails (shared-cli exits or throws)', async () => {
+		const { cliRollbackCommand } = await import('@wadeck-app/shared-cli/CliMetaCommands');
+		vi.mocked(cliRollbackCommand).mockRejectedValue(new Error('npm install failed'));
+
+		await expect(runTaskCliRollback({ resolveManifest: () => '/pkg/app-module/manifest.json' })).rejects.toThrow(
+			'npm install failed'
+		);
+
+		expect(sdk.registerModule).not.toHaveBeenCalled();
+	});
+
+	it('never fails the rollback when app-core refuses: the message says how to retry', async () => {
+		sdk.registerModule.mockResolvedValue({ status: 'refused' });
+		sdk.describeRegistration.mockReturnValue('app-core: refused the module (bad manifest)');
+
+		await expect(
+			runTaskCliRollback({ resolveManifest: () => '/pkg/app-module/manifest.json' })
+		).resolves.toBeUndefined();
+
+		expect(written.join('')).toContain('app-core: refused the module (bad manifest)');
+		expect(written.join('')).toContain('task cli register');
+	});
+
+	it('never fails the rollback when the SDK rejects', async () => {
+		sdk.registerModule.mockRejectedValue(new Error('socket hang up'));
+
+		await expect(
+			runTaskCliRollback({ resolveManifest: () => '/pkg/app-module/manifest.json' })
+		).resolves.toBeUndefined();
+
+		expect(written.join('')).toContain('socket hang up');
+	});
+
+	it('never fails the rollback when the restored version ships no app-module: says app-core may still point at it', async () => {
+		await expect(
+			runTaskCliRollback({
+				resolveManifest: () => {
+					throw new Error('No app-module manifest found. Looked for /pkg/app-module/manifest.json');
+				},
+			})
+		).resolves.toBeUndefined();
+
+		expect(sdk.registerModule).not.toHaveBeenCalled();
+		const output = written.join('');
+		expect(output).toContain('No app-module manifest found');
+		expect(output).toContain('task cli unregister');
 	});
 });
 
