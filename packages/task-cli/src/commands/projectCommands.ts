@@ -39,4 +39,4 @@ export const PROJECT_COMMANDS: ReadonlyMap<string, ProjectCommand> = new Map<str
 
 /** Shown for an unknown command: every command word, including the ones that need no project. */
 export const VALID_COMMANDS_HINT =
-	'Valid commands: init, new, list, show, history, set-status, set-type, set-parent, remove-parent, children, parents, tree, link, unlink, links, add-label, remove-label, set-meta, delete, type, plugins';
+	'Valid commands: init, new, list, show, history, set-status, set-type, set-parent, remove-parent, children, parents, tree, link, unlink, links, add-label, remove-label, set-meta, delete, type, plugins, projects';

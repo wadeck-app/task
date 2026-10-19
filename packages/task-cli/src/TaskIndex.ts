@@ -17,6 +17,7 @@ import { printUpdateNotice } from './cli/updateNotice.js';
 import { runCliSubcommand } from './commands/CliSubcommands.js';
 import { runInit } from './commands/InitCommand.js';
 import { runPluginsCommand } from './commands/PluginsCommand.js';
+import { runProjectsCommand } from './commands/ProjectsCommand.js';
 import { PROJECT_COMMANDS, VALID_COMMANDS_HINT } from './commands/projectCommands.js';
 import { VERSION } from './version.js';
 
@@ -50,6 +51,9 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 	}
 	if (command === 'plugins') {
 		return runPluginsCommand(rest, jsonMode);
+	}
+	if (command === 'projects') {
+		return runProjectsCommand(rest, jsonMode, cwd);
 	}
 
 	if (!TaskConfigLoader.isInitialized(effectiveCwd)) {

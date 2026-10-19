@@ -120,3 +120,38 @@ export function unregisterProject(
 		lockOptions
 	);
 }
+
+/** True only when the path is known not to be a directory (absent, or a file); other stat failures (permissions...) keep the entry. */
+function isMissingDirectory(dir: string): boolean {
+	try {
+		return !fs.statSync(dir).isDirectory();
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		return code === 'ENOENT' || code === 'ENOTDIR';
+	}
+}
+
+/**
+ * Removes the registered projects whose directory no longer exists and returns them. With `dryRun` nothing is
+ * written. A registry with nothing to prune is not rewritten. Safe against concurrent writers.
+ */
+export function pruneMissingProjects(
+	configDir: string,
+	options: { dryRun?: boolean; lock?: RegistryLockOptions } = {}
+): { removed: string[] } {
+	return withRegistryLock(
+		configDir,
+		() => {
+			const projects = listRegisteredProjects(configDir);
+			const removed = projects.filter(isMissingDirectory);
+			if (removed.length > 0 && options.dryRun !== true) {
+				writeRegistry(
+					configDir,
+					projects.filter(p => !removed.includes(p))
+				);
+			}
+			return { removed };
+		},
+		options.lock
+	);
+}

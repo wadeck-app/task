@@ -11,7 +11,7 @@
 
 `task-core` <- `task-service` <- `task-cli` and `app-module-task`. The two adapters never import each other, and `task-service` knows no CLI, HTTP or app-core library, never prints or exits. `npm run test:architecture` (`architecture/`, part of `npm test`) enforces it on imports, `package.json` dependencies and source patterns.
 
-Shared rules live in `task-service`, adapters only parse input and format output: `describeError` (error kind, message, hint; CLI maps to stderr, module to HTTP status), `selectDeleteTargets` / `describeDeleteEffects`, `openTaskContext`, `getTaskLogDir`, `countTasksByStatus`, `showTaskWithRelations`.
+Shared rules live in `task-service`, adapters only parse input and format output: `describeError` (error kind, message, hint; CLI maps to stderr, module to HTTP status), `selectDeleteTargets` / `describeDeleteEffects`, `openTaskContext`, `getTaskLogDir`, `countTasksByStatus`, `showTaskWithRelations`, the projects registry (`listRegisteredProjects`, `unregisterProject`, `inspectRegisteredProjects`, `pruneMissingProjects`).
 
 ## app-core registration
 
@@ -19,6 +19,8 @@ Shared rules live in `task-service`, adapters only parse input and format output
 - Exit 0 when app-core took it or is absent/not running (deferred, skipped); exit 1 with app-core's reason when it refuses.
 - Manifest: `app-module/manifest.json` next to `task.cjs`, else `packages/app-module-task/dist-module/manifest.json` (source checkout: `BUNDLE_VERSION=0.0.0-local npm run bundle --workspace=packages/app-module-task`). Neither found is an error naming both paths.
 - The module has no cwd: projects come from `<config dir>/projects.json` (written by `task init`), routes take `?project=<dir>`.
+- Registry upkeep, no project needed: `task projects list [--json]` (path, `[ok]` / `[missing]` / `[not initialized]` / `[unreadable: reason]`), `task projects remove <dir>` (relative to cwd, case-insensitive on Windows; unknown dir is an error), `task projects prune [--dry-run]` (drops entries whose directory is gone; a directory that cannot be stat'ed, e.g. permissions, is kept).
+- `deferred` from the SDK means only "the POST failed" (refused, reset, or no answer within 3 s) and the config dir exists, not proof that app-core is down; the message says "not running" regardless. If app-core is up, run `task cli register`.
 - Testing against a real app-core: set `APP_CORE_PORT` and `APP_CORE_CONFIG_DIR`; without a free `APP_CORE_PORT` the SDK talks to the app-core running on 4850.
 
 ## app-module-task routes and pages

@@ -81,10 +81,7 @@ export const runSetStatus: ProjectCommand = async (rest, { jsonMode, ctx, eventS
 	} catch (error) {
 		// Machine readers get the valid values in the message itself (the hint line is not part of the JSON).
 		if (error instanceof InvalidStatusError && jsonMode) {
-			return errorOutput(
-				jsonMode,
-				`Invalid status: ${error.status}. Valid values: ${error.validStatuses.join(', ')}`
-			);
+			return errorOutput(jsonMode, `${error.message}. Valid statuses: ${error.validStatuses.join(', ')}`);
 		}
 		return failure(jsonMode, error);
 	}

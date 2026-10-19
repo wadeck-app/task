@@ -55,6 +55,9 @@ export {
 	isSameProjectDir,
 	listRegisteredProjects,
 	projectsRegistryPath,
+	pruneMissingProjects,
 	registerProject,
 	unregisterProject,
 } from './projectsRegistry.js';
+export type { ProjectHealth } from './projectsHealth.js';
+export { inspectRegisteredProjects } from './projectsHealth.js';

@@ -48,6 +48,9 @@ Usage:
   task cli logs [--follow]                   Print today's invocation log
   task cli register [--json]                 Tell app-core where the task app-module is (also done by task cli update)
   task cli unregister [--json]               Remove the task app-module from app-core
+  task projects list [--json]                List the projects registered with the app-module (flags missing/uninitialized/unreadable ones)
+  task projects remove <dir> [--json]        Unregister a project directory (its .task is left untouched)
+  task projects prune [--dry-run] [--json]   Unregister the projects whose directory no longer exists
 
 Global flags:
   --config <dir>       Global config directory (default: ~/.task)
@@ -64,6 +67,17 @@ Environment variables:
   TASK_CONFIG       Override global config directory (default: ~/.task)
   TASK_PROJECT_DIR  Override project directory`;
 }
+
+/** `task projects --help`. */
+export const PROJECTS_HELP = `task projects - projects registered with the task app-module (by 'task init')
+
+Usage:
+  task projects list [--json]                List registered projects: path and [ok], [missing], [not initialized] or [unreadable: <reason>]
+  task projects remove <dir> [--json]        Unregister a directory (relative paths resolve against the cwd); .task is left untouched
+  task projects prune [--dry-run] [--json]   Unregister every project whose directory no longer exists; --dry-run only prints them
+  task projects --help                       Show this help
+
+The registry is <config dir>/projects.json. These commands need no initialized project.`;
 
 /** `task type --help`. */
 export const TYPE_HELP = `task type - manage valid task types for this project

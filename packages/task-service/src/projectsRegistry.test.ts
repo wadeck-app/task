@@ -7,6 +7,7 @@ import {
 	isSameProjectDir,
 	listRegisteredProjects,
 	projectsRegistryPath,
+	pruneMissingProjects,
 	registerProject,
 	unregisterProject,
 } from './projectsRegistry.js';
@@ -135,5 +136,60 @@ describe('isSameProjectDir', () => {
 
 	it('ignores case on Windows only (the rule the registry applies to its entries)', () => {
 		expect(isSameProjectDir(base, base.toUpperCase())).toBe(process.platform === 'win32');
+	});
+});
+
+describe('pruneMissingProjects', () => {
+	let root: string;
+	let configDir: string;
+
+	beforeEach(() => {
+		root = fs.mkdtempSync(path.join(os.tmpdir(), 'task-prune-'));
+		configDir = path.join(root, 'config');
+	});
+
+	afterEach(() => {
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	it('removes the entries whose directory no longer exists and returns them, keeping the others in order', () => {
+		const kept = path.join(root, 'kept');
+		const gone = path.join(root, 'gone');
+		fs.mkdirSync(kept);
+		registerProject(configDir, gone);
+		registerProject(configDir, kept);
+		expect(pruneMissingProjects(configDir)).toEqual({ removed: [gone] });
+		expect(listRegisteredProjects(configDir)).toEqual([kept]);
+	});
+
+	it('dry run reports the same entries and writes nothing', () => {
+		const gone = path.join(root, 'gone');
+		registerProject(configDir, gone);
+		const before = fs.readFileSync(projectsRegistryPath(configDir), 'utf8');
+		expect(pruneMissingProjects(configDir, { dryRun: true })).toEqual({ removed: [gone] });
+		expect(fs.readFileSync(projectsRegistryPath(configDir), 'utf8')).toBe(before);
+	});
+
+	it('does not touch the registry when every directory exists or nothing is registered', () => {
+		expect(pruneMissingProjects(configDir)).toEqual({ removed: [] });
+		expect(fs.existsSync(projectsRegistryPath(configDir))).toBe(false);
+		const kept = path.join(root, 'kept');
+		fs.mkdirSync(kept);
+		registerProject(configDir, kept);
+		expect(pruneMissingProjects(configDir)).toEqual({ removed: [] });
+		expect(listRegisteredProjects(configDir)).toEqual([kept]);
+	});
+
+	it('treats a path that is a file as missing (a project is a directory)', () => {
+		const file = path.join(root, 'afile');
+		fs.writeFileSync(file, 'x');
+		registerProject(configDir, file);
+		expect(pruneMissingProjects(configDir)).toEqual({ removed: [file] });
+	});
+
+	it('throws the registry error for a corrupt registry instead of pruning', () => {
+		fs.mkdirSync(configDir, { recursive: true });
+		fs.writeFileSync(projectsRegistryPath(configDir), '{nope');
+		expect(() => pruneMissingProjects(configDir)).toThrow(ProjectsRegistryError);
 	});
 });

@@ -219,7 +219,8 @@ describe('runTaskCommand — set-status error messages', () => {
 		const result = await runTaskCommand(['--json', 'set-status', task.id, 'nope'], tmpDir);
 		expect(result.exitCode).toBe(1);
 		const parsed = JSON.parse(result.output) as { error: string };
-		expect(parsed.error).toContain('Invalid status');
+		// Same wording as the text mode (`unknown status "..."`), with the valid values since JSON carries no hint line.
+		expect(parsed.error).toBe('unknown status "nope". Valid statuses: backlog, in-progress, done');
 	});
 });
 

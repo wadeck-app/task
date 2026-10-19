@@ -3,7 +3,7 @@ import { addType, listTypes, removeType } from '@wadeck-app/task-service';
 
 import type { ProjectCommand } from '../cli/env.js';
 import { TYPE_HELP } from '../cli/help.js';
-import { errorOutput } from '../cli/output.js';
+import { errorOutput, failure } from '../cli/output.js';
 
 export const runType: ProjectCommand = (rest, { jsonMode, ctx }) => {
 	const subCmd = rest[0];
@@ -23,7 +23,11 @@ export const runType: ProjectCommand = (rest, { jsonMode, ctx }) => {
 			if (!typeName) {
 				return errorOutput(jsonMode, 'missing type name', 'Usage: task type add <name>');
 			}
-			addType(ctx, { name: typeName });
+			try {
+				addType(ctx, { name: typeName });
+			} catch (error) {
+				return failure(jsonMode, error);
+			}
 			return { exitCode: 0, output: `Added type: ${typeName}` };
 		}
 		case 'remove': {
@@ -31,7 +35,11 @@ export const runType: ProjectCommand = (rest, { jsonMode, ctx }) => {
 			if (!typeName) {
 				return errorOutput(jsonMode, 'missing type name', 'Usage: task type remove <name>');
 			}
-			removeType(ctx, { name: typeName });
+			try {
+				removeType(ctx, { name: typeName });
+			} catch (error) {
+				return failure(jsonMode, error);
+			}
 			return { exitCode: 0, output: `Removed type: ${typeName}` };
 		}
 		// violations-suppress: ts/no-switch-default-break returns a user-facing error, not a silent fallback
