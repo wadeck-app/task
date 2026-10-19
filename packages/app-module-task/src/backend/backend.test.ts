@@ -1051,11 +1051,27 @@ describe('GET /tasks/:id/links', () => {
 		expect(fromA.status).toBe(200);
 		expect(fromA.body['id']).toBe(a);
 		expect(fromA.body['rows']).toEqual([
-			{ relation: 'blockedBy', direction: 'outgoing', id: b, title: 'b', status: 'backlog', href: hrefOf(b) },
+			{
+				relation: 'blockedBy',
+				direction: 'outgoing',
+				id: b,
+				title: 'b',
+				titleText: 'b',
+				status: 'backlog',
+				href: hrefOf(b),
+			},
 		]);
 		const fromB = await h.call('GET /tasks/:id/links', { params: { id: b }, query: { project } });
 		expect(fromB.body['rows']).toEqual([
-			{ relation: 'blocks', direction: 'derived', id: a, title: 'a', status: 'backlog', href: hrefOf(a) },
+			{
+				relation: 'blocks',
+				direction: 'derived',
+				id: a,
+				title: 'a',
+				titleText: 'a',
+				status: 'backlog',
+				href: hrefOf(a),
+			},
 		]);
 		expect(fromB.body['links']['blocks'].map((t: { id: string }) => t.id)).toEqual([a]);
 	});
@@ -1683,5 +1699,240 @@ describe('POST /tasks from a form', () => {
 			body: { description: 'x', parent: '', projectParam: 'whatever' },
 		});
 		expect(answer.status).toBe(201);
+	});
+});
+
+describe('inline errors (?inlineErrors=true): the views cannot read a failed request, so the answer carries the error', () => {
+	const projectQuery = (): Record<string, unknown> => ({ project, inlineErrors: 'true' });
+
+	it('a rejected action answers 200 with failed, the original status and a ready-to-display errorText (message and hint)', async () => {
+		const id = await createTask('a');
+		const answer = await h.call('POST /tasks/:id/links', {
+			params: { id },
+			query: projectQuery(),
+			body: { type: 'blockedBy', target: 'zzzzzzzz' },
+		});
+		expect(answer.status).toBe(200);
+		expect(answer.body).toMatchObject({ failed: true, httpStatus: 404 });
+		expect(answer.body['errorText']).toContain(answer.body['error']);
+		expect(answer.body['errorText']).toContain('zzzzzzzz');
+	});
+
+	it('appends the hint of the error to errorText when there is one', async () => {
+		const id = await createTask('a');
+		const answer = await h.call('POST /tasks/:id/status', {
+			params: { id },
+			query: projectQuery(),
+			body: { status: 'nope' },
+		});
+		expect(answer.status).toBe(200);
+		expect(answer.body['hint']).toBeTruthy();
+		expect(answer.body['errorText']).toContain(answer.body['hint']);
+	});
+
+	it('leaves out the hints that explain the JSON body of the API: a form user has no body to fix', async () => {
+		const answer = await h.call('POST /tasks', { query: projectQuery(), body: { description: '   ' } });
+		expect(answer.status).toBe(200);
+		expect(answer.body['hint']).toContain('Send a JSON body');
+		expect(answer.body['errorText']).toBe('description must not be blank');
+	});
+
+	it('without the flag the same failure keeps its HTTP status (API callers, the CLI-like contract)', async () => {
+		const id = await createTask('a');
+		const answer = await h.call('POST /tasks/:id/links', {
+			params: { id },
+			query: { project },
+			body: { type: 'blockedBy', target: 'zzzzzzzz' },
+		});
+		expect(answer.status).toBe(404);
+		expect(answer.body).not.toHaveProperty('errorText');
+	});
+
+	it('also covers reads: a task that does not exist', async () => {
+		const answer = await h.call('GET /tasks/:id', { params: { id: 'nope' }, query: projectQuery() });
+		expect(answer.status).toBe(200);
+		expect(answer.body).toMatchObject({ failed: true, httpStatus: 404 });
+		expect(answer.body['errorText']).toContain('nope');
+	});
+
+	it('a successful request has no errorText nor failed flag (the view hides its error badge)', async () => {
+		const id = await createTask('a');
+		const answer = await h.call('POST /tasks/:id/labels', {
+			params: { id },
+			query: projectQuery(),
+			body: { label: 'x' },
+		});
+		expect(answer.status).toBe(200);
+		expect(answer.body).not.toHaveProperty('errorText');
+		expect(answer.body).not.toHaveProperty('failed');
+	});
+
+	it('an unexpected failure (5xx) is still logged on the server side and answered inline', async () => {
+		const lines: string[] = [];
+		const broken = setup(
+			{ deliver: () => Promise.reject(new Error('sink exploded')) },
+			{ writeStderr: text => lines.push(text) }
+		);
+		try {
+			const dir = broken.world.createProject('gamma', { configYml: STATUSES_YML });
+			const answer = await broken.call('POST /tasks', {
+				query: { project: dir, inlineErrors: 'true' },
+				body: { description: 'x' },
+			});
+			expect(answer.status).toBe(200);
+			expect(answer.body).toMatchObject({ failed: true, httpStatus: 500 });
+			expect(lines.join('')).toContain('sink exploded');
+		} finally {
+			broken.world.cleanup();
+		}
+	});
+
+	it('the delete route reports the missing confirmation inline', async () => {
+		const id = await createTask('a');
+		const answer = await h.call('POST /tasks/delete', {
+			query: projectQuery(),
+			body: { ids: id },
+		});
+		expect(answer.status).toBe(200);
+		expect(answer.body).toMatchObject({ failed: true, httpStatus: 400 });
+		expect(answer.body['errorText']).toContain('confirm must be true');
+	});
+});
+
+describe('POST /tasks: blank descriptions', () => {
+	it('rejects a description made of whitespace only (it would create a task with an empty title)', async () => {
+		const answer = await h.call('POST /tasks', { query: { project }, body: { description: '   ' } });
+		expect(answer.status).toBe(400);
+		expect(answer.body['error']).toContain('description');
+	});
+});
+
+describe('selected project that cannot be read', () => {
+	it('GET /projects names the problem and gives an empty selectedQuery, so the views show the reason instead of failing', async () => {
+		const broken = h.world.createProject('broken');
+		fs.rmSync(`${broken}/.task`, { recursive: true });
+		const answer = await h.call('GET /projects', { query: { project: broken } });
+		expect(answer.body['selectedQuery']).toBe('');
+		expect(answer.body['selectedProblem']).toContain('not initialized');
+		expect(answer.body['selectedProblem']).toContain('task init');
+	});
+
+	it('has no selectedProblem for a readable project', async () => {
+		const answer = await h.call('GET /projects', { query: { project } });
+		expect(answer.body['selectedProblem']).toBeNull();
+	});
+});
+
+describe('display text of dates and titles (the views cannot format a column)', () => {
+	it('task rows carry a short UTC "created" text and a truncated titleText, the title stays whole', async () => {
+		const long = `word ${'long '.repeat(40)}end`;
+		await createTask(long);
+		const answer = await h.call('GET /tasks', { query: { project } });
+		const row = answer.body['tasks'][0];
+		expect(row['title']).toBe(long);
+		expect(row['titleText'].length).toBeLessThanOrEqual(90);
+		expect(row['titleText'].endsWith('\u2026')).toBe(true);
+		expect(row['created']).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d$/);
+	});
+
+	it('a short title is shown as is', async () => {
+		await createTask('short');
+		const answer = await h.call('GET /tasks', { query: { project } });
+		expect(answer.body['tasks'][0]['titleText']).toBe('short');
+	});
+
+	it('tree rows truncate the label, not the title', async () => {
+		const long = `x${' y'.repeat(100)}`;
+		await createTask(long);
+		const answer = await h.call('GET /tree', { query: { project } });
+		expect(answer.body['rows'][0]['title']).toBe(long);
+		expect(answer.body['rows'][0]['label'].length).toBeLessThanOrEqual(90);
+	});
+
+	it('the history has rows with a short UTC time', async () => {
+		const id = await createTask('t');
+		await h.call('POST /tasks/:id/status', { params: { id }, query: { project }, body: { status: 'in-progress' } });
+		const answer = await h.call('GET /tasks/:id/history', { params: { id }, query: { project } });
+		expect(answer.body['rows'].map((r: { status: string }) => r.status)).toEqual(['backlog', 'in-progress']);
+		expect(answer.body['rows'][0]['time']).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d$/);
+	});
+});
+
+describe('detail page flags', () => {
+	it('canDetach is true when the task has a parentId, even a dangling one (the fix must be reachable from the page)', async () => {
+		const parent = await createTask('parent');
+		const child = await createTask('child', { parent });
+		const root = await h.call('GET /tasks/:id', { params: { id: parent }, query: { project } });
+		expect(root.body['canDetach']).toBe(false);
+		const indexPath = `${project}/.task/task-index.json`;
+		const index = JSON.parse(fs.readFileSync(indexPath, 'utf8')) as { tasks: Array<{ id: string }> };
+		index.tasks = index.tasks.filter(x => x.id !== parent);
+		fs.writeFileSync(indexPath, JSON.stringify(index));
+		const answer = await h.call('GET /tasks/:id', { params: { id: child }, query: { project } });
+		expect(answer.body['parent']).toBeNull();
+		expect(answer.body['canDetach']).toBe(true);
+	});
+
+	it('every page body names the project in a projectText line (a header with actions drops its subtitle)', async () => {
+		const id = await createTask('t');
+		for (const [route, params] of [
+			['GET /tasks', {}],
+			['GET /tree', {}],
+			['GET /tasks/:id', { id }],
+		] as const) {
+			const answer = await h.call(route, { params, query: { project } });
+			expect(answer.body['projectText'], route).toBe('Project: alpha');
+		}
+	});
+
+	it('the hierarchy of a task marks its own row', async () => {
+		const parent = await createTask('parent');
+		const child = await createTask('child', { parent });
+		const answer = await h.call('GET /tree', { query: { project, id: child } });
+		const labels = answer.body['rows'].map((r: { label: string }) => r.label);
+		expect(labels[0]).toBe('parent');
+		expect(labels[1]).toMatch(/child \(this task\)$/);
+	});
+});
+
+describe('delete answers drive the page state', () => {
+	it('a preview carries previewText, an executed delete deletedText and canConfirm false (the stale preview goes away)', async () => {
+		const id = await createTask('a');
+		const preview = await h.call('POST /tasks/delete/plan', { query: { project }, body: { ids: id } });
+		expect(preview.body['previewText']).toBe(preview.body['summary']);
+		const done = await h.call('POST /tasks/delete', {
+			query: { project },
+			body: { ids: id, confirm: true },
+		});
+		expect(done.status).toBe(200);
+		expect(done.body['deletedText']).toBe('Deleted 1 task(s).');
+		expect(done.body['canConfirm']).toBe(false);
+		expect(done.body).not.toHaveProperty('previewText');
+	});
+});
+
+describe('GET /summary display rows', () => {
+	it('marks the closed statuses and gives a short skipped text for the narrow widget', async () => {
+		const c = await createTask('c');
+		await h.call('POST /tasks/:id/status', { params: { id: c }, query: { project }, body: { status: 'done' } });
+		const broken = h.world.createProject('broken');
+		fs.rmSync(`${broken}/.task`, { recursive: true });
+		const answer = await h.call('GET /summary');
+		expect(answer.body['rows']).toEqual([
+			{ statusText: 'backlog', count: 0 },
+			{ statusText: 'in-progress', count: 0 },
+			{ statusText: 'done (closed)', count: 1 },
+		]);
+		expect(answer.body['skippedText']).toBe('1 project not counted (see the Projects page).');
+	});
+});
+
+describe('GET /projects tasks link', () => {
+	it('gives the tasks page of the selected project, else the plain tasks page', async () => {
+		h.world.createProject('beta');
+		const selected = await h.call('GET /projects', { query: { project } });
+		expect(selected.body['tasksHref']).toBe(`/modules/task/tasks?project=${encodeURIComponent(project)}`);
+		const none = await h.call('GET /projects');
+		expect(none.body['tasksHref']).toBe('/modules/task/tasks');
 	});
 });

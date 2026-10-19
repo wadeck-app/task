@@ -30,7 +30,11 @@ Pages: nav `/tasks` `/tree` `/projects` `/types`; routes `/tasks/:id`, `/tasks/:
 View conventions (app-core DSL, checked against the real shell):
 
 - Mutations: Form + `$actions` + `onSubmit: $ctx.<action>`; the form data is the body and fills `{placeholders}` of the action URL. Placeholders are not URL-encoded: forms carry `projectParam` (encoded by the route) and use `?project={projectParam}`.
-- A failing action shows nothing (no error channel); a failing source blanks the whole page. Sources therefore use `?{query}` with `$source.projects.selectedQuery`: empty while no project is selected, which skips the source.
+- The shell drops the answer of a failed action and discards ALL source answers when one source fails (blank page). Every request of a view therefore adds `inlineErrors=true`: the route answers a failure as 200 with `failed`, `httpStatus` and `errorText` (message, plus the hint unless it explains the JSON API), and the view shows `errorText` in a `variant: danger` Badge. Actions publish with `resultKey` per section, so the message sits next to its form.
+- Sources use `?{query}` with `$source.projects.selectedQuery`: empty while no project is selected (or the selected one is unreadable, see `selectedProblem`), which skips the source.
+- The shell reloads on a URL change only the sources naming a `$urlParam.*`/`$route.*`: a source waiting for `projects` also takes `reload: $urlParam.reload` (always empty, so never sent), else filter links and project choice leave the page stale or blank until F5.
+- DataTable columns lose `format`, `mono`, `width`, `truncate` (the shell rebuilds them from `key`/`label`) and a `PageHeader` with `headerActions` drops its `subtitle`: routes give display texts (`titleText`, `created`, `time`, `projectText`).
+- A `FieldSelect` showing its first option while the form holds `''` makes picking that option a no-change (Save stays off): selects that act on an existing item (remove label/type) need a `placeholder`.
 - `FieldSelect` crashes the page until its options load: guard with `$if`. `$if` has no negation and `[]` is truthy: routes give boolean flags (`hasLabels`, `noTypes`...).
 - Not expressible: row actions (the shell fetcher does not substitute `{id}`), URL-writing filters, TreeView navigation.
 - Test against a real shell: `app-core-cli dev packages/app-module-task --watch` with `APP_CORE_PORT`, `XDG_CONFIG_HOME` and a PATH without `queue` (events end up undelivered instead of pushed).

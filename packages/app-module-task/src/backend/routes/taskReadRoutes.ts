@@ -12,6 +12,7 @@ import {
 	showTaskWithRelations,
 } from '@wadeck-app/task-service';
 
+import { shortUtcTime } from '../display.js';
 import { booleanFlag, optionalQueryValue, showAllFlag } from '../request.js';
 import { withRowLinks, linkRows } from '../rowViews.js';
 import { childrenBody, forestBody, taskDetailBody, taskTreeBody, tasksListBody } from '../taskViews.js';
@@ -51,7 +52,9 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 	});
 
 	route('GET', '/tasks/:id/history', req => {
-		return { status: 200, body: getTaskHistory(open(req), { id: taskId(req) }) };
+		const history = getTaskHistory(open(req), { id: taskId(req) });
+		const rows = history.history.map(entry => ({ ...entry, time: shortUtcTime(entry.timestamp) }));
+		return { status: 200, body: { ...history, rows } };
 	});
 
 	route('GET', '/tasks/:id/children', req => {

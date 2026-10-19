@@ -1,23 +1,28 @@
 # Task types of one project (nav /types), stored in .task/config.yml. With no type configured any text is accepted for
 # the type of a task; as soon as one is configured the type of a task must be one of them.
-# Forms submit through named actions (see task-page.yaml for the conventions: projectParam, no error channel).
+# Forms submit through named actions (see task-page.yaml for the conventions: projectParam, inline errors, reload).
+# inlineErrors on every source: one failing source discards the answers of all the others (the page stays blank), so a
+# failure is answered as data (`errorText`) and shown by a badge.
 $sources:
     projects:
         url: GET /api/modules/task/projects
         params:
             project: $urlParam.project
     types:
-        url: GET /api/modules/task/types?{query}
+        url: GET /api/modules/task/types?{query}&inlineErrors=true
         params:
             query: $source.projects.selectedQuery
+            reload: $urlParam.reload
 
 $actions:
     addType:
-        url: POST /api/modules/task/types?project={projectParam}
+        url: POST /api/modules/task/types?project={projectParam}&inlineErrors=true
+        resultKey: typeResult
         reloadSources: true
     # {name} is the encoded type picked in the select.
     removeType:
-        url: DELETE /api/modules/task/types/{name}?project={projectParam}
+        url: DELETE /api/modules/task/types/{name}?project={projectParam}&inlineErrors=true
+        resultKey: typeResult
         reloadSources: true
 
 $type: PageContent
@@ -26,9 +31,29 @@ sections:
       title: Types
       subtitle: $sources.types.project.name
     - $type: Badge
+      $if: $sources.projects.selectedProblem
+      label: $sources.projects.selectedProblem
+      variant: danger
+    - $type: Badge
       $if: $sources.projects.needsSelection
-      label: Several projects are registered. Pick one on the Projects page.
+      label: Several projects are registered, pick one to see its types.
       variant: warning
+    - $type: DataTable
+      $if: $sources.projects.needsSelection
+      rows: $sources.projects.projects
+      navigateTo: '{href}'
+      columns:
+          - { key: 'name', label: 'Project' }
+          - { key: 'openCount', label: 'Open tasks' }
+          - { key: 'error', label: 'Problem' }
+    - $type: Badge
+      $if: $sources.types.errorText
+      label: $sources.types.errorText
+      variant: danger
+    - $type: Badge
+      $if: $ctx.typeResult.errorText
+      label: $ctx.typeResult.errorText
+      variant: danger
     - $type: Badge
       $if: $sources.types.restricted
       label: Task types are restricted to this list.
@@ -59,6 +84,9 @@ sections:
             label: Type to remove
             bind: name
             options: $sources.types.removeOptions
+            # Without it the select shows its first type while the form holds none: picking it (the only one,
+            # typically) was no change, so the button stayed off.
+            placeholder: Choose a type
       actions:
           - $type: ButtonSave
             label: Remove type

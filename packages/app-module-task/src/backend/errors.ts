@@ -51,3 +51,17 @@ export function toHttpError(error: unknown): HttpErrorResult {
 	const hint = described.kind === 'ambiguous' ? AMBIGUOUS_HINT : described.hint;
 	return { status: STATUS_BY_KIND[described.kind], body: withHint(described.message, hint, described.details) };
 }
+
+/**
+ * The same failure as a 200 answer for the views. The DSL shows nothing when a request fails (the answer of a failed
+ * action is dropped, a failed source blanks the page), so a view that opts in with `?inlineErrors=true` gets the error
+ * as data: `failed`, the original `httpStatus` and `errorText`, one line (message, then hint) ready to display.
+ */
+export function toInlineError(failure: HttpErrorResult): HttpErrorResult {
+	const { error, hint } = failure.body;
+	const message = typeof error === 'string' ? error : `Request failed with status ${failure.status}.`;
+	// "Send a JSON body {...}" explains the API to a caller writing requests; a form user has no body to fix.
+	const useful = typeof hint === 'string' && hint !== '' && !hint.startsWith('Send ');
+	const errorText = useful ? `${message}. ${hint}` : message;
+	return { status: 200, body: { ...failure.body, failed: true, httpStatus: failure.status, errorText } };
+}

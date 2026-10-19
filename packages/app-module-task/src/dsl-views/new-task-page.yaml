@@ -1,20 +1,24 @@
 # Create a task (route /new). The project comes from ?project=; with several projects registered and none given the form
 # asks for it. The parent list is the open tasks of the project, so it appears once the project is known.
-# Submits through a named action (conventions of task-page.yaml: projectParam, no error channel for failed actions);
-# the answer is published as $ctx.created: message, link to the new task, and the queue events that were not delivered.
+# Submits through a named action (conventions of task-page.yaml: projectParam, inline errors, reload);
+# the answer is published as $ctx.created: message, link to the new task, the queue events that were not delivered,
+# or the error (errorText).
+# inlineErrors on every source: one failing source discards the answers of all the others (the page stays blank), so a
+# failure is answered as data (`errorText`) and shown by a badge.
 $sources:
     projects:
         url: GET /api/modules/task/projects
         params:
             project: $urlParam.project
     tasks:
-        url: GET /api/modules/task/tasks?{query}
+        url: GET /api/modules/task/tasks?{query}&inlineErrors=true
         params:
             query: $source.projects.selectedQuery
+            reload: $urlParam.reload
 
 $actions:
     createTask:
-        url: POST /api/modules/task/tasks?project={projectParam}
+        url: POST /api/modules/task/tasks?project={projectParam}&inlineErrors=true
         resultKey: created
         reloadSources: true
 
@@ -23,6 +27,22 @@ sections:
     - $type: PageHeader
       title: New task
       subtitle: $sources.tasks.project.name
+    - $type: BackLink
+      $if: $sources.projects.tasksHref
+      to: $sources.projects.tasksHref
+      label: Back to the tasks
+    - $type: Badge
+      $if: $sources.projects.selectedProblem
+      label: $sources.projects.selectedProblem
+      variant: danger
+    - $type: Badge
+      $if: $sources.tasks.errorText
+      label: $sources.tasks.errorText
+      variant: danger
+    - $type: Badge
+      $if: $ctx.created.errorText
+      label: $ctx.created.errorText
+      variant: danger
     - $type: Badge
       $if: $ctx.created.message
       label: $ctx.created.message

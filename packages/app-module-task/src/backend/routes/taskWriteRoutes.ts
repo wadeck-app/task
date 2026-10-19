@@ -49,8 +49,13 @@ export function registerTaskWriteRoutes(kit: RouteKit): void {
 	route('POST', '/tasks', async req => {
 		const ctx = open(req);
 		const body = bodyObject(req.body, CREATE_USAGE);
+		const description = requiredString(body, 'description', CREATE_USAGE);
+		// A blank description would make a task with an empty title (the CLI accepts it too; the form should not).
+		if (description.trim() === '') {
+			throw new RequestError(400, 'description must not be blank', CREATE_USAGE);
+		}
 		const input = {
-			description: requiredString(body, 'description', CREATE_USAGE),
+			description,
 			// A form sends an empty parent when none is chosen.
 			parent: body['parent'] === '' ? undefined : optionalString(body, 'parent', CREATE_USAGE),
 		};

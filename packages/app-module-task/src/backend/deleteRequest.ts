@@ -79,6 +79,7 @@ export function planBody(
 ): Record<string, unknown> {
 	const count = plan.tasks.length;
 	const headline = count === 0 ? 'Nothing to delete.' : `Would delete ${count} task(s).`;
+	const summary = [headline, ...effectsWithNotFound(plan, 'would')].join(' ');
 	return {
 		canConfirm: count > 0,
 		// The body that confirms exactly this preview: the confirm form of the page submits it as is.
@@ -97,19 +98,25 @@ export function planBody(
 		notFound: plan.notFound,
 		orphanCount: plan.orphanCount,
 		danglingLinkCount: plan.danglingLinkCount,
-		summary: [headline, ...effectsWithNotFound(plan, 'would')].join(' '),
+		summary,
+		// What the preview area of the page shows; an executed delete has none, which clears a stale preview.
+		previewText: summary,
 	};
 }
 
 /** The answer of an executed delete. */
 export function outcomeBody(project: ProjectRef, plan: DeletePlan, deletedCount: number): Record<string, unknown> {
+	const summary = [`Deleted ${deletedCount} task(s).`, ...effectsWithNotFound(plan, 'did')].join(' ');
 	return {
 		project,
 		deletedCount,
 		orphanCount: plan.orphanCount,
 		danglingLinkCount: plan.danglingLinkCount,
 		notFound: plan.notFound,
-		summary: [`Deleted ${deletedCount} task(s).`, ...effectsWithNotFound(plan, 'did')].join(' '),
+		summary,
+		deletedText: summary,
+		// Shares the page state of the preview: the confirm form of the executed preview must disappear.
+		canConfirm: false,
 	};
 }
 

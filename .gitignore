@@ -51,3 +51,6 @@ task-cli-darwin-x64/
 task-cli-win32-x64/
 
 *-errors.log
+
+# Browser verification screenshots
+.claude/screenshots/

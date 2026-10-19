@@ -2,13 +2,23 @@
 import { LINK_TYPES } from '@wadeck-app/task-core';
 import type { TaskLinks, TaskSummary, TaskTreeNode } from '@wadeck-app/task-core';
 
+import { shortTitle, shortUtcTime } from './display.js';
 import { detailHref } from './hrefs.js';
 
 type ProjectRef = { path: string };
 
-/** Tasks with the project and the link to their detail page. */
+/**
+ * Tasks with the project, the link to their detail page, and the texts a table shows: a truncated title and the
+ * creation time (the DSL table cannot truncate nor format a column).
+ */
 export function withRowLinks(project: ProjectRef, tasks: TaskSummary[]): unknown[] {
-	return tasks.map(task => ({ ...task, projectPath: project.path, href: detailHref(project, task.id) }));
+	return tasks.map(task => ({
+		...task,
+		titleText: shortTitle(task.title),
+		created: shortUtcTime(task.createdAt),
+		projectPath: project.path,
+		href: detailHref(project, task.id),
+	}));
 }
 
 /** The nested tree with the detail link on every node. */
@@ -35,6 +45,12 @@ interface TreeRow {
 	selected?: true;
 }
 
+/** The indented, truncated title of a node; the task the tree was asked for says so (its row is otherwise not told apart). */
+function treeLabel(node: TaskTreeNode, depth: number): string {
+	const title = shortTitle(node.title) + (node.selected ? ' (this task)' : '');
+	return depth === 0 ? title : `${EM_SPACE.repeat(depth - 1)}${BRANCH} ${title}`;
+}
+
 /**
  * Depth-first rows of a tree. A DataTable shows them with a row click to the detail page; the TreeView component
  * cannot navigate from YAML (its selection is a callback), hence the flat view.
@@ -46,7 +62,7 @@ export function flattenTree(project: ProjectRef, nodes: TaskTreeNode[], depth = 
 			title: node.title,
 			status: node.status,
 			depth,
-			label: depth === 0 ? node.title : `${EM_SPACE.repeat(depth - 1)}${BRANCH} ${node.title}`,
+			label: treeLabel(node, depth),
 			href: detailHref(project, node.id),
 			...(node.selected ? { selected: true as const } : {}),
 		},
@@ -60,6 +76,7 @@ interface LinkRow {
 	direction: 'outgoing' | 'derived';
 	id: string;
 	title: string;
+	titleText: string;
 	status: string;
 	href: string;
 }
@@ -73,6 +90,7 @@ export function linkRows(project: ProjectRef, links: TaskLinks): LinkRow[] {
 			direction: stored.includes(relation) ? ('outgoing' as const) : ('derived' as const),
 			id: task.id,
 			title: task.title,
+			titleText: shortTitle(task.title),
 			status: task.status,
 			href: detailHref(project, task.id),
 		}))

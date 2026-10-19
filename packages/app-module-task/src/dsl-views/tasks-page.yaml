@@ -3,6 +3,12 @@
 # ?showAll=true also lists the tasks in a terminal status, ?parent=<id> restricts to the direct children of a task.
 # Each row carries `href` (built by the route, project query included): the row click opens the detail page.
 # Status and label changes are on the detail page: a table row action cannot carry the row to its URL in app-core.
+# The sources that wait for `projects` also name a $urlParam (`reload`, empty in practice): the shell reloads on a URL
+# change only the sources that name one, so without it the filter links and the project choice changed the URL only.
+# The table columns carry no format nor width in the DSL: the route gives `titleText` (truncated) and `created` (short UTC).
+# A header with actions shows no subtitle: the project is named by `projectText` below it.
+# inlineErrors on every source: one failing source discards the answers of all the others (the page stays blank), so a
+# failure is answered as data (`errorText`) and shown by a badge.
 $sources:
     # First: the others wait for the project it resolved (a source whose {project} is empty is skipped, not failed).
     projects:
@@ -13,15 +19,15 @@ $sources:
             parent: $urlParam.parent
             id: $urlParam.id
     tasks:
-        url: GET /api/modules/task/tasks?{query}
+        url: GET /api/modules/task/tasks?{query}&inlineErrors=true
         params:
             query: $source.projects.selectedQuery
+            reload: $urlParam.reload
 
 $type: PageContent
 sections:
     - $type: PageHeader
       title: Tasks
-      subtitle: $sources.tasks.project.name
       headerActions:
           - $type: ButtonLink
             $if: $sources.tasks.hrefs
@@ -36,7 +42,21 @@ sections:
             $if: $sources.tasks.hrefs
             label: Delete tasks
             to: $sources.tasks.hrefs.deleteTasks
-    # Several projects registered and none chosen: the tasks cannot be listed, the projects below are the way in.
+    - $type: Badge
+      $if: $sources.tasks.projectText
+      label: $sources.tasks.projectText
+      variant: info
+    # The selected project cannot be read (not initialized, corrupt config...): the reason and the fix, not a blank page.
+    - $type: Badge
+      $if: $sources.projects.selectedProblem
+      label: $sources.projects.selectedProblem
+      variant: danger
+    # An unknown ?parent=... and the like: the reason, not a blank page.
+    - $type: Badge
+      $if: $sources.tasks.errorText
+      label: $sources.tasks.errorText
+      variant: danger
+    # Several projects are registered and none chosen: the tasks cannot be listed, the projects below are the way in.
     - $type: Badge
       $if: $sources.projects.needsSelection
       label: Several projects are registered, pick one to see its tasks.
@@ -67,6 +87,6 @@ sections:
       emptyMessage: No open tasks (use "Show closed tasks" to include the closed ones)
       columns:
           - { key: 'id', label: 'ID', mono: true }
-          - { key: 'title', label: 'Title' }
+          - { key: 'titleText', label: 'Title' }
           - { key: 'status', label: 'Status' }
-          - { key: 'createdAt', label: 'Created', format: 'datetime' }
+          - { key: 'created', label: 'Created (UTC)' }

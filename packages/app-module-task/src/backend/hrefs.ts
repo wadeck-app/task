@@ -12,6 +12,11 @@ export function encodedProject(project: { path: string }): string {
 	return encodeURIComponent(project.path);
 }
 
+/** The line that names the project on a page (a header with actions shows no subtitle). */
+export function projectText(project: { name: string }): string {
+	return `Project: ${project.name}`;
+}
+
 /** A link to a module page of the project; `extra` parameters are appended encoded. */
 export function pageLink(project: { path: string }, name: string, extra: Record<string, string> = {}): string {
 	const extraQuery = Object.entries(extra)

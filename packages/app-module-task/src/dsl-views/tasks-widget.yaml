@@ -1,23 +1,30 @@
 # Dashboard widget: open tasks (non-terminal statuses) and the count per status.
 # No ?project: the route aggregates every registered project; it answers 404 with the fix (`task init`) when none is registered.
+# The table lists every status; the closed ones say so, they are not part of the "Open tasks" figure.
 $sources:
     summary:
-        url: GET /api/modules/task/summary
+        url: GET /api/modules/task/summary?inlineErrors=true
 
 $type: VerticalStack
 gap: gap-3
 items:
+    # No project registered, or none readable: the reason and the fix (inlineErrors: a failed source blanks the widget).
+    - $type: Badge
+      $if: $sources.summary.errorText
+      label: $sources.summary.errorText
+      variant: danger
     # Projects the route could not read are not counted: say so instead of showing an undercount.
+    # Short text (the badge of the narrow widget does not wrap); the reasons are on the Projects page.
     - $type: Badge
       $if: $sources.summary.skippedCount
-      label: $sources.summary.warning
+      label: $sources.summary.skippedText
       variant: warning
     - $type: StatTile
       label: Open tasks
       value: $sources.summary.open
     - $type: DataTable
-      rows: $sources.summary.byStatus
+      rows: $sources.summary.rows
       emptyMessage: No tasks
       columns:
-          - { key: 'status', label: 'Status' }
+          - { key: 'statusText', label: 'Status' }
           - { key: 'count', label: 'Tasks' }

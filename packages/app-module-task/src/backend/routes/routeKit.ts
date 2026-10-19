@@ -1,7 +1,7 @@
 import type { ModuleContext } from '@wadeck-app/app-core-sdk';
 import type { EventSink, TaskEvent, TaskServiceContext } from '@wadeck-app/task-service';
 
-import { toHttpError } from '../errors.js';
+import { toHttpError, toInlineError } from '../errors.js';
 import { openProject } from '../projects.js';
 import { queryValue } from '../request.js';
 import type { RouteAnswer, RouteRequest } from '../request.js';
@@ -59,11 +59,17 @@ export function createRouteKit(
 							writeStderr
 						);
 					}
-					return out.code(failure.status).send(failure.body);
+					const answer = wantsInlineErrors(req as unknown as RouteRequest) ? toInlineError(failure) : failure;
+					return out.code(answer.status).send(answer.body);
 				}
 			});
 		},
 		open: req => openProject(configDir, queryValue(req.query, 'project')),
 		deliver: events => deliverForRequest(eventSink, events),
 	};
+}
+
+/** `?inlineErrors=true`: the caller is a view that cannot read a failed request (see {@link toInlineError}). */
+function wantsInlineErrors(req: RouteRequest): boolean {
+	return req.query?.['inlineErrors'] === 'true';
 }

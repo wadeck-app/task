@@ -78,7 +78,9 @@ describe('dashboard widget (src/dsl-views/tasks-widget.yaml)', () => {
 
 	it('shows the skipped-projects warning only when /summary reports skipped projects (no silent undercount)', () => {
 		expect(widget).toContain('$if: $sources.summary.skippedCount');
-		expect(widget).toContain('$sources.summary.warning');
+		// Short text: the badge of the narrow widget does not wrap, a long one is cut.
+		expect(widget).toContain('$sources.summary.skippedText');
+		expect(widget).toContain('$sources.summary.rows');
 	});
 });
 
@@ -202,7 +204,7 @@ describe('delete page', () => {
 	});
 
 	it('shows the outcome of the delete', () => {
-		expect(page).toContain('$ctx.deleted.summary');
+		expect(page).toContain('$ctx.plan.deletedText');
 	});
 });
 
@@ -237,5 +239,154 @@ describe('list pages', () => {
 
 	it('the history page reads the history route of the task', () => {
 		expect(view('task-history-page.yaml')).toContain('GET /api/modules/task/tasks/{id}/history');
+	});
+});
+
+/** The `$sources:` blocks of a view: name -> its lines. */
+function sourceBlocks(text: string): Map<string, string> {
+	const blocks = new Map<string, string>();
+	const lines = text.split('\n');
+	let inSources = false;
+	let current: string | undefined;
+	for (const line of lines) {
+		if (/^\$sources:/.test(line)) {
+			inSources = true;
+			continue;
+		}
+		if (inSources && /^\S/.test(line)) break;
+		const start = /^ {4}(\w+):\s*$/.exec(line);
+		if (inSources && start) {
+			current = start[1]!;
+			blocks.set(current, '');
+		} else if (inSources && current !== undefined) {
+			blocks.set(current, `${blocks.get(current)}${line}\n`);
+		}
+	}
+	return blocks;
+}
+
+describe('views: feedback and refresh conventions found by driving the pages in a real browser', () => {
+	it.each(viewNames)(
+		'%s: a source that waits for another one also names a $urlParam, else the shell does not reload it when the URL changes (filters, project choice did nothing until F5)',
+		name => {
+			for (const [source, block] of sourceBlocks(view(name))) {
+				if (!block.includes('$source.')) continue;
+				expect(block, `${name}: source ${source}`).toMatch(/: \$urlParam\.\w+/);
+			}
+		}
+	);
+
+	it.each(viewNames)(
+		'%s: every action opts in to inline errors, publishes its answer and shows errorText (a failed action is otherwise invisible)',
+		name => {
+			const text = view(name);
+			const actions = text.match(/^\$actions:\n((?: {4}.*\n|\n)+)/m)?.[1];
+			if (actions === undefined) return;
+			const blocks = actions.split(/^ {4}(?=\w+:\s*$)/m).filter(block => block.trim() !== '');
+			expect(blocks.length, name).toBeGreaterThan(0);
+			for (const block of blocks) {
+				const actionName = block.split(':')[0];
+				expect(block, `${name}: ${actionName}`).toMatch(/url: (POST|DELETE) \S+&inlineErrors=true/);
+				const key = /resultKey: (\w+)/.exec(block)?.[1];
+				expect(key, `${name}: ${actionName} needs a resultKey`).toBeDefined();
+				expect(text, `${name}: ${actionName}`).toContain(`$ctx.${key}.errorText`);
+			}
+		}
+	);
+
+	it('the detail and history pages ask for inline errors on the task they read, and show them', () => {
+		for (const name of ['task-page.yaml', 'task-history-page.yaml']) {
+			const text = view(name);
+			expect(text, name).toMatch(/url: GET \/api\/modules\/task\/tasks\/\{id\}\?\{query\}&inlineErrors=true/);
+			expect(text, name).toContain('$sources.detail.errorText');
+		}
+	});
+
+	it.each(['tasks-page.yaml', 'tree-page.yaml', 'types-page.yaml', 'task-page.yaml', 'task-history-page.yaml'])(
+		'%s: tells why the selected project cannot be read instead of staying blank',
+		name => {
+			expect(view(name)).toContain('$sources.projects.selectedProblem');
+		}
+	);
+
+	it('the selects that remove an item start on a placeholder: choosing the only option must count as a change', () => {
+		for (const [name, label] of [
+			['task-page.yaml', 'Label to remove'],
+			['types-page.yaml', 'Type to remove'],
+		] as const) {
+			const lines = view(name).split('\n');
+			const at = lines.findIndex(line => line.includes(`label: ${label}`));
+			expect(at, `${name}: ${label}`).toBeGreaterThan(-1);
+			expect(lines.slice(at, at + 8).join('\n'), `${name}: ${label}`).toContain('placeholder:');
+		}
+	});
+
+	it('the detail page names the project, and detaches a task whose parent is dangling', () => {
+		const page = view('task-page.yaml');
+		expect(page).toContain('$sources.detail.projectText');
+		expect(page).toContain('$if: $sources.detail.canDetach');
+	});
+
+	it('the list pages show the project name apart from their header (a header with actions drops its subtitle)', () => {
+		expect(view('tasks-page.yaml')).toContain('$sources.tasks.projectText');
+		expect(view('tree-page.yaml')).toContain('$sources.tree.projectText');
+	});
+
+	it('the tables use the display texts of the routes: truncated titles and short dates', () => {
+		expect(view('tasks-page.yaml')).toContain("key: 'titleText'");
+		expect(view('tasks-page.yaml')).toContain("key: 'created'");
+		expect(view('task-page.yaml')).toContain("key: 'titleText'");
+		expect(view('task-history-page.yaml')).toContain('$sources.history.rows');
+		expect(view('task-history-page.yaml')).toContain("key: 'time'");
+	});
+
+	it('tree and types pages offer the projects to pick from when several are registered', () => {
+		for (const name of ['tree-page.yaml', 'types-page.yaml']) {
+			const text = view(name);
+			expect(text, name).toContain('$if: $sources.projects.needsSelection');
+			expect(text, name).toContain('rows: $sources.projects.projects');
+		}
+	});
+
+	it('the delete page clears the preview and the confirm button once the delete ran (both answers share the plan state)', () => {
+		const page = view('delete-page.yaml');
+		expect(page).toMatch(/deleteTasks:\n {8}url: .*\n {8}resultKey: plan\b/);
+		expect(page).toContain('$if: $ctx.plan.previewText');
+		expect(page).toContain('$ctx.plan.deletedText');
+	});
+
+	it('the create and delete pages link back to the tasks', () => {
+		for (const name of ['new-task-page.yaml', 'delete-page.yaml']) {
+			expect(view(name), name).toContain('$sources.projects.tasksHref');
+		}
+	});
+});
+
+describe('views: a failing source blanks the whole page', () => {
+	it.each(viewNames)(
+		'%s: every source but projects asks for inline errors (one failure discards the answers of all the others)',
+		name => {
+			const text = view(name);
+			for (const [source, block] of sourceBlocks(text)) {
+				if (source === 'projects') continue;
+				expect(block, `${name}: source ${source}`).toContain('inlineErrors=true');
+			}
+			for (const [, , url] of text.matchAll(/^ {8}url: (GET) (\S+)/gm)) {
+				if (url!.endsWith('/projects')) continue;
+				expect(url, name).toMatch(/inlineErrors=true$/);
+			}
+		}
+	);
+
+	it.each([
+		['tasks-page.yaml', 'tasks'],
+		['tree-page.yaml', 'tree'],
+		['types-page.yaml', 'types'],
+		['new-task-page.yaml', 'tasks'],
+		['task-page.yaml', 'detail'],
+		['task-history-page.yaml', 'detail'],
+		['tasks-widget.yaml', 'summary'],
+	])('%s: shows the error of its %s source', (name, source) => {
+		expect(view(name)).toContain(`$sources.${source}.errorText`);
 	});
 });

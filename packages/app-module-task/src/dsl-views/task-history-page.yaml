@@ -1,33 +1,51 @@
 # Status history of one task (/modules/task/tasks/:id/history); the project comes from ?project=.
+# inlineErrors on every source: one failing source discards the answers of all the others (the page stays blank), so a
+# failure is answered as data (`errorText`) and shown by a badge.
+# `history` fails with the same error as `detail` when the task does not exist: `detail` shows it.
 $sources:
     projects:
         url: GET /api/modules/task/projects
         params:
             project: $urlParam.project
     detail:
-        url: GET /api/modules/task/tasks/{id}?{query}
+        url: GET /api/modules/task/tasks/{id}?{query}&inlineErrors=true
         params:
             id: $route.id
             query: $source.projects.selectedQuery
+            reload: $urlParam.reload
     history:
-        url: GET /api/modules/task/tasks/{id}/history?{query}
+        url: GET /api/modules/task/tasks/{id}/history?{query}&inlineErrors=true
         params:
             id: $route.id
             query: $source.projects.selectedQuery
+            reload: $urlParam.reload
 
 $type: PageContent
 sections:
     - $type: PageHeader
       title: $sources.detail.task.title
-      subtitle: Status history
       headerActions:
           - $type: ButtonLink
             $if: $sources.detail.taskHrefs
             label: Back to the task
             to: $sources.detail.taskHrefs.detail
+    # The selected project cannot be read, or the task does not exist: the reason, not a blank page.
+    - $type: Badge
+      $if: $sources.projects.selectedProblem
+      label: $sources.projects.selectedProblem
+      variant: danger
+    - $type: Badge
+      $if: $sources.detail.errorText
+      label: $sources.detail.errorText
+      variant: danger
+    - $type: Badge
+      $if: $sources.detail.task
+      label: Status history
+      variant: info
     - $type: DataTable
-      rows: $sources.history.history
+      $if: $sources.detail.task
+      rows: $sources.history.rows
       emptyMessage: No history
       columns:
-          - { key: 'timestamp', label: 'Time', format: 'datetime' }
+          - { key: 'time', label: 'Time (UTC)' }
           - { key: 'status', label: 'Status' }

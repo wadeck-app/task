@@ -3,8 +3,10 @@
 #    and publishes the preview as $ctx.plan: counts, the tasks and what would happen to children and links.
 # 2. Only once a preview selected something, the confirm form appears; its initialData is the exact request the route
 #    prepared (`plan.confirmRequest`, with confirm: true). The route refuses a delete without confirm: true anyway.
-# After a delete the preview shown above is stale: preview again before deleting more.
-# Conventions of task-page.yaml apply (projectParam; a failed action shows nothing).
+# The delete publishes its answer under the same key as the preview (`plan`): the answer of an executed delete has no
+# `previewText` and `canConfirm: false`, so the stale preview, its table and the red button disappear and `deletedText`
+# takes their place. Preview again before deleting more.
+# Conventions of task-page.yaml apply (projectParam, inline errors).
 $sources:
     projects:
         url: GET /api/modules/task/projects
@@ -13,20 +15,32 @@ $sources:
 
 $actions:
     previewDelete:
-        url: POST /api/modules/task/tasks/delete/plan?project={projectParam}
+        url: POST /api/modules/task/tasks/delete/plan?project={projectParam}&inlineErrors=true
         resultKey: plan
     deleteTasks:
-        url: POST /api/modules/task/tasks/delete?project={projectParam}
-        resultKey: deleted
+        url: POST /api/modules/task/tasks/delete?project={projectParam}&inlineErrors=true
+        resultKey: plan
 
 $type: PageContent
 sections:
     - $type: PageHeader
       title: Delete tasks
       subtitle: Give one selector, preview, then confirm. Deleting cannot be undone.
+    - $type: BackLink
+      $if: $sources.projects.tasksHref
+      to: $sources.projects.tasksHref
+      label: Back to the tasks
     - $type: Badge
-      $if: $ctx.deleted.summary
-      label: $ctx.deleted.summary
+      $if: $sources.projects.selectedProblem
+      label: $sources.projects.selectedProblem
+      variant: danger
+    - $type: Badge
+      $if: $ctx.plan.errorText
+      label: $ctx.plan.errorText
+      variant: danger
+    - $type: Badge
+      $if: $ctx.plan.deletedText
+      label: $ctx.plan.deletedText
       variant: success
     - $type: Form
       $if: $sources.projects.forms
@@ -55,11 +69,11 @@ sections:
           - $type: ButtonSave
             label: Preview
     - $type: Badge
-      $if: $ctx.plan.summary
-      label: $ctx.plan.summary
+      $if: $ctx.plan.previewText
+      label: $ctx.plan.previewText
       variant: warning
     - $type: DataTable
-      $if: $ctx.plan.summary
+      $if: $ctx.plan.previewText
       rows: $ctx.plan.tasks
       emptyMessage: Nothing selected
       columns:

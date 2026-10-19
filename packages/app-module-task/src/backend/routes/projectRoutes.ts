@@ -3,10 +3,15 @@ import { countTasksByStatus, describeError, isSameProjectDir } from '@wadeck-app
 import type { StatusCount, TaskServiceContext } from '@wadeck-app/task-service';
 
 import { RequestError } from '../errors.js';
-import { selectedQuery } from '../hrefs.js';
+import { MODULE_ID, selectedQuery, tasksPageHref } from '../hrefs.js';
 import { listProjects, openProject, requireRegisteredProjects } from '../projects.js';
+import type { ProjectListing } from '../projects.js';
 import { optionalQueryValue, queryValue } from '../request.js';
 import type { RouteKit } from './routeKit.js';
+
+function skippedCount(count: number): string {
+	return `${count} ${count === 1 ? 'project' : 'projects'}`;
+}
 
 /** One display line for the projects the all-projects summary could not read; null when there is none. */
 function skippedWarning(skipped: readonly { path: string; error: string }[]): string | null {
@@ -14,6 +19,14 @@ function skippedWarning(skipped: readonly { path: string; error: string }[]): st
 	const noun = skipped.length === 1 ? 'project' : 'projects';
 	const details = skipped.map(entry => `${entry.path} (${entry.error})`).join('; ');
 	return `${skipped.length} ${noun} not counted: ${details}. Run \`task init\` in the project directory or check that it still exists.`;
+}
+
+/** Why the selected project cannot be shown, with what to do about it. */
+function problemText(project: ProjectListing): string {
+	const fix = project.initialized
+		? 'Fix the cause above, then reload.'
+		: `Run \`task init\` in ${project.path} to recreate it.`;
+	return `${project.error} ${fix}`;
 }
 
 export function registerProjectRoutes(kit: RouteKit): void {
@@ -28,6 +41,9 @@ export function registerProjectRoutes(kit: RouteKit): void {
 			(requested === undefined && projects.length === 1 ? projects[0] : undefined);
 		const projectParam = selected === undefined ? '' : encodeURIComponent(selected.path);
 		const base = { projectParam };
+		// A selected project that cannot be read: the views show why instead of requesting tasks that would fail.
+		const readable = selected !== undefined && selected.error === null;
+		const selectedProblem = selected === undefined || selected.error === null ? null : problemText(selected);
 		return {
 			status: 200,
 			body: {
@@ -36,7 +52,9 @@ export function registerProjectRoutes(kit: RouteKit): void {
 				// Several projects and none chosen: the views ask for a choice instead of showing nothing.
 				needsSelection: projects.length > 1 && selected === undefined,
 				selectedParam: projectParam,
-				selectedQuery: selectedQuery(selected === undefined ? undefined : selected.path, req.query),
+				selectedProblem,
+				selectedQuery: selectedQuery(readable ? selected.path : undefined, req.query),
+				tasksHref: selected === undefined ? `/modules/${MODULE_ID}/tasks` : tasksPageHref(selected.path),
 				projectOptions: projects.map(entry => ({ value: encodeURIComponent(entry.path), label: entry.name })),
 				forms: {
 					create: { ...base, description: '', parent: '' },
@@ -82,6 +100,10 @@ export function registerProjectRoutes(kit: RouteKit): void {
 				{ skipped }
 			);
 		}
+		const rows = [...merged.values()].map(entry => ({
+			statusText: entry.terminal ? `${entry.status} (closed)` : entry.status,
+			count: entry.count,
+		}));
 		return {
 			status: 200,
 			body: {
@@ -93,6 +115,13 @@ export function registerProjectRoutes(kit: RouteKit): void {
 				skipped,
 				skippedCount: skipped.length,
 				warning: skippedWarning(skipped),
+				// The widget is narrow and its badge does not wrap: the detail is on the Projects page.
+				skippedText:
+					skipped.length === 0
+						? null
+						: `${skippedCount(skipped.length)} not counted (see the Projects page).`,
+				// What the table shows: closed statuses are told apart from the open ones counted above.
+				rows,
 			},
 		};
 	});

@@ -3,7 +3,7 @@ import type { TaskLinks, TaskRecord, TaskSummary, TaskTreeNode } from '@wadeck-a
 import { ALL_LINK_NAMES } from '@wadeck-app/task-service';
 import type { TaskServiceContext } from '@wadeck-app/task-service';
 
-import { detailHref, encodedProject, historyHref, pageHrefs, pageLink, showAllToggle } from './hrefs.js';
+import { detailHref, encodedProject, historyHref, pageHrefs, pageLink, projectText, showAllToggle } from './hrefs.js';
 import { flattenTree, withRowLinks, withTreeLinks } from './rowViews.js';
 
 type Project = TaskServiceContext['project'];
@@ -23,6 +23,7 @@ export function tasksListBody(
 	const keepParent: Record<string, string> = parent === undefined ? {} : { parent };
 	return {
 		project,
+		projectText: projectText(project),
 		hrefs: pageHrefs(project),
 		filters: { showAll, parent: parent ?? null },
 		showAllToggle: showAllToggle(project, 'tasks', showAll, keepParent),
@@ -58,6 +59,7 @@ export function taskDetailBody(
 	const labels = record.labels ?? [];
 	return {
 		project,
+		projectText: projectText(project),
 		task,
 		// Rows for the tables of the detail page (a table shows lists of objects).
 		labelRows: labels.map(label => ({ label })),
@@ -78,6 +80,8 @@ export function taskDetailBody(
 		projectParam: encodedProject(project),
 		forms: detailForms(project, record),
 		parent,
+		// A dangling parentId resolves to no `parent`, yet the task must stay detachable from the page.
+		canDetach: record.parentId !== undefined,
 		warnings: data.warnings,
 		warningText: data.warnings.length === 0 ? null : data.warnings.join(' '),
 		children: withRowLinks(project, children as TaskSummary[]),
@@ -109,6 +113,7 @@ export function forestBody(
 ): Record<string, unknown> {
 	return {
 		project,
+		projectText: projectText(project),
 		hrefs: pageHrefs(project),
 		showAllToggle: showAllToggle(
 			project,

@@ -4,61 +4,77 @@
 # - the body is the form data; it also fills the {placeholders} of the action URL ({id} is the route id);
 # - `projectParam` is the project already URL-encoded by the route (the substitution does not encode), so the URL is
 #   always `?project={projectParam}`; the forms get it through their initialData (`$sources.detail.forms.*`);
-# - the page reloads its sources after a successful action; a failed one shows nothing (the DSL has no error channel
-#   for actions: see CLAUDE.md), the form just keeps its unsaved state;
-# - `resultKey` publishes the answer as $ctx.<key>: used to show what the queue did not receive (`undeliveredText`).
+# - the page reloads its sources after a successful action;
+# - `&inlineErrors=true`: the DSL drops the answer of a failed request (nothing is shown, the form just stays as typed),
+#   so the routes answer a failure as data (`errorText`, one line with the hint) and the section of the form shows it;
+# - `resultKey` publishes the answer as $ctx.<key>: the error, and what the queue did not receive (`undeliveredText`),
+#   are shown in the section of the form that produced them (the page is long, a message at the top would be off screen).
 # FieldSelect crashes the page while its options are not loaded: every form sits behind $if on its source data.
+# The sources that wait for `projects` also name a $urlParam (`reload`, empty in practice): the shell reloads on a URL
+# change only the sources that name one, so without it a link to another project or filter changed the URL and nothing else.
 $sources:
     projects:
         url: GET /api/modules/task/projects
         params:
             project: $urlParam.project
+    # inlineErrors on every source: one failing source discards the answers of all the others (the page stays blank), so a
+    # failure is answered as data (`errorText`) and shown by a badge.
+    # `tree` and `links` fail with the same error as `detail` when the task does not exist: `detail` shows it.
     detail:
-        url: GET /api/modules/task/tasks/{id}?{query}
+        url: GET /api/modules/task/tasks/{id}?{query}&inlineErrors=true
         params:
             id: $route.id
             query: $source.projects.selectedQuery
+            reload: $urlParam.reload
     tree:
-        url: GET /api/modules/task/tree?{query}&id={id}
+        url: GET /api/modules/task/tree?{query}&id={id}&inlineErrors=true
         params:
             id: $route.id
             query: $source.projects.selectedQuery
+            reload: $urlParam.reload
     links:
-        url: GET /api/modules/task/tasks/{id}/links?{query}
+        url: GET /api/modules/task/tasks/{id}/links?{query}&inlineErrors=true
         params:
             id: $route.id
             query: $source.projects.selectedQuery
+            reload: $urlParam.reload
 
 $actions:
     setStatus:
-        url: POST /api/modules/task/tasks/{id}/status?project={projectParam}
+        url: POST /api/modules/task/tasks/{id}/status?project={projectParam}&inlineErrors=true
         resultKey: statusResult
         reloadSources: true
     setType:
-        url: POST /api/modules/task/tasks/{id}/type?project={projectParam}
+        url: POST /api/modules/task/tasks/{id}/type?project={projectParam}&inlineErrors=true
+        resultKey: typeResult
         reloadSources: true
     addLabel:
-        url: POST /api/modules/task/tasks/{id}/labels?project={projectParam}
+        url: POST /api/modules/task/tasks/{id}/labels?project={projectParam}&inlineErrors=true
+        resultKey: labelResult
         reloadSources: true
     # {label} is the encoded label picked in the select.
     removeLabel:
-        url: DELETE /api/modules/task/tasks/{id}/labels/{label}?project={projectParam}
+        url: DELETE /api/modules/task/tasks/{id}/labels/{label}?project={projectParam}&inlineErrors=true
+        resultKey: labelResult
         reloadSources: true
     setMeta:
-        url: POST /api/modules/task/tasks/{id}/meta?project={projectParam}
+        url: POST /api/modules/task/tasks/{id}/meta?project={projectParam}&inlineErrors=true
+        resultKey: metaResult
         reloadSources: true
     setParent:
-        url: POST /api/modules/task/tasks/{id}/parent?project={projectParam}
+        url: POST /api/modules/task/tasks/{id}/parent?project={projectParam}&inlineErrors=true
+        resultKey: parentResult
         reloadSources: true
     removeParent:
-        url: DELETE /api/modules/task/tasks/{id}/parent?project={projectParam}
+        url: DELETE /api/modules/task/tasks/{id}/parent?project={projectParam}&inlineErrors=true
+        resultKey: parentResult
         reloadSources: true
     addLink:
-        url: POST /api/modules/task/tasks/{id}/links?project={projectParam}
+        url: POST /api/modules/task/tasks/{id}/links?project={projectParam}&inlineErrors=true
         resultKey: linkResult
         reloadSources: true
     removeLink:
-        url: DELETE /api/modules/task/tasks/{id}/links?project={projectParam}
+        url: DELETE /api/modules/task/tasks/{id}/links?project={projectParam}&inlineErrors=true
         resultKey: linkResult
         reloadSources: true
 
@@ -66,7 +82,6 @@ $type: PageContent
 sections:
     - $type: PageHeader
       title: $sources.detail.task.title
-      subtitle: $sources.detail.task.description
       headerActions:
           - $type: ButtonLink
             $if: $sources.detail.taskHrefs
@@ -80,23 +95,28 @@ sections:
             $if: $sources.detail.hrefs
             label: All tasks
             to: $sources.detail.hrefs.tasks
+    # The selected project cannot be read (not initialized, corrupt config...): the reason and the fix, not a blank page.
+    - $type: Badge
+      $if: $sources.projects.selectedProblem
+      label: $sources.projects.selectedProblem
+      variant: danger
+    # The task does not exist (or the id is ambiguous): what was asked and what to do.
+    - $type: Badge
+      $if: $sources.detail.errorText
+      label: $sources.detail.errorText
+      variant: danger
     # Repairable inconsistencies of this task (dangling parent...), with the command that fixes them.
     - $type: Badge
       $if: $sources.detail.warningText
       label: $sources.detail.warningText
       variant: warning
-    # Events the queue did not receive after a status change or a link change: the change itself is saved.
-    - $type: Badge
-      $if: $ctx.statusResult.undeliveredText
-      label: $ctx.statusResult.undeliveredText
-      variant: warning
-    - $type: Badge
-      $if: $ctx.linkResult.undeliveredText
-      label: $ctx.linkResult.undeliveredText
-      variant: warning
     - $type: HorizontalStack
       gap: gap-3
+      $if: $sources.detail.task
       items:
+          - $type: Badge
+            label: $sources.detail.projectText
+            variant: info
           - $type: Badge
             label: $sources.detail.task.status
             variant: info
@@ -111,7 +131,17 @@ sections:
 
     - $type: Section
       title: Status
+      $if: $sources.detail.task
       items:
+          # Events the queue did not receive after a status change: the change itself is saved.
+          - $type: Badge
+            $if: $ctx.statusResult.errorText
+            label: $ctx.statusResult.errorText
+            variant: danger
+          - $type: Badge
+            $if: $ctx.statusResult.undeliveredText
+            label: $ctx.statusResult.undeliveredText
+            variant: warning
           - $type: Form
             $if: $sources.detail.forms
             onSubmit: $ctx.setStatus
@@ -127,7 +157,12 @@ sections:
 
     - $type: Section
       title: Type
+      $if: $sources.detail.task
       items:
+          - $type: Badge
+            $if: $ctx.typeResult.errorText
+            label: $ctx.typeResult.errorText
+            variant: danger
           # With configured types the choice is restricted; without any, every string is accepted.
           - $type: Form
             $if: $sources.detail.hasTypes
@@ -160,7 +195,12 @@ sections:
 
     - $type: Section
       title: Labels
+      $if: $sources.detail.task
       items:
+          - $type: Badge
+            $if: $ctx.labelResult.errorText
+            label: $ctx.labelResult.errorText
+            variant: danger
           - $type: DataTable
             rows: $sources.detail.labelRows
             emptyMessage: No labels
@@ -177,6 +217,8 @@ sections:
             actions:
                 - $type: ButtonSave
                   label: Add label
+          # The placeholder matters: without it the select shows its first label while the form holds none, and
+          # picking that label (the only one, typically) is no change, so the button stayed off.
           - $type: Form
             $if: $sources.detail.hasLabels
             onSubmit: $ctx.removeLabel
@@ -186,13 +228,19 @@ sections:
                   label: Label to remove
                   bind: label
                   options: $sources.detail.labelOptions
+                  placeholder: Choose a label
             actions:
                 - $type: ButtonSave
                   label: Remove label
 
     - $type: Section
       title: Metadata
+      $if: $sources.detail.task
       items:
+          - $type: Badge
+            $if: $ctx.metaResult.errorText
+            label: $ctx.metaResult.errorText
+            variant: danger
           - $type: DataTable
             rows: $sources.detail.metaRows
             emptyMessage: No metadata
@@ -216,8 +264,13 @@ sections:
 
     - $type: Section
       title: Hierarchy
+      $if: $sources.detail.task
       items:
-          # The whole tree containing this task (its ancestors, siblings, children); the row of this task is flagged.
+          - $type: Badge
+            $if: $ctx.parentResult.errorText
+            label: $ctx.parentResult.errorText
+            variant: danger
+          # The whole tree containing this task (its ancestors, siblings, children); its own row says "(this task)".
           - $type: DataTable
             rows: $sources.tree.rows
             navigateTo: '{href}'
@@ -237,8 +290,9 @@ sections:
             actions:
                 - $type: ButtonSave
                   label: Set parent
+          # canDetach: also true for a parent that no longer exists (the warning above), the case to repair.
           - $type: Form
-            $if: $sources.detail.parent
+            $if: $sources.detail.canDetach
             onSubmit: $ctx.removeParent
             initialData: $sources.detail.forms.empty
             fields: []
@@ -250,7 +304,17 @@ sections:
 
     - $type: Section
       title: Links
+      $if: $sources.detail.task
       items:
+          - $type: Badge
+            $if: $ctx.linkResult.errorText
+            label: $ctx.linkResult.errorText
+            variant: danger
+          # Events the queue did not receive after a link change: the change itself is saved.
+          - $type: Badge
+            $if: $ctx.linkResult.undeliveredText
+            label: $ctx.linkResult.undeliveredText
+            variant: warning
           # Outgoing links and the inverses derived from the links of the other tasks (blocks, duplicates, causes).
           - $type: DataTable
             rows: $sources.links.rows
@@ -260,7 +324,7 @@ sections:
                 - { key: 'relation', label: 'Relation' }
                 - { key: 'direction', label: 'Direction' }
                 - { key: 'id', label: 'Task', mono: true }
-                - { key: 'title', label: 'Title' }
+                - { key: 'titleText', label: 'Title' }
                 - { key: 'status', label: 'Status' }
           - $type: Form
             $if: $sources.detail.linkTypeOptions
@@ -295,6 +359,7 @@ sections:
 
     - $type: Section
       title: Children
+      $if: $sources.detail.task
       items:
           - $type: DataTable
             rows: $sources.detail.children
@@ -302,5 +367,5 @@ sections:
             emptyMessage: No children
             columns:
                 - { key: 'id', label: 'ID', mono: true }
-                - { key: 'title', label: 'Title' }
+                - { key: 'titleText', label: 'Title' }
                 - { key: 'status', label: 'Status' }

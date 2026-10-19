@@ -2,6 +2,10 @@
 # ?showAll=true includes the closed tasks, ?parent=<id> restricts to the descendants of a task, ?id=<id> shows the one
 # tree containing a task. A row click opens the detail page.
 # TreeView is not used: its selection is a callback, which YAML cannot express, so rows could not navigate.
+# The sources that wait for `projects` also name a $urlParam (`reload`, empty in practice): see tasks-page.yaml.
+# A header with actions shows no subtitle: the project is named by `projectText` below it.
+# inlineErrors on every source: one failing source discards the answers of all the others (the page stays blank), so a
+# failure is answered as data (`errorText`) and shown by a badge.
 $sources:
     projects:
         url: GET /api/modules/task/projects
@@ -11,25 +15,46 @@ $sources:
             parent: $urlParam.parent
             id: $urlParam.id
     tree:
-        url: GET /api/modules/task/tree?{query}
+        url: GET /api/modules/task/tree?{query}&inlineErrors=true
         params:
             query: $source.projects.selectedQuery
+            reload: $urlParam.reload
 
 $type: PageContent
 sections:
     - $type: PageHeader
       title: Tree
-      subtitle: $sources.tree.project.name
       headerActions:
           - $type: ButtonLink
             $if: $sources.tree.showAllToggle
             label: $sources.tree.showAllToggle.label
             to: $sources.tree.showAllToggle.href
-    # Several projects registered and none chosen: say so instead of an empty page.
+    - $type: Badge
+      $if: $sources.tree.projectText
+      label: $sources.tree.projectText
+      variant: info
+    # The selected project cannot be read (not initialized, corrupt config...): the reason and the fix, not a blank page.
+    - $type: Badge
+      $if: $sources.projects.selectedProblem
+      label: $sources.projects.selectedProblem
+      variant: danger
+    - $type: Badge
+      $if: $sources.tree.errorText
+      label: $sources.tree.errorText
+      variant: danger
+    # Several projects are registered and none chosen: the projects below are the way in.
     - $type: Badge
       $if: $sources.projects.needsSelection
-      label: Several projects are registered. Pick one on the Projects page.
+      label: Several projects are registered, pick one to see its tree.
       variant: warning
+    - $type: DataTable
+      $if: $sources.projects.needsSelection
+      rows: $sources.projects.projects
+      navigateTo: '{href}'
+      columns:
+          - { key: 'name', label: 'Project' }
+          - { key: 'openCount', label: 'Open tasks' }
+          - { key: 'error', label: 'Problem' }
     - $type: DataTable
       $if: $sources.tree.project
       rows: $sources.tree.rows
