@@ -107,6 +107,7 @@ describe('listProjects', () => {
 			{
 				name: 'alpha',
 				path: a,
+				exists: true,
 				initialized: true,
 				openCount: 0,
 				error: null,
@@ -115,6 +116,7 @@ describe('listProjects', () => {
 			{
 				name: 'beta',
 				path: b,
+				exists: true,
 				initialized: false,
 				openCount: null,
 				error: expect.stringContaining('not initialized') as unknown,

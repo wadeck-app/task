@@ -213,6 +213,7 @@ describe('GET /projects', () => {
 			{
 				name: 'alpha',
 				path: project,
+				exists: true,
 				initialized: true,
 				openCount: 0,
 				error: null,
@@ -1934,5 +1935,67 @@ describe('GET /projects tasks link', () => {
 		expect(selected.body['tasksHref']).toBe(`/modules/task/tasks?project=${encodeURIComponent(project)}`);
 		const none = await h.call('GET /projects');
 		expect(none.body['tasksHref']).toBe('/modules/task/tasks');
+	});
+});
+
+describe('nothing registered yet (the views must say what to do)', () => {
+	beforeEach(() => {
+		fs.rmSync(projectsRegistryPath(h.world.configDir));
+	});
+
+	it('GET /projects flags noProjects with the two ways to register a project', async () => {
+		const answer = await h.call('GET /projects');
+		expect(answer.status).toBe(200);
+		expect(answer.body['noProjects']).toBe(true);
+		expect(answer.body['noProjectsText']).toContain('No project is registered');
+		expect(answer.body['noProjectsText']).toContain('task init');
+		expect(answer.body['noProjectsText']).toContain('task projects add');
+	});
+
+	it('GET /projects has no noProjects flag nor text once a project is registered', async () => {
+		h.world.createProject('beta');
+		const answer = await h.call('GET /projects');
+		expect(answer.body['noProjects']).toBe(false);
+		expect(answer.body['noProjectsText']).toBeNull();
+	});
+
+	it('the routes that need a project name both commands in their hint', async () => {
+		const answer = await h.call('GET /tasks');
+		expect(answer.status).toBe(404);
+		expect(answer.body['hint']).toContain('task init');
+		expect(answer.body['hint']).toContain('task projects add');
+	});
+});
+
+describe('registered project whose directory vanished', () => {
+	it('GET /projects names the missing directory and the way to unregister it, not `task init`', async () => {
+		fs.rmSync(project, { recursive: true });
+		const answer = await h.call('GET /projects', { query: { project } });
+		expect(answer.body['selectedQuery']).toBe('');
+		expect(answer.body['selectedProblem']).toContain('no longer exists');
+		expect(answer.body['selectedProblem']).toContain('task projects remove');
+		expect(answer.body['selectedProblem']).not.toContain('recreate');
+	});
+});
+
+describe('registered projects that cannot be used', () => {
+	it('selectedProblem is two sentences (the cause ends with a period before the fix)', async () => {
+		fs.rmSync(`${project}/.task`, { recursive: true });
+		const answer = await h.call('GET /projects', { query: { project } });
+		expect(answer.body['selectedProblem']).toMatch(/\.\s+Run `task init`/);
+	});
+
+	it('GET /projects offers no form for the selected project when it cannot be read (its submit could only fail)', async () => {
+		fs.rmSync(`${project}/.task`, { recursive: true });
+		const answer = await h.call('GET /projects', { query: { project } });
+		expect(answer.body['forms']).toBeNull();
+	});
+
+	it('the all-projects summary failure hint covers a vanished directory too', async () => {
+		fs.rmSync(project, { recursive: true });
+		const answer = await h.call('GET /summary');
+		expect(answer.status).toBe(500);
+		expect(answer.body['hint']).toContain('task projects remove');
+		expect(answer.body['hint']).toContain('task init');
 	});
 });

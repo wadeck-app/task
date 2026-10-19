@@ -42,6 +42,11 @@ sections:
             $if: $sources.tasks.hrefs
             label: Delete tasks
             to: $sources.tasks.hrefs.deleteTasks
+    # Nothing registered yet: the welcome text of the route (the exact next step) instead of a blank page.
+    - $type: Badge
+      $if: $sources.projects.noProjects
+      label: $sources.projects.noProjectsText
+      variant: info
     - $type: Badge
       $if: $sources.tasks.projectText
       label: $sources.tasks.projectText
@@ -84,7 +89,7 @@ sections:
       $if: $sources.tasks.project
       rows: $sources.tasks.tasks
       navigateTo: '{href}'
-      emptyMessage: No open tasks (use "Show closed tasks" to include the closed ones)
+      emptyMessage: No open tasks yet. Use "New task" to create one ("Show closed tasks" includes the closed ones)
       columns:
           - { key: 'id', label: 'ID', mono: true }
           - { key: 'titleText', label: 'Title' }

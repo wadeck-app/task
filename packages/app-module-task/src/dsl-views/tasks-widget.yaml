@@ -19,10 +19,13 @@ items:
       $if: $sources.summary.skippedCount
       label: $sources.summary.skippedText
       variant: warning
+    # The figures only when a project was counted: after a failure (nothing registered...) the badge above is the whole answer.
     - $type: StatTile
+      $if: $sources.summary.projectCount
       label: Open tasks
       value: $sources.summary.open
     - $type: DataTable
+      $if: $sources.summary.projectCount
       rows: $sources.summary.rows
       emptyMessage: No tasks
       columns:

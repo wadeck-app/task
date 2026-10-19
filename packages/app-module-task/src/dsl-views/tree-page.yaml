@@ -29,6 +29,11 @@ sections:
             $if: $sources.tree.showAllToggle
             label: $sources.tree.showAllToggle.label
             to: $sources.tree.showAllToggle.href
+    # Nothing registered yet: the welcome text of the route (the exact next step) instead of a blank page.
+    - $type: Badge
+      $if: $sources.projects.noProjects
+      label: $sources.projects.noProjectsText
+      variant: info
     - $type: Badge
       $if: $sources.tree.projectText
       label: $sources.tree.projectText
@@ -59,7 +64,7 @@ sections:
       $if: $sources.tree.project
       rows: $sources.tree.rows
       navigateTo: '{href}'
-      emptyMessage: No tasks
+      emptyMessage: No open tasks yet. Create one from the Tasks page ("Show closed tasks" includes the closed ones)
       columns:
           - { key: 'label', label: 'Task' }
           - { key: 'id', label: 'ID', mono: true }

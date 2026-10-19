@@ -1,10 +1,11 @@
-// task projects list|remove|prune: the projects registered (by `task init`) with the task app-module. Needs no project.
+// task projects list|add|remove|prune: the projects registered (by `task init` or `add`) with the task app-module. Needs no project.
 import { ConfigDir } from '@wadeck-app/shared-cli';
 import {
 	inspectRegisteredProjects,
 	isSameProjectDir,
 	listRegisteredProjects,
 	pruneMissingProjects,
+	registerInitializedProject,
 	unregisterProject,
 } from '@wadeck-app/task-service';
 import type { ProjectHealth } from '@wadeck-app/task-service';
@@ -33,6 +34,16 @@ function runList(rest: string[], jsonMode: boolean, configDir: string): CommandR
 		};
 	}
 	return { exitCode: 0, output: projects.map(p => `${p.path}  ${statusFlag(p)}`).join('\n') };
+}
+
+function runAdd(rest: string[], jsonMode: boolean, configDir: string, cwd: string): CommandResult {
+	const [dir, ...extra] = rest;
+	if (extra.length > 0) {
+		return errorOutput(jsonMode, `unexpected argument: ${extra[0]}`, 'Usage: task projects add [dir]');
+	}
+	const result = registerInitializedProject(configDir, path.resolve(cwd, dir ?? '.'));
+	if (jsonMode) return jsonResult(result);
+	return { exitCode: 0, output: `${result.added ? 'Registered project' : 'Already registered'}: ${result.path}` };
 }
 
 function runRemove(rest: string[], jsonMode: boolean, configDir: string, cwd: string): CommandResult {
@@ -83,6 +94,8 @@ export function runProjectsCommand(rest: string[], jsonMode: boolean, cwd: strin
 		switch (subCmd) {
 			case 'list':
 				return runList(args, jsonMode, configDir);
+			case 'add':
+				return runAdd(args, jsonMode, configDir, cwd);
 			case 'remove':
 				return runRemove(args, jsonMode, configDir, cwd);
 			case 'prune':
@@ -92,7 +105,7 @@ export function runProjectsCommand(rest: string[], jsonMode: boolean, cwd: strin
 				return errorOutput(
 					jsonMode,
 					`unknown task projects subcommand: ${subCmd}`,
-					'Valid subcommands: list, remove, prune'
+					'Valid subcommands: list, add, remove, prune'
 				);
 		}
 	} catch (error) {

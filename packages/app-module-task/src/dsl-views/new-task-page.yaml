@@ -31,6 +31,11 @@ sections:
       $if: $sources.projects.tasksHref
       to: $sources.projects.tasksHref
       label: Back to the tasks
+    # Nothing registered yet: the welcome text of the route (the exact next step) instead of a blank page.
+    - $type: Badge
+      $if: $sources.projects.noProjects
+      label: $sources.projects.noProjectsText
+      variant: info
     - $type: Badge
       $if: $sources.projects.selectedProblem
       label: $sources.projects.selectedProblem

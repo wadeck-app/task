@@ -135,6 +135,7 @@ describe('the packaged module through a real app-core server', () => {
 			{
 				name: 'proj',
 				path: projectDir,
+				exists: true,
 				initialized: true,
 				openCount: 1,
 				error: null,

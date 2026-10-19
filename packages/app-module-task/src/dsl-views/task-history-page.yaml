@@ -29,6 +29,11 @@ sections:
             $if: $sources.detail.taskHrefs
             label: Back to the task
             to: $sources.detail.taskHrefs.detail
+    # Nothing registered yet: the welcome text of the route (the exact next step) instead of a blank page.
+    - $type: Badge
+      $if: $sources.projects.noProjects
+      label: $sources.projects.noProjectsText
+      variant: info
     # The selected project cannot be read, or the task does not exist: the reason, not a blank page.
     - $type: Badge
       $if: $sources.projects.selectedProblem

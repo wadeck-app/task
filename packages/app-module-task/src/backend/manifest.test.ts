@@ -390,3 +390,20 @@ describe('views: a failing source blanks the whole page', () => {
 		expect(view(name)).toContain(`$sources.${source}.errorText`);
 	});
 });
+
+describe('views: nothing registered yet', () => {
+	it.each(viewNames.filter(name => name !== 'tasks-widget.yaml'))(
+		'%s: shows the welcome text (the route gives it) instead of a blank page or a dead form',
+		name => {
+			const text = view(name);
+			expect(text, name).toContain('$sources.projects.noProjects');
+			expect(text, name).toContain('label: $sources.projects.noProjectsText');
+		}
+	);
+
+	it('the widget shows its figures only when a project was counted, the error alone otherwise', () => {
+		const text = view('tasks-widget.yaml');
+		expect(text).toContain('$if: $sources.summary.projectCount');
+		expect(text).toContain('$sources.summary.errorText');
+	});
+});

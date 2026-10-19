@@ -95,6 +95,11 @@ sections:
             $if: $sources.detail.hrefs
             label: All tasks
             to: $sources.detail.hrefs.tasks
+    # Nothing registered yet: the welcome text of the route (the exact next step) instead of a blank page.
+    - $type: Badge
+      $if: $sources.projects.noProjects
+      label: $sources.projects.noProjectsText
+      variant: info
     # The selected project cannot be read (not initialized, corrupt config...): the reason and the fix, not a blank page.
     - $type: Badge
       $if: $sources.projects.selectedProblem

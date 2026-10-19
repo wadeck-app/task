@@ -8,11 +8,16 @@ $type: PageContent
 sections:
     - $type: PageHeader
       title: Projects
-      subtitle: Registered with `task init`
+      subtitle: Registered with `task init` or `task projects add <dir>`
+    # Nothing registered yet: the welcome text of the route (the exact next step) instead of a blank page.
+    - $type: Badge
+      $if: $sources.projects.noProjects
+      label: $sources.projects.noProjectsText
+      variant: info
     - $type: DataTable
       rows: $sources.projects.projects
       navigateTo: '{href}'
-      emptyMessage: No project is registered. Run `task init` in a project directory.
+      emptyMessage: No project is registered (see above)
       columns:
           - { key: 'name', label: 'Project' }
           - { key: 'path', label: 'Directory', mono: true }

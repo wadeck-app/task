@@ -99,6 +99,56 @@ describe('task projects', () => {
 		});
 	});
 
+	describe('add', () => {
+		it('registers the cwd by default when it holds a .task', async () => {
+			const dir = path.join(root, 'p');
+			fs.mkdirSync(path.join(dir, '.task'), { recursive: true });
+			const result = await runTaskCommand(['projects', 'add'], dir);
+			expect(result).toEqual({ exitCode: 0, output: `Registered project: ${dir}` });
+			expect(listRegisteredProjects(configDir)).toEqual([dir]);
+		});
+
+		it('resolves a relative path against the cwd', async () => {
+			const dir = path.join(root, 'p');
+			fs.mkdirSync(path.join(dir, '.task'), { recursive: true });
+			const result = await runTaskCommand(['projects', 'add', 'p'], root);
+			expect(result.exitCode).toBe(0);
+			expect(listRegisteredProjects(configDir)).toEqual([dir]);
+		});
+
+		it('is idempotent and says so', async () => {
+			const dir = await initProject('p');
+			const result = await runTaskCommand(['projects', 'add', dir], root);
+			expect(result).toEqual({ exitCode: 0, output: `Already registered: ${dir}` });
+			expect(listRegisteredProjects(configDir)).toEqual([dir]);
+		});
+
+		it('fails loudly with the task init hint for a directory that is not initialized', async () => {
+			const bare = path.join(root, 'bare');
+			fs.mkdirSync(bare);
+			const result = await runTaskCommand(['projects', 'add', bare], root);
+			expect(result.exitCode).toBe(1);
+			expect(result.output).toContain(`Error: "${bare}" is not an initialized task project`);
+			expect(result.output).toContain('Run `task init` there');
+			expect(listRegisteredProjects(configDir)).toEqual([]);
+		});
+
+		it('--json prints the path and whether it was added', async () => {
+			const dir = path.join(root, 'p');
+			fs.mkdirSync(path.join(dir, '.task'), { recursive: true });
+			const first = await runTaskCommand(['projects', 'add', dir, '--json'], root);
+			expect(JSON.parse(first.output)).toEqual({ path: dir, added: true });
+			const second = await runTaskCommand(['projects', 'add', dir, '--json'], root);
+			expect(JSON.parse(second.output)).toEqual({ path: dir, added: false });
+		});
+
+		it('rejects a second directory', async () => {
+			const result = await runTaskCommand(['projects', 'add', 'a', 'b'], root);
+			expect(result.exitCode).toBe(1);
+			expect(result.output).toContain('unexpected argument: b');
+		});
+	});
+
 	describe('remove', () => {
 		it('unregisters the directory and leaves its .task untouched', async () => {
 			const a = await initProject('a');
@@ -220,6 +270,7 @@ describe('task projects', () => {
 				expect(result.exitCode).toBe(0);
 				expect(result.output).toContain('task projects list');
 				expect(result.output).toContain('task projects prune');
+				expect(result.output).toContain('task projects add');
 			}
 		});
 
@@ -227,7 +278,7 @@ describe('task projects', () => {
 			const result = await runTaskCommand(['projects', 'frobnicate'], root);
 			expect(result.exitCode).toBe(1);
 			expect(result.output).toContain('unknown task projects subcommand: frobnicate');
-			expect(result.output).toContain('Valid subcommands: list, remove, prune');
+			expect(result.output).toContain('Valid subcommands: list, add, remove, prune');
 		});
 
 		it('is named in the --help and in the unknown-command hint', async () => {

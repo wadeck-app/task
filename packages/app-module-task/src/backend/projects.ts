@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { TaskConfigLoader } from '@wadeck-app/task-core';
@@ -16,6 +17,8 @@ import { tasksPageHref } from './hrefs.js';
 export interface ProjectListing {
 	name: string;
 	path: string;
+	/** False when the registered directory is gone. */
+	exists: boolean;
 	/** False when the directory is registered but has no `.task` directory any more. */
 	initialized: boolean;
 	/** Tasks in a non-terminal status; null when the project cannot be read (see `error`). */
@@ -28,7 +31,12 @@ export interface ProjectListing {
 
 export function listProjects(configDir: string): ProjectListing[] {
 	return listRegisteredProjects(configDir).map(dir => {
-		const base = { name: path.basename(dir), path: dir, initialized: TaskConfigLoader.isInitialized(dir) };
+		const base = {
+			name: path.basename(dir),
+			path: dir,
+			exists: fs.existsSync(dir),
+			initialized: TaskConfigLoader.isInitialized(dir),
+		};
 		try {
 			const openCount = listTasks(openProject(configDir, dir), {}).length;
 			return { ...base, openCount, error: null, href: tasksPageHref(dir) };
@@ -48,6 +56,13 @@ export function listProjects(configDir: string): ProjectListing[] {
 export function openProject(configDir: string, requested: string | undefined): TaskServiceContext {
 	const registered = listRegisteredProjects(configDir);
 	const dir = pickProject(registered, requested);
+	if (!fs.existsSync(dir)) {
+		throw new RequestError(
+			404,
+			`project directory ${dir} no longer exists`,
+			`Run \`task projects remove ${dir}\` to unregister it (\`task projects prune\` drops every missing one).`
+		);
+	}
 	if (!TaskConfigLoader.isInitialized(dir)) {
 		throw new RequestError(
 			404,
@@ -65,13 +80,13 @@ export function requireRegisteredProjects(configDir: string): string[] {
 	return registered;
 }
 
+/** What to do when nothing is registered: shown by every view and answered by every route. */
+export const NO_PROJECT_HINT =
+	'Run `task init` in a project directory to create and register it, or `task projects add <dir>` for a project that is already initialized.';
+
 function requireAny(registered: string[]): void {
 	if (registered.length === 0) {
-		throw new RequestError(
-			404,
-			'no project is registered with the task app-module',
-			'Run `task init` in a project directory to register it.'
-		);
+		throw new RequestError(404, 'no project is registered with the task app-module', NO_PROJECT_HINT);
 	}
 }
 
@@ -90,7 +105,7 @@ function pickProject(registered: string[], requested: string | undefined): strin
 			throw new RequestError(
 				404,
 				`project "${requested}" is not registered with the task app-module`,
-				'Run `task init` in that project directory to register it, or GET /api/modules/task/projects to list the registered ones.'
+				'Run `task init` (or `task projects add <dir>`) in that project directory to register it, or GET /api/modules/task/projects to list the registered ones.'
 			);
 		}
 		return found;

@@ -4,7 +4,7 @@ import type { StatusCount, TaskServiceContext } from '@wadeck-app/task-service';
 
 import { RequestError } from '../errors.js';
 import { MODULE_ID, selectedQuery, tasksPageHref } from '../hrefs.js';
-import { listProjects, openProject, requireRegisteredProjects } from '../projects.js';
+import { listProjects, NO_PROJECT_HINT, openProject, requireRegisteredProjects } from '../projects.js';
 import type { ProjectListing } from '../projects.js';
 import { optionalQueryValue, queryValue } from '../request.js';
 import type { RouteKit } from './routeKit.js';
@@ -23,10 +23,14 @@ function skippedWarning(skipped: readonly { path: string; error: string }[]): st
 
 /** Why the selected project cannot be shown, with what to do about it. */
 function problemText(project: ProjectListing): string {
-	const fix = project.initialized
-		? 'Fix the cause above, then reload.'
-		: `Run \`task init\` in ${project.path} to recreate it.`;
-	return `${project.error} ${fix}`;
+	let fix = 'Fix the cause above, then reload.';
+	if (!project.exists) {
+		fix = `Run \`task projects remove ${project.path}\` to unregister it, or \`task projects add <dir>\` if the project moved.`;
+	} else if (!project.initialized) {
+		fix = `Run \`task init\` in ${project.path} to recreate it.`;
+	}
+	const cause = project.error?.endsWith('.') ? project.error : `${project.error}.`;
+	return `${cause} ${fix}`;
 }
 
 export function registerProjectRoutes(kit: RouteKit): void {
@@ -48,6 +52,12 @@ export function registerProjectRoutes(kit: RouteKit): void {
 			status: 200,
 			body: {
 				projects,
+				// Nothing registered: the views show this text (with the exact next step) instead of staying blank.
+				noProjects: projects.length === 0,
+				noProjectsText:
+					projects.length === 0
+						? `No project is registered with the task app-module. ${NO_PROJECT_HINT}`
+						: null,
 				multiple: projects.length > 1,
 				// Several projects and none chosen: the views ask for a choice instead of showing nothing.
 				needsSelection: projects.length > 1 && selected === undefined,
@@ -56,10 +66,14 @@ export function registerProjectRoutes(kit: RouteKit): void {
 				selectedQuery: selectedQuery(readable ? selected.path : undefined, req.query),
 				tasksHref: selected === undefined ? `/modules/${MODULE_ID}/tasks` : tasksPageHref(selected.path),
 				projectOptions: projects.map(entry => ({ value: encodeURIComponent(entry.path), label: entry.name })),
-				forms: {
-					create: { ...base, description: '', parent: '' },
-					delete: { ...base, ids: '', filter: '', all: false, cascade: false },
-				},
+				// No project, or a selected one that cannot be read: no form either (its submit could only fail); the views gate their forms on it.
+				forms:
+					projects.length === 0 || selectedProblem !== null
+						? null
+						: {
+								create: { ...base, description: '', parent: '' },
+								delete: { ...base, ids: '', filter: '', all: false, cascade: false },
+							},
 			},
 		};
 	});
@@ -96,7 +110,7 @@ export function registerProjectRoutes(kit: RouteKit): void {
 			throw new RequestError(
 				500,
 				`none of the ${skipped.length} registered projects could be read: ${skipped.map(s => `${s.path} (${s.error})`).join('; ')}`,
-				'Run `task init` in each project directory to recreate its .task directory, or fix the cause above.',
+				'Fix the causes above: `task init` in a project directory recreates its .task, `task projects remove <dir>` unregisters a vanished one (`task projects prune` drops every missing one).',
 				{ skipped }
 			);
 		}

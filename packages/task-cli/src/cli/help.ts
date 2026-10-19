@@ -49,6 +49,7 @@ Usage:
   task cli register [--json]                 Tell app-core where the task app-module is (also done by task cli update)
   task cli unregister [--json]               Remove the task app-module from app-core
   task projects list [--json]                List the projects registered with the app-module (flags missing/uninitialized/unreadable ones)
+  task projects add [dir] [--json]           Register an initialized project (default: the cwd) with the app-module
   task projects remove <dir> [--json]        Unregister a project directory (its .task is left untouched)
   task projects prune [--dry-run] [--json]   Unregister the projects whose directory no longer exists
 
@@ -69,10 +70,11 @@ Environment variables:
 }
 
 /** `task projects --help`. */
-export const PROJECTS_HELP = `task projects - projects registered with the task app-module (by 'task init')
+export const PROJECTS_HELP = `task projects - projects registered with the task app-module (by 'task init' or 'task projects add')
 
 Usage:
   task projects list [--json]                List registered projects: path and [ok], [missing], [not initialized] or [unreadable: <reason>]
+  task projects add [dir] [--json]           Register a directory holding a .task (default: the cwd); idempotent; not initialized: run 'task init' there
   task projects remove <dir> [--json]        Unregister a directory (relative paths resolve against the cwd); .task is left untouched
   task projects prune [--dry-run] [--json]   Unregister every project whose directory no longer exists; --dry-run only prints them
   task projects --help                       Show this help

@@ -1,6 +1,6 @@
 // task init: creates .task/ and registers the project for the task app-module.
 import { ConfigDir } from '@wadeck-app/shared-cli';
-import { describeError, registerProject } from '@wadeck-app/task-service';
+import { describeError, registerInitializedProject } from '@wadeck-app/task-service';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -34,7 +34,7 @@ statuses:
  */
 function registerProjectOrWarn(projectDir: string): void {
 	try {
-		registerProject(ConfigDir.get('task'), projectDir);
+		registerInitializedProject(ConfigDir.get('task'), projectDir);
 	} catch (error) {
 		const { message, hint } = describeError(error);
 		process.stderr.write(
