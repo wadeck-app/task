@@ -1,22 +1,70 @@
 # Tasks of one project. Select it with ?project=<absolute dir>; optional without it when a single project is registered.
-# showAll=true also lists the tasks in a terminal status.
+# Filters are links built by the route (the DSL has no component writing arbitrary URL parameters):
+# ?showAll=true also lists the tasks in a terminal status, ?parent=<id> restricts to the direct children of a task.
 # Each row carries `href` (built by the route, project query included): the row click opens the detail page.
+# Status and label changes are on the detail page: a table row action cannot carry the row to its URL in app-core.
 $sources:
-    tasks:
-        url: GET /api/modules/task/tasks
+    # First: the others wait for the project it resolved (a source whose {project} is empty is skipped, not failed).
+    projects:
+        url: GET /api/modules/task/projects
         params:
             project: $urlParam.project
             showAll: $urlParam.showAll
+            parent: $urlParam.parent
+            id: $urlParam.id
+    tasks:
+        url: GET /api/modules/task/tasks?{query}
+        params:
+            query: $source.projects.selectedQuery
 
 $type: PageContent
 sections:
     - $type: PageHeader
       title: Tasks
       subtitle: $sources.tasks.project.name
+      headerActions:
+          - $type: ButtonLink
+            $if: $sources.tasks.hrefs
+            label: New task
+            variant: primary
+            to: $sources.tasks.hrefs.newTask
+          - $type: ButtonLink
+            $if: $sources.tasks.showAllToggle
+            label: $sources.tasks.showAllToggle.label
+            to: $sources.tasks.showAllToggle.href
+          - $type: ButtonLink
+            $if: $sources.tasks.hrefs
+            label: Delete tasks
+            to: $sources.tasks.hrefs.deleteTasks
+    # Several projects registered and none chosen: the tasks cannot be listed, the projects below are the way in.
+    - $type: Badge
+      $if: $sources.projects.needsSelection
+      label: Several projects are registered, pick one to see its tasks.
+      variant: warning
     - $type: DataTable
+      $if: $sources.projects.needsSelection
+      rows: $sources.projects.projects
+      navigateTo: '{href}'
+      columns:
+          - { key: 'name', label: 'Project' }
+          - { key: 'openCount', label: 'Open tasks' }
+          - { key: 'error', label: 'Problem' }
+    - $type: HorizontalStack
+      gap: gap-3
+      $if: $sources.tasks.parentFilterText
+      items:
+          - $type: Badge
+            label: $sources.tasks.parentFilterText
+            variant: info
+          - $type: ButtonLink
+            label: Clear the filter
+            size: sm
+            to: $sources.tasks.clearParentHref
+    - $type: DataTable
+      $if: $sources.tasks.project
       rows: $sources.tasks.tasks
       navigateTo: '{href}'
-      emptyMessage: No open tasks (add ?showAll=true to include the closed ones)
+      emptyMessage: No open tasks (use "Show closed tasks" to include the closed ones)
       columns:
           - { key: 'id', label: 'ID', mono: true }
           - { key: 'title', label: 'Title' }

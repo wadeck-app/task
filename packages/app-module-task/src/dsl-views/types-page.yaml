@@ -1,0 +1,64 @@
+# Task types of one project (nav /types), stored in .task/config.yml. With no type configured any text is accepted for
+# the type of a task; as soon as one is configured the type of a task must be one of them.
+# Forms submit through named actions (see task-page.yaml for the conventions: projectParam, no error channel).
+$sources:
+    projects:
+        url: GET /api/modules/task/projects
+        params:
+            project: $urlParam.project
+    types:
+        url: GET /api/modules/task/types?{query}
+        params:
+            query: $source.projects.selectedQuery
+
+$actions:
+    addType:
+        url: POST /api/modules/task/types?project={projectParam}
+        reloadSources: true
+    # {name} is the encoded type picked in the select.
+    removeType:
+        url: DELETE /api/modules/task/types/{name}?project={projectParam}
+        reloadSources: true
+
+$type: PageContent
+sections:
+    - $type: PageHeader
+      title: Types
+      subtitle: $sources.types.project.name
+    - $type: Badge
+      $if: $sources.projects.needsSelection
+      label: Several projects are registered. Pick one on the Projects page.
+      variant: warning
+    - $type: Badge
+      $if: $sources.types.restricted
+      label: Task types are restricted to this list.
+      variant: info
+    - $type: DataTable
+      $if: $sources.types.project
+      rows: $sources.types.rows
+      emptyMessage: No type configured, any text is accepted for the type of a task
+      columns:
+          - { key: 'name', label: 'Type' }
+    - $type: Form
+      $if: $sources.types.forms
+      onSubmit: $ctx.addType
+      initialData: $sources.types.forms.add
+      fields:
+          - $type: FieldText
+            label: New type
+            bind: name
+      actions:
+          - $type: ButtonSave
+            label: Add type
+    - $type: Form
+      $if: $sources.types.restricted
+      onSubmit: $ctx.removeType
+      initialData: $sources.types.forms.remove
+      fields:
+          - $type: FieldSelect
+            label: Type to remove
+            bind: name
+            options: $sources.types.removeOptions
+      actions:
+          - $type: ButtonSave
+            label: Remove type

@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { TaskStore } from '@wadeck-app/task-core';
 import { projectsRegistryPath } from '@wadeck-app/task-service';
 
 import { RequestError } from './errors.js';
@@ -98,14 +99,46 @@ describe('openProject', () => {
 });
 
 describe('listProjects', () => {
-	it('reports each registered project with its initialization state', () => {
+	it('reports each registered project with its initialization state, open count and the link to its tasks page', () => {
 		const a = world.createProject('alpha');
 		const b = world.createProject('beta');
 		fs.rmSync(path.join(b, '.task'), { recursive: true });
 		expect(listProjects(world.configDir)).toEqual([
-			{ name: 'alpha', path: a, initialized: true },
-			{ name: 'beta', path: b, initialized: false },
+			{
+				name: 'alpha',
+				path: a,
+				initialized: true,
+				openCount: 0,
+				error: null,
+				href: `/modules/task/tasks?project=${encodeURIComponent(a)}`,
+			},
+			{
+				name: 'beta',
+				path: b,
+				initialized: false,
+				openCount: null,
+				error: expect.stringContaining('not initialized') as unknown,
+				href: null,
+			},
 		]);
+	});
+
+	it('counts only the non-terminal tasks as open', () => {
+		const dir = world.createProject('alpha', {
+			configYml: 'statuses:\n  - backlog\n  - name: done\n    terminal: true\n',
+		});
+		const store = new TaskStore(path.join(dir, '.task', 'tasks'));
+		store.create('open', 'backlog');
+		store.create('closed', 'done');
+		expect(listProjects(world.configDir)[0]).toMatchObject({ openCount: 1, error: null });
+	});
+
+	it('reports an unreadable project (corrupt config.yml) with its reason instead of a zero count', () => {
+		const dir = world.createProject('alpha', { configYml: 'statuses: [unclosed' });
+		const [listing] = listProjects(world.configDir);
+		expect(listing).toMatchObject({ path: dir, initialized: true, openCount: null, href: null });
+		expect(listing!.error).toEqual(expect.any(String));
+		expect(listing!.error).not.toBe('');
 	});
 
 	it('is empty when nothing is registered', () => {

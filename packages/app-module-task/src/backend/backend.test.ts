@@ -14,13 +14,25 @@ const EXPECTED_ROUTES = [
 	'GET /tasks',
 	'GET /tasks/:id',
 	'GET /tasks/:id/history',
+	'GET /tasks/:id/children',
+	'GET /tasks/:id/ancestors',
+	'GET /tasks/:id/links',
 	'GET /tree',
+	'GET /types',
 	'POST /tasks',
 	'POST /tasks/:id/status',
 	'POST /tasks/:id/labels',
 	'DELETE /tasks/:id/labels/:label',
 	'POST /tasks/:id/links',
 	'DELETE /tasks/:id/links',
+	'POST /tasks/:id/parent',
+	'DELETE /tasks/:id/parent',
+	'POST /tasks/:id/type',
+	'POST /tasks/:id/meta',
+	'POST /types',
+	'DELETE /types/:name',
+	'POST /tasks/delete/plan',
+	'POST /tasks/delete',
 ];
 
 interface Answer {
@@ -165,8 +177,20 @@ describe('project selection', () => {
 		const calls: [string, Record<string, string>, unknown][] = [
 			['GET /tasks/:id', { id: 'x' }, undefined],
 			['GET /tasks/:id/history', { id: 'x' }, undefined],
+			['GET /tasks/:id/children', { id: 'x' }, undefined],
+			['GET /tasks/:id/ancestors', { id: 'x' }, undefined],
+			['GET /tasks/:id/links', { id: 'x' }, undefined],
 			['GET /tree', {}, undefined],
+			['GET /types', {}, undefined],
 			['GET /summary', {}, undefined],
+			['POST /tasks/:id/parent', { id: 'x' }, { parent: 'y' }],
+			['DELETE /tasks/:id/parent', { id: 'x' }, undefined],
+			['POST /tasks/:id/type', { id: 'x' }, { type: 'bug' }],
+			['POST /tasks/:id/meta', { id: 'x' }, { key: 'k', value: 'v' }],
+			['POST /types', {}, { name: 'bug' }],
+			['DELETE /types/:name', { name: 'bug' }, undefined],
+			['POST /tasks/delete/plan', {}, { all: true }],
+			['POST /tasks/delete', {}, { all: true, confirm: true }],
 			['POST /tasks', {}, { description: 'd' }],
 			['POST /tasks/:id/status', { id: 'x' }, { status: 'done' }],
 			['POST /tasks/:id/labels', { id: 'x' }, { label: 'l' }],
@@ -184,15 +208,24 @@ describe('project selection', () => {
 describe('GET /projects', () => {
 	it('lists the registered projects with their initialization state', async () => {
 		const answer = await h.call('GET /projects');
-		expect(answer).toEqual({
-			status: 200,
-			body: { projects: [{ name: 'alpha', path: project, initialized: true }] },
-		});
+		expect(answer.status).toBe(200);
+		expect(answer.body['projects']).toEqual([
+			{
+				name: 'alpha',
+				path: project,
+				initialized: true,
+				openCount: 0,
+				error: null,
+				href: `/modules/task/tasks?project=${encodeURIComponent(project)}`,
+			},
+		]);
 	});
 
 	it('is an empty list (not an error) when nothing is registered', async () => {
 		fs.rmSync(projectsRegistryPath(h.world.configDir));
-		expect(await h.call('GET /projects')).toEqual({ status: 200, body: { projects: [] } });
+		const answer = await h.call('GET /projects');
+		expect(answer.status).toBe(200);
+		expect(answer.body).toMatchObject({ projects: [], multiple: false, needsSelection: false });
 	});
 });
 
@@ -854,5 +887,801 @@ describe('server-side logging of unexpected errors (5xx)', () => {
 
 		expect(answer.status).toBe(500);
 		expect(stderr.join('')).toContain('could not record the error in the task log');
+	});
+});
+
+const hrefOf = (id: string): string => `/modules/task/tasks/${id}?project=${encodeURIComponent(project)}`;
+
+describe('GET /tree rows (flat, navigable view of the forest)', () => {
+	it('flattens the forest depth-first with depth, an indented label and the encoded detail link', async () => {
+		const parent = await createTask('parent');
+		const child = await createTask('child', { parent });
+		const grandchild = await createTask('grandchild', { parent: child });
+		const answer = await h.call('GET /tree', { query: { project } });
+		const rows = answer.body['rows'] as Array<Record<string, unknown>>;
+		expect(rows.map(r => [r['id'], r['depth']])).toEqual([
+			[parent, 0],
+			[child, 1],
+			[grandchild, 2],
+		]);
+		expect(rows[0]).toMatchObject({ title: 'parent', label: 'parent', href: hrefOf(parent) });
+		expect(rows[2]!['label']).toMatch(/grandchild$/);
+		expect(rows[2]!['label']).not.toBe('grandchild');
+		expect(answer.body['tree'][0]['children'][0]['href']).toBe(hrefOf(child));
+	});
+
+	it('with ?id marks the selected row', async () => {
+		const parent = await createTask('parent');
+		const child = await createTask('child', { parent });
+		const answer = await h.call('GET /tree', { query: { project, id: child } });
+		expect(answer.body['rows'].map((r: { id: string; selected?: boolean }) => [r.id, r.selected ?? false])).toEqual(
+			[
+				[parent, false],
+				[child, true],
+			]
+		);
+	});
+
+	it('honours showAll and parent like GET /tasks', async () => {
+		const parent = await createTask('parent');
+		const child = await createTask('child', { parent });
+		await h.call('POST /tasks/:id/status', { params: { id: child }, query: { project }, body: { status: 'done' } });
+		const open = await h.call('GET /tree', { query: { project, parent } });
+		expect(open.body['rows']).toEqual([]);
+		const all = await h.call('GET /tree', { query: { project, parent, showAll: 'true' } });
+		expect(all.body['rows'].map((r: { id: string }) => r.id)).toEqual([child]);
+	});
+});
+
+describe('hierarchy routes', () => {
+	it('POST /tasks/:id/parent attaches a task under a parent given by prefix', async () => {
+		const parent = await createTask('parent');
+		const child = await createTask('child');
+		const answer = await h.call('POST /tasks/:id/parent', {
+			params: { id: child.slice(0, 8) },
+			query: { project },
+			body: { parent: parent.slice(0, 8) },
+		});
+		expect(answer.status).toBe(200);
+		expect(answer.body['task']).toMatchObject({ id: child, parentId: parent });
+		expect(h.sink.events).toEqual([]);
+	});
+
+	it('POST /tasks/:id/parent is a 400 naming the usage without a parent', async () => {
+		const child = await createTask('child');
+		const answer = await h.call('POST /tasks/:id/parent', { params: { id: child }, query: { project }, body: {} });
+		expect(answer.status).toBe(400);
+		expect(answer.body['error']).toContain('parent');
+		expect(answer.body['hint']).toContain('"parent"');
+	});
+
+	it('POST /tasks/:id/parent refuses a cycle with a 4xx explaining it (nothing changes)', async () => {
+		const parent = await createTask('parent');
+		const child = await createTask('child', { parent });
+		const answer = await h.call('POST /tasks/:id/parent', {
+			params: { id: parent },
+			query: { project },
+			body: { parent: child },
+		});
+		expect(answer.status).toBeGreaterThanOrEqual(400);
+		expect(answer.status).toBeLessThan(500);
+		const detail = await h.call('GET /tasks/:id', { params: { id: parent }, query: { project } });
+		expect(detail.body['parent']).toBeNull();
+	});
+
+	it('POST /tasks/:id/parent is a 404 for an unknown parent', async () => {
+		const child = await createTask('child');
+		const answer = await h.call('POST /tasks/:id/parent', {
+			params: { id: child },
+			query: { project },
+			body: { parent: 'zzzz' },
+		});
+		expect(answer.status).toBe(404);
+	});
+
+	it('DELETE /tasks/:id/parent makes the task a root task', async () => {
+		const parent = await createTask('parent');
+		const child = await createTask('child', { parent });
+		const answer = await h.call('DELETE /tasks/:id/parent', { params: { id: child }, query: { project } });
+		expect(answer.status).toBe(200);
+		expect(answer.body['task']['parentId']).toBeUndefined();
+	});
+
+	it('GET /tasks/:id/children lists the direct children with their links', async () => {
+		const parent = await createTask('parent');
+		const child = await createTask('child', { parent });
+		await createTask('grandchild', { parent: child });
+		const answer = await h.call('GET /tasks/:id/children', { params: { id: parent }, query: { project } });
+		expect(answer.status).toBe(200);
+		expect(answer.body['children'].map((c: { id: string }) => c.id)).toEqual([child]);
+		expect(answer.body['children'][0]['href']).toBe(hrefOf(child));
+	});
+
+	it('GET /tasks/:id/children?recursive=true returns the nested subtree and its flat rows', async () => {
+		const parent = await createTask('parent');
+		const child = await createTask('child', { parent });
+		const grandchild = await createTask('grandchild', { parent: child });
+		const answer = await h.call('GET /tasks/:id/children', {
+			params: { id: parent },
+			query: { project, recursive: 'true' },
+		});
+		expect(answer.body['children']).toMatchObject([{ id: child, children: [{ id: grandchild, children: [] }] }]);
+		expect(answer.body['rows'].map((r: { id: string; depth: number }) => [r.id, r.depth])).toEqual([
+			[child, 0],
+			[grandchild, 1],
+		]);
+	});
+
+	it('GET /tasks/:id/children 400s on a recursive value that is not true or false', async () => {
+		const parent = await createTask('parent');
+		const answer = await h.call('GET /tasks/:id/children', {
+			params: { id: parent },
+			query: { project, recursive: 'yes' },
+		});
+		expect(answer.status).toBe(400);
+		expect(answer.body['hint']).toContain('true');
+	});
+
+	it('GET /tasks/:id/ancestors goes from the direct parent up to the root', async () => {
+		const root = await createTask('root');
+		const middle = await createTask('middle', { parent: root });
+		const leaf = await createTask('leaf', { parent: middle });
+		const answer = await h.call('GET /tasks/:id/ancestors', { params: { id: leaf }, query: { project } });
+		expect(answer.status).toBe(200);
+		expect(answer.body['ancestors'].map((a: { id: string }) => a.id)).toEqual([middle, root]);
+		expect(answer.body['ancestors'][0]['href']).toBe(hrefOf(middle));
+	});
+
+	it('GET /tasks/:id/ancestors is a 404 for an unknown id', async () => {
+		const answer = await h.call('GET /tasks/:id/ancestors', { params: { id: 'nope' }, query: { project } });
+		expect(answer.status).toBe(404);
+	});
+});
+
+describe('GET /tasks/:id/links', () => {
+	it('lists outgoing links and the derived inverses as rows naming the relation, with the other task and its link', async () => {
+		const a = await createTask('a');
+		const b = await createTask('b');
+		await h.call('POST /tasks/:id/links', {
+			params: { id: a },
+			query: { project },
+			body: { type: 'blockedBy', target: b },
+		});
+		const fromA = await h.call('GET /tasks/:id/links', { params: { id: a }, query: { project } });
+		expect(fromA.status).toBe(200);
+		expect(fromA.body['id']).toBe(a);
+		expect(fromA.body['rows']).toEqual([
+			{ relation: 'blockedBy', direction: 'outgoing', id: b, title: 'b', status: 'backlog', href: hrefOf(b) },
+		]);
+		const fromB = await h.call('GET /tasks/:id/links', { params: { id: b }, query: { project } });
+		expect(fromB.body['rows']).toEqual([
+			{ relation: 'blocks', direction: 'derived', id: a, title: 'a', status: 'backlog', href: hrefOf(a) },
+		]);
+		expect(fromB.body['links']['blocks'].map((t: { id: string }) => t.id)).toEqual([a]);
+	});
+
+	it('has no rows for a task without links', async () => {
+		const a = await createTask('a');
+		const answer = await h.call('GET /tasks/:id/links', { params: { id: a }, query: { project } });
+		expect(answer.body['rows']).toEqual([]);
+	});
+
+	it('is a 404 for an unknown id', async () => {
+		const answer = await h.call('GET /tasks/:id/links', { params: { id: 'nope' }, query: { project } });
+		expect(answer.status).toBe(404);
+	});
+});
+
+describe('GET /tasks/:id (display fields)', () => {
+	it('gives the labels and the metadata as rows to display', async () => {
+		const id = await createTask('t');
+		await h.call('POST /tasks/:id/labels', { params: { id }, query: { project }, body: { label: 'urgent' } });
+		await h.call('POST /tasks/:id/meta', {
+			params: { id },
+			query: { project },
+			body: { key: 'owner', value: 'ann' },
+		});
+		const answer = await h.call('GET /tasks/:id', { params: { id }, query: { project } });
+		expect(answer.body['labelRows']).toEqual([{ label: 'urgent' }]);
+		expect(answer.body['metaRows']).toEqual([{ key: 'owner', value: 'ann' }]);
+	});
+
+	it('has empty rows for a bare task', async () => {
+		const id = await createTask('t');
+		const answer = await h.call('GET /tasks/:id', { params: { id }, query: { project } });
+		expect(answer.body['labelRows']).toEqual([]);
+		expect(answer.body['metaRows']).toEqual([]);
+	});
+});
+
+describe('types', () => {
+	it('GET /types is empty and unrestricted when none is configured', async () => {
+		const answer = await h.call('GET /types', { query: { project } });
+		expect(answer.status).toBe(200);
+		expect(answer.body).toMatchObject({
+			project: { name: 'alpha', path: project },
+			types: [],
+			rows: [],
+			removeOptions: [],
+			restricted: false,
+		});
+	});
+
+	it('POST /types adds a valid type and answers the new list; adding twice is idempotent', async () => {
+		const first = await h.call('POST /types', { query: { project }, body: { name: 'bug' } });
+		expect(first.status).toBe(200);
+		expect(first.body['types']).toEqual(['bug']);
+		expect(first.body['restricted']).toBe(true);
+		const second = await h.call('POST /types', { query: { project }, body: { name: 'bug' } });
+		expect(second.body['types']).toEqual(['bug']);
+		const list = await h.call('GET /types', { query: { project } });
+		expect(list.body['rows']).toEqual([{ name: 'bug' }]);
+	});
+
+	it('POST /types keeps the statuses of config.yml', async () => {
+		await h.call('POST /types', { query: { project }, body: { name: 'bug' } });
+		const answer = await h.call('GET /summary', { query: { project } });
+		expect(answer.body['byStatus'].map((s: { status: string }) => s.status)).toEqual([
+			'backlog',
+			'in-progress',
+			'done',
+		]);
+	});
+
+	it('POST /types is a 400 without a name', async () => {
+		const answer = await h.call('POST /types', { query: { project }, body: {} });
+		expect(answer.status).toBe(400);
+		expect(answer.body['hint']).toContain('"name"');
+	});
+
+	it('DELETE /types/:name removes a configured type', async () => {
+		await h.call('POST /types', { query: { project }, body: { name: 'bug' } });
+		await h.call('POST /types', { query: { project }, body: { name: 'feature' } });
+		const answer = await h.call('DELETE /types/:name', { params: { name: 'bug' }, query: { project } });
+		expect(answer.status).toBe(200);
+		expect(answer.body['types']).toEqual(['feature']);
+	});
+
+	it('DELETE /types/:name is a 404 (not a silent success) for a type that is not configured', async () => {
+		await h.call('POST /types', { query: { project }, body: { name: 'bug' } });
+		const answer = await h.call('DELETE /types/:name', { params: { name: 'bugg' }, query: { project } });
+		expect(answer.status).toBe(404);
+		expect(answer.body['error']).toContain('bugg');
+		expect(answer.body['hint']).toContain('bug');
+	});
+
+	it('POST /tasks/:id/type sets the type, any string when none is configured', async () => {
+		const id = await createTask('t');
+		const answer = await h.call('POST /tasks/:id/type', {
+			params: { id },
+			query: { project },
+			body: { type: 'whatever' },
+		});
+		expect(answer.status).toBe(200);
+		expect(answer.body['task']).toMatchObject({ id, type: 'whatever' });
+	});
+
+	it('POST /tasks/:id/type is a 400 with the valid types when the type is not configured', async () => {
+		const id = await createTask('t');
+		await h.call('POST /types', { query: { project }, body: { name: 'bug' } });
+		const answer = await h.call('POST /tasks/:id/type', {
+			params: { id },
+			query: { project },
+			body: { type: 'bugg' },
+		});
+		expect(answer.status).toBe(400);
+		expect(answer.body['error']).toContain('bugg');
+		const fine = await h.call('POST /tasks/:id/type', {
+			params: { id },
+			query: { project },
+			body: { type: 'bug' },
+		});
+		expect(fine.body['task']['type']).toBe('bug');
+	});
+
+	it('POST /tasks/:id/type is a 400 without a type', async () => {
+		const id = await createTask('t');
+		const answer = await h.call('POST /tasks/:id/type', { params: { id }, query: { project }, body: {} });
+		expect(answer.status).toBe(400);
+		expect(answer.body['hint']).toContain('"type"');
+	});
+});
+
+describe('POST /tasks/:id/meta', () => {
+	it('sets a metadata key, replacing an existing value', async () => {
+		const id = await createTask('t');
+		await h.call('POST /tasks/:id/meta', {
+			params: { id },
+			query: { project },
+			body: { key: 'owner', value: 'ann' },
+		});
+		const answer = await h.call('POST /tasks/:id/meta', {
+			params: { id: id.slice(0, 8) },
+			query: { project },
+			body: { key: 'owner', value: 'bob' },
+		});
+		expect(answer.status).toBe(200);
+		expect(answer.body['task']['meta']).toEqual({ owner: 'bob' });
+		expect(h.sink.events).toEqual([]);
+	});
+
+	it('accepts an empty value (like the CLI) but not an empty key or a non-string value', async () => {
+		const id = await createTask('t');
+		const call = (body: unknown): Promise<Answer> =>
+			h.call('POST /tasks/:id/meta', { params: { id }, query: { project }, body });
+		expect((await call({ key: 'k', value: '' })).status).toBe(200);
+		const noKey = await call({ key: '', value: 'v' });
+		expect(noKey.status).toBe(400);
+		expect(noKey.body['hint']).toContain('"key"');
+		const number = await call({ key: 'k', value: 3 });
+		expect(number.status).toBe(400);
+		expect(number.body['error']).toContain('value');
+	});
+
+	it('is a 404 for an unknown id', async () => {
+		const answer = await h.call('POST /tasks/:id/meta', {
+			params: { id: 'nope' },
+			query: { project },
+			body: { key: 'k', value: 'v' },
+		});
+		expect(answer.status).toBe(404);
+	});
+});
+
+describe('delete', () => {
+	async function ids(): Promise<string[]> {
+		const answer = await h.call('GET /tasks', { query: { project, showAll: 'true' } });
+		return answer.body['tasks'].map((t: { id: string }) => t.id);
+	}
+	const plan = (body: unknown): Promise<Answer> => h.call('POST /tasks/delete/plan', { query: { project }, body });
+	const remove = (body: unknown): Promise<Answer> => h.call('POST /tasks/delete', { query: { project }, body });
+
+	it('POST /tasks/delete/plan previews the selection without deleting', async () => {
+		const a = await createTask('a');
+		const b = await createTask('b');
+		const answer = await plan({ ids: [a.slice(0, 8)] });
+		expect(answer.status).toBe(200);
+		expect(answer.body).toMatchObject({ count: 1, notFound: [], orphanCount: 0, danglingLinkCount: 0 });
+		expect(answer.body['tasks'].map((t: { id: string }) => t.id)).toEqual([a]);
+		expect(answer.body['summary']).toContain('Would delete 1 task');
+		expect(await ids()).toEqual([a, b]);
+	});
+
+	it('accepts comma-separated ids in a string and reports prefixes that match nothing', async () => {
+		const a = await createTask('a');
+		const answer = await plan({ ids: `${a},zzzz` });
+		expect(answer.body['count']).toBe(1);
+		expect(answer.body['notFound']).toEqual(['zzzz']);
+		expect(answer.body['summary']).toContain('zzzz');
+	});
+
+	it('selects with all, or with a field=glob filter', async () => {
+		const a = await createTask('alpha job');
+		await createTask('beta job');
+		expect((await plan({ all: true })).body['count']).toBe(2);
+		const filtered = await plan({ filter: 'title=alpha*' });
+		expect(filtered.body['tasks'].map((t: { id: string }) => t.id)).toEqual([a]);
+	});
+
+	it('is a 400 listing the valid fields for an invalid filter', async () => {
+		const answer = await plan({ filter: 'colour=red' });
+		expect(answer.status).toBe(400);
+		expect(answer.body['hint']).toContain('title');
+	});
+
+	it('is a 400 with the usage unless exactly one selector is given', async () => {
+		for (const body of [
+			{},
+			{ all: true, filter: 'title=*' },
+			{ ids: ['a'], all: true },
+			{ ids: [] },
+			{ all: false },
+		]) {
+			const answer = await plan(body);
+			expect(answer.status, JSON.stringify(body)).toBe(400);
+			expect(answer.body['hint'], JSON.stringify(body)).toContain('ids');
+		}
+	});
+
+	it('cascade adds the descendants; without it the surviving children are counted as orphans', async () => {
+		const parent = await createTask('parent');
+		const child = await createTask('child', { parent });
+		const plain = await plan({ ids: [parent] });
+		expect(plain.body).toMatchObject({ count: 1, orphanCount: 1 });
+		expect(plain.body['summary']).toContain('1 child task(s) would become root tasks');
+		const cascade = await plan({ ids: [parent], cascade: true });
+		expect(cascade.body['tasks'].map((t: { id: string }) => t.id)).toEqual([parent, child]);
+		expect(cascade.body['orphanCount']).toBe(0);
+	});
+
+	it('counts the links of surviving tasks that point to a deleted task', async () => {
+		const a = await createTask('a');
+		const b = await createTask('b');
+		await h.call('POST /tasks/:id/links', {
+			params: { id: a },
+			query: { project },
+			body: { type: 'blockedBy', target: b },
+		});
+		const answer = await plan({ ids: [b] });
+		expect(answer.body['danglingLinkCount']).toBe(1);
+		expect(answer.body['summary']).toContain('1 link(s)');
+	});
+
+	it('POST /tasks/delete without confirm:true is a 400 carrying the plan, and deletes nothing', async () => {
+		const a = await createTask('a');
+		for (const body of [{ ids: [a] }, { ids: [a], confirm: false }, { ids: [a], confirm: 'true' }]) {
+			const answer = await remove(body);
+			expect(answer.status, JSON.stringify(body)).toBe(400);
+			expect(answer.body['error']).toContain('confirm');
+			expect(answer.body['hint']).toContain('"confirm": true');
+			expect(answer.body['plan']).toMatchObject({ count: 1 });
+		}
+		expect(await ids()).toEqual([a]);
+	});
+
+	it('POST /tasks/delete with confirm:true deletes the planned tasks and reports the outcome', async () => {
+		const parent = await createTask('parent');
+		await createTask('child', { parent });
+		const keep = await createTask('keep');
+		const answer = await remove({ ids: [parent], cascade: true, confirm: true });
+		expect(answer.status).toBe(200);
+		expect(answer.body).toMatchObject({ deletedCount: 2, orphanCount: 0, danglingLinkCount: 0, notFound: [] });
+		expect(answer.body['summary']).toContain('Deleted 2 task');
+		expect(await ids()).toEqual([keep]);
+		expect(h.sink.events).toEqual([]);
+	});
+
+	it('POST /tasks/delete with confirm:true and nothing matching is a 200 deleting nothing', async () => {
+		const answer = await remove({ ids: ['zzzz'], confirm: true });
+		expect(answer.status).toBe(200);
+		expect(answer.body).toMatchObject({ deletedCount: 0, notFound: ['zzzz'] });
+	});
+
+	it('POST /tasks/delete validates the selector before checking the confirmation', async () => {
+		const answer = await remove({ confirm: true });
+		expect(answer.status).toBe(400);
+		expect(answer.body['hint']).toContain('ids');
+	});
+});
+
+describe('GET /tasks (list filters)', () => {
+	it('parent and showAll combine', async () => {
+		const parent = await createTask('parent');
+		const child = await createTask('child', { parent });
+		await h.call('POST /tasks/:id/status', { params: { id: child }, query: { project }, body: { status: 'done' } });
+		const open = await h.call('GET /tasks', { query: { project, parent } });
+		expect(open.body['tasks']).toEqual([]);
+		const all = await h.call('GET /tasks', { query: { project, parent, showAll: 'true' } });
+		expect(all.body['tasks'].map((t: { id: string }) => t.id)).toEqual([child]);
+	});
+
+	it('an empty ?parent or ?showAll (a cleared filter field) means no filter', async () => {
+		await createTask('a');
+		const answer = await h.call('GET /tasks', { query: { project, parent: '', showAll: '' } });
+		expect(answer.status).toBe(200);
+		expect(answer.body['tasks']).toHaveLength(1);
+	});
+});
+
+describe('GET /tasks/:id (form options)', () => {
+	it('gives the statuses and the configured types as select options, and the encoded project for action URLs', async () => {
+		const id = await createTask('t');
+		await h.call('POST /types', { query: { project }, body: { name: 'bug' } });
+		const answer = await h.call('GET /tasks/:id', { params: { id }, query: { project } });
+		expect(answer.body['statusOptions']).toEqual([
+			{ value: 'backlog', label: 'backlog' },
+			{ value: 'in-progress', label: 'in-progress' },
+			{ value: 'done', label: 'done' },
+		]);
+		expect(answer.body['typeOptions']).toEqual([{ value: 'bug', label: 'bug' }]);
+		expect(answer.body['projectParam']).toBe(encodeURIComponent(project));
+	});
+});
+
+describe('undeliveredText (ready-to-display line for the views)', () => {
+	it('is null when everything was delivered, on every event-producing route', async () => {
+		const created = await h.call('POST /tasks', { query: { project }, body: { description: 'a' } });
+		const id = created.body['task'].id as string;
+		const other = await createTask('b');
+		const status = await h.call('POST /tasks/:id/status', {
+			params: { id },
+			query: { project },
+			body: { status: 'in-progress' },
+		});
+		const link = await h.call('POST /tasks/:id/links', {
+			params: { id },
+			query: { project },
+			body: { type: 'blockedBy', target: other },
+		});
+		const unlink = await h.call('DELETE /tasks/:id/links', {
+			params: { id },
+			query: { project },
+			body: { type: 'blockedBy', target: other },
+		});
+		for (const answer of [created, status, link, unlink]) {
+			expect(answer.body['undeliveredText']).toBeNull();
+		}
+	});
+
+	it('names the events, the reason and the replay command when the queue did not get them', async () => {
+		const unreachable: EventSink = { deliver: () => Promise.resolve({ delivered: false, reason: 'exit 3' }) };
+		const failingHarness = setup(unreachable);
+		try {
+			const dir = failingHarness.world.createProject('alpha', { configYml: STATUSES_YML });
+			const created = await failingHarness.call('POST /tasks', {
+				query: { project: dir },
+				body: { description: 'kept' },
+			});
+			const text = created.body['undeliveredText'] as string;
+			expect(text).toContain('onTaskCreated');
+			expect(text).toContain('exit 3');
+			expect(text).toContain('queue push onTaskCreated');
+			expect(text).toContain('saved');
+		} finally {
+			failingHarness.world.cleanup();
+		}
+	});
+});
+
+describe('view data: page links, filters and form defaults', () => {
+	const projectParam = (): string => encodeURIComponent(project);
+	const page = (name: string, query = ''): string =>
+		`/modules/task/${name}?project=${encodeURIComponent(project)}${query}`;
+
+	it('GET /tasks, /tree, /types and /tasks/:id carry the encoded links to the pages of the project', async () => {
+		const id = await createTask('t');
+		const expected = {
+			tasks: page('tasks'),
+			tree: page('tree'),
+			types: page('types'),
+			newTask: page('new'),
+			deleteTasks: page('delete'),
+			projects: '/modules/task/projects',
+		};
+		for (const [route, params] of [
+			['GET /tasks', {}],
+			['GET /tree', {}],
+			['GET /types', {}],
+			['GET /tasks/:id', { id }],
+		] as const) {
+			const answer = await h.call(route, { params, query: { project } });
+			expect(answer.body['hrefs'], route).toEqual(expected);
+		}
+	});
+
+	describe('GET /tasks filters', () => {
+		it('reports the active filters and a link toggling showAll while keeping the parent filter', async () => {
+			const parent = await createTask('parent');
+			const plain = await h.call('GET /tasks', { query: { project } });
+			expect(plain.body['filters']).toEqual({ showAll: false, parent: null });
+			expect(plain.body['showAllToggle']).toEqual({
+				label: 'Show closed tasks',
+				href: page('tasks', '&showAll=true'),
+			});
+			expect(plain.body['clearParentHref']).toBeNull();
+
+			const filtered = await h.call('GET /tasks', { query: { project, showAll: 'true', parent } });
+			expect(filtered.body['filters']).toEqual({ showAll: true, parent });
+			expect(filtered.body['showAllToggle']).toEqual({
+				label: 'Hide closed tasks',
+				href: page('tasks', `&parent=${parent}`),
+			});
+			expect(filtered.body['clearParentHref']).toBe(page('tasks', '&showAll=true'));
+			expect(filtered.body['parentFilterText']).toContain(parent);
+		});
+
+		it('gives the open tasks as options for a parent selector', async () => {
+			const a = await createTask('first task');
+			const closed = await createTask('closed task');
+			await h.call('POST /tasks/:id/status', {
+				params: { id: closed },
+				query: { project },
+				body: { status: 'done' },
+			});
+			const answer = await h.call('GET /tasks', { query: { project } });
+			expect(answer.body['parentOptions']).toEqual([{ value: a, label: `${a} first task` }]);
+		});
+	});
+
+	it('GET /tree gives the showAll toggle like GET /tasks', async () => {
+		const answer = await h.call('GET /tree', { query: { project } });
+		expect(answer.body['showAllToggle']).toEqual({
+			label: 'Show closed tasks',
+			href: page('tree', '&showAll=true'),
+		});
+	});
+
+	describe('GET /tasks/:id form data', () => {
+		it('gives each form its encoded project and current values, and the options of the selects', async () => {
+			const id = await createTask('t');
+			await h.call('POST /types', { query: { project }, body: { name: 'bug' } });
+			await h.call('POST /tasks/:id/labels', {
+				params: { id },
+				query: { project },
+				body: { label: 'needs review' },
+			});
+			const answer = await h.call('GET /tasks/:id', { params: { id }, query: { project } });
+			const base = { projectParam: projectParam() };
+			expect(answer.body['forms']).toEqual({
+				status: { ...base, status: 'backlog' },
+				type: { ...base, type: '' },
+				label: { ...base, label: '' },
+				meta: { ...base, key: '', value: '' },
+				parent: { ...base, parent: '' },
+				link: { ...base, type: 'blockedBy', target: '' },
+				empty: base,
+			});
+			expect(answer.body['hasTypes']).toBe(true);
+			expect(answer.body['noTypes']).toBe(false);
+			expect(answer.body['hasLabels']).toBe(true);
+			expect(answer.body['labelOptions']).toEqual([
+				{ value: encodeURIComponent('needs review'), label: 'needs review' },
+			]);
+			expect(answer.body['linkTypeOptions'].map((o: { value: string }) => o.value)).toEqual([
+				'blockedBy',
+				'duplicateOf',
+				'causedBy',
+				'blocks',
+				'duplicates',
+				'causes',
+			]);
+		});
+
+		it('hasTypes is false when no type is configured', async () => {
+			const id = await createTask('t');
+			const answer = await h.call('GET /tasks/:id', { params: { id }, query: { project } });
+			expect(answer.body['hasTypes']).toBe(false);
+			// The DSL has no negation in $if: the opposite flag is given too.
+			expect(answer.body['noTypes']).toBe(true);
+			expect(answer.body['hasLabels']).toBe(false);
+		});
+
+		it('links to the history, the tree of the task and the list of its children', async () => {
+			const id = await createTask('t');
+			const answer = await h.call('GET /tasks/:id', { params: { id }, query: { project } });
+			expect(answer.body['taskHrefs']).toEqual({
+				detail: `/modules/task/tasks/${id}?project=${projectParam()}`,
+				history: `/modules/task/tasks/${id}/history?project=${projectParam()}`,
+				childrenList: page('tasks', `&parent=${id}&showAll=true`),
+			});
+		});
+	});
+
+	describe('GET /types form data', () => {
+		it('gives the add and remove forms their encoded project and the removable types encoded for the URL', async () => {
+			await h.call('POST /types', { query: { project }, body: { name: 'my type' } });
+			const answer = await h.call('GET /types', { query: { project } });
+			expect(answer.body['forms']).toEqual({
+				add: { projectParam: projectParam(), name: '' },
+				remove: { projectParam: projectParam(), name: '' },
+			});
+			expect(answer.body['removeOptions']).toEqual([{ value: encodeURIComponent('my type'), label: 'my type' }]);
+		});
+	});
+
+	describe('GET /projects selection data', () => {
+		it('with several projects and none selected, asks for a selection and offers the projects as encoded options', async () => {
+			const beta = h.world.createProject('beta');
+			const answer = await h.call('GET /projects');
+			expect(answer.body['multiple']).toBe(true);
+			expect(answer.body['needsSelection']).toBe(true);
+			// The views skip their sources while this is empty (a failing source would blank the whole page).
+			expect(answer.body['selectedParam']).toBe('');
+			expect(answer.body['projectOptions']).toEqual([
+				{ value: encodeURIComponent(project), label: 'alpha' },
+				{ value: encodeURIComponent(beta), label: 'beta' },
+			]);
+			expect(answer.body['forms']['create']).toMatchObject({ projectParam: '', description: '', parent: '' });
+		});
+
+		it('with ?project given, nothing is left to select and the forms carry the encoded project', async () => {
+			h.world.createProject('beta');
+			const answer = await h.call('GET /projects', { query: { project } });
+			expect(answer.body['needsSelection']).toBe(false);
+			expect(answer.body['selectedParam']).toBe(encodeURIComponent(project));
+			expect(answer.body['forms']['delete']).toEqual({
+				projectParam: encodeURIComponent(project),
+				ids: '',
+				filter: '',
+				all: false,
+				cascade: false,
+			});
+		});
+
+		it('with a single project, it is the selection', async () => {
+			const answer = await h.call('GET /projects');
+			expect(answer.body['multiple']).toBe(false);
+			expect(answer.body['needsSelection']).toBe(false);
+			expect(answer.body['forms']['create']['projectParam']).toBe(encodeURIComponent(project));
+		});
+	});
+
+	describe('GET /projects selectedQuery (query string the views append to their sources)', () => {
+		it('is the encoded project plus the pass-through filters given, and empty while no project is selected', async () => {
+			h.world.createProject('beta');
+			const none = await h.call('GET /projects', { query: { showAll: 'true' } });
+			expect(none.body['selectedQuery']).toBe('');
+			const withFilters = await h.call('GET /projects', {
+				query: { project, showAll: 'true', parent: 'ab cd', id: '', ignored: 'x' },
+			});
+			expect(withFilters.body['selectedQuery']).toBe(
+				`project=${encodeURIComponent(project)}&showAll=true&parent=ab%20cd`
+			);
+			const plain = await h.call('GET /projects', { query: { project } });
+			expect(plain.body['selectedQuery']).toBe(`project=${encodeURIComponent(project)}`);
+		});
+	});
+
+	describe('POST /tasks answer for the create page', () => {
+		it('gives a message and the link to the created task', async () => {
+			const answer = await h.call('POST /tasks', { query: { project }, body: { description: 'new one' } });
+			const id = answer.body['task'].id as string;
+			expect(answer.body['message']).toBe(`Created task ${id}: new one`);
+			expect(answer.body['href']).toBe(`/modules/task/tasks/${id}?project=${projectParam()}`);
+		});
+	});
+
+	describe('delete plan answer for the delete page', () => {
+		it('offers the confirmation request only when something would be deleted, with the exact selector', async () => {
+			const a = await createTask('a');
+			const withTask = await h.call('POST /tasks/delete/plan', {
+				query: { project },
+				body: { ids: [a], cascade: true },
+			});
+			expect(withTask.body['canConfirm']).toBe(true);
+			expect(withTask.body['confirmRequest']).toEqual({
+				projectParam: projectParam(),
+				ids: [a],
+				cascade: true,
+				confirm: true,
+			});
+			const none = await h.call('POST /tasks/delete/plan', {
+				query: { project },
+				body: { filter: 'title=nothing*' },
+			});
+			expect(none.body['canConfirm']).toBe(false);
+			expect(none.body['confirmRequest']).toBeNull();
+		});
+
+		it('ignores the blank fields a form sends and the extra keys, selecting with the one that is filled', async () => {
+			const a = await createTask('alpha');
+			await createTask('beta');
+			const answer = await h.call('POST /tasks/delete/plan', {
+				query: { project },
+				body: { projectParam: projectParam(), ids: '', filter: 'title=alpha', all: false, cascade: false },
+			});
+			expect(answer.status).toBe(200);
+			expect(answer.body['tasks'].map((t: { id: string }) => t.id)).toEqual([a]);
+			expect(answer.body['confirmRequest']).toEqual({
+				projectParam: projectParam(),
+				filter: 'title=alpha',
+				cascade: false,
+				confirm: true,
+			});
+		});
+
+		it('still 400s when every selector is blank', async () => {
+			const answer = await h.call('POST /tasks/delete/plan', {
+				query: { project },
+				body: { ids: '', filter: '', all: false },
+			});
+			expect(answer.status).toBe(400);
+		});
+	});
+});
+
+describe('POST /tasks from a form', () => {
+	it('a blank parent (the empty select of a form) means no parent', async () => {
+		const answer = await h.call('POST /tasks', { query: { project }, body: { description: 'root', parent: '' } });
+		expect(answer.status).toBe(201);
+		expect(answer.body['task']['parentId']).toBeUndefined();
+	});
+
+	it('extra fields of the form (projectParam...) are ignored', async () => {
+		const answer = await h.call('POST /tasks', {
+			query: { project },
+			body: { description: 'x', parent: '', projectParam: 'whatever' },
+		});
+		expect(answer.status).toBe(201);
 	});
 });

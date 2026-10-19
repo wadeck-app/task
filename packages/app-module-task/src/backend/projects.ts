@@ -1,29 +1,47 @@
 import * as path from 'node:path';
 
 import { TaskConfigLoader, TaskStore } from '@wadeck-app/task-core';
-import { listRegisteredProjects } from '@wadeck-app/task-service';
+import { listRegisteredProjects, listTasks } from '@wadeck-app/task-service';
 import type { TaskServiceContext } from '@wadeck-app/task-service';
 
-import { RequestError } from './errors.js';
+import { RequestError, toHttpError } from './errors.js';
 
 export interface ProjectListing {
 	name: string;
 	path: string;
 	/** False when the directory is registered but has no `.task` directory any more. */
 	initialized: boolean;
+	/** Tasks in a non-terminal status; null when the project cannot be read (see `error`). */
+	openCount: number | null;
+	/** Why the project cannot be read (not initialized, corrupt config.yml...); null when it can. */
+	error: string | null;
+	/** Link to the tasks page of the project; null when the project cannot be read. */
+	href: string | null;
+}
+
+const MODULE_ID = 'task';
+
+/** Link to the tasks list page of a project (the module's nav page, project selected by the query). */
+export function tasksPageHref(projectPath: string): string {
+	return `/modules/${MODULE_ID}/tasks?project=${encodeURIComponent(projectPath)}`;
 }
 
 /** Windows paths are case-insensitive (same rule as the registry). */
-function sameDir(a: string, b: string): boolean {
+export function sameDir(a: string, b: string): boolean {
 	return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
 export function listProjects(configDir: string): ProjectListing[] {
-	return listRegisteredProjects(configDir).map(dir => ({
-		name: path.basename(dir),
-		path: dir,
-		initialized: TaskConfigLoader.isInitialized(dir),
-	}));
+	return listRegisteredProjects(configDir).map(dir => {
+		const base = { name: path.basename(dir), path: dir, initialized: TaskConfigLoader.isInitialized(dir) };
+		try {
+			const openCount = listTasks(openProject(configDir, dir), {}).length;
+			return { ...base, openCount, error: null, href: tasksPageHref(dir) };
+		} catch (error) {
+			// One unreadable project must not hide the others, nor read as "0 open": it is listed with its reason.
+			return { ...base, openCount: null, error: String(toHttpError(error).body['error']), href: null };
+		}
+	});
 }
 
 /**

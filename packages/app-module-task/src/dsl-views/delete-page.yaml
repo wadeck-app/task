@@ -1,0 +1,78 @@
+# Delete tasks (route /delete): preview, then confirm. The project comes from ?project= (asked for when several are registered).
+# 1. The selection form (ids, or a field=glob filter, or all; optionally with the descendants) posts to the dry-run route
+#    and publishes the preview as $ctx.plan: counts, the tasks and what would happen to children and links.
+# 2. Only once a preview selected something, the confirm form appears; its initialData is the exact request the route
+#    prepared (`plan.confirmRequest`, with confirm: true). The route refuses a delete without confirm: true anyway.
+# After a delete the preview shown above is stale: preview again before deleting more.
+# Conventions of task-page.yaml apply (projectParam; a failed action shows nothing).
+$sources:
+    projects:
+        url: GET /api/modules/task/projects
+        params:
+            project: $urlParam.project
+
+$actions:
+    previewDelete:
+        url: POST /api/modules/task/tasks/delete/plan?project={projectParam}
+        resultKey: plan
+    deleteTasks:
+        url: POST /api/modules/task/tasks/delete?project={projectParam}
+        resultKey: deleted
+
+$type: PageContent
+sections:
+    - $type: PageHeader
+      title: Delete tasks
+      subtitle: Give one selector, preview, then confirm. Deleting cannot be undone.
+    - $type: Badge
+      $if: $ctx.deleted.summary
+      label: $ctx.deleted.summary
+      variant: success
+    - $type: Form
+      $if: $sources.projects.forms
+      onSubmit: $ctx.previewDelete
+      initialData: $sources.projects.forms.delete
+      fields:
+          - $type: FieldSelect
+            $if: $sources.projects.needsSelection
+            label: Project
+            bind: projectParam
+            options: $sources.projects.projectOptions
+            placeholder: Choose a project
+          - $type: FieldText
+            label: Task ids (comma separated, prefixes allowed)
+            bind: ids
+          - $type: FieldText
+            label: Or a filter (field=glob, fields id, title, status, parentId; e.g. title=draft*)
+            bind: filter
+          - $type: Switch
+            label: Or all the tasks
+            bind: all
+          - $type: Switch
+            label: Also delete the descendants of the selected tasks
+            bind: cascade
+      actions:
+          - $type: ButtonSave
+            label: Preview
+    - $type: Badge
+      $if: $ctx.plan.summary
+      label: $ctx.plan.summary
+      variant: warning
+    - $type: DataTable
+      $if: $ctx.plan.summary
+      rows: $ctx.plan.tasks
+      emptyMessage: Nothing selected
+      columns:
+          - { key: 'id', label: 'ID', mono: true }
+          - { key: 'title', label: 'Title' }
+          - { key: 'status', label: 'Status' }
+    - $type: Form
+      $if: $ctx.plan.canConfirm
+      onSubmit: $ctx.deleteTasks
+      initialData: $ctx.plan.confirmRequest
+      fields: []
+      actions:
+          - $type: ButtonAction
+            label: Delete these tasks
+            variant: danger
+            type: submit

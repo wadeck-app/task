@@ -1,0 +1,60 @@
+# Create a task (route /new). The project comes from ?project=; with several projects registered and none given the form
+# asks for it. The parent list is the open tasks of the project, so it appears once the project is known.
+# Submits through a named action (conventions of task-page.yaml: projectParam, no error channel for failed actions);
+# the answer is published as $ctx.created: message, link to the new task, and the queue events that were not delivered.
+$sources:
+    projects:
+        url: GET /api/modules/task/projects
+        params:
+            project: $urlParam.project
+    tasks:
+        url: GET /api/modules/task/tasks?{query}
+        params:
+            query: $source.projects.selectedQuery
+
+$actions:
+    createTask:
+        url: POST /api/modules/task/tasks?project={projectParam}
+        resultKey: created
+        reloadSources: true
+
+$type: PageContent
+sections:
+    - $type: PageHeader
+      title: New task
+      subtitle: $sources.tasks.project.name
+    - $type: Badge
+      $if: $ctx.created.message
+      label: $ctx.created.message
+      variant: success
+    - $type: Badge
+      $if: $ctx.created.undeliveredText
+      label: $ctx.created.undeliveredText
+      variant: warning
+    - $type: ButtonLink
+      $if: $ctx.created.href
+      label: Open the new task
+      to: $ctx.created.href
+    - $type: Form
+      $if: $sources.projects.forms
+      onSubmit: $ctx.createTask
+      initialData: $sources.projects.forms.create
+      fields:
+          - $type: FieldSelect
+            $if: $sources.projects.needsSelection
+            label: Project
+            bind: projectParam
+            options: $sources.projects.projectOptions
+            placeholder: Choose a project
+          - $type: FieldTextarea
+            label: Description
+            bind: description
+          - $type: FieldSelect
+            $if: $sources.tasks.parentOptions
+            label: Parent (optional)
+            bind: parent
+            options: $sources.tasks.parentOptions
+            placeholder: No parent
+      actions:
+          - $type: ButtonSave
+            label: Create task

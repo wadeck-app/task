@@ -1,0 +1,33 @@
+# Status history of one task (/modules/task/tasks/:id/history); the project comes from ?project=.
+$sources:
+    projects:
+        url: GET /api/modules/task/projects
+        params:
+            project: $urlParam.project
+    detail:
+        url: GET /api/modules/task/tasks/{id}?{query}
+        params:
+            id: $route.id
+            query: $source.projects.selectedQuery
+    history:
+        url: GET /api/modules/task/tasks/{id}/history?{query}
+        params:
+            id: $route.id
+            query: $source.projects.selectedQuery
+
+$type: PageContent
+sections:
+    - $type: PageHeader
+      title: $sources.detail.task.title
+      subtitle: Status history
+      headerActions:
+          - $type: ButtonLink
+            $if: $sources.detail.taskHrefs
+            label: Back to the task
+            to: $sources.detail.taskHrefs.detail
+    - $type: DataTable
+      rows: $sources.history.history
+      emptyMessage: No history
+      columns:
+          - { key: 'timestamp', label: 'Time', format: 'datetime' }
+          - { key: 'status', label: 'Status' }

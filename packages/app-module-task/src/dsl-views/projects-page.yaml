@@ -1,0 +1,20 @@
+# Registered projects (nav /projects) with their open task count; a row click opens the tasks of the project.
+# A project that cannot be read (not initialized, corrupt config.yml) is listed with its reason, not hidden.
+$sources:
+    projects:
+        url: GET /api/modules/task/projects
+
+$type: PageContent
+sections:
+    - $type: PageHeader
+      title: Projects
+      subtitle: Registered with `task init`
+    - $type: DataTable
+      rows: $sources.projects.projects
+      navigateTo: '{href}'
+      emptyMessage: No project is registered. Run `task init` in a project directory.
+      columns:
+          - { key: 'name', label: 'Project' }
+          - { key: 'path', label: 'Directory', mono: true }
+          - { key: 'openCount', label: 'Open tasks' }
+          - { key: 'error', label: 'Problem' }

@@ -14,9 +14,10 @@ import { registerProject } from '@wadeck-app/task-service';
  * the handlers directly, so it cannot see how the router fills `req.params`/`req.query`/`req.body`, nor whether
  * the packaged CJS bundle (task-core + task-service inlined) loads and runs.
  *
- * Only event-free mutations (labels) and rejected requests are sent over HTTP: a mutation that produces events
- * would run the REAL queue sink (`queue push`) on the developer's machine, and the sink cannot be injected into
- * a packaged server. Event delivery is covered in backend.test.ts with a fake sink.
+ * Only event-free mutations (labels, meta, type, parent, types, delete) and rejected requests are sent over HTTP: a
+ * mutation that produces events (create, status, link, unlink) would run the REAL queue sink (`queue push`) on the
+ * developer's machine, and the sink cannot be injected into a packaged server. Event delivery is covered in
+ * backend.test.ts with a fake sink.
  */
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -130,7 +131,16 @@ describe('the packaged module through a real app-core server', () => {
 	it('GET /projects lists the fixture project', async () => {
 		const { status, body } = await call('GET', '/projects');
 		expect(status).toBe(200);
-		expect(body['projects']).toEqual([{ name: 'proj', path: projectDir, initialized: true }]);
+		expect(body['projects']).toEqual([
+			{
+				name: 'proj',
+				path: projectDir,
+				initialized: true,
+				openCount: 1,
+				error: null,
+				href: `/modules/task/tasks?project=${encodeURIComponent(projectDir)}`,
+			},
+		]);
 	});
 
 	it('GET /tasks reads ?project from the real query string and returns the seeded task', async () => {
@@ -195,5 +205,76 @@ describe('the packaged module through a real app-core server', () => {
 		const { status, body } = await call('DELETE', `/tasks/${taskId}/links?${q()}&type=blockedBy&target=${taskId}`);
 		expect(status).toBe(409);
 		expect(body['error']).toContain('is not blockedBy');
+	});
+
+	describe('hierarchy, links, types, meta and delete (event-free routes)', () => {
+		let childId: string;
+
+		beforeAll(() => {
+			childId = new TaskStore(join(projectDir, '.task', 'tasks')).create('child seeded', 'backlog').id;
+		});
+
+		it('POST /tasks/:id/parent reads the id param and the JSON body, then GET /tree, /children and /ancestors show it', async () => {
+			const set = await call('POST', `/tasks/${childId}/parent?${q()}`, { parent: taskId.slice(0, 8) });
+			expect(set.status).toBe(200);
+			expect(set.body['task']['parentId']).toBe(taskId);
+
+			const tree = await call('GET', `/tree?${q()}`);
+			expect(tree.status).toBe(200);
+			expect(tree.body['rows'].map((r: { id: string; depth: number }) => [r.id, r.depth])).toEqual([
+				[taskId, 0],
+				[childId, 1],
+			]);
+
+			const children = await call('GET', `/tasks/${taskId}/children?${q()}&recursive=true`);
+			expect(children.body['children'][0]).toMatchObject({ id: childId, children: [] });
+
+			const ancestors = await call('GET', `/tasks/${childId}/ancestors?${q()}`);
+			expect(ancestors.body['ancestors'].map((a: { id: string }) => a.id)).toEqual([taskId]);
+		});
+
+		it('GET /tasks/:id/links answers the (empty) link rows of a task', async () => {
+			const { status, body } = await call('GET', `/tasks/${childId}/links?${q()}`);
+			expect(status).toBe(200);
+			expect(body).toMatchObject({ id: childId, rows: [] });
+		});
+
+		it('types: POST adds, GET lists, POST /tasks/:id/type validates against them, DELETE removes (and 404s on a typo)', async () => {
+			expect((await call('POST', `/types?${q()}`, { name: 'bug' })).body['types']).toEqual(['bug']);
+			expect((await call('GET', `/types?${q()}`)).body['rows']).toEqual([{ name: 'bug' }]);
+			const bad = await call('POST', `/tasks/${childId}/type?${q()}`, { type: 'bugg' });
+			expect(bad.status).toBe(400);
+			const good = await call('POST', `/tasks/${childId}/type?${q()}`, { type: 'bug' });
+			expect(good.body['task']['type']).toBe('bug');
+			const typo = await call('DELETE', `/types/bugg?${q()}`);
+			expect(typo.status).toBe(404);
+			const removed = await call('DELETE', `/types/bug?${q()}`);
+			expect(removed.body['types']).toEqual([]);
+		});
+
+		it('POST /tasks/:id/meta then GET /tasks/:id shows the metadata rows', async () => {
+			const set = await call('POST', `/tasks/${childId}/meta?${q()}`, { key: 'owner', value: 'ann' });
+			expect(set.status).toBe(200);
+			const detail = await call('GET', `/tasks/${childId}?${q()}`);
+			expect(detail.body['metaRows']).toEqual([{ key: 'owner', value: 'ann' }]);
+		});
+
+		it('POST /tasks/delete/plan previews, and POST /tasks/delete without confirm deletes nothing (400 with the plan)', async () => {
+			const plan = await call('POST', `/tasks/delete/plan?${q()}`, { ids: [childId] });
+			expect(plan.status).toBe(200);
+			expect(plan.body).toMatchObject({ count: 1 });
+			const refused = await call('POST', `/tasks/delete?${q()}`, { ids: [childId] });
+			expect(refused.status).toBe(400);
+			expect(refused.body['plan']).toMatchObject({ count: 1 });
+			const still = await call('GET', `/tasks/${childId}?${q()}`);
+			expect(still.status).toBe(200);
+		});
+
+		it('POST /tasks/delete with confirm:true deletes the child (the static /tasks/delete wins over /tasks/:id)', async () => {
+			const done = await call('POST', `/tasks/delete?${q()}`, { ids: [childId], confirm: true });
+			expect(done.status).toBe(200);
+			expect(done.body['deletedCount']).toBe(1);
+			expect((await call('GET', `/tasks/${childId}?${q()}`)).status).toBe(404);
+		});
 	});
 });

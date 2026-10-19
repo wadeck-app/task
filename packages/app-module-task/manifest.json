@@ -22,12 +22,72 @@
 		},
 		{
 			"kind": "page",
+			"slot": "nav",
+			"label": "Tree",
+			"path": "/tree",
+			"view": {
+				"type": "path",
+				"value": "./src/dsl-views/tree-page.yaml"
+			}
+		},
+		{
+			"kind": "page",
+			"slot": "nav",
+			"label": "Projects",
+			"path": "/projects",
+			"view": {
+				"type": "path",
+				"value": "./src/dsl-views/projects-page.yaml"
+			}
+		},
+		{
+			"kind": "page",
+			"slot": "nav",
+			"label": "Types",
+			"path": "/types",
+			"view": {
+				"type": "path",
+				"value": "./src/dsl-views/types-page.yaml"
+			}
+		},
+		{
+			"kind": "page",
 			"slot": "route",
 			"label": "Task",
 			"path": "/tasks/:id",
 			"view": {
 				"type": "path",
 				"value": "./src/dsl-views/task-page.yaml"
+			}
+		},
+		{
+			"kind": "page",
+			"slot": "route",
+			"label": "Task history",
+			"path": "/tasks/:id/history",
+			"view": {
+				"type": "path",
+				"value": "./src/dsl-views/task-history-page.yaml"
+			}
+		},
+		{
+			"kind": "page",
+			"slot": "route",
+			"label": "New task",
+			"path": "/new",
+			"view": {
+				"type": "path",
+				"value": "./src/dsl-views/new-task-page.yaml"
+			}
+		},
+		{
+			"kind": "page",
+			"slot": "route",
+			"label": "Delete tasks",
+			"path": "/delete",
+			"view": {
+				"type": "path",
+				"value": "./src/dsl-views/delete-page.yaml"
 			}
 		}
 	]

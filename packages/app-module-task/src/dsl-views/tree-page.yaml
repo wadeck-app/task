@@ -1,0 +1,41 @@
+# Hierarchy of the tasks of one project (nav /tree): the forest of the open tasks, children indented under their parent.
+# ?showAll=true includes the closed tasks, ?parent=<id> restricts to the descendants of a task, ?id=<id> shows the one
+# tree containing a task. A row click opens the detail page.
+# TreeView is not used: its selection is a callback, which YAML cannot express, so rows could not navigate.
+$sources:
+    projects:
+        url: GET /api/modules/task/projects
+        params:
+            project: $urlParam.project
+            showAll: $urlParam.showAll
+            parent: $urlParam.parent
+            id: $urlParam.id
+    tree:
+        url: GET /api/modules/task/tree?{query}
+        params:
+            query: $source.projects.selectedQuery
+
+$type: PageContent
+sections:
+    - $type: PageHeader
+      title: Tree
+      subtitle: $sources.tree.project.name
+      headerActions:
+          - $type: ButtonLink
+            $if: $sources.tree.showAllToggle
+            label: $sources.tree.showAllToggle.label
+            to: $sources.tree.showAllToggle.href
+    # Several projects registered and none chosen: say so instead of an empty page.
+    - $type: Badge
+      $if: $sources.projects.needsSelection
+      label: Several projects are registered. Pick one on the Projects page.
+      variant: warning
+    - $type: DataTable
+      $if: $sources.tree.project
+      rows: $sources.tree.rows
+      navigateTo: '{href}'
+      emptyMessage: No tasks
+      columns:
+          - { key: 'label', label: 'Task' }
+          - { key: 'id', label: 'ID', mono: true }
+          - { key: 'status', label: 'Status' }
