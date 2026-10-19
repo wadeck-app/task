@@ -83,5 +83,24 @@ export class DanglingParentError extends TaskServiceError {
 	}
 }
 
+/** One registered project an all-projects view could not read, with why. */
+export interface ProjectFailure {
+	path: string;
+	error: string;
+}
+
+/**
+ * Projects are registered but none can be read. An all-projects view must fail with this (reasons and fix),
+ * never answer zeros that would read as "no tasks".
+ */
+export class NoReadableProjectsError extends TaskServiceError {
+	constructor(readonly failures: readonly ProjectFailure[]) {
+		super(
+			`none of the ${failures.length} registered projects could be read: ${failures.map(f => `${f.path} (${f.error})`).join('; ')}`,
+			'Fix the causes above: `task init` in a project directory recreates its .task, `task projects remove <dir>` unregisters a vanished one (`task projects prune` drops every missing one).'
+		);
+	}
+}
+
 /** `<configDir>/projects.json` is unreadable, corrupt, or the directory to register is invalid. Never auto-repaired. */
 export class ProjectsRegistryError extends TaskServiceError {}

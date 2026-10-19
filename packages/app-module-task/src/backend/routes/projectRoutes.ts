@@ -1,24 +1,50 @@
 // GET /projects and GET /summary: which projects the module knows and how many tasks they hold.
-import { countTasksByStatus, describeError, isSameProjectDir } from '@wadeck-app/task-service';
-import type { StatusCount, TaskServiceContext } from '@wadeck-app/task-service';
+import { isSameProjectDir, summarizeProject, summarizeProjects } from '@wadeck-app/task-service';
+import type { ProjectOverview, ProjectsSummary } from '@wadeck-app/task-service';
 
-import { RequestError } from '../errors.js';
-import { MODULE_ID, selectedQuery, tasksPageHref } from '../hrefs.js';
-import { listProjects, NO_PROJECT_HINT, openProject, requireRegisteredProjects } from '../projects.js';
+import { projectRows, skippedOf, skippedWarning } from '../allProjectsViews.js';
+import { allProjectsTasksHref, MODULE_ID, selectedQuery, tasksPageHref } from '../hrefs.js';
+import { listProjects, NO_PROJECT_HINT, openProject } from '../projects.js';
 import type { ProjectListing } from '../projects.js';
 import { optionalQueryValue, queryValue } from '../request.js';
+import type { RouteRequest } from '../request.js';
 import type { RouteKit } from './routeKit.js';
 
-function skippedCount(count: number): string {
-	return `${count} ${count === 1 ? 'project' : 'projects'}`;
+/** The `?showAll` filter, passed on to the global list (the only filter it has). */
+function globalQuery(query: RouteRequest['query']): string {
+	const showAll = optionalQueryValue(query, 'showAll');
+	return showAll === undefined ? 'allProjects=true' : `allProjects=true&showAll=${encodeURIComponent(showAll)}`;
 }
 
-/** One display line for the projects the all-projects summary could not read; null when there is none. */
-function skippedWarning(skipped: readonly { path: string; error: string }[]): string | null {
-	if (skipped.length === 0) return null;
-	const noun = skipped.length === 1 ? 'project' : 'projects';
-	const details = skipped.map(entry => `${entry.path} (${entry.error})`).join('; ');
-	return `${skipped.length} ${noun} not counted: ${details}. Run \`task init\` in the project directory or check that it still exists.`;
+/** The figures the widget shows, from the overview of the registered projects (or of the one asked for). */
+function summaryBody(scope: 'all' | 'project', summary: ProjectsSummary): Record<string, unknown> {
+	const skipped = skippedOf(summary.projects);
+	const noProjects = summary.projects.length === 0;
+	return {
+		scope,
+		// Nothing registered: the views show this text (with the exact next step), not an error nor empty figures.
+		noProjects,
+		noProjectsText: noProjects ? `No project is registered with the task app-module. ${NO_PROJECT_HINT}` : null,
+		projectCount: summary.readableCount,
+		open: summary.open,
+		total: summary.total,
+		byStatus: summary.byStatus,
+		skipped,
+		skippedCount: skipped.length,
+		warning: skippedWarning(skipped, 'counted'),
+		// The widget is narrow and its badge does not wrap: the detail is in the project table and on the Projects page.
+		skippedText:
+			skipped.length === 0
+				? null
+				: `${skipped.length} ${skipped.length === 1 ? 'project' : 'projects'} not counted (see the table).`,
+		// What the status table shows: closed statuses are told apart from the open ones counted above.
+		rows: summary.byStatus.map(entry => ({
+			statusText: entry.terminal ? `${entry.status} (closed)` : entry.status,
+			count: entry.count,
+		})),
+		// One row per registered project: figures and link, or the reason it is not counted.
+		projectRows: projectRows(summary.projects),
+	};
 }
 
 /** Why the selected project cannot be shown, with what to do about it. */
@@ -45,8 +71,13 @@ export function registerProjectRoutes(kit: RouteKit): void {
 			(requested === undefined && projects.length === 1 ? projects[0] : undefined);
 		const projectParam = selected === undefined ? '' : encodeURIComponent(selected.path);
 		const base = { projectParam };
+		const needsSelection = projects.length > 1 && selected === undefined;
+		// A ?project the registry does not know: said on the Tasks page instead of an empty page.
+		const unknownProject = requested !== undefined && selected === undefined;
 		// A selected project that cannot be read: the views show why instead of requesting tasks that would fail.
 		const readable = selected !== undefined && selected.error === null;
+		const projectQuery = selectedQuery(readable ? selected.path : undefined, req.query);
+		const global = needsSelection && requested === undefined ? globalQuery(req.query) : '';
 		const selectedProblem = selected === undefined || selected.error === null ? null : problemText(selected);
 		return {
 			status: 200,
@@ -60,10 +91,20 @@ export function registerProjectRoutes(kit: RouteKit): void {
 						: null,
 				multiple: projects.length > 1,
 				// Several projects and none chosen: the views ask for a choice instead of showing nothing.
-				needsSelection: projects.length > 1 && selected === undefined,
+				needsSelection,
+				// The Tasks page across all projects: its source query while several projects exist and none is asked for.
+				globalQuery: global,
+				// What the Tasks page asks GET /tasks: the project, else the global list. One source for both, so the page never keeps the answer of the other scope.
+				tasksQuery: projectQuery === '' ? global : projectQuery,
+				// Back to the global Tasks page from a project (or from an unknown one); a single project has no global view.
+				allProjectsHref:
+					projects.length > 1 && (selected !== undefined || unknownProject) ? allProjectsTasksHref() : null,
+				unknownProjectText: unknownProject
+					? `Project "${requested}" is not registered with the task app-module. Pick a registered project from "All projects", or register it with \`task projects add <dir>\`.`
+					: null,
 				selectedParam: projectParam,
 				selectedProblem,
-				selectedQuery: selectedQuery(readable ? selected.path : undefined, req.query),
+				selectedQuery: projectQuery,
 				tasksHref: selected === undefined ? `/modules/${MODULE_ID}/tasks` : tasksPageHref(selected.path),
 				projectOptions: projects.map(entry => ({ value: encodeURIComponent(entry.path), label: entry.name })),
 				// No project, or a selected one that cannot be read: no form either (its submit could only fail); the views gate their forms on it.
@@ -80,63 +121,30 @@ export function registerProjectRoutes(kit: RouteKit): void {
 
 	kit.route('GET', '/summary', req => {
 		const requested = queryValue(req.query, 'project');
-		const dirs = requested === undefined ? requireRegisteredProjects(configDir) : [requested];
-		const merged = new Map<string, StatusCount>();
-		const skipped: { path: string; error: string }[] = [];
-		let projectCount = 0;
-		let open = 0;
-		let total = 0;
-		for (const dir of dirs) {
-			let project: TaskServiceContext;
-			try {
-				project = openProject(configDir, dir);
-			} catch (error) {
-				// Naming a project explicitly must fail loudly; in the all-projects view one broken project is reported, not hidden.
-				if (requested !== undefined) throw error;
-				skipped.push({ path: dir, error: describeError(error).message });
-				continue;
-			}
-			projectCount++;
-			for (const entry of countTasksByStatus(project)) {
-				const sum = merged.get(entry.status) ?? { ...entry, count: 0 };
-				sum.count += entry.count;
-				merged.set(entry.status, sum);
-				total += entry.count;
-				if (!entry.terminal) open += entry.count;
-			}
+		if (requested === undefined) {
+			// Every registered project (nothing registered is an empty summary; none readable throws with the reasons).
+			return { status: 200, body: summaryBody('all', summarizeProjects(configDir)) };
 		}
-		// Zeros from a registry whose every project failed would read as "no tasks": answer the failure instead.
-		if (projectCount === 0 && skipped.length > 0) {
-			throw new RequestError(
-				500,
-				`none of the ${skipped.length} registered projects could be read: ${skipped.map(s => `${s.path} (${s.error})`).join('; ')}`,
-				'Fix the causes above: `task init` in a project directory recreates its .task, `task projects remove <dir>` unregisters a vanished one (`task projects prune` drops every missing one).',
-				{ skipped }
-			);
-		}
-		const rows = [...merged.values()].map(entry => ({
-			statusText: entry.terminal ? `${entry.status} (closed)` : entry.status,
-			count: entry.count,
-		}));
+		// Naming a project explicitly must fail loudly: an unreadable one is an error, not a skipped entry.
+		const ctx = openProject(configDir, requested);
+		const figures = summarizeProject(ctx);
+		const overview: ProjectOverview = {
+			name: ctx.project.name,
+			path: ctx.project.path,
+			exists: true,
+			initialized: true,
+			...figures,
+			error: null,
+		};
 		return {
 			status: 200,
-			body: {
-				scope: requested === undefined ? 'all' : 'project',
-				projectCount,
-				open,
-				total,
-				byStatus: [...merged.values()],
-				skipped,
-				skippedCount: skipped.length,
-				warning: skippedWarning(skipped),
-				// The widget is narrow and its badge does not wrap: the detail is on the Projects page.
-				skippedText:
-					skipped.length === 0
-						? null
-						: `${skippedCount(skipped.length)} not counted (see the Projects page).`,
-				// What the table shows: closed statuses are told apart from the open ones counted above.
-				rows,
-			},
+			body: summaryBody('project', {
+				projects: [overview],
+				readableCount: 1,
+				open: figures.open,
+				total: figures.total,
+				byStatus: figures.byStatus,
+			}),
 		};
 	});
 }

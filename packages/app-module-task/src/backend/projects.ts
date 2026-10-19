@@ -73,13 +73,6 @@ export function openProject(configDir: string, requested: string | undefined): T
 	return openTaskContext({ projectDir: dir });
 }
 
-/** The registered project directories; 404 with the fix when there is none. */
-export function requireRegisteredProjects(configDir: string): string[] {
-	const registered = listRegisteredProjects(configDir);
-	requireAny(registered);
-	return registered;
-}
-
 /** What to do when nothing is registered: shown by every view and answered by every route. */
 export const NO_PROJECT_HINT =
 	'Run `task init` in a project directory to create and register it, or `task projects add <dir>` for a project that is already initialized.';

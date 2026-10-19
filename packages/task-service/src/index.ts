@@ -12,7 +12,9 @@ export {
 	AmbiguousDeletePrefixError,
 	DanglingParentError,
 	ProjectsRegistryError,
+	NoReadableProjectsError,
 } from './errors.js';
+export type { ProjectFailure } from './errors.js';
 export type { ErrorDescription, ErrorKind } from './describeError.js';
 export { describeError } from './describeError.js';
 export type {
@@ -62,3 +64,11 @@ export {
 export { registerInitializedProject } from './registerInitializedProject.js';
 export type { ProjectHealth } from './projectsHealth.js';
 export { inspectRegisteredProjects } from './projectsHealth.js';
+export type {
+	ProjectOverview,
+	ProjectsSummary,
+	ProjectTask,
+	ListTasksAcrossProjectsInput,
+	TasksAcrossProjects,
+} from './projectsOverview.js';
+export { summarizeProject, summarizeProjects, listTasksAcrossProjects } from './projectsOverview.js';

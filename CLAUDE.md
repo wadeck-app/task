@@ -11,7 +11,7 @@
 
 `task-core` <- `task-service` <- `task-cli` and `app-module-task`. The two adapters never import each other, and `task-service` knows no CLI, HTTP or app-core library, never prints or exits. `npm run test:architecture` (`architecture/`, part of `npm test`) enforces it on imports, `package.json` dependencies and source patterns.
 
-Shared rules live in `task-service`, adapters only parse input and format output: `describeError` (error kind, message, hint; CLI maps to stderr, module to HTTP status), `selectDeleteTargets` / `describeDeleteEffects`, `openTaskContext`, `getTaskLogDir`, `countTasksByStatus`, `showTaskWithRelations`, the projects registry (`listRegisteredProjects`, `unregisterProject`, `inspectRegisteredProjects`, `pruneMissingProjects`, `registerInitializedProject`: shared by `task init` and `task projects add`).
+Shared rules live in `task-service`, adapters only parse input and format output: `describeError` (error kind, message, hint; CLI maps to stderr, module to HTTP status), `selectDeleteTargets` / `describeDeleteEffects`, `openTaskContext`, `getTaskLogDir`, `countTasksByStatus`, `showTaskWithRelations`, the projects registry (`listRegisteredProjects`, `unregisterProject`, `inspectRegisteredProjects`, `pruneMissingProjects`, `registerInitializedProject`: shared by `task init` and `task projects add`), and the cross-project reads `summarizeProjects` / `listTasksAcrossProjects` (per-project figures and tasks tagged with their project; unreadable projects reported, `NoReadableProjectsError` when none can be read; only the app-module uses them today, see the TODO below).
 
 ## app-core registration
 
@@ -28,6 +28,14 @@ Shared rules live in `task-service`, adapters only parse input and format output
 Routes (`/api/modules/task/...`, all take `?project=<dir>`, typed errors mapped in `errors.ts`): GET `/projects` `/summary` `/tasks` `/tasks/:id` `/tasks/:id/{history,children,ancestors,links}` `/tree` `/types`; POST `/tasks` `/tasks/:id/{status,labels,links,parent,type,meta}` `/types` `/tasks/delete/plan` `/tasks/delete` (needs `confirm: true`, else 400 with the plan); DELETE `/tasks/:id/{labels/:label,links,parent}` `/types/:name`. Only create/status/links produce queue events (`undelivered`, `undeliveredText`).
 
 Pages: nav `/tasks` `/tree` `/projects` `/types`; routes `/tasks/:id`, `/tasks/:id/history`, `/new`, `/delete`; dashboard widget.
+
+Global view (all registered projects): the widget (`GET /summary` without `?project`: open/total plus `projectRows`, one row per project with its tasks link or its error; nothing registered is a 200 with `noProjects`, not an error) and the Tasks page without `?project` while several projects are registered (`GET /tasks?allProjects=true`, Project column, rows keep `?project`; `/projects` gives `globalQuery`, `allProjectsHref`, `unknownProjectText`). With `?project`, or a single registered project, the Tasks page is the per-project page. The other pages (tree, types, new, delete) still ask for a project choice.
+
+> **TODO(cli-parity)**: the global view exists only in the app-module. The CLI needs, over the same `summarizeProjects` / `listTasksAcrossProjects` (no new logic, only parsing and output):
+>
+> - `task list --all-projects [--all] [--json]`: Project column, unreadable projects on stderr, exit 1 when none can be read.
+> - `task projects summary [--json]`: per-project open/total and the totals.
+> - Output tests in `task-cli`, then drop this TODO.
 
 View conventions (app-core DSL, checked against the real shell):
 

@@ -7,6 +7,7 @@ import {
 	InvalidDeleteFilterError,
 	InvalidTaskTypeError,
 	DanglingParentError,
+	NoReadableProjectsError,
 	TaskServiceError,
 } from './errors.js';
 
@@ -62,6 +63,9 @@ export function describeError(error: unknown): ErrorDescription {
 	}
 	if (error instanceof InvalidTaskTypeError || error instanceof InvalidDeleteFilterError) {
 		return describe('invalid', error, error.hint);
+	}
+	if (error instanceof NoReadableProjectsError) {
+		return describe('internal', error, error.hint, { skipped: error.failures });
 	}
 	if (error instanceof TaskServiceError) return describe('internal', error, error.hint);
 	return { kind: 'internal', message: error instanceof Error ? error.message : String(error), details: {} };

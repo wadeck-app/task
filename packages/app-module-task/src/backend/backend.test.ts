@@ -457,11 +457,261 @@ describe('GET /summary', () => {
 		});
 	});
 
-	it('the aggregate with no registered project is 404 with the task init fix', async () => {
+	it('the aggregate with no registered project is a 200 flagged noProjects, with the two ways to register (not an error)', async () => {
 		fs.rmSync(projectsRegistryPath(h.world.configDir));
 		const answer = await h.call('GET /summary');
+		expect(answer.status).toBe(200);
+		expect(answer.body).toMatchObject({ scope: 'all', noProjects: true, projectCount: 0, open: 0, total: 0 });
+		expect(answer.body['noProjectsText']).toContain('task init');
+		expect(answer.body['noProjectsText']).toContain('task projects add');
+		expect(answer.body['projectRows']).toEqual([]);
+		expect(answer.body).not.toHaveProperty('errorText');
+	});
+
+	it('an explicit unregistered ?project stays a 404 (naming a project must fail loudly)', async () => {
+		const other = h.world.createProject('other', { register: false });
+		const answer = await h.call('GET /summary', { query: { project: other } });
 		expect(answer.status).toBe(404);
+	});
+
+	it('has noProjects false and no text once a project is registered', async () => {
+		const answer = await h.call('GET /summary');
+		expect(answer.body['noProjects']).toBe(false);
+		expect(answer.body['noProjectsText']).toBeNull();
+	});
+});
+
+describe('GET /summary per-project rows (the global dashboard widget)', () => {
+	it('gives one row per registered project with name, open, total and the link to its tasks page', async () => {
+		const closed = await createTask('closed');
+		await h.call('POST /tasks/:id/status', {
+			params: { id: closed },
+			query: { project },
+			body: { status: 'done' },
+		});
+		await createTask('open one');
+		const beta = h.world.createProject('beta');
+		const answer = await h.call('GET /summary');
+		expect(answer.body['projectRows']).toEqual([
+			{
+				name: 'alpha',
+				label: 'alpha',
+				path: project,
+				openText: '1',
+				totalText: '2',
+				problem: '',
+				href: `/modules/task/tasks?project=${encodeURIComponent(project)}`,
+			},
+			{
+				name: 'beta',
+				label: 'beta',
+				path: beta,
+				openText: '0',
+				totalText: '0',
+				problem: '',
+				href: `/modules/task/tasks?project=${encodeURIComponent(beta)}`,
+			},
+		]);
+		expect(answer.body).toMatchObject({ open: 1, total: 2, projectCount: 2 });
+	});
+
+	it('shows an unreadable project with its reason and no figures nor link, besides the readable ones', async () => {
+		const broken = h.world.createProject('broken');
+		fs.rmSync(`${broken}/.task`, { recursive: true });
+		const gone = h.world.createProject('gone');
+		fs.rmSync(gone, { recursive: true });
+		const answer = await h.call('GET /summary');
+		const [, brokenRow, goneRow] = answer.body['projectRows'];
+		expect(brokenRow).toMatchObject({
+			name: 'broken',
+			label: 'broken (not initialized)',
+			openText: '-',
+			totalText: '-',
+			href: null,
+		});
+		expect(brokenRow.problem).toContain('not initialized');
+		expect(goneRow).toMatchObject({ name: 'gone', label: 'gone (missing)', href: null });
+		expect(goneRow.problem).toContain('does not exist');
+		expect(answer.body['projectCount']).toBe(1);
+	});
+
+	it('with ?project, has the single row of that project and scope project', async () => {
+		await createTask('a');
+		h.world.createProject('beta');
+		const answer = await h.call('GET /summary', { query: { project } });
+		expect(answer.body['scope']).toBe('project');
+		expect(answer.body['projectRows']).toHaveLength(1);
+		expect(answer.body['projectRows'][0]).toMatchObject({ name: 'alpha', openText: '1', totalText: '1' });
+	});
+});
+
+describe('GET /tasks?allProjects=true (the global task list)', () => {
+	let beta: string;
+
+	async function createIn(dir: string, description: string): Promise<string> {
+		const answer = await h.call('POST /tasks', { query: { project: dir }, body: { description } });
+		expect(answer.status).toBe(201);
+		return answer.body['task'].id as string;
+	}
+
+	beforeEach(() => {
+		beta = h.world.createProject('beta', { configYml: STATUSES_YML });
+	});
+
+	it('lists the open tasks of every project, each with its project name and a detail link keeping the project', async () => {
+		const a = await createIn(project, 'in alpha');
+		const b = await createIn(beta, 'in beta');
+		const answer = await h.call('GET /tasks', { query: { allProjects: 'true' } });
+		expect(answer.status).toBe(200);
+		expect(answer.body['scope']).toBe('all');
+		expect(answer.body['tasks']).toMatchObject([
+			{
+				id: a,
+				projectName: 'alpha',
+				projectPath: project,
+				titleText: 'in alpha',
+				href: `/modules/task/tasks/${a}?project=${encodeURIComponent(project)}`,
+			},
+			{ id: b, projectName: 'beta', href: `/modules/task/tasks/${b}?project=${encodeURIComponent(beta)}` },
+		]);
+		expect(answer.body['tasks'][0].created).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d$/);
+		expect(answer.body['scopeText']).toBe('All projects: 2 projects, 2 open tasks.');
+		expect(answer.body['projectCount']).toBe(2);
+	});
+
+	it('hides closed tasks unless showAll, and the toggle keeps the global scope (no project in its link)', async () => {
+		const done = await createIn(project, 'closed one');
+		await h.call('POST /tasks/:id/status', { params: { id: done }, query: { project }, body: { status: 'done' } });
+		await createIn(project, 'open one');
+		const open = await h.call('GET /tasks', { query: { allProjects: 'true' } });
+		expect(open.body['tasks']).toHaveLength(1);
+		expect(open.body['showAllToggle']).toEqual({
+			label: 'Show closed tasks',
+			href: '/modules/task/tasks?showAll=true',
+		});
+		const all = await h.call('GET /tasks', { query: { allProjects: 'true', showAll: 'true' } });
+		expect(all.body['tasks']).toHaveLength(2);
+		expect(all.body['scopeText']).toBe('All projects: 2 projects, 2 tasks (closed ones included).');
+		expect(all.body['showAllToggle']).toEqual({ label: 'Hide closed tasks', href: '/modules/task/tasks' });
+	});
+
+	it('is an empty list (not an error) when no project holds a task', async () => {
+		const answer = await h.call('GET /tasks', { query: { allProjects: 'true' } });
+		expect(answer.status).toBe(200);
+		expect(answer.body['tasks']).toEqual([]);
+		expect(answer.body['scopeText']).toBe('All projects: 2 projects, 0 open tasks.');
+	});
+
+	it('reports an unreadable project in a ready-to-display warning, besides the tasks of the others', async () => {
+		await createIn(project, 'in alpha');
+		const broken = h.world.createProject('broken');
+		fs.rmSync(`${broken}/.task`, { recursive: true });
+		const answer = await h.call('GET /tasks', { query: { allProjects: 'true' } });
+		expect(answer.status).toBe(200);
+		expect(answer.body['tasks']).toHaveLength(1);
+		expect(answer.body['skippedCount']).toBe(1);
+		expect(answer.body['warning']).toContain('1 project not listed');
+		expect(answer.body['warning']).toContain(broken);
+		expect(answer.body['warning']).toContain('not initialized');
+	});
+
+	it('has no warning when every project could be read', async () => {
+		const answer = await h.call('GET /tasks', { query: { allProjects: 'true' } });
+		expect(answer.body['skippedCount']).toBe(0);
+		expect(answer.body['warning']).toBeNull();
+	});
+
+	it('answers 500 (not an empty list) when every registered project is unreadable, with reasons and hint', async () => {
+		fs.rmSync(`${project}/.task`, { recursive: true });
+		fs.rmSync(`${beta}/.task`, { recursive: true });
+		const answer = await h.call('GET /tasks', { query: { allProjects: 'true' } });
+		expect(answer.status).toBe(500);
+		expect(answer.body['error']).toContain('none of the 2 registered projects');
 		expect(answer.body['hint']).toContain('task init');
+	});
+
+	it('is a 400 together with ?project (one scope at a time)', async () => {
+		const answer = await h.call('GET /tasks', { query: { allProjects: 'true', project } });
+		expect(answer.status).toBe(400);
+		expect(answer.body['error']).toContain('allProjects');
+	});
+
+	it('is a 400 for a value that is not true or false', async () => {
+		const answer = await h.call('GET /tasks', { query: { allProjects: 'yes' } });
+		expect(answer.status).toBe(400);
+	});
+
+	it('answers inline errors like the other view requests', async () => {
+		fs.rmSync(`${project}/.task`, { recursive: true });
+		fs.rmSync(`${beta}/.task`, { recursive: true });
+		const answer = await h.call('GET /tasks', { query: { allProjects: 'true', inlineErrors: 'true' } });
+		expect(answer.status).toBe(200);
+		expect(answer.body['failed']).toBe(true);
+		expect(answer.body['errorText']).toContain('none of the 2 registered projects');
+	});
+
+	it('without the flag, several registered projects and no ?project stay a 400 (the API contract is unchanged)', async () => {
+		const answer = await h.call('GET /tasks');
+		expect(answer.status).toBe(400);
+	});
+});
+
+describe('GET /projects global view data (the Tasks page without ?project)', () => {
+	it('several projects and none chosen: globalQuery asks for the global list, keeping showAll', async () => {
+		h.world.createProject('beta');
+		const plain = await h.call('GET /projects');
+		expect(plain.body['globalQuery']).toBe('allProjects=true');
+		expect(plain.body['allProjectsHref']).toBeNull();
+		const showAll = await h.call('GET /projects', { query: { showAll: 'true' } });
+		expect(showAll.body['globalQuery']).toBe('allProjects=true&showAll=true');
+	});
+
+	it('tasksQuery is the project query when one is chosen, else the global query (the Tasks page has one source)', async () => {
+		h.world.createProject('beta');
+		const global = await h.call('GET /projects', { query: { showAll: 'true' } });
+		expect(global.body['tasksQuery']).toBe('allProjects=true&showAll=true');
+		const chosen = await h.call('GET /projects', { query: { project } });
+		expect(chosen.body['tasksQuery']).toBe(`project=${encodeURIComponent(project)}`);
+		const unknown = await h.call('GET /projects', { query: { project: '/nowhere/ghost' } });
+		expect(unknown.body['tasksQuery']).toBe('');
+	});
+
+	it('is empty with a project chosen, a single project or none registered (the page skips the global source)', async () => {
+		const single = await h.call('GET /projects');
+		expect(single.body['globalQuery']).toBe('');
+		h.world.createProject('beta');
+		const chosen = await h.call('GET /projects', { query: { project } });
+		expect(chosen.body['globalQuery']).toBe('');
+		fs.rmSync(projectsRegistryPath(h.world.configDir));
+		const none = await h.call('GET /projects');
+		expect(none.body['globalQuery']).toBe('');
+	});
+
+	it('with a project chosen among several, allProjectsHref goes back to the global Tasks page', async () => {
+		h.world.createProject('beta');
+		const answer = await h.call('GET /projects', { query: { project } });
+		expect(answer.body['allProjectsHref']).toBe('/modules/task/tasks');
+	});
+
+	it('has no allProjectsHref with a single project (the global view would be the same page)', async () => {
+		const answer = await h.call('GET /projects', { query: { project } });
+		expect(answer.body['allProjectsHref']).toBeNull();
+	});
+
+	it('an unregistered ?project is named in unknownProjectText and offers the way back, without a global query', async () => {
+		h.world.createProject('beta');
+		const answer = await h.call('GET /projects', { query: { project: '/nowhere/ghost' } });
+		expect(answer.body['globalQuery']).toBe('');
+		expect(answer.body['unknownProjectText']).toContain('/nowhere/ghost');
+		expect(answer.body['unknownProjectText']).toContain('not registered');
+		expect(answer.body['allProjectsHref']).toBe('/modules/task/tasks');
+	});
+
+	it('has no unknownProjectText for a registered or absent ?project', async () => {
+		const answer = await h.call('GET /projects', { query: { project } });
+		expect(answer.body['unknownProjectText']).toBeNull();
+		const none = await h.call('GET /projects');
+		expect(none.body['unknownProjectText']).toBeNull();
 	});
 });
 
@@ -1924,7 +2174,7 @@ describe('GET /summary display rows', () => {
 			{ statusText: 'in-progress', count: 0 },
 			{ statusText: 'done (closed)', count: 1 },
 		]);
-		expect(answer.body['skippedText']).toBe('1 project not counted (see the Projects page).');
+		expect(answer.body['skippedText']).toBe('1 project not counted (see the table).');
 	});
 });
 

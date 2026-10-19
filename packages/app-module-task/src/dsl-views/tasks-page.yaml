@@ -1,4 +1,6 @@
-# Tasks of one project. Select it with ?project=<absolute dir>; optional without it when a single project is registered.
+# Tasks of one project (?project=<absolute dir>; optional when a single project is registered), or, WITHOUT ?project
+# and with several projects registered, the global list: every project's open tasks with a Project column (source
+# `tasks`, GET /tasks?allProjects=true). A row of either list opens the task with its project; "All projects" leads back.
 # Filters are links built by the route (the DSL has no component writing arbitrary URL parameters):
 # ?showAll=true also lists the tasks in a terminal status, ?parent=<id> restricts to the direct children of a task.
 # Each row carries `href` (built by the route, project query included): the row click opens the detail page.
@@ -21,7 +23,9 @@ $sources:
     tasks:
         url: GET /api/modules/task/tasks?{query}&inlineErrors=true
         params:
-            query: $source.projects.selectedQuery
+            # One source for both scopes: the shell keeps the last answer of a skipped source, so a second source for the
+            # global list would leave the buttons of the previous project on screen after "All projects" (and the reverse).
+            query: $source.projects.tasksQuery
             reload: $urlParam.reload
 
 $type: PageContent
@@ -29,6 +33,10 @@ sections:
     - $type: PageHeader
       title: Tasks
       headerActions:
+          - $type: ButtonLink
+            $if: $sources.projects.allProjectsHref
+            label: All projects
+            to: $sources.projects.allProjectsHref
           - $type: ButtonLink
             $if: $sources.tasks.hrefs
             label: New task
@@ -61,19 +69,35 @@ sections:
       $if: $sources.tasks.errorText
       label: $sources.tasks.errorText
       variant: danger
-    # Several projects are registered and none chosen: the tasks cannot be listed, the projects below are the way in.
+    # ?project=... names a directory the registry does not know: said, with the way back, not a blank page.
     - $type: Badge
-      $if: $sources.projects.needsSelection
-      label: Several projects are registered, pick one to see its tasks.
+      $if: $sources.projects.unknownProjectText
+      label: $sources.projects.unknownProjectText
+      variant: danger
+    # Global list: what it covers, the projects it could not read (never dropped), or why nothing can be listed at all.
+    - $type: Badge
+      $if: $sources.tasks.scopeText
+      label: $sources.tasks.scopeText
+      variant: info
+    - $type: Badge
+      $if: $sources.tasks.warning
+      label: $sources.tasks.warning
       variant: warning
+    - $type: Badge
+      $if: $sources.tasks.errorText
+      label: $sources.tasks.errorText
+      variant: danger
     - $type: DataTable
-      $if: $sources.projects.needsSelection
-      rows: $sources.projects.projects
+      $if: $sources.tasks.scopeText
+      rows: $sources.tasks.tasks
       navigateTo: '{href}'
+      emptyMessage: No open tasks in any project yet ("Show closed tasks" includes the closed ones)
       columns:
-          - { key: 'name', label: 'Project' }
-          - { key: 'openCount', label: 'Open tasks' }
-          - { key: 'error', label: 'Problem' }
+          - { key: 'projectName', label: 'Project' }
+          - { key: 'id', label: 'ID', mono: true }
+          - { key: 'titleText', label: 'Title' }
+          - { key: 'status', label: 'Status' }
+          - { key: 'created', label: 'Created (UTC)' }
     - $type: HorizontalStack
       gap: gap-3
       $if: $sources.tasks.parentFilterText

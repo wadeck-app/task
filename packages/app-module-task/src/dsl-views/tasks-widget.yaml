@@ -1,6 +1,7 @@
-# Dashboard widget: open tasks (non-terminal statuses) and the count per status.
-# No ?project: the route aggregates every registered project; it answers 404 with the fix (`task init`) when none is registered.
-# The table lists every status; the closed ones say so, they are not part of the "Open tasks" figure.
+# Dashboard widget, global view: open and total tasks over every registered project, then one row per project.
+# No ?project: the route aggregates every registered project (task-service summarizeProjects). Nothing registered is
+# an info text with the next step (not an error); a project that cannot be read is a row with its reason, never dropped.
+# The row click opens the Tasks page of the project. The status table is in the API (`rows`) but not here: the widget is narrow.
 $sources:
     summary:
         url: GET /api/modules/task/summary?inlineErrors=true
@@ -8,26 +9,38 @@ $sources:
 $type: VerticalStack
 gap: gap-3
 items:
-    # No project registered, or none readable: the reason and the fix (inlineErrors: a failed source blanks the widget).
+    # Every registered project failed (or projects.json is corrupt): the reason and the fix (inlineErrors: a failed source blanks the widget).
     - $type: Badge
       $if: $sources.summary.errorText
       label: $sources.summary.errorText
       variant: danger
+    # Nothing registered yet: the welcome text of the route (the exact next step), no empty tile nor table.
+    - $type: Badge
+      $if: $sources.summary.noProjects
+      label: $sources.summary.noProjectsText
+      variant: info
     # Projects the route could not read are not counted: say so instead of showing an undercount.
-    # Short text (the badge of the narrow widget does not wrap); the reasons are on the Projects page.
+    # Short text (the badge of the narrow widget does not wrap); the table below names the gist (the full reasons are on the Projects page).
     - $type: Badge
       $if: $sources.summary.skippedCount
       label: $sources.summary.skippedText
       variant: warning
-    # The figures only when a project was counted: after a failure (nothing registered...) the badge above is the whole answer.
-    - $type: StatTile
+    # The figures only when a project was counted: after a failure or with nothing registered the badge above is the whole answer.
+    - $type: HorizontalStack
+      gap: gap-3
       $if: $sources.summary.projectCount
-      label: Open tasks
-      value: $sources.summary.open
+      items:
+          - $type: StatTile
+            label: Open tasks
+            value: $sources.summary.open
+          - $type: StatTile
+            label: All tasks
+            value: $sources.summary.total
     - $type: DataTable
       $if: $sources.summary.projectCount
-      rows: $sources.summary.rows
-      emptyMessage: No tasks
+      rows: $sources.summary.projectRows
+      navigateTo: '{href}'
       columns:
-          - { key: 'statusText', label: 'Status' }
-          - { key: 'count', label: 'Tasks' }
+          - { key: 'label', label: 'Project' }
+          - { key: 'openText', label: 'Open' }
+          - { key: 'totalText', label: 'Total' }

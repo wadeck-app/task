@@ -80,7 +80,61 @@ describe('dashboard widget (src/dsl-views/tasks-widget.yaml)', () => {
 		expect(widget).toContain('$if: $sources.summary.skippedCount');
 		// Short text: the badge of the narrow widget does not wrap, a long one is cut.
 		expect(widget).toContain('$sources.summary.skippedText');
-		expect(widget).toContain('$sources.summary.rows');
+		expect(widget).toContain('$sources.summary.projectRows');
+	});
+
+	it('is the global view: open and total figures, then a table with one row per project linking to its tasks', () => {
+		expect(widget).toContain('$sources.summary.open');
+		expect(widget).toContain('$sources.summary.total');
+		expect(widget).toContain('rows: $sources.summary.projectRows');
+		expect(widget).toContain("navigateTo: '{href}'");
+		for (const key of ['label', 'openText', 'totalText']) {
+			expect(widget).toContain(`key: '${key}'`);
+		}
+	});
+
+	it('shows the zero-project welcome as an info badge, never a danger badge, and no figures with it', () => {
+		const welcome = widget.slice(widget.indexOf('$if: $sources.summary.noProjects')).split('\n').slice(0, 3);
+		expect(welcome[1]).toContain('label: $sources.summary.noProjectsText');
+		expect(welcome[2]).toContain('variant: info');
+		// The figures and the project table both wait for a counted project.
+		expect(widget.split('$if: $sources.summary.projectCount')).toHaveLength(3);
+	});
+});
+
+describe('tasks page: global list without ?project (src/dsl-views/tasks-page.yaml)', () => {
+	const page = readFileSync(join(packageDir, 'src/dsl-views/tasks-page.yaml'), 'utf8');
+
+	it('shares the tasks source with the project page, fed by the route tasksQuery (project or global), with inlineErrors and reload', () => {
+		const block = page.slice(page.indexOf('    tasks:'), page.indexOf('$type: PageContent'));
+		expect(block).toContain('url: GET /api/modules/task/tasks?{query}&inlineErrors=true');
+		expect(block).toContain('query: $source.projects.tasksQuery');
+		expect(block).toContain('reload: $urlParam.reload');
+	});
+
+	it('lists every project task with a Project column, rows linking to the task with its project', () => {
+		const table = page.slice(page.indexOf('rows: $sources.tasks.tasks'));
+		expect(table).toContain("navigateTo: '{href}'");
+		expect(table.indexOf("key: 'projectName'")).toBeGreaterThan(-1);
+		expect(table.indexOf("key: 'projectName'")).toBeLessThan(table.indexOf("key: 'titleText'"));
+		expect(page).toContain('$if: $sources.tasks.scopeText');
+	});
+
+	it('shows the skipped-projects warning and the error of the global list, and the way back to it', () => {
+		expect(page).toContain('label: $sources.tasks.warning');
+		expect(page).toContain('label: $sources.tasks.errorText');
+		expect(page).toContain('$if: $sources.projects.allProjectsHref');
+		expect(page).toContain('label: All projects');
+		expect(page).toContain('label: $sources.projects.unknownProjectText');
+	});
+
+	it('has a single show-closed button (both scopes answer showAllToggle)', () => {
+		expect(page.match(/label: \$sources\.tasks\.showAllToggle\.label/g)).toHaveLength(1);
+	});
+
+	it('no longer asks for a project choice when several are registered', () => {
+		expect(page).not.toContain('pick one');
+		expect(page).not.toContain('$if: $sources.projects.needsSelection');
 	});
 });
 
@@ -405,5 +459,7 @@ describe('views: nothing registered yet', () => {
 		const text = view('tasks-widget.yaml');
 		expect(text).toContain('$if: $sources.summary.projectCount');
 		expect(text).toContain('$sources.summary.errorText');
+		expect(text).toContain('$if: $sources.summary.noProjects');
+		expect(text).toContain('label: $sources.summary.noProjectsText');
 	});
 });

@@ -30,6 +30,11 @@ export function tasksPageHref(projectPath: string): string {
 	return `/modules/${MODULE_ID}/tasks?project=${encodeURIComponent(projectPath)}`;
 }
 
+/** The Tasks page across all projects (no project in the query); `showAll` lists the closed tasks too. */
+export function allProjectsTasksHref(showAll = false): string {
+	return `/modules/${MODULE_ID}/tasks${showAll ? '?showAll=true' : ''}`;
+}
+
 export function detailHref(project: { path: string }, taskId: string): string {
 	return `/modules/${MODULE_ID}/tasks/${taskId}?project=${encodedProject(project)}`;
 }

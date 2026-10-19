@@ -7,13 +7,16 @@ import {
 	listChildren,
 	listForest,
 	listTasks,
+	listTasksAcrossProjects,
 	listTypes,
 	showTask,
 	showTaskWithRelations,
 } from '@wadeck-app/task-service';
 
+import { allTasksBody } from '../allProjectsViews.js';
 import { shortUtcTime } from '../display.js';
-import { booleanFlag, optionalQueryValue, showAllFlag } from '../request.js';
+import { RequestError } from '../errors.js';
+import { booleanFlag, optionalQueryValue, queryValue, showAllFlag } from '../request.js';
 import { withRowLinks, linkRows } from '../rowViews.js';
 import { childrenBody, forestBody, taskDetailBody, taskTreeBody, tasksListBody } from '../taskViews.js';
 import { taskId } from './routeKit.js';
@@ -23,8 +26,18 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 	const { route, open } = kit;
 
 	route('GET', '/tasks', req => {
-		const ctx = open(req);
 		const showAll = showAllFlag(req.query);
+		if (booleanFlag(req.query, 'allProjects', 'Use ?allProjects=true for the tasks of every registered project.')) {
+			if (queryValue(req.query, 'project') !== undefined) {
+				throw new RequestError(
+					400,
+					'allProjects and project cannot be combined',
+					'Use ?allProjects=true for every registered project, or ?project=<absolute dir> for one.'
+				);
+			}
+			return { status: 200, body: allTasksBody(listTasksAcrossProjects(kit.configDir, { showAll }), showAll) };
+		}
+		const ctx = open(req);
 		const parent = optionalQueryValue(req.query, 'parent');
 		return {
 			status: 200,
