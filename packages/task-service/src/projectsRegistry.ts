@@ -22,6 +22,11 @@ function keyOf(dir: string): string {
 	return process.platform === 'win32' ? dir.toLowerCase() : dir;
 }
 
+/** True when both paths designate the same project directory (the comparison the registry itself uses). */
+export function isSameProjectDir(a: string, b: string): boolean {
+	return keyOf(path.resolve(a)) === keyOf(path.resolve(b));
+}
+
 function normalize(dir: string): string {
 	if (!path.isAbsolute(dir)) {
 		throw new ProjectsRegistryError(
@@ -88,7 +93,7 @@ export function registerProject(configDir: string, dir: string, lockOptions?: Re
 		configDir,
 		() => {
 			const projects = listRegisteredProjects(configDir);
-			if (projects.some(p => keyOf(path.resolve(p)) === keyOf(target))) return { added: false };
+			if (projects.some(p => isSameProjectDir(p, target))) return { added: false };
 			writeRegistry(configDir, [...projects, target]);
 			return { added: true };
 		},
@@ -107,7 +112,7 @@ export function unregisterProject(
 		configDir,
 		() => {
 			const projects = listRegisteredProjects(configDir);
-			const kept = projects.filter(p => keyOf(path.resolve(p)) !== keyOf(target));
+			const kept = projects.filter(p => !isSameProjectDir(p, target));
 			if (kept.length === projects.length) return { removed: false };
 			writeRegistry(configDir, kept);
 			return { removed: true };

@@ -1,6 +1,7 @@
 // task cli register | unregister -- tell app-core where the task app-module lives, or remove it.
 import { attemptRegistration, attemptUnregistration, type AppCoreAttempt } from '../AppCoreRegistration.js';
 import { resolveAppModuleManifest } from '../appModuleManifest.js';
+import type { CommandResult } from '../cli/output.js';
 
 export interface AppCoreCommandDeps {
 	resolveManifest: () => string;
@@ -14,12 +15,7 @@ const defaultDeps: AppCoreCommandDeps = {
 	unregister: attemptUnregistration,
 };
 
-interface Result {
-	exitCode: number;
-	output: string;
-}
-
-function failure(jsonMode: boolean, message: string, status?: string): Result {
+function failure(jsonMode: boolean, message: string, status?: string): CommandResult {
 	if (jsonMode) {
 		return {
 			exitCode: 1,
@@ -37,7 +33,7 @@ export async function runAppCoreCommand(
 	action: 'register' | 'unregister',
 	jsonMode: boolean,
 	deps: AppCoreCommandDeps = defaultDeps
-): Promise<Result> {
+): Promise<CommandResult> {
 	let attempt: AppCoreAttempt;
 	if (action === 'register') {
 		let manifestPath: string;

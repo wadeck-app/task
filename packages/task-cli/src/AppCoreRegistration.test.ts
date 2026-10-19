@@ -12,7 +12,6 @@ import {
 	attemptRegistration,
 	attemptUnregistration,
 	registerWithAppCore,
-	unregisterFromAppCore,
 } from './AppCoreRegistration.js';
 
 let lines: { source: string; message: string }[];
@@ -93,13 +92,5 @@ describe('registerWithAppCore (best-effort)', () => {
 		sdk.registerModule.mockRejectedValue(new Error('no such manifest'));
 		await expect(registerWithAppCore('/abs/manifest.json', log)).resolves.toBeUndefined();
 		expect(lines[0]!.message).toContain('no such manifest');
-	});
-});
-
-describe('unregisterFromAppCore (best-effort)', () => {
-	it('logs what app-core answered and never throws', async () => {
-		sdk.unregisterModule.mockRejectedValue(new Error('boom'));
-		await expect(unregisterFromAppCore(log)).resolves.toBeUndefined();
-		expect(lines[0]!.message).toContain('boom');
 	});
 });

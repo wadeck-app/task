@@ -1,0 +1,99 @@
+// GET /projects and GET /summary: which projects the module knows and how many tasks they hold.
+import { countTasksByStatus, describeError, isSameProjectDir } from '@wadeck-app/task-service';
+import type { StatusCount, TaskServiceContext } from '@wadeck-app/task-service';
+
+import { RequestError } from '../errors.js';
+import { selectedQuery } from '../hrefs.js';
+import { listProjects, openProject, requireRegisteredProjects } from '../projects.js';
+import { optionalQueryValue, queryValue } from '../request.js';
+import type { RouteKit } from './routeKit.js';
+
+/** One display line for the projects the all-projects summary could not read; null when there is none. */
+function skippedWarning(skipped: readonly { path: string; error: string }[]): string | null {
+	if (skipped.length === 0) return null;
+	const noun = skipped.length === 1 ? 'project' : 'projects';
+	const details = skipped.map(entry => `${entry.path} (${entry.error})`).join('; ');
+	return `${skipped.length} ${noun} not counted: ${details}. Run \`task init\` in the project directory or check that it still exists.`;
+}
+
+export function registerProjectRoutes(kit: RouteKit): void {
+	const { configDir } = kit;
+
+	kit.route('GET', '/projects', req => {
+		const projects = listProjects(configDir);
+		const requested = optionalQueryValue(req.query, 'project');
+		// The project the page is about: the one asked for (when registered), else the only registered one.
+		const selected =
+			projects.find(entry => requested !== undefined && isSameProjectDir(entry.path, requested)) ??
+			(requested === undefined && projects.length === 1 ? projects[0] : undefined);
+		const projectParam = selected === undefined ? '' : encodeURIComponent(selected.path);
+		const base = { projectParam };
+		return {
+			status: 200,
+			body: {
+				projects,
+				multiple: projects.length > 1,
+				// Several projects and none chosen: the views ask for a choice instead of showing nothing.
+				needsSelection: projects.length > 1 && selected === undefined,
+				selectedParam: projectParam,
+				selectedQuery: selectedQuery(selected === undefined ? undefined : selected.path, req.query),
+				projectOptions: projects.map(entry => ({ value: encodeURIComponent(entry.path), label: entry.name })),
+				forms: {
+					create: { ...base, description: '', parent: '' },
+					delete: { ...base, ids: '', filter: '', all: false, cascade: false },
+				},
+			},
+		};
+	});
+
+	kit.route('GET', '/summary', req => {
+		const requested = queryValue(req.query, 'project');
+		const dirs = requested === undefined ? requireRegisteredProjects(configDir) : [requested];
+		const merged = new Map<string, StatusCount>();
+		const skipped: { path: string; error: string }[] = [];
+		let projectCount = 0;
+		let open = 0;
+		let total = 0;
+		for (const dir of dirs) {
+			let project: TaskServiceContext;
+			try {
+				project = openProject(configDir, dir);
+			} catch (error) {
+				// Naming a project explicitly must fail loudly; in the all-projects view one broken project is reported, not hidden.
+				if (requested !== undefined) throw error;
+				skipped.push({ path: dir, error: describeError(error).message });
+				continue;
+			}
+			projectCount++;
+			for (const entry of countTasksByStatus(project)) {
+				const sum = merged.get(entry.status) ?? { ...entry, count: 0 };
+				sum.count += entry.count;
+				merged.set(entry.status, sum);
+				total += entry.count;
+				if (!entry.terminal) open += entry.count;
+			}
+		}
+		// Zeros from a registry whose every project failed would read as "no tasks": answer the failure instead.
+		if (projectCount === 0 && skipped.length > 0) {
+			throw new RequestError(
+				500,
+				`none of the ${skipped.length} registered projects could be read: ${skipped.map(s => `${s.path} (${s.error})`).join('; ')}`,
+				'Run `task init` in each project directory to recreate its .task directory, or fix the cause above.',
+				{ skipped }
+			);
+		}
+		return {
+			status: 200,
+			body: {
+				scope: requested === undefined ? 'all' : 'project',
+				projectCount,
+				open,
+				total,
+				byStatus: [...merged.values()],
+				skipped,
+				skippedCount: skipped.length,
+				warning: skippedWarning(skipped),
+			},
+		};
+	});
+}

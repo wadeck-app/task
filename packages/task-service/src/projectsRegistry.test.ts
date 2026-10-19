@@ -4,6 +4,7 @@ import * as path from 'node:path';
 
 import { ProjectsRegistryError } from './errors.js';
 import {
+	isSameProjectDir,
 	listRegisteredProjects,
 	projectsRegistryPath,
 	registerProject,
@@ -117,5 +118,22 @@ describe('projects registry', () => {
 			// Never overwritten: the user's content is untouched.
 			expect(fs.readFileSync(file, 'utf8')).toBe(content);
 		});
+	});
+});
+
+describe('isSameProjectDir', () => {
+	const base = path.resolve(os.tmpdir(), 'Proj');
+
+	it('is true for the same directory, however it is spelled (trailing separator, dot segments)', () => {
+		expect(isSameProjectDir(base, base)).toBe(true);
+		expect(isSameProjectDir(base, path.join(base, 'sub', '..'))).toBe(true);
+	});
+
+	it('is false for different directories', () => {
+		expect(isSameProjectDir(base, path.join(base, 'sub'))).toBe(false);
+	});
+
+	it('ignores case on Windows only (the rule the registry applies to its entries)', () => {
+		expect(isSameProjectDir(base, base.toUpperCase())).toBe(process.platform === 'win32');
 	});
 });

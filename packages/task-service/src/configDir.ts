@@ -11,3 +11,8 @@ export function getTaskConfigDir(): string {
 	const xdg = process.env['XDG_CONFIG_HOME'];
 	return xdg ? join(xdg, 'task') : join(homedir(), '.config', 'task');
 }
+
+/** The folder of the task log (`YYYY-MM-DD.ndjson`: CLI invocations, undelivered events, server errors) inside a config dir. */
+export function getTaskLogDir(configDir: string = getTaskConfigDir()): string {
+	return join(configDir, 'logs');
+}

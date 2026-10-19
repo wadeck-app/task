@@ -1,13 +1,5 @@
-import { AmbiguousTaskPrefixError, TaskConflictError, TaskNotFoundError } from '@wadeck-app/task-core';
-import {
-	AmbiguousDeletePrefixError,
-	DanglingParentError,
-	InvalidDeleteFilterError,
-	InvalidLinkTypeError,
-	InvalidStatusError,
-	InvalidTaskTypeError,
-	TaskServiceError,
-} from '@wadeck-app/task-service';
+import { describeError } from '@wadeck-app/task-service';
+import type { ErrorKind } from '@wadeck-app/task-service';
 
 /** A request the route layer itself rejects (project selection, malformed query or body). */
 export class RequestError extends Error {
@@ -36,52 +28,26 @@ function withHint(
 	return { error, ...(hint === undefined ? {} : { hint }), ...extra };
 }
 
+const STATUS_BY_KIND: Record<ErrorKind, number> = {
+	'not-found': 404,
+	ambiguous: 409,
+	conflict: 409,
+	invalid: 400,
+	internal: 500,
+};
+
+const AMBIGUOUS_HINT = 'Use a longer id prefix, or one of the full ids in "matches".';
+
 /**
- * The single place where typed errors become HTTP answers:
- * 400 invalid input, 404 not found, 409 ambiguous prefix / state conflict, 500 everything else (with its message).
+ * The single place where errors become HTTP answers: task-service classifies them (describeError), this maps the
+ * kind to a status: 400 invalid input, 404 not found, 409 ambiguous prefix / state conflict, 500 everything else
+ * (with its message). Structured data of the error (matches, valid values, suggestions) goes into the body.
  */
 export function toHttpError(error: unknown): HttpErrorResult {
 	if (error instanceof RequestError) {
 		return { status: error.status, body: withHint(error.message, error.hint, error.extra) };
 	}
-	if (error instanceof TaskNotFoundError) {
-		return { status: 404, body: withHint(error.message, undefined) };
-	}
-	// Two classes on purpose: the delete one is a TaskServiceError whose CLI text (lowercase "ambiguous") must not change.
-	if (error instanceof AmbiguousTaskPrefixError || error instanceof AmbiguousDeletePrefixError) {
-		return {
-			status: 409,
-			body: withHint(error.message, 'Use a longer id prefix, or one of the full ids in "matches".', {
-				matches: error.matches,
-			}),
-		};
-	}
-	if (error instanceof TaskConflictError) {
-		return { status: 409, body: withHint(error.message, undefined) };
-	}
-	if (error instanceof DanglingParentError) {
-		return { status: 409, body: withHint(error.message, error.hint) };
-	}
-	if (error instanceof InvalidStatusError) {
-		return {
-			status: 400,
-			body: withHint(error.message, error.hint, {
-				validStatuses: error.validStatuses,
-				suggestions: error.suggestions,
-			}),
-		};
-	}
-	if (error instanceof InvalidLinkTypeError) {
-		return {
-			status: 400,
-			body: withHint(error.message, error.hint, { validTypes: error.validTypes, suggestions: error.suggestions }),
-		};
-	}
-	if (error instanceof InvalidTaskTypeError || error instanceof InvalidDeleteFilterError) {
-		return { status: 400, body: withHint(error.message, error.hint) };
-	}
-	if (error instanceof TaskServiceError) {
-		return { status: 500, body: withHint(error.message, error.hint) };
-	}
-	return { status: 500, body: withHint(error instanceof Error ? error.message : String(error), undefined) };
+	const described = describeError(error);
+	const hint = described.kind === 'ambiguous' ? AMBIGUOUS_HINT : described.hint;
+	return { status: STATUS_BY_KIND[described.kind], body: withHint(described.message, hint, described.details) };
 }

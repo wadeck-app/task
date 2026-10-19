@@ -1,10 +1,17 @@
 import * as path from 'node:path';
 
-import { TaskConfigLoader, TaskStore } from '@wadeck-app/task-core';
-import { listRegisteredProjects, listTasks } from '@wadeck-app/task-service';
+import { TaskConfigLoader } from '@wadeck-app/task-core';
+import {
+	describeError,
+	isSameProjectDir,
+	listRegisteredProjects,
+	listTasks,
+	openTaskContext,
+} from '@wadeck-app/task-service';
 import type { TaskServiceContext } from '@wadeck-app/task-service';
 
-import { RequestError, toHttpError } from './errors.js';
+import { RequestError } from './errors.js';
+import { tasksPageHref } from './hrefs.js';
 
 export interface ProjectListing {
 	name: string;
@@ -19,18 +26,6 @@ export interface ProjectListing {
 	href: string | null;
 }
 
-const MODULE_ID = 'task';
-
-/** Link to the tasks list page of a project (the module's nav page, project selected by the query). */
-export function tasksPageHref(projectPath: string): string {
-	return `/modules/${MODULE_ID}/tasks?project=${encodeURIComponent(projectPath)}`;
-}
-
-/** Windows paths are case-insensitive (same rule as the registry). */
-export function sameDir(a: string, b: string): boolean {
-	return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
-}
-
 export function listProjects(configDir: string): ProjectListing[] {
 	return listRegisteredProjects(configDir).map(dir => {
 		const base = { name: path.basename(dir), path: dir, initialized: TaskConfigLoader.isInitialized(dir) };
@@ -39,7 +34,7 @@ export function listProjects(configDir: string): ProjectListing[] {
 			return { ...base, openCount, error: null, href: tasksPageHref(dir) };
 		} catch (error) {
 			// One unreadable project must not hide the others, nor read as "0 open": it is listed with its reason.
-			return { ...base, openCount: null, error: String(toHttpError(error).body['error']), href: null };
+			return { ...base, openCount: null, error: describeError(error).message, href: null };
 		}
 	});
 }
@@ -60,11 +55,7 @@ export function openProject(configDir: string, requested: string | undefined): T
 			`Run \`task init\` in ${dir} to recreate it.`
 		);
 	}
-	return {
-		store: new TaskStore(path.join(dir, '.task', 'tasks')),
-		config: TaskConfigLoader.load({ projectDir: dir }),
-		project: { name: path.basename(dir), path: dir },
-	};
+	return openTaskContext({ projectDir: dir });
 }
 
 /** The registered project directories; 404 with the fix when there is none. */
@@ -94,7 +85,7 @@ function pickProject(registered: string[], requested: string | undefined): strin
 			);
 		}
 		const wanted = path.resolve(requested);
-		const found = registered.find(dir => sameDir(path.resolve(dir), wanted));
+		const found = registered.find(dir => isSameProjectDir(dir, wanted));
 		if (found === undefined) {
 			throw new RequestError(
 				404,

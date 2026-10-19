@@ -7,6 +7,12 @@
 | `task-cli`        | `task` binary: arg parsing and output over task-service, updater, app-core registration.                         |
 | `app-module-task` | app-core module (id `task`): routes `/api/modules/task/*` and dsl-views over task-service.                       |
 
+## Dependency direction
+
+`task-core` <- `task-service` <- `task-cli` and `app-module-task`. The two adapters never import each other, and `task-service` knows no CLI, HTTP or app-core library, never prints or exits. `npm run test:architecture` (`architecture/`, part of `npm test`) enforces it on imports, `package.json` dependencies and source patterns.
+
+Shared rules live in `task-service`, adapters only parse input and format output: `describeError` (error kind, message, hint; CLI maps to stderr, module to HTTP status), `selectDeleteTargets` / `describeDeleteEffects`, `openTaskContext`, `getTaskLogDir`, `countTasksByStatus`, `showTaskWithRelations`.
+
 ## app-core registration
 
 - `task cli register [--json]` / `task cli unregister [--json]`; `task cli update` registers by itself when the shipped app-module version changed. Task has no daemon, so nothing registers at start.

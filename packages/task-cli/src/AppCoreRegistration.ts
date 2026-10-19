@@ -66,9 +66,3 @@ export async function registerWithAppCore(manifestPath: string, logDiagnostic: L
 	const attempt = await attemptRegistration(manifestPath);
 	logDiagnostic({ source: SOURCE, message: attempt.message });
 }
-
-/** Best-effort counterpart of registerWithAppCore. */
-export async function unregisterFromAppCore(logDiagnostic: LogDiagnostic): Promise<void> {
-	const attempt = await attemptUnregistration();
-	logDiagnostic({ source: SOURCE, message: attempt.message });
-}

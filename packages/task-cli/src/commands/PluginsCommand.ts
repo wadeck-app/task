@@ -1,4 +1,4 @@
-import type { CommandResult } from '../TaskIndex.js';
+import type { CommandResult } from '../cli/output.js';
 
 interface PluginEntry {
 	id: string;

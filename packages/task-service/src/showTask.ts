@@ -30,6 +30,29 @@ export function showTask(ctx: TaskServiceContext, input: ShowTaskInput): Record<
 	return detail;
 }
 
+export interface TaskWithRelations {
+	/** The task record with `childrenIds`, `parent` (null for a root task or a dangling parent) and `children`. */
+	detail: Record<string, unknown>;
+	/** Data problems found while reading, each with its fix; empty when the data is consistent. */
+	warnings: string[];
+}
+
+/**
+ * The detail of a task with its parent and children. A task must stay reachable to be repaired: when its parent no
+ * longer exists the task is returned without parent and the corruption is reported as a warning (with the fix).
+ */
+export function showTaskWithRelations(ctx: TaskServiceContext, input: { id: string }): TaskWithRelations {
+	try {
+		return { detail: showTask(ctx, { id: input.id, withParent: true, withChildren: true }), warnings: [] };
+	} catch (error) {
+		if (!(error instanceof DanglingParentError)) throw error;
+		return {
+			detail: { ...showTask(ctx, { id: input.id, withChildren: true }), parent: null },
+			warnings: [`${error.message}. ${error.hint}`],
+		};
+	}
+}
+
 export interface TaskHistory {
 	/** Full id of the resolved task. */
 	id: string;

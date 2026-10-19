@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { getTaskConfigDir } from './configDir.js';
+import { getTaskConfigDir, getTaskLogDir } from './configDir.js';
 
 const savedXdg = process.env['XDG_CONFIG_HOME'];
 
@@ -32,5 +32,16 @@ describe('getTaskConfigDir', () => {
 		} finally {
 			delete process.env['TASK_CONFIG_DIR'];
 		}
+	});
+});
+
+describe('getTaskLogDir', () => {
+	it('is the logs folder of the given config dir (CLI invocation log, undelivered events, server errors)', () => {
+		expect(getTaskLogDir(join('/cfg', 'task'))).toBe(join('/cfg', 'task', 'logs'));
+	});
+
+	it('defaults to the logs folder of the task config dir', () => {
+		process.env['XDG_CONFIG_HOME'] = '/xdg';
+		expect(getTaskLogDir()).toBe(join('/xdg', 'task', 'logs'));
 	});
 });

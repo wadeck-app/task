@@ -16,11 +16,6 @@ describe('manifest.json (source manifest of the app-core-cli layout)', () => {
 		expect(manifest.id).toBe('task');
 	});
 
-	it('keeps the id task-cli registers it as (task-cli/src/AppCoreRegistration.ts APP_CORE_MODULE_ID)', () => {
-		const registration = readFileSync(join(packageDir, '../task-cli/src/AppCoreRegistration.ts'), 'utf8');
-		expect(registration).toContain(`APP_CORE_MODULE_ID = '${String(manifest.id)}'`);
-	});
-
 	it('holds neither version nor backendEntryPath: `app-core-cli package` stamps the first and fixes the second', () => {
 		expect(manifest).not.toHaveProperty('version');
 		expect(manifest).not.toHaveProperty('backendEntryPath');
