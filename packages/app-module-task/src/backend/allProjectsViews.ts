@@ -4,8 +4,16 @@ import type { ProjectOverview, TasksAcrossProjects } from '@wadeck-app/task-serv
 
 import { shortTitle, shortUtcTime } from './display.js';
 import type { AcrossProjects } from './acrossProjects.js';
-import { allProjectsPageHref, allProjectsTasksHref, detailHref, pageLink, tasksPageHref } from './hrefs.js';
-import { BRANCH, flattenTree } from './rowViews.js';
+import {
+	allProjectsPageHref,
+	allProjectsTasksHref,
+	detailHref,
+	encodedProject,
+	pageLink,
+	tasksPageHref,
+} from './hrefs.js';
+import { projectTasksSection } from './dslNodes.js';
+import { flattenTree } from './rowViews.js';
 
 const NO_TYPE_TEXT = '(none configured: any text is accepted)';
 
@@ -86,39 +94,23 @@ export function allTasksBody(found: TasksAcrossProjects, showAll: boolean): Reco
 }
 
 /**
- * The Tree page without ?project: one top-level row per project (opening its own tree), its forest indented under it.
- * A flat table, because the TreeView component cannot navigate from YAML (see rowViews.ts).
+ * The Tree page without ?project: one section per project (its name and count, a link to its own tree, its forest as
+ * a table). The DataTable has no row styling nor grouping, so a project header row could not be told from a task row:
+ * the sections are DSL nodes built here and rendered as is by the view (see dslNodes.ts).
  */
 export function allForestBody(found: AcrossProjects<TaskTreeNode[]>, showAll: boolean): Record<string, unknown> {
 	let taskTotal = 0;
-	const rows = found.entries.flatMap(({ project, value }) => {
-		const tasks = flattenTree(project, value, 1);
-		taskTotal += tasks.length;
-		const href = pageLink(project, 'tree');
-		const header = {
-			id: '',
-			title: project.name,
-			status: plural(tasks.length, 'task'),
-			depth: 0,
-			label: project.name,
-			isProject: true,
-			href,
-		};
-		// An empty project says so: without this row it would read as a project the page forgot.
-		const body =
-			tasks.length > 0
-				? tasks
-				: [
-						{
-							id: '',
-							title: '',
-							status: '',
-							depth: 1,
-							label: `${BRANCH} (no ${showAll ? '' : 'open '}tasks)`,
-							href,
-						},
-					];
-		return [header, ...body];
+	const groups = found.entries.map(({ project, value }) => {
+		const rows = flattenTree(project, value);
+		taskTotal += rows.length;
+		return projectTasksSection({
+			title: `${project.name} (${plural(rows.length, 'task')})`,
+			linkLabel: `Open the tree of ${project.name}`,
+			linkTo: pageLink(project, 'tree'),
+			rows,
+			// An empty project says so: without it the section would read as a project the page forgot.
+			emptyMessage: showAll ? 'No tasks' : 'No open tasks',
+		});
 	});
 	return {
 		scope: 'all',
@@ -128,7 +120,7 @@ export function allForestBody(found: AcrossProjects<TaskTreeNode[]>, showAll: bo
 			? { label: 'Hide closed tasks', href: allProjectsPageHref('tree') }
 			: { label: 'Show closed tasks', href: allProjectsPageHref('tree', true) },
 		...skippedFields(found.unreadable),
-		rows,
+		groups,
 	};
 }
 
@@ -138,15 +130,24 @@ export function allTypesBody(found: AcrossProjects<string[]>): Record<string, un
 	return {
 		scope: 'all',
 		projectCount: found.entries.length,
-		scopeText: `All projects: ${plural(found.entries.length, 'project')}, ${plural(typeTotal, 'type')} configured. A row opens its project, where types can be removed.`,
+		scopeText: `All projects: ${plural(found.entries.length, 'project')}, ${plural(typeTotal, 'type')} configured. Remove on a row deletes that type from its project.`,
 		...skippedFields(found.unreadable),
+		// A removable row carries what the remove action needs: the shell fills {name} and {projectParam} of the action URL
+		// from the row, and the confirm text says what the next click does. The "none configured" row removes nothing.
 		rows: found.entries.flatMap(({ project, value }) =>
-			(value.length > 0 ? value : [NO_TYPE_TEXT]).map(typeText => ({
-				projectName: project.name,
-				projectPath: project.path,
-				typeText,
-				href: pageLink(project, 'types'),
-			}))
+			(value.length > 0 ? value : [NO_TYPE_TEXT]).map(typeText => {
+				const canRemove = value.length > 0;
+				return {
+					projectName: project.name,
+					projectPath: project.path,
+					typeText,
+					projectParam: encodedProject(project),
+					name: canRemove ? encodeURIComponent(typeText) : '',
+					canRemove,
+					confirmText: canRemove ? `Remove the type "${typeText}" from the project ${project.name}?` : '',
+					confirmLabel: canRemove ? `Remove "${typeText}" from ${project.name}` : '',
+				};
+			})
 		),
 		// Adding names its project in the form: only the ones that can be written to, none preselected.
 		projectOptions: found.entries.map(({ project }) => ({

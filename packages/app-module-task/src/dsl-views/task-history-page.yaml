@@ -2,6 +2,8 @@
 # inlineErrors on every source: one failing source discards the answers of all the others (the page stays blank), so a
 # failure is answered as data (`errorText`) and shown by a badge.
 # `history` fails with the same error as `detail` when the task does not exist: `detail` shows it.
+# The sources are fed by `projectQuery` (the project, else `blank=true`): the shell keeps the last answer of a source it
+# skips, so an unknown or unreadable project must replace the previous task with an empty answer, not skip the request.
 $sources:
     projects:
         url: GET /api/modules/task/projects
@@ -11,13 +13,13 @@ $sources:
         url: GET /api/modules/task/tasks/{id}?{query}&inlineErrors=true
         params:
             id: $route.id
-            query: $source.projects.selectedQuery
+            query: $source.projects.projectQuery
             reload: $urlParam.reload
     history:
         url: GET /api/modules/task/tasks/{id}/history?{query}&inlineErrors=true
         params:
             id: $route.id
-            query: $source.projects.selectedQuery
+            query: $source.projects.projectQuery
             reload: $urlParam.reload
 
 $type: PageContent
@@ -56,5 +58,5 @@ sections:
       rows: $sources.history.rows
       emptyMessage: No history
       columns:
-          - { key: 'time', label: 'Time (UTC)' }
-          - { key: 'status', label: 'Status' }
+          - { key: 'time', label: 'Time (UTC)', nowrap: true }
+          - { key: 'status', label: 'Status', nowrap: true }

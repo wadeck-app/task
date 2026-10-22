@@ -11,6 +11,7 @@ import {
 	selectedQuery,
 	tasksPageHref,
 } from '../hrefs.js';
+import { readLastProject } from '../lastProject.js';
 import { listProjects, NO_PROJECT_HINT, openProject } from '../projects.js';
 import type { ProjectListing } from '../projects.js';
 import { optionalQueryValue, queryValue } from '../request.js';
@@ -90,7 +91,12 @@ export function registerProjectRoutes(kit: RouteKit): void {
 		const readableProjects = projects.filter(entry => entry.error === null);
 		// Several projects, one of them readable: nothing to hesitate over for a creation. Never for a deletion.
 		const onlyReadable = projects.length > 1 && readableProjects.length === 1 ? readableProjects[0] : undefined;
-		const createProject = selected === undefined ? onlyReadable : selected;
+		// Otherwise the project a task was last created in, while it is still registered and readable.
+		const lastUsed = readLastProject(kit.dataDir);
+		const lastReadable = readableProjects.find(
+			entry => lastUsed.path !== null && isSameProjectDir(entry.path, lastUsed.path)
+		);
+		const createProject = selected === undefined ? (onlyReadable ?? lastReadable) : selected;
 		const backToGlobal = projects.length > 1 && (selected !== undefined || unknownProject);
 		const selectedProblem = selected === undefined || selected.error === null ? null : problemText(selected);
 		return {
@@ -129,7 +135,8 @@ export function registerProjectRoutes(kit: RouteKit): void {
 					: null,
 				selectedParam: projectParam,
 				selectedProblem,
-				selectedQuery: projectQuery,
+				// The remembered project cannot be read (corrupt file...): said on the New task page, not ignored.
+				lastProjectProblem: lastUsed.problem,
 				tasksHref: selected === undefined ? `/modules/${MODULE_ID}/tasks` : tasksPageHref(selected.path),
 				// Only the projects that can be read: picking another one could only fail.
 				projectOptions: readableProjects.map(entry => ({

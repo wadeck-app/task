@@ -21,6 +21,8 @@ export interface TaskRoutesOptions {
 /** What the route modules share: route registration with error mapping, project selection, event delivery. */
 export interface RouteKit {
 	configDir: string;
+	/** The module's own persistent folder (ModuleContext.dataDir): state of the views, not of the projects. */
+	dataDir: string;
 	/** Registers a route; every error thrown by `run` becomes its HTTP answer (see errors.ts). */
 	route(method: string, subPath: string, run: (req: RouteRequest) => RouteAnswer | Promise<RouteAnswer>): void;
 	/** The service context of the project the request targets (`?project=`). */
@@ -43,6 +45,7 @@ export function createRouteKit(
 	const { configDir, eventSink, logDir, writeStderr } = deps;
 	return {
 		configDir,
+		dataDir: ctx.dataDir,
 		route(method, subPath, run) {
 			ctx.registerRoute(method, subPath, async (req, reply) => {
 				const out = reply as unknown as Reply;

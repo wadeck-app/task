@@ -2,9 +2,16 @@
 # the type of a task; as soon as one is configured the type of a task must be one of them.
 # With ?project=<absolute dir> (optional when a single project is registered): the types of that project, which can be
 # added to and removed. WITHOUT ?project and with several projects registered: the types of every project side by side
-# (Project column, a row click opens that project). Adding is possible there too, to the project picked in the form (none
-# preselected, unreadable ones are not offered); removing is not: the types to choose from depend on the project, which a
-# form cannot cascade, so it stays on the page of one project.
+# (Project column). Adding is possible there too, to the project picked in the form (none preselected, unreadable ones are
+# not offered). Removing needs no cascading select there: each row has a Remove button (an `actions` column).
+# - A row action without a URL (`pickRemove`) makes the shell store the clicked row under its resultKey, so the row
+#   (which carries projectParam, the encoded type `name` and `confirmText`) becomes `$ctx.typeResult`.
+# - The confirm text and form then appear; the form is given that row, so removeType's {name} and {projectParam} come from it.
+# - removeType publishes under the same key: its answer replaces the picked row and the confirm goes away.
+# - The table has no row click: a button inside a row also fires the row click (the shell does not stop it), which
+#   would navigate away as soon as Remove is pressed.
+# - The row buttons are text buttons (the shell logs a warning per row: an icon cannot be expressed in YAML).
+# Inside a project (?project=...) the type to remove is still chosen in a select.
 # One `types` source for every scope, fed by `scopeQuery` (see tasks-page.yaml).
 # A header with actions shows no subtitle: the project is named by `projectText` below it.
 # Forms submit through named actions (see task-page.yaml for the conventions: projectParam, inline errors, reload).
@@ -22,6 +29,9 @@ $sources:
             reload: $urlParam.reload
 
 $actions:
+    # Row button "Remove" of the global table: no URL, so only the clicked row is stored under typeResult.
+    pickRemove:
+        resultKey: typeResult
     addType:
         url: POST /api/modules/task/types?project={projectParam}&inlineErrors=true
         resultKey: typeResult
@@ -83,11 +93,15 @@ sections:
     - $type: DataTable
       $if: $sources.types.scopeText
       rows: $sources.types.rows
-      navigateTo: '{href}'
+      onAction: $ctx.onAction
       emptyMessage: No project to show
       columns:
           - { key: 'projectName', label: 'Project' }
           - { key: 'typeText', label: 'Type' }
+          - {
+                type: actions,
+                items: [{ label: 'Remove', action: pickRemove, variant: danger-outline, condition: canRemove }],
+            }
     - $type: DataTable
       $if: $sources.types.project
       rows: $sources.types.rows
@@ -127,3 +141,18 @@ sections:
       actions:
           - $type: ButtonSave
             label: Remove type
+    # Global scope: the row picked with its Remove button. The text and the button both name the type and the project.
+    - $type: Badge
+      $if: $ctx.typeResult.confirmText
+      label: $ctx.typeResult.confirmText
+      variant: warning
+    - $type: Form
+      $if: $ctx.typeResult.confirmText
+      onSubmit: $ctx.removeType
+      initialData: $ctx.typeResult
+      fields: []
+      actions:
+          - $type: ButtonAction
+            label: $ctx.typeResult.confirmLabel
+            variant: danger
+            type: submit

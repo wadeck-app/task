@@ -6,7 +6,7 @@
 # Filters are links built by the route (the DSL has no component writing arbitrary URL parameters):
 # ?showAll=true also lists the tasks in a terminal status, ?parent=<id> restricts to the direct children of a task.
 # Each row carries `href` (built by the route, project query included): the row click opens the detail page.
-# Status and label changes are on the detail page: a table row action cannot carry the row to its URL in app-core.
+# Status and label changes are on the detail page: the installed shell does not fill {id} in a row action URL (see CLAUDE.md).
 # The sources that wait for `projects` also name a $urlParam (`reload`, empty in practice): the shell reloads on a URL
 # change only the sources that name one, so without it the filter links and the project choice changed the URL only.
 # The table columns carry no format nor width in the DSL: the route gives `titleText` (truncated) and `created` (short UTC).
@@ -92,10 +92,10 @@ sections:
       emptyMessage: No open tasks in any project yet ("Show closed tasks" includes the closed ones)
       columns:
           - { key: 'projectName', label: 'Project' }
-          - { key: 'id', label: 'ID', mono: true }
+          - { key: 'id', label: 'ID', mono: true, nowrap: true }
           - { key: 'titleText', label: 'Title' }
-          - { key: 'status', label: 'Status' }
-          - { key: 'created', label: 'Created (UTC)' }
+          - { key: 'status', label: 'Status', nowrap: true }
+          - { key: 'created', label: 'Created (UTC)', nowrap: true }
     - $type: HorizontalStack
       gap: gap-3
       $if: $sources.tasks.parentFilterText
@@ -113,7 +113,7 @@ sections:
       navigateTo: '{href}'
       emptyMessage: No open tasks yet. Use "New task" to create one ("Show closed tasks" includes the closed ones)
       columns:
-          - { key: 'id', label: 'ID', mono: true }
+          - { key: 'id', label: 'ID', mono: true, nowrap: true }
           - { key: 'titleText', label: 'Title' }
-          - { key: 'status', label: 'Status' }
-          - { key: 'created', label: 'Created (UTC)' }
+          - { key: 'status', label: 'Status', nowrap: true }
+          - { key: 'created', label: 'Created (UTC)', nowrap: true }

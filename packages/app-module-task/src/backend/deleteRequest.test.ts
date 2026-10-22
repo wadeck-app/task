@@ -21,6 +21,13 @@ describe('deleteInput', () => {
 		expect(deleteInput({ ids: 'a1,,b2' }).selector).toEqual({ kind: 'ids', ids: ['a1', 'b2'] });
 	});
 
+	// Found in a real browser: "nc5r, ix7w" in the text field (the label says comma separated) reported "Not found: ix7w."
+	it('ignores the spaces around the ids of a comma-separated string, as typed in a form', () => {
+		expect(deleteInput({ ids: 'a1, b2 ,  c3' }).selector).toEqual({ kind: 'ids', ids: ['a1', 'b2', 'c3'] });
+		expect(deleteInput({ ids: ' a1 , ' }).selector).toEqual({ kind: 'ids', ids: ['a1'] });
+		expect(deleteInput({ ids: ['a1', ' b2'] }).selector).toEqual({ kind: 'ids', ids: ['a1', 'b2'] });
+	});
+
 	it('reads all, a filter and cascade', () => {
 		expect(deleteInput({ all: true, cascade: true })).toEqual({ selector: { kind: 'all' }, cascade: true });
 		expect(deleteInput({ filter: 'status=done' }).selector).toEqual({

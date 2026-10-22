@@ -42,5 +42,5 @@ items:
       navigateTo: '{href}'
       columns:
           - { key: 'label', label: 'Project' }
-          - { key: 'openText', label: 'Open' }
-          - { key: 'totalText', label: 'Total' }
+          - { key: 'openText', label: 'Open', nowrap: true }
+          - { key: 'totalText', label: 'Total', nowrap: true }

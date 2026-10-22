@@ -69,15 +69,11 @@ sections:
       $if: $sources.tree.warning
       label: $sources.tree.warning
       variant: warning
-    - $type: DataTable
-      $if: $sources.tree.scopeText
-      rows: $sources.tree.rows
-      navigateTo: '{href}'
-      emptyMessage: No project to show
-      columns:
-          - { key: 'label', label: 'Project / task' }
-          - { key: 'id', label: 'ID', mono: true }
-          - { key: 'status', label: 'Status' }
+    # One section per project (title, link to its tree, its tasks as a table), built by the route: a DataTable has no
+    # row styling nor grouping in the installed shell, so a project header row could not be told from a task row.
+    - $type: ExtensionSlot
+      $if: $sources.tree.groups
+      items: $sources.tree.groups
     - $type: DataTable
       $if: $sources.tree.project
       rows: $sources.tree.rows
@@ -85,5 +81,5 @@ sections:
       emptyMessage: No open tasks yet. Create one from the Tasks page ("Show closed tasks" includes the closed ones)
       columns:
           - { key: 'label', label: 'Task' }
-          - { key: 'id', label: 'ID', mono: true }
-          - { key: 'status', label: 'Status' }
+          - { key: 'id', label: 'ID', mono: true, nowrap: true }
+          - { key: 'status', label: 'Status', nowrap: true }

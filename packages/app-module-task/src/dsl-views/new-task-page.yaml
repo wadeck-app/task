@@ -51,6 +51,12 @@ sections:
       $if: $sources.projects.selectedProblem
       label: $sources.projects.selectedProblem
       variant: danger
+    # The project select starts on the last project a task was created in (route: forms.create.projectParam); a
+    # remembered value that cannot be used is said here instead of silently preselecting nothing.
+    - $type: Badge
+      $if: $sources.projects.lastProjectProblem
+      label: $sources.projects.lastProjectProblem
+      variant: warning
     - $type: Badge
       $if: $sources.tasks.errorText
       label: $sources.tasks.errorText
@@ -63,6 +69,10 @@ sections:
       $if: $ctx.created.message
       label: $ctx.created.message
       variant: success
+    - $type: Badge
+      $if: $ctx.created.lastProjectWarning
+      label: $ctx.created.lastProjectWarning
+      variant: warning
     - $type: Badge
       $if: $ctx.created.undeliveredText
       label: $ctx.created.undeliveredText

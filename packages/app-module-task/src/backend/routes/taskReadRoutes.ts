@@ -53,6 +53,7 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 	});
 
 	route('GET', '/tasks/:id', req => {
+		if (isBlankRequest(req.query)) return BLANK_ANSWER;
 		const ctx = open(req);
 		const { detail, warnings } = showTaskWithRelations(ctx, { id: taskId(req) });
 		return {
@@ -67,6 +68,7 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 	});
 
 	route('GET', '/tasks/:id/history', req => {
+		if (isBlankRequest(req.query)) return BLANK_ANSWER;
 		const history = getTaskHistory(open(req), { id: taskId(req) });
 		const rows = history.history.map(entry => ({ ...entry, time: shortUtcTime(entry.timestamp) }));
 		return { status: 200, body: { ...history, rows } };
@@ -86,6 +88,7 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 	});
 
 	route('GET', '/tasks/:id/links', req => {
+		if (isBlankRequest(req.query)) return BLANK_ANSWER;
 		const ctx = open(req);
 		const links = getTaskLinks(ctx, { id: taskId(req) });
 		// The full id of the resolved task (the request may hold a prefix).

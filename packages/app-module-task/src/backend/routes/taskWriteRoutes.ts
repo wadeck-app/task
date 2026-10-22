@@ -14,6 +14,7 @@ import {
 
 import { RequestError } from '../errors.js';
 import { detailHref } from '../hrefs.js';
+import { rememberLastProject } from '../lastProject.js';
 import { bodyObject, optionalString, queryValue, requiredString } from '../request.js';
 import type { RouteRequest } from '../request.js';
 import { undeliveredFields } from '../undelivered.js';
@@ -60,6 +61,8 @@ export function registerTaskWriteRoutes(kit: RouteKit): void {
 			parent: body['parent'] === '' ? undefined : optionalString(body, 'parent', CREATE_USAGE),
 		};
 		const created = createTask(ctx, input);
+		// The New task page preselects it next time; the task exists, so a failure to remember it is a warning only.
+		const lastProjectWarning = rememberLastProject(kit.dataDir, ctx.project.path);
 		const undelivered = await deliver(created.events);
 		return {
 			status: 201,
@@ -67,6 +70,7 @@ export function registerTaskWriteRoutes(kit: RouteKit): void {
 				task: created.task,
 				message: `Created task ${created.task.id}: ${created.task.title}`,
 				href: detailHref(ctx.project, created.task.id),
+				lastProjectWarning,
 				...undeliveredFields(undelivered),
 			},
 		};

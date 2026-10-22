@@ -90,9 +90,9 @@ sections:
       rows: $ctx.plan.tasks
       emptyMessage: Nothing selected
       columns:
-          - { key: 'id', label: 'ID', mono: true }
+          - { key: 'id', label: 'ID', mono: true, nowrap: true }
           - { key: 'title', label: 'Title' }
-          - { key: 'status', label: 'Status' }
+          - { key: 'status', label: 'Status', nowrap: true }
     # Which project the next button deletes from: said where the click happens.
     - $type: Badge
       $if: $ctx.plan.canConfirm

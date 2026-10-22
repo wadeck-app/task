@@ -201,6 +201,67 @@ describe('views: conventions that keep pages rendering', () => {
 	);
 });
 
+/** The sources fed by a query the project route leaves EMPTY for an unknown or unreadable project (the source is then skipped). */
+function skippableQuerySources(text: string): string[] {
+	return [...sourceBlocks(text)]
+		.filter(([, block]) => /query: \$source\.projects\.selectedQuery\b/.test(block))
+		.map(([name]) => name);
+}
+
+describe('views: no source is skipped for a project that cannot be used (stale data stays on screen otherwise)', () => {
+	// The shell keeps the last answer of a source it skips. Reproduced in a real browser on the views of ad95014:
+	// the Tasks page of an unknown project, "Tasks" in the menu (global list, 6 rows), browser Back to the unknown
+	// project: the 6 rows stayed under the "not registered" badge. A source must ask for `blank=true` instead.
+	const OLD_TASKS_PAGE_SOURCE = [
+		'$sources:',
+		'    tasks:',
+		'        url: GET /api/modules/task/tasks?{query}&inlineErrors=true',
+		'        params:',
+		'            query: $source.projects.selectedQuery',
+		'            reload: $urlParam.reload',
+		'',
+	].join('\n');
+
+	it('the check itself catches the pattern that left stale rows on the old views', () => {
+		expect(skippableQuerySources(OLD_TASKS_PAGE_SOURCE)).toEqual(['tasks']);
+	});
+
+	it.each(viewNames)(
+		'%s: its project-scoped sources are fed by scopeQuery or projectQuery, never by a query that can be empty',
+		name => {
+			expect(skippableQuerySources(view(name)), name).toEqual([]);
+		}
+	);
+
+	it('the detail and history pages read every source through projectQuery (project, else blank=true)', () => {
+		for (const [name, sources] of [
+			['task-page.yaml', ['detail', 'tree', 'links']],
+			['task-history-page.yaml', ['detail', 'history']],
+		] as const) {
+			const blocks = sourceBlocks(view(name));
+			for (const source of sources) {
+				expect(blocks.get(source), `${name}: ${source}`).toContain('query: $source.projects.projectQuery');
+			}
+		}
+	});
+});
+
+// Narrow screens: a DataTable cell without nowrap/width/truncate breaks anywhere (`break-all`), so a short code such as
+// a task id was cut into one character per line at 390px. The installed shell rebuilds YAML columns from key and label
+// only (nowrap, width, mono... are dropped); a shell with dsl-ui >= 2026.10.20 honours them. Marking the columns that
+// hold short codes costs nothing before and fixes the wrapping after the shell is upgraded.
+describe('views: columns holding short codes never wrap (nowrap)', () => {
+	const SHORT_CODE_KEYS = ['id', 'status', 'created', 'time', 'openCount', 'openText', 'totalText'];
+
+	it.each(viewNames)('%s: every id/status/date/count column is nowrap', name => {
+		const columns = [...view(name).matchAll(/\{ key: '(\w+)'[^}\n]*\}/g)];
+		for (const [column, key] of columns) {
+			if (!SHORT_CODE_KEYS.includes(key!)) continue;
+			expect(column, `${name}: ${key}`).toContain('nowrap: true');
+		}
+	});
+});
+
 describe('task detail page: forms and links', () => {
 	const page = view('task-page.yaml');
 
@@ -245,6 +306,17 @@ describe('create page', () => {
 
 	it('asks for the project only when several are registered', () => {
 		expect(page).toContain('$if: $sources.projects.needsSelection');
+	});
+
+	// The last used project is the initial value of the select (forms.create.projectParam, from the route): a problem
+	// with the remembered value is shown, not swallowed.
+	it('shows why the last used project cannot be preselected, and when a created task could not be remembered', () => {
+		expect(page).toMatch(
+			/\$if: \$sources\.projects\.lastProjectProblem\n {6}label: \$sources\.projects\.lastProjectProblem\n {6}variant: warning/
+		);
+		expect(page).toMatch(
+			/\$if: \$ctx\.created\.lastProjectWarning\n {6}label: \$ctx\.created\.lastProjectWarning\n {6}variant: warning/
+		);
 	});
 });
 
@@ -315,11 +387,19 @@ describe('tree page: global forest without ?project (src/dsl-views/tree-page.yam
 		expect(page).toContain('label: $sources.projects.unknownProjectText');
 	});
 
-	it('shows the rows in either scope with a row click, and the show-closed button once', () => {
+	it('shows the project scope as one table with a row click, and the show-closed button once', () => {
 		expect(page).toContain('rows: $sources.tree.rows');
 		expect(page.match(/label: \$sources\.tree\.showAllToggle\.label/g)).toHaveLength(1);
-		expect(page).toContain('$if: $sources.tree.scopeText');
 		expect(page).toContain('$if: $sources.tree.project');
+	});
+
+	// The DataTable has no row styling or grouping in the installed shell: a project header row looks like any task
+	// row. The route builds one Section per project (name, link, table) and the view renders that list as is.
+	it('renders the global forest as the sections the route built, one per project (ExtensionSlot), not as one flat table', () => {
+		expect(page).toMatch(
+			/- \$type: ExtensionSlot\n {6}\$if: \$sources\.tree\.groups\n {6}items: \$sources\.tree\.groups\n/
+		);
+		expect(page).not.toContain('$if: $sources.tree.scopeText\n      rows');
 	});
 });
 
@@ -332,16 +412,33 @@ describe('types page: all projects side by side without ?project (src/dsl-views/
 		expect(block).toContain('query: $source.projects.scopeQuery');
 	});
 
-	it('lists the types with a Project column in the global scope, every row opening its project', () => {
+	// A button in a row also fires the click of the row (the shell does not stop it): a table that navigates on a row
+	// click would leave the page the moment the button is pressed. The global table has the button, so no row click.
+	it('lists the types with a Project column in the global scope and a Remove button on each removable row (no row click)', () => {
 		const table = page.slice(page.indexOf('$if: $sources.types.scopeText\n      rows'));
-		expect(table).toContain("navigateTo: '{href}'");
-		expect(table).toContain("key: 'projectName'");
-		expect(table).toContain("key: 'typeText'");
-		expect(table.indexOf("key: 'projectName'")).toBeLessThan(table.indexOf("key: 'typeText'"));
+		const globalTable = table.slice(0, table.indexOf('- $type: DataTable', 10));
+		expect(globalTable).not.toContain('navigateTo');
+		expect(globalTable).toContain('onAction: $ctx.onAction');
+		expect(globalTable).toContain("key: 'projectName'");
+		expect(globalTable).toContain("key: 'typeText'");
+		expect(globalTable.indexOf("key: 'projectName'")).toBeLessThan(globalTable.indexOf("key: 'typeText'"));
+		expect(globalTable).toContain('type: actions');
+		expect(globalTable).toContain('action: pickRemove');
+		expect(globalTable).toContain('condition: canRemove');
 		expect(page).toContain('label: $sources.types.warning');
 	});
 
-	it('adds to a project chosen in the form (no default), and removes only inside a project', () => {
+	it('removes from the global table without a cascading select: the row button picks the row, a confirm names it and submits it', () => {
+		// No URL: the shell only stores the clicked row under the resultKey, and the confirm form takes it as its data.
+		expect(page).toMatch(/\n {4}pickRemove:\n {8}resultKey: typeResult\n/);
+		expect(page).toContain('$if: $ctx.typeResult.confirmText');
+		expect(page).toContain('label: $ctx.typeResult.confirmText');
+		expect(page).toMatch(/onSubmit: \$ctx\.removeType\n {6}initialData: \$ctx\.typeResult\n/);
+		// removeType publishes under the same key: its answer replaces the picked row, so the confirm goes away.
+		expect(page).toMatch(/\n {4}removeType:\n {8}url: DELETE [^\n]*\n {8}resultKey: typeResult\n/);
+	});
+
+	it('adds to a project chosen in the form (no default); inside a project the type to remove is still chosen in a select', () => {
 		expect(page).toMatch(
 			/\$type: FieldSelect\n {12}\$if: \$sources\.types\.projectOptions\n {12}label: Project\n {12}bind: projectParam/
 		);
@@ -438,11 +535,18 @@ describe('views: feedback and refresh conventions found by driving the pages in 
 			const text = view(name);
 			const actions = text.match(/^\$actions:\n((?: {4}.*\n|\n)+)/m)?.[1];
 			if (actions === undefined) return;
-			const blocks = actions.split(/^ {4}(?=\w+:\s*$)/m).filter(block => block.trim() !== '');
+			// A comment above the first action is not an action.
+			const blocks = actions
+				.split(/^ {4}(?=\w+:\s*$)/m)
+				.filter(block => block.replace(/^\s*#.*$/gm, '').trim() !== '');
 			expect(blocks.length, name).toBeGreaterThan(0);
 			for (const block of blocks) {
-				const actionName = block.split(':')[0];
-				expect(block, `${name}: ${actionName}`).toMatch(/url: (POST|DELETE) \S+&inlineErrors=true/);
+				const actionName = block.split(':')[0]!;
+				// `pick*` is a row button: with no URL the shell only stores the clicked row under its resultKey (no request).
+				const isRowPick = actionName.startsWith('pick') && !block.includes('url:');
+				if (!isRowPick) {
+					expect(block, `${name}: ${actionName}`).toMatch(/url: (POST|DELETE) \S+&inlineErrors=true/);
+				}
 				const key = /resultKey: (\w+)/.exec(block)?.[1];
 				expect(key, `${name}: ${actionName} needs a resultKey`).toBeDefined();
 				expect(text, `${name}: ${actionName}`).toContain(`$ctx.${key}.errorText`);

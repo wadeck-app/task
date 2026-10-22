@@ -11,11 +11,14 @@ export const DELETE_USAGE =
 
 type ProjectRef = { name: string; path: string };
 
-/** The ids of a request: an array, or a comma-separated string (blank entries dropped); null when it is neither. */
+/**
+ * The ids of a request: an array, or a comma-separated string (blank entries dropped, spaces around an id ignored: a
+ * person types "a1, b2" in a text field); null when it is neither.
+ */
 function idList(ids: unknown): string[] | null {
 	const list = typeof ids === 'string' ? ids.split(',') : ids;
 	if (!Array.isArray(list) || list.some(entry => typeof entry !== 'string')) return null;
-	return (list as string[]).filter(entry => entry.length > 0);
+	return (list as string[]).map(entry => entry.trim()).filter(entry => entry.length > 0);
 }
 
 /** The selector of a delete request: exactly one of ids / all / filter. */
