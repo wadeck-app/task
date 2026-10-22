@@ -12,11 +12,12 @@
 # - A project that cannot be read (directory gone, no .task) is the main case: its Edit and Remove are the primary buttons.
 # - Removing only unregisters: the tasks and the .task folder of the project stay on disk, and the texts say so.
 $sources:
+    # page=projects: the welcome text of a registry with no project points at the form below, not at this page.
     projects:
-        url: GET /api/modules/task/projects
+        url: GET /api/modules/task/projects?page=projects
     # The same route, for the defaults of the add form only (never reloaded by an action, see addProject).
     addDefaults:
-        url: GET /api/modules/task/projects?inlineErrors=true
+        url: GET /api/modules/task/projects?page=projects&inlineErrors=true
 
 $actions:
     pickEdit:

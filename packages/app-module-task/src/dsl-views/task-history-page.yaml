@@ -27,6 +27,7 @@ sections:
     - $type: PageHeader
       title: $sources.detail.task.title
       headerActions:
+          # Kept although the breadcrumb has a "Task <id>" crumb: that crumb drops ?project (blank page with several projects).
           - $type: ButtonLink
             $if: $sources.detail.taskHrefs
             label: Back to the task

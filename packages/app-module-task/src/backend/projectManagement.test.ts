@@ -304,6 +304,25 @@ describe('GET /projects: data of the Projects page forms and table', () => {
 		expect(answer.body['hasOpenLinks']).toBe(false);
 	});
 
+	it('names the Projects menu in the welcome text, except on the Projects page itself (?page=projects) where it points at the form', async () => {
+		const elsewhere = await h.call('GET /projects');
+		expect(elsewhere.body['noProjectsText']).toContain('Projects page (menu Projects)');
+		const here = await h.call('GET /projects', { query: { page: 'projects' } });
+		expect(here.body['noProjects']).toBe(true);
+		expect(here.body['noProjectsText']).toContain('form below');
+		expect(here.body['noProjectsText']).not.toContain('Projects page');
+		expect(here.body['noProjectsText']).not.toContain('menu Projects');
+		// The other ways stay named: the CLI commands work from anywhere.
+		expect(here.body['noProjectsText']).toContain('task init');
+		expect(here.body['noProjectsText']).toContain('task projects add');
+	});
+
+	it('gives no welcome text once a project is registered, on the Projects page too', async () => {
+		h.world.createProject('alpha');
+		const here = await h.call('GET /projects', { query: { page: 'projects' } });
+		expect(here.body['noProjectsText']).toBeNull();
+	});
+
 	it('gives one row per project carrying everything the Edit and Remove steps send', async () => {
 		const dir = h.world.createProject('alpha');
 		const answer = await h.call('GET /projects');

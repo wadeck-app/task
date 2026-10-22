@@ -85,6 +85,10 @@ export function openProject(configDir: string, requested: string | undefined): T
 export const NO_PROJECT_HINT =
 	'Add one on the Projects page (menu Projects), run `task init` in a project directory to create and register it, or `task projects add <dir>` for a project that is already initialized.';
 
+/** The same, on the Projects page itself: it has the add form, so it does not send the user to the page they are on. */
+export const NO_PROJECT_HINT_ON_PROJECTS_PAGE =
+	'Use the form below to add one, run `task init` in a project directory to create and register it, or `task projects add <dir>` for a project that is already initialized.';
+
 function requireAny(registered: string[]): void {
 	if (registered.length === 0) {
 		throw new RequestError(404, 'no project is registered with the task app-module', NO_PROJECT_HINT);

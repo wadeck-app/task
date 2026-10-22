@@ -608,12 +608,6 @@ describe('views: feedback and refresh conventions found by driving the pages in 
 		expect(page).toContain('$if: $ctx.plan.previewText');
 		expect(page).toContain('$ctx.plan.deletedText');
 	});
-
-	it('the create and delete pages link back to the tasks', () => {
-		for (const name of ['new-task-page.yaml', 'delete-page.yaml']) {
-			expect(view(name), name).toContain('$sources.projects.tasksHref');
-		}
-	});
 });
 
 describe('views: a failing source blanks the whole page', () => {
@@ -626,7 +620,8 @@ describe('views: a failing source blanks the whole page', () => {
 				expect(block, `${name}: source ${source}`).toContain('inlineErrors=true');
 			}
 			for (const [, , url] of text.matchAll(/^ {8}url: (GET) (\S+)/gm)) {
-				if (url!.endsWith('/projects')) continue;
+				// The projects source itself (it only lists the registry; the Projects page adds page=projects).
+				if (/\/projects(\?page=projects)?$/.test(url!)) continue;
 				expect(url, name).toMatch(/inlineErrors=true$/);
 			}
 		}
@@ -782,5 +777,99 @@ describe('projects page: a refused add keeps the typed values', () => {
 		expect(page).toContain('initialData: $sources.addDefaults.projectForm');
 		expect(page).toContain('options: $sources.addDefaults.modeOptions');
 		expect(page).toMatch(/addProject:\n {8}url: [^\n]+\n {8}resultKey: addResult\n {8}reloadSources: \[projects\]/);
+	});
+});
+
+/** The links of a view (BackLink and ButtonLink nodes): the `to:` and `label:` found right under each `$type`. */
+function linkNodes(text: string): Array<{ type: string; to: string; label: string; line: number }> {
+	const lines = text.split('\n');
+	const found: Array<{ type: string; to: string; label: string; line: number }> = [];
+	lines.forEach((line, index) => {
+		const type = /\$type: (BackLink|ButtonLink)\b/.exec(line)?.[1];
+		if (type === undefined) return;
+		let to = '';
+		let label = '';
+		for (const next of lines.slice(index + 1, index + 8)) {
+			if (/\$type:/.test(next)) break;
+			to = /^\s*to: (.+)$/.exec(next)?.[1] ?? to;
+			label = /^\s*label: (.+)$/.exec(next)?.[1] ?? label;
+		}
+		found.push({ type, to, label, line: index + 1 });
+	});
+	return found;
+}
+
+describe('views: no link to a direct parent of the breadcrumb (app-core-cli >= 2026.10.19-063 shows the trail of every route page)', () => {
+	// The history page is the exception: the crumb "Task <id>" drops `?project`, so with several projects registered it
+	// lands on a blank page (verified on app-core-cli 2026.10.22-072); the link below carries the project.
+	const viewsWithoutBackLink = viewNames.filter(name => name !== 'task-history-page.yaml');
+
+	it.each(viewsWithoutBackLink)('%s: no "Back to ..." link (the crumb before the page is the way back)', name => {
+		for (const link of linkNodes(view(name))) {
+			expect(link.label, `${name}:${link.line}`).not.toMatch(/^Back to\b/i);
+		}
+	});
+
+	it.each([
+		// New task: parent crumb Tasks (/tasks).
+		['new-task-page.yaml', '$sources.projects.tasksHref'],
+		// Delete tasks: parent crumb Tasks (/tasks).
+		['delete-page.yaml', '$sources.projects.tasksHref'],
+	])('%s: does not link to %s, the parent page already in the trail', (name, target) => {
+		const targets = linkNodes(view(name)).map(link => link.to);
+		expect(targets, name).not.toContain(target);
+	});
+
+	it('task-history-page.yaml: keeps "Back to the task" because the crumb loses ?project', () => {
+		const links = linkNodes(view('task-history-page.yaml'));
+		expect(links.map(link => link.to)).toContain('$sources.detail.taskHrefs.detail');
+		expect(links.find(link => link.to === '$sources.detail.taskHrefs.detail')?.label).toBe('Back to the task');
+	});
+
+	it.each([
+		['new-task-page.yaml', ['$sources.projects.allProjectsHref', '$ctx.created.href']],
+		['delete-page.yaml', ['$sources.projects.allProjectsHref']],
+		['task-history-page.yaml', ['$sources.projects.allProjectsHref']],
+	])('%s: keeps the links the trail cannot give (%j)', (name, kept) => {
+		const targets = linkNodes(view(name)).map(link => link.to);
+		for (const target of kept) expect(targets, name).toContain(target);
+	});
+});
+
+describe('projects page: its welcome text does not send the user to itself', () => {
+	it('both sources ask GET /projects with page=projects (the route then points at the form below)', () => {
+		const blocks = sourceBlocks(view('projects-page.yaml'));
+		for (const source of ['projects', 'addDefaults']) {
+			expect(blocks.get(source), source).toMatch(
+				/url: GET \/api\/modules\/task\/projects\?(\S*&)?page=projects(&\S*)?$/m
+			);
+		}
+	});
+
+	it('no other page asks page=projects (they keep the pointer to the Projects menu)', () => {
+		for (const name of viewNames.filter(n => n !== 'projects-page.yaml')) {
+			expect(view(name), name).not.toContain('page=projects');
+		}
+	});
+});
+
+describe('manifest: the labels the breadcrumb shows (app-core-cli >= 2026.10.19-063 names each crumb after the page label)', () => {
+	it('gives every page a label (a page without one is named after its address)', () => {
+		for (const point of manifest.extensionPoints.filter(p => p.kind === 'page')) {
+			expect((point as { label?: string }).label, point.path).toMatch(/\S/);
+		}
+	});
+
+	it('reads as one trail: Task > Tasks > Task <id> > Task history, Task > New task, Task > Delete tasks', () => {
+		const labels = Object.fromEntries(
+			manifest.extensionPoints.filter(p => p.kind === 'page').map(p => [p.path, (p as { label?: string }).label])
+		);
+		expect(labels).toMatchObject({
+			'/tasks': 'Tasks',
+			'/tasks/:id': 'Task',
+			'/tasks/:id/history': 'Task history',
+			'/new': 'New task',
+			'/delete': 'Delete tasks',
+		});
 	});
 });

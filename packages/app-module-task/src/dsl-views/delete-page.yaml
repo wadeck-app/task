@@ -27,10 +27,6 @@ sections:
       title: Delete tasks
       subtitle: Give one selector, preview, then confirm. Deleting cannot be undone.
     - $type: BackLink
-      $if: $sources.projects.tasksHref
-      to: $sources.projects.tasksHref
-      label: Back to the tasks
-    - $type: BackLink
       $if: $sources.projects.allProjectsHref
       to: $sources.projects.allProjectsHref
       label: All projects

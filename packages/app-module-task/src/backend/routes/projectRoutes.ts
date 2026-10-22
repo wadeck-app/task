@@ -13,7 +13,7 @@ import {
 } from '../hrefs.js';
 import { readLastProject } from '../lastProject.js';
 import { ADD_FORM_DEFAULTS, attentionText, manageRows, MODE_OPTIONS, openLinks } from '../projectManagement.js';
-import { listProjects, NO_PROJECT_HINT, openProject } from '../projects.js';
+import { listProjects, NO_PROJECT_HINT, NO_PROJECT_HINT_ON_PROJECTS_PAGE, openProject } from '../projects.js';
 import type { ProjectListing } from '../projects.js';
 import { optionalQueryValue, queryValue } from '../request.js';
 import type { RouteRequest } from '../request.js';
@@ -115,9 +115,14 @@ export function registerProjectRoutes(kit: RouteKit): void {
 				attentionText: attentionText(projects),
 				// Nothing registered: the views show this text (with the exact next step) instead of staying blank.
 				noProjects: projects.length === 0,
+				// The Projects page asks with ?page=projects: its hint points at the form instead of at itself.
 				noProjectsText:
 					projects.length === 0
-						? `No project is registered with the task app-module. ${NO_PROJECT_HINT}`
+						? `No project is registered with the task app-module. ${
+								optionalQueryValue(req.query, 'page') === 'projects'
+									? NO_PROJECT_HINT_ON_PROJECTS_PAGE
+									: NO_PROJECT_HINT
+							}`
 						: null,
 				multiple: projects.length > 1,
 				// Several projects and none chosen: the views ask for a choice instead of showing nothing.
