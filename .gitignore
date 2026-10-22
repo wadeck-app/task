@@ -54,3 +54,6 @@ task-cli-win32-x64/
 
 # Browser verification screenshots
 .claude/screenshots/
+
+# Crash dumps of a git-bash session
+*.stackdump
