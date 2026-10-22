@@ -102,5 +102,28 @@ export class NoReadableProjectsError extends TaskServiceError {
 	}
 }
 
+/** A directory given for a project is unusable (not absolute, relative segments, NUL byte, missing, not a directory, not a task project). Nothing was changed. */
+export class InvalidProjectPathError extends TaskServiceError {}
+
+/** The project to remove or move is not in the registry. */
+export class ProjectNotRegisteredError extends TaskServiceError {
+	constructor(readonly path: string) {
+		super(
+			`project "${path}" is not registered`,
+			'Pick one of the registered projects (`task projects list` or the Projects page).'
+		);
+	}
+}
+
+/** The directory to register or move to is already in the registry. */
+export class ProjectAlreadyRegisteredError extends TaskServiceError {
+	constructor(readonly path: string) {
+		super(
+			`project "${path}" is already registered`,
+			'Remove the other entry first if it is the one you want to replace (the tasks stay on disk).'
+		);
+	}
+}
+
 /** `<configDir>/projects.json` is unreadable, corrupt, or the directory to register is invalid. Never auto-repaired. */
 export class ProjectsRegistryError extends TaskServiceError {}

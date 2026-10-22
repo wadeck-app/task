@@ -2,11 +2,10 @@
 import { ConfigDir } from '@wadeck-app/shared-cli';
 import {
 	inspectRegisteredProjects,
-	isSameProjectDir,
-	listRegisteredProjects,
 	pruneMissingProjects,
 	registerInitializedProject,
-	unregisterProject,
+	relocateProject,
+	removeRegisteredProject,
 } from '@wadeck-app/task-service';
 import type { ProjectHealth } from '@wadeck-app/task-service';
 import * as path from 'node:path';
@@ -56,17 +55,22 @@ function runRemove(rest: string[], jsonMode: boolean, configDir: string, cwd: st
 	if (extra.length > 0) {
 		return errorOutput(jsonMode, `unexpected argument: ${extra[0]}`, usage);
 	}
-	const target = path.resolve(cwd, dir);
 	// The path as stored is reported, so the user sees which entry went (the match ignores case on Windows).
-	const stored = listRegisteredProjects(configDir).find(p => isSameProjectDir(p, target));
-	if (stored === undefined || !unregisterProject(configDir, target).removed) {
-		return errorOutput(
-			jsonMode,
-			`project "${target}" is not registered`,
-			'Run `task projects list` to see the registered directories.'
-		);
+	const { removed } = removeRegisteredProject(configDir, path.resolve(cwd, dir));
+	return jsonMode ? jsonResult({ removed }) : { exitCode: 0, output: `Removed project: ${removed}` };
+}
+
+function runMove(rest: string[], jsonMode: boolean, configDir: string, cwd: string): CommandResult {
+	const usage = 'Usage: task projects move <old-dir> <new-dir> [--json]';
+	const [from, to, ...extra] = rest;
+	if (!from || !to) {
+		return errorOutput(jsonMode, 'missing directory: both the old and the new one are needed', usage);
 	}
-	return jsonMode ? jsonResult({ removed: stored }) : { exitCode: 0, output: `Removed project: ${stored}` };
+	if (extra.length > 0) {
+		return errorOutput(jsonMode, `unexpected argument: ${extra[0]}`, usage);
+	}
+	const result = relocateProject(configDir, path.resolve(cwd, from), path.resolve(cwd, to));
+	return jsonMode ? jsonResult(result) : { exitCode: 0, output: `Moved project: ${result.from} -> ${result.to}` };
 }
 
 function runPrune(rest: string[], jsonMode: boolean, configDir: string): CommandResult {
@@ -99,6 +103,8 @@ export function runProjectsCommand(rest: string[], jsonMode: boolean, cwd: strin
 				return runAdd(args, jsonMode, configDir, cwd);
 			case 'remove':
 				return runRemove(args, jsonMode, configDir, cwd);
+			case 'move':
+				return runMove(args, jsonMode, configDir, cwd);
 			case 'prune':
 				return runPrune(args, jsonMode, configDir);
 			case 'summary':
@@ -108,7 +114,7 @@ export function runProjectsCommand(rest: string[], jsonMode: boolean, cwd: strin
 				return errorOutput(
 					jsonMode,
 					`unknown task projects subcommand: ${subCmd}`,
-					'Valid subcommands: list, add, remove, prune, summary'
+					'Valid subcommands: list, add, remove, prune, summary, move'
 				);
 		}
 	} catch (error) {

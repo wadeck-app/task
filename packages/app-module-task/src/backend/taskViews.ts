@@ -130,6 +130,7 @@ export function forestBody(
 export function taskTreeBody(project: Project, root: TaskTreeNode): Record<string, unknown> {
 	return {
 		project,
+		projectText: projectText(project),
 		hrefs: pageHrefs(project),
 		tree: withTreeLinks(project, [root])[0],
 		rows: flattenTree(project, [root]),

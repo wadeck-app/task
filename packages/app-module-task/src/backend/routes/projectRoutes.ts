@@ -12,6 +12,7 @@ import {
 	tasksPageHref,
 } from '../hrefs.js';
 import { readLastProject } from '../lastProject.js';
+import { ADD_FORM_DEFAULTS, attentionText, manageRows, MODE_OPTIONS, openLinks } from '../projectManagement.js';
 import { listProjects, NO_PROJECT_HINT, openProject } from '../projects.js';
 import type { ProjectListing } from '../projects.js';
 import { optionalQueryValue, queryValue } from '../request.js';
@@ -59,7 +60,7 @@ function summaryBody(scope: 'all' | 'project', summary: ProjectsSummary): Record
 function problemText(project: ProjectListing): string {
 	let fix = 'Fix the cause above, then reload.';
 	if (!project.exists) {
-		fix = `Run \`task projects remove ${project.path}\` to unregister it, or \`task projects add <dir>\` if the project moved.`;
+		fix = `Use Remove (or Edit, if the project moved) on the Projects page, or run \`task projects remove ${project.path}\` to unregister it, or \`task projects add <dir>\` if the project moved.`;
 	} else if (!project.initialized) {
 		fix = `Run \`task init\` in ${project.path} to recreate it.`;
 	}
@@ -98,11 +99,20 @@ export function registerProjectRoutes(kit: RouteKit): void {
 		);
 		const createProject = selected === undefined ? (onlyReadable ?? lastReadable) : selected;
 		const backToGlobal = projects.length > 1 && (selected !== undefined || unknownProject);
+		const taskLinks = openLinks(projects);
 		const selectedProblem = selected === undefined || selected.error === null ? null : problemText(selected);
 		return {
 			status: 200,
 			body: {
 				projects,
+				// The Projects page: its add form (also with no project), the table rows with what Edit and Remove send,
+				// links to the tasks of the readable projects (the table has row buttons, so no row click), the banner.
+				projectForm: ADD_FORM_DEFAULTS,
+				modeOptions: MODE_OPTIONS,
+				manageRows: manageRows(projects),
+				openLinks: taskLinks,
+				hasOpenLinks: taskLinks.length > 0,
+				attentionText: attentionText(projects),
 				// Nothing registered: the views show this text (with the exact next step) instead of staying blank.
 				noProjects: projects.length === 0,
 				noProjectsText:

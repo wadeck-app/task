@@ -6,6 +6,9 @@ import {
 	InvalidStatusError,
 	InvalidDeleteFilterError,
 	InvalidTaskTypeError,
+	InvalidProjectPathError,
+	ProjectAlreadyRegisteredError,
+	ProjectNotRegisteredError,
 	DanglingParentError,
 	NoReadableProjectsError,
 	TaskServiceError,
@@ -64,6 +67,9 @@ export function describeError(error: unknown): ErrorDescription {
 	if (error instanceof InvalidTaskTypeError || error instanceof InvalidDeleteFilterError) {
 		return describe('invalid', error, error.hint);
 	}
+	if (error instanceof InvalidProjectPathError) return describe('invalid', error, error.hint);
+	if (error instanceof ProjectNotRegisteredError) return describe('not-found', error, error.hint);
+	if (error instanceof ProjectAlreadyRegisteredError) return describe('conflict', error, error.hint);
 	if (error instanceof NoReadableProjectsError) {
 		return describe('internal', error, error.hint, { skipped: error.failures });
 	}

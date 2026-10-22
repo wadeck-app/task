@@ -98,11 +98,17 @@ export function allTasksBody(found: TasksAcrossProjects, showAll: boolean): Reco
  * a table). The DataTable has no row styling nor grouping, so a project header row could not be told from a task row:
  * the sections are DSL nodes built here and rendered as is by the view (see dslNodes.ts).
  */
-export function allForestBody(found: AcrossProjects<TaskTreeNode[]>, showAll: boolean): Record<string, unknown> {
+export function allForestBody(
+	found: AcrossProjects<{ forest: TaskTreeNode[]; terminalStatuses: readonly string[] }>,
+	showAll: boolean
+): Record<string, unknown> {
 	let taskTotal = 0;
+	let closedKept = 0;
 	const groups = found.entries.map(({ project, value }) => {
-		const rows = flattenTree(project, value);
+		const rows = flattenTree(project, value.forest);
 		taskTotal += rows.length;
+		// Without showAll, a closed task in the forest is a parent kept above an open one: it is not an open task.
+		if (!showAll) closedKept += rows.filter(row => value.terminalStatuses.includes(row.status)).length;
 		return projectTasksSection({
 			title: `${project.name} (${plural(rows.length, 'task')})`,
 			linkLabel: `Open the tree of ${project.name}`,
@@ -115,7 +121,7 @@ export function allForestBody(found: AcrossProjects<TaskTreeNode[]>, showAll: bo
 	return {
 		scope: 'all',
 		projectCount: found.entries.length,
-		scopeText: `All projects: ${plural(found.entries.length, 'project')}, ${taskCount(taskTotal, showAll)}.`,
+		scopeText: `All projects: ${plural(found.entries.length, 'project')}, ${taskCount(taskTotal - closedKept, showAll)}${closedKept === 0 ? '' : `, plus ${plural(closedKept, 'closed parent')} kept for context`}.`,
 		showAllToggle: showAll
 			? { label: 'Hide closed tasks', href: allProjectsPageHref('tree') }
 			: { label: 'Show closed tasks', href: allProjectsPageHref('tree', true) },

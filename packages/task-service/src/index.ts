@@ -12,6 +12,9 @@ export {
 	AmbiguousDeletePrefixError,
 	DanglingParentError,
 	ProjectsRegistryError,
+	InvalidProjectPathError,
+	ProjectNotRegisteredError,
+	ProjectAlreadyRegisteredError,
 	NoReadableProjectsError,
 } from './errors.js';
 export type { ProjectFailure } from './errors.js';
@@ -59,9 +62,16 @@ export {
 	projectsRegistryPath,
 	pruneMissingProjects,
 	registerProject,
+	relocateProject,
+	removeRegisteredProject,
 	unregisterProject,
 } from './projectsRegistry.js';
 export { registerInitializedProject } from './registerInitializedProject.js';
+export type { InitProjectResult, InitRegistration } from './initProject.js';
+export { initProject } from './initProject.js';
+export type { AddProjectInput, AddProjectMode, AddProjectResult } from './addProject.js';
+export { ADD_PROJECT_MODES, addProject } from './addProject.js';
+export { assertExistingDirectory, validateProjectPath } from './projectPaths.js';
 export type { ProjectHealth } from './projectsHealth.js';
 export { inspectRegisteredProjects } from './projectsHealth.js';
 export type {

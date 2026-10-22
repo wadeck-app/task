@@ -213,6 +213,96 @@ describe('task projects', () => {
 		});
 	});
 
+	describe('move', () => {
+		it('replaces the registered directory by the new one, in place, and touches no data', async () => {
+			const a = await initProject('a');
+			const b = await initProject('b');
+			const c = await initProject('c');
+			const moved = await initProject('b2');
+			// The registry holds a, b, c, b2: unregister b2 first so that it is only a candidate.
+			await runTaskCommand(['projects', 'remove', moved], root);
+			const result = await runTaskCommand(['projects', 'move', b, moved], root);
+			expect(result).toEqual({ exitCode: 0, output: `Moved project: ${b} -> ${moved}` });
+			expect(listRegisteredProjects(configDir)).toEqual([a, moved, c]);
+			expect(fs.existsSync(path.join(b, '.task'))).toBe(true);
+		});
+
+		it('resolves relative paths against the cwd', async () => {
+			const a = await initProject('a');
+			const b = await initProject('b');
+			await runTaskCommand(['projects', 'remove', b], root);
+			const result = await runTaskCommand(['projects', 'move', 'a', 'b'], root);
+			expect(result.output).toBe(`Moved project: ${a} -> ${b}`);
+			expect(listRegisteredProjects(configDir)).toEqual([b]);
+		});
+
+		it('works when the registered directory is gone (the point of the command)', async () => {
+			const a = await initProject('a');
+			const next = await initProject('next');
+			await runTaskCommand(['projects', 'remove', next], root);
+			fs.rmSync(a, { recursive: true });
+			const result = await runTaskCommand(['projects', 'move', a, next], root);
+			expect(result.exitCode).toBe(0);
+			expect(listRegisteredProjects(configDir)).toEqual([next]);
+		});
+
+		it('--json prints from and to', async () => {
+			const a = await initProject('a');
+			const next = await initProject('next');
+			await runTaskCommand(['projects', 'remove', next], root);
+			const result = await runTaskCommand(['projects', 'move', a, next, '--json'], root);
+			expect(result.exitCode).toBe(0);
+			expect(JSON.parse(result.output)).toEqual({ from: a, to: next });
+		});
+
+		it('fails when the old directory is not registered', async () => {
+			const a = await initProject('a');
+			const other = path.join(root, 'other');
+			const result = await runTaskCommand(['projects', 'move', other, a], root);
+			expect(result.exitCode).toBe(1);
+			expect(result.output).toContain(`Error: project "${other}" is not registered`);
+			expect(result.output).toContain('task projects list');
+		});
+
+		it('fails when the new directory is not an initialized project, with the fix', async () => {
+			const a = await initProject('a');
+			const bare = path.join(root, 'bare');
+			fs.mkdirSync(bare);
+			const result = await runTaskCommand(['projects', 'move', a, bare], root);
+			expect(result.exitCode).toBe(1);
+			expect(result.output).toContain('is not an initialized task project');
+			expect(result.output).toContain('task init');
+			expect(listRegisteredProjects(configDir)).toEqual([a]);
+		});
+
+		it('fails when the new directory is already registered', async () => {
+			const a = await initProject('a');
+			const b = await initProject('b');
+			const result = await runTaskCommand(['projects', 'move', a, b, '--json'], root);
+			expect(result.exitCode).toBe(1);
+			expect((JSON.parse(result.output) as { error: string }).error).toContain('is already registered');
+			expect(listRegisteredProjects(configDir)).toEqual([a, b]);
+		});
+
+		it('requires exactly two directories', async () => {
+			const none = await runTaskCommand(['projects', 'move'], root);
+			expect(none.exitCode).toBe(1);
+			expect(none.output).toContain('Usage: task projects move <old-dir> <new-dir>');
+			const one = await runTaskCommand(['projects', 'move', 'a'], root);
+			expect(one.output).toContain('Usage: task projects move <old-dir> <new-dir>');
+			const three = await runTaskCommand(['projects', 'move', 'a', 'b', 'c'], root);
+			expect(three.output).toContain('unexpected argument: c');
+		});
+
+		it('is documented in the help', async () => {
+			const help = await runTaskCommand(['projects', '--help'], root);
+			expect(help.output).toContain('task projects move <old-dir> <new-dir>');
+			expect((await runTaskCommand(['--help'], root)).output).toContain('task projects move');
+			const unknown = await runTaskCommand(['projects', 'frobnicate'], root);
+			expect(unknown.output).toContain('summary, move');
+		});
+	});
+
 	describe('prune', () => {
 		it('removes the entries whose directory is gone and prints each path', async () => {
 			const kept = await initProject('kept');

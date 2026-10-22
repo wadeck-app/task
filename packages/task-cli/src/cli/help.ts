@@ -54,6 +54,7 @@ Usage:
   task projects list [--json]                List the projects registered with the app-module (flags missing/uninitialized/unreadable ones)
   task projects add [dir] [--json]           Register an initialized project (default: the cwd) with the app-module
   task projects remove <dir> [--json]        Unregister a project directory (its .task is left untouched)
+  task projects move <old-dir> <new-dir> [--json]  Replace a registered directory by the one the project moved to (nothing on disk is touched)
   task projects prune [--dry-run] [--json]   Unregister the projects whose directory no longer exists
   task projects summary [--json]             Open/total tasks per registered project and in total (unreadable projects listed with their reason)
 
@@ -80,6 +81,9 @@ Usage:
   task projects list [--json]                List registered projects: path and [ok], [missing], [not initialized] or [unreadable: <reason>]
   task projects add [dir] [--json]           Register a directory holding a .task (default: the cwd); idempotent; not initialized: run 'task init' there
   task projects remove <dir> [--json]        Unregister a directory (relative paths resolve against the cwd); .task is left untouched
+  task projects move <old-dir> <new-dir> [--json]
+                                             Replace a registered directory by the one the project moved to (the new one must hold a .task;
+                                             the old one may be gone); the registry entry only, no data is moved or deleted
   task projects prune [--dry-run] [--json]   Unregister every project whose directory no longer exists; --dry-run only prints them
   task projects summary [--json]             Open/total tasks per project and in total; an unreadable project shows its reason and is not counted;
                                              exit 1 only when registered projects exist and none can be read

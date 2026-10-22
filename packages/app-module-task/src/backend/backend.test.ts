@@ -1,7 +1,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { projectsRegistryPath, unregisterProject } from '@wadeck-app/task-service';
+import type { TaskTreeNode } from '@wadeck-app/task-core';
+import { listForest, openTaskContext, projectsRegistryPath, unregisterProject } from '@wadeck-app/task-service';
 import type { EventSink } from '@wadeck-app/task-service';
 import type { ModuleContext, ModuleRouteHandler } from '@wadeck-app/app-core-sdk';
 
@@ -34,6 +35,9 @@ const EXPECTED_ROUTES = [
 	'DELETE /types/:name',
 	'POST /tasks/delete/plan',
 	'POST /tasks/delete',
+	'POST /projects',
+	'POST /projects/relocate',
+	'POST /projects/remove',
 ];
 
 interface Answer {
@@ -1186,6 +1190,101 @@ describe('GET /tree rows (flat, navigable view of the forest)', () => {
 	});
 });
 
+describe('GET /tree nested forest (same structure as the service forest the CLI prints)', () => {
+	const em = String.fromCodePoint(0x2003);
+	const branch = String.fromCodePoint(0x2514);
+	type Row = { id: string; label: string; depth: number; status: string; selected?: boolean };
+
+	const close = (id: string): Promise<Answer> =>
+		h.call('POST /tasks/:id/status', { params: { id }, query: { project }, body: { status: 'done' } });
+
+	/** epic > (feature > sub > deep), (closed parent > open child), late; root2 > late2; closed root > closed leaf. */
+	async function seedForest(): Promise<Record<string, string>> {
+		const ids: Record<string, string> = {};
+		ids['epic'] = await createTask('epic');
+		ids['feature'] = await createTask('feature <b>bold</b> & "q"', { parent: ids['epic'] });
+		ids['root2'] = await createTask('root2');
+		ids['sub'] = await createTask('sub', { parent: ids['feature'] });
+		ids['deep'] = await createTask('deep', { parent: ids['sub'] });
+		ids['closedParent'] = await createTask('closed parent', { parent: ids['epic'] });
+		ids['openChild'] = await createTask('open child', { parent: ids['closedParent'] });
+		ids['late'] = await createTask('late', { parent: ids['epic'] });
+		ids['late2'] = await createTask('late2', { parent: ids['root2'] });
+		ids['closedRoot'] = await createTask('closed root');
+		ids['closedLeaf'] = await createTask('closed leaf', { parent: ids['closedRoot'] });
+		await close(ids['closedParent']!);
+		await close(ids['closedLeaf']!);
+		await close(ids['closedRoot']!);
+		return ids;
+	}
+
+	it('indents each level with the branch prefix, keeps the order of the siblings, and keeps a closed parent of an open task', async () => {
+		await seedForest();
+		const rows = (await h.call('GET /tree', { query: { project } })).body['rows'] as Row[];
+		expect(rows.map(r => [r.label, r.depth])).toEqual([
+			['epic', 0],
+			[`${branch} feature <b>bold</b> & "q"`, 1],
+			[`${em}${branch} sub`, 2],
+			[`${em}${em}${branch} deep`, 3],
+			[`${branch} closed parent`, 1],
+			[`${em}${branch} open child`, 2],
+			[`${branch} late`, 1],
+			['root2', 0],
+			[`${branch} late2`, 1],
+		]);
+		expect(rows.find(r => r.label.endsWith('closed parent'))!.status).toBe('done');
+	});
+
+	it('shows the closed tasks with showAll, and gives the same ids, depths and order as the service forest', async () => {
+		await seedForest();
+		const ctx = openTaskContext({ projectDir: project });
+		const flat = (nodes: TaskTreeNode[], depth = 0): Array<[string, number]> =>
+			nodes.flatMap(node => [[node.id, depth] as [string, number], ...flat(node.children, depth + 1)]);
+		for (const showAll of [false, true]) {
+			const rows = (await h.call('GET /tree', { query: { project, ...(showAll ? { showAll: 'true' } : {}) } }))
+				.body['rows'] as Row[];
+			expect(rows.map(r => [r.id, r.depth])).toEqual(flat(listForest(ctx, { showAll })));
+		}
+		const all = (await h.call('GET /tree', { query: { project, showAll: 'true' } })).body['rows'] as Row[];
+		expect(all.map(r => r.label).slice(-2)).toEqual(['closed root', `${branch} closed leaf`]);
+	});
+
+	it('with ?id shows the whole tree of the task, the task marked in its label, the others not, and names the project', async () => {
+		const ids = await seedForest();
+		const answer = await h.call('GET /tree', { query: { project, id: ids['sub']! } });
+		const rows = answer.body['rows'] as Row[];
+		expect(rows.map(r => [r.label, r.selected ?? false])).toEqual([
+			['epic', false],
+			[`${branch} feature <b>bold</b> & "q"`, false],
+			[`${em}${branch} sub (this task)`, true],
+			[`${em}${em}${branch} deep`, false],
+			[`${branch} closed parent`, false],
+			[`${em}${branch} open child`, false],
+			[`${branch} late`, false],
+		]);
+		expect(answer.body['projectText']).toBe('Project: alpha');
+	});
+
+	it('survives a very deep chain (indentation grows, no stack overflow)', async () => {
+		const depth = 1500;
+		// The forest reads the index only: writing it directly keeps the fixture fast (a create rewrites the whole index).
+		const now = new Date().toISOString();
+		const tasks = Array.from({ length: depth }, (_, i) => ({
+			id: `c${i}`,
+			title: `chain ${i}`,
+			status: 'backlog',
+			createdAt: now,
+			...(i === 0 ? {} : { parentId: `c${i - 1}` }),
+		}));
+		fs.writeFileSync(path.join(project, '.task', 'task-index.json'), JSON.stringify({ tasks }));
+		const answer = await h.call('GET /tree', { query: { project } });
+		expect(answer.status).toBe(200);
+		const rows = answer.body['rows'] as Row[];
+		expect(rows).toHaveLength(depth);
+		expect(rows.at(-1)!.depth).toBe(depth - 1);
+	});
+});
+
 describe('hierarchy routes', () => {
 	it('POST /tasks/:id/parent attaches a task under a parent given by prefix', async () => {
 		const parent = await createTask('parent');
@@ -2334,6 +2433,47 @@ describe('GET /tree?allProjects=true (the global forest, grouped by project)', (
 		expect((all.body['groups'] as Array<Record<string, any>>)[1]!['items'][1]['emptyMessage']).toBe('No tasks');
 		expect(all.body['scopeText']).toBe('All projects: 2 projects, 1 task (closed ones included).');
 		expect(all.body['showAllToggle']).toEqual({ label: 'Hide closed tasks', href: '/modules/task/tree' });
+	});
+
+	// The table is the only place of the hierarchy in a section: the label carries the indentation, depth by depth.
+	it('indents every nested level in the table of its project, keeps a closed parent of an open task, and counts honestly', async () => {
+		const epic = await createIn(project, 'epic');
+		const feature = await createIn(project, 'feature', { parent: epic });
+		const sub = await createIn(project, 'sub', { parent: feature });
+		await createIn(project, 'deep', { parent: sub });
+		const closedParent = await createIn(project, 'closed parent', { parent: epic });
+		await createIn(project, 'open under closed', { parent: closedParent });
+		const close = (id: string): Promise<Answer> =>
+			h.call('POST /tasks/:id/status', { params: { id }, query: { project }, body: { status: 'done' } });
+		await close(closedParent);
+		const closedRoot = await createIn(project, 'closed root');
+		const closedLeaf = await createIn(project, 'closed leaf', { parent: closedRoot });
+		await close(closedLeaf);
+		await close(closedRoot);
+		const betaRoot = await createIn(beta, 'beta root');
+		const betaLeaf = await createIn(beta, 'beta child', { parent: betaRoot });
+		const em = String.fromCodePoint(0x2003);
+		const branch = String.fromCodePoint(0x2514);
+		const groups = (await global()).body['groups'] as Array<Record<string, any>>;
+		const alphaRows = groups[0]!['items'][1]['rows'] as Array<{ label: string; depth: number; id: string }>;
+		expect(alphaRows.map(r => [r.label, r.depth])).toEqual([
+			['epic', 0],
+			[`${branch} feature`, 1],
+			[`${em}${branch} sub`, 2],
+			[`${em}${em}${branch} deep`, 3],
+			[`${branch} closed parent`, 1],
+			[`${em}${branch} open under closed`, 2],
+		]);
+		const betaRows = groups[1]!['items'][1]['rows'] as Array<{ label: string; id: string }>;
+		expect(betaRows.map(r => [r.label, r.id === betaLeaf])).toEqual([
+			['beta root', false],
+			[`${branch} beta child`, true],
+		]);
+		expect(groups.map(g => g['title'])).toEqual(['alpha (6 tasks)', 'beta (2 tasks)']);
+		// 7 open tasks (alpha 5, beta 2): the closed parent kept above an open task is said, not counted as open.
+		expect((await global()).body['scopeText']).toBe(
+			'All projects: 2 projects, 7 open tasks, plus 1 closed parent kept for context.'
+		);
 	});
 
 	// Strings of a node prop starting with "$" are read by the renderer as an expression on the page context.

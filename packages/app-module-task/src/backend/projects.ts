@@ -83,7 +83,7 @@ export function openProject(configDir: string, requested: string | undefined): T
 
 /** What to do when nothing is registered: shown by every view and answered by every route. */
 export const NO_PROJECT_HINT =
-	'Run `task init` in a project directory to create and register it, or `task projects add <dir>` for a project that is already initialized.';
+	'Add one on the Projects page (menu Projects), run `task init` in a project directory to create and register it, or `task projects add <dir>` for a project that is already initialized.';
 
 function requireAny(registered: string[]): void {
 	if (registered.length === 0) {

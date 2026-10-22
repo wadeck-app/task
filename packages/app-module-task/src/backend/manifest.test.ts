@@ -194,7 +194,9 @@ describe('views: conventions that keep pages rendering', () => {
 			for (const [, , url] of text.matchAll(/^\s+url: (GET|POST|DELETE) (\S+)/gm)) {
 				expect(url, name).toMatch(/^\/api\/modules\/task\//);
 			}
+			// The registry actions of the Projects page (add, edit, remove) act on no project: they carry none.
 			for (const [, , url] of text.matchAll(/^ {8}url: (POST|DELETE) (\S+)/gm)) {
+				if (url!.startsWith('/api/modules/task/projects')) continue;
 				expect(url, name).toContain('?project={projectParam}');
 			}
 		}
@@ -353,8 +355,8 @@ describe('list pages', () => {
 	it('the projects page lists the projects with their open count and problem', () => {
 		const page = view('projects-page.yaml');
 		expect(page).toContain('url: GET /api/modules/task/projects');
-		expect(page).toContain("key: 'openCount'");
-		expect(page).toContain("key: 'error'");
+		expect(page).toContain("key: 'openText'");
+		expect(page).toContain("key: 'problemText'");
 	});
 
 	it('the types page adds and removes types through their routes', () => {
@@ -545,7 +547,7 @@ describe('views: feedback and refresh conventions found by driving the pages in 
 				// `pick*` is a row button: with no URL the shell only stores the clicked row under its resultKey (no request).
 				const isRowPick = actionName.startsWith('pick') && !block.includes('url:');
 				if (!isRowPick) {
-					expect(block, `${name}: ${actionName}`).toMatch(/url: (POST|DELETE) \S+&inlineErrors=true/);
+					expect(block, `${name}: ${actionName}`).toMatch(/url: (POST|DELETE) \S+[?&]inlineErrors=true/);
 				}
 				const key = /resultKey: (\w+)/.exec(block)?.[1];
 				expect(key, `${name}: ${actionName} needs a resultKey`).toBeDefined();
@@ -659,5 +661,126 @@ describe('views: nothing registered yet', () => {
 		expect(text).toContain('$sources.summary.errorText');
 		expect(text).toContain('$if: $sources.summary.noProjects');
 		expect(text).toContain('label: $sources.summary.noProjectsText');
+	});
+});
+
+describe('projects page: add, edit and remove projects (src/dsl-views/projects-page.yaml)', () => {
+	const page = view('projects-page.yaml');
+	const actionBlock = (name: string): string => {
+		const start = page.indexOf(`\n    ${name}:`);
+		expect(start, `action ${name}`).toBeGreaterThan(-1);
+		const rest = page.slice(start + 1);
+		const next = rest.slice(1).search(/\n {4}\w+:|\n\S/);
+		return next < 0 ? rest : rest.slice(0, next + 1);
+	};
+	const sectionBlock = (marker: string): string => {
+		const start = page.indexOf(marker);
+		expect(start, marker).toBeGreaterThan(-1);
+		const rest = page.slice(start);
+		const next = rest.slice(1).search(/\n {4}- \$type:/);
+		return next < 0 ? rest : rest.slice(0, next + 1);
+	};
+
+	it('submits the three registry actions to their routes with inline errors, each under its own result key, and reloads the lists', () => {
+		const expected = [
+			['addProject', 'POST /api/modules/task/projects?inlineErrors=true', 'addResult'],
+			['relocateProject', 'POST /api/modules/task/projects/relocate?inlineErrors=true', 'editResult'],
+			['removeProject', 'POST /api/modules/task/projects/remove?inlineErrors=true', 'removeResult'],
+		] as const;
+		for (const [action, url, key] of expected) {
+			const block = actionBlock(action);
+			expect(block, action).toContain(`url: ${url}`);
+			expect(block, action).toContain(`resultKey: ${key}`);
+			expect(block, action).toMatch(/reloadSources: (true|\[projects\])/);
+		}
+	});
+
+	it('picks a row with URL-less row actions (the installed shell stores the clicked row under the result key)', () => {
+		for (const [action, key] of [
+			['pickEdit', 'editResult'],
+			['pickRemove', 'removeResult'],
+		] as const) {
+			const block = actionBlock(action);
+			expect(block, action).toContain(`resultKey: ${key}`);
+			expect(block, action).not.toContain('url:');
+		}
+	});
+
+	it('the table has Edit and Remove buttons and NO row click (a button inside a row also fires the row click)', () => {
+		const table = sectionBlock('- $type: DataTable');
+		expect(table).not.toContain('navigateTo');
+		expect(table).toContain('onAction: $ctx.onAction');
+		expect(table).toContain('rows: $sources.projects.manageRows');
+		expect(table).toMatch(/label: 'Edit'[^}]*action: pickEdit/);
+		expect(table).toMatch(/label: 'Remove'[^}]*action: pickRemove/);
+	});
+
+	it('shows Edit and Remove prominently (primary / filled danger) on a project that cannot be read', () => {
+		const table = sectionBlock('- $type: DataTable');
+		expect(table).toMatch(/label: 'Edit'[^}]*variant: default[^}]*condition: needsRepair/);
+		expect(table).toMatch(/label: 'Remove'[^}]*variant: danger[^}]*condition: needsRepair/);
+		expect(table).toMatch(/label: 'Remove'[^}]*variant: danger-outline[^}]*condition: '!needsRepair'/);
+	});
+
+	it('links the readable projects to their tasks through a slot of route-built links', () => {
+		expect(page).toMatch(
+			/\$type: ExtensionSlot\n\s+\$if: \$sources\.projects\.hasOpenLinks\n\s+items: \$sources\.projects\.openLinks/
+		);
+	});
+
+	it('the add form is NOT gated by forms/noProjects: the zero-project page offers it directly', () => {
+		const form =
+			sectionBlock('onSubmit: $ctx.addProject').length > 0
+				? page.slice(page.lastIndexOf('- $type: Form', page.indexOf('onSubmit: $ctx.addProject')))
+				: '';
+		const head = form.split('fields:')[0]!;
+		expect(head).not.toContain('$sources.projects.forms');
+		expect(head).not.toContain('noProjects');
+		expect(head).toContain('initialData: $sources.addDefaults.projectForm');
+		expect(form).toContain('bind: path');
+		expect(form).toContain('bind: mode');
+		expect(form).toContain('options: $sources.addDefaults.modeOptions');
+		expect(form).toContain('bind: createDirectory');
+	});
+
+	it('the edit form is given the picked row, asks for the new directory, and stays visible after a refusal', () => {
+		const form = page.slice(page.lastIndexOf('- $type: Form', page.indexOf('onSubmit: $ctx.relocateProject')));
+		expect(form).toContain('$if: $ctx.editResult.editPrompt');
+		expect(form).toContain('initialData: $ctx.editResult');
+		expect(form).toContain('bind: to');
+		expect(page).toContain('label: $ctx.editResult.editPrompt');
+	});
+
+	it('the remove step says what it does, then confirms with a danger button given the picked row', () => {
+		expect(page).toContain('label: $ctx.removeResult.confirmText');
+		const form = page.slice(page.lastIndexOf('- $type: Form', page.indexOf('onSubmit: $ctx.removeProject')));
+		expect(form).toContain('$if: $ctx.removeResult.confirmText');
+		expect(form).toContain('initialData: $ctx.removeResult');
+		expect(form).toContain('label: $ctx.removeResult.confirmLabel');
+		expect(form).toContain('variant: danger');
+		expect(page).toContain('stay on disk');
+	});
+
+	it('shows the failure of each action in a danger badge and the success message in a success badge', () => {
+		for (const key of ['addResult', 'editResult', 'removeResult']) {
+			const danger = `\\$if: \\$ctx\\.${key}\\.errorText\\n\\s+label: \\$ctx\\.${key}\\.errorText\\n\\s+variant: danger`;
+			const success = `\\$if: \\$ctx\\.${key}\\.messageText\\n\\s+label: \\$ctx\\.${key}\\.messageText\\n\\s+variant: success`;
+			expect(page, key).toMatch(new RegExp(danger));
+			expect(page, key).toMatch(new RegExp(success));
+		}
+		expect(page).toContain('label: $sources.projects.attentionText');
+	});
+});
+
+describe('projects page: a refused add keeps the typed values', () => {
+	const page = view('projects-page.yaml');
+
+	it('feeds the add form from its own source and reloads only the table source after an add (a reloaded initialData resets the form)', () => {
+		const blocks = sourceBlocks(page);
+		expect([...blocks.keys()]).toEqual(['projects', 'addDefaults']);
+		expect(blocks.get('addDefaults')).toContain('url: GET /api/modules/task/projects');
+		expect(page).toContain('initialData: $sources.addDefaults.projectForm');
+		expect(page).toContain('options: $sources.addDefaults.modeOptions');
+		expect(page).toMatch(/addProject:\n {8}url: [^\n]+\n {8}resultKey: addResult\n {8}reloadSources: \[projects\]/);
 	});
 });

@@ -1,6 +1,7 @@
 # Hierarchy of the tasks (nav /tree). With ?project=<absolute dir> (optional when a single project is registered): the
 # forest of that project, children indented under their parent. WITHOUT ?project and with several projects registered:
-# the global forest, one top-level row per project (a click opens its own tree) with its forest indented under it.
+# the global forest, one section per project (title, link to its own tree) whose table holds that project's forest, a
+# child indented under its parent by a label prefix (the table cannot style rows).
 # ?showAll=true includes the closed tasks, ?parent=<id> restricts to the descendants of a task, ?id=<id> shows the one
 # tree containing a task (project scope only). A row click opens the detail page.
 # TreeView is not used: its selection is a callback, which YAML cannot express, so rows could not navigate.

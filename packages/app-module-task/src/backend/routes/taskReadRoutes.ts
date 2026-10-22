@@ -113,7 +113,10 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 				}
 			}
 			const showAll = showAllFlag(req.query);
-			const found = readAcrossProjects(kit.configDir, ctx => listForest(ctx, { showAll }));
+			const found = readAcrossProjects(kit.configDir, ctx => ({
+				forest: listForest(ctx, { showAll }),
+				terminalStatuses: ctx.config.terminalStatuses,
+			}));
 			return { status: 200, body: allForestBody(found, showAll) };
 		}
 		const ctx = open(req);
