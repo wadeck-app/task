@@ -12,8 +12,15 @@ describe('errorOutput', () => {
 		expect(errorOutput(false, 'boom')).toEqual({ exitCode: 1, output: 'Error: boom' });
 	});
 
-	it('prints {"error": message} in JSON mode, without the hint', () => {
-		expect(errorOutput(true, 'boom', 'Run: fix')).toEqual({ exitCode: 1, output: '{"error":"boom"}' });
+	it('prints {"error": message, "hint": hint} in JSON mode, so machine readers get the fix too', () => {
+		expect(errorOutput(true, 'boom', 'Run: fix')).toEqual({
+			exitCode: 1,
+			output: '{"error":"boom","hint":"Run: fix"}',
+		});
+	});
+
+	it('prints only {"error": message} in JSON mode without hint (no "hint": null)', () => {
+		expect(errorOutput(true, 'boom')).toEqual({ exitCode: 1, output: '{"error":"boom"}' });
 	});
 });
 
@@ -22,6 +29,14 @@ describe('failure', () => {
 		expect(failure(false, new DanglingParentError('t1', 'p1'))).toEqual({
 			exitCode: 1,
 			output: 'Error: parent "p1" of task "t1" does not exist\nFix with: task remove-parent t1',
+		});
+	});
+
+	it('keeps the hint in JSON mode', () => {
+		const result = failure(true, new DanglingParentError('t1', 'p1'));
+		expect(JSON.parse(result.output)).toEqual({
+			error: 'parent "p1" of task "t1" does not exist',
+			hint: 'Fix with: task remove-parent t1',
 		});
 	});
 

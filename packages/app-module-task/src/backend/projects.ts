@@ -54,6 +54,14 @@ export function listProjects(configDir: string): ProjectListing[] {
  * A corrupt registry throws the registry error unchanged (never read as "no project").
  */
 export function openProject(configDir: string, requested: string | undefined): TaskServiceContext {
+	// A form whose project select was left on its placeholder sends an empty project: say so, instead of "not absolute".
+	if (requested === '') {
+		throw new RequestError(
+			400,
+			'no project chosen',
+			'Choose a project in the form first (or pass ?project=<absolute project directory>; GET /api/modules/task/projects lists the registered ones).'
+		);
+	}
 	const registered = listRegisteredProjects(configDir);
 	const dir = pickProject(registered, requested);
 	if (!fs.existsSync(dir)) {

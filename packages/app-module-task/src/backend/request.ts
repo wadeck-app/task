@@ -68,3 +68,33 @@ export function optionalString(source: Record<string, unknown>, field: string, u
 	}
 	return value;
 }
+
+/** What `?blank=true` answers: nothing, so a view replaces the data of its previous scope (see {@link isBlankRequest}). */
+export const BLANK_ANSWER: RouteAnswer = { status: 200, body: { blank: true } };
+
+/**
+ * `?blank=true`: the caller is a view whose scope has no data (unknown or unreadable project, nothing registered).
+ * The shell keeps the last answer of a source it skips, so the view asks for this empty answer instead, which
+ * replaces the stale data of the previous scope.
+ */
+export function isBlankRequest(query: RouteRequest['query']): boolean {
+	return booleanFlag(query, 'blank', 'Use ?blank=true for an empty answer.');
+}
+
+/**
+ * `?allProjects=true`: the answer covers every registered project. One scope at a time, so it refuses `?project`.
+ * `what` completes the hint ("the tasks", "the types"...).
+ */
+export function allProjectsFlag(query: RouteRequest['query'], what: string): boolean {
+	if (!booleanFlag(query, 'allProjects', `Use ?allProjects=true for ${what} of every registered project.`)) {
+		return false;
+	}
+	if (queryValue(query, 'project') !== undefined) {
+		throw new RequestError(
+			400,
+			'allProjects and project cannot be combined',
+			'Use ?allProjects=true for every registered project, or ?project=<absolute dir> for one.'
+		);
+	}
+	return true;
+}

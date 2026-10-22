@@ -140,6 +140,7 @@ export function taskTreeBody(project: Project, root: TaskTreeNode): Record<strin
 export function typesBody(project: Project, types: string[]): Record<string, unknown> {
 	return {
 		project,
+		projectText: projectText(project),
 		hrefs: pageHrefs(project),
 		types,
 		rows: types.map(name => ({ name })),

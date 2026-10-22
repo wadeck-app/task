@@ -1,5 +1,5 @@
 // task cli register | unregister -- tell app-core where the task app-module lives, or remove it.
-import { attemptRegistration, attemptUnregistration, type AppCoreAttempt } from '../AppCoreRegistration.js';
+import { attemptStagedRegistration, attemptUnregistration, type AppCoreAttempt } from '../AppCoreRegistration.js';
 import { resolveAppModuleManifest } from '../appModuleManifest.js';
 import type { CommandResult } from '../cli/output.js';
 
@@ -11,7 +11,7 @@ export interface AppCoreCommandDeps {
 
 const defaultDeps: AppCoreCommandDeps = {
 	resolveManifest: () => resolveAppModuleManifest(),
-	register: attemptRegistration,
+	register: attemptStagedRegistration,
 	unregister: attemptUnregistration,
 };
 

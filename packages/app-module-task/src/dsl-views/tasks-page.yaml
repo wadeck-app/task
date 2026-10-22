@@ -1,6 +1,8 @@
 # Tasks of one project (?project=<absolute dir>; optional when a single project is registered), or, WITHOUT ?project
 # and with several projects registered, the global list: every project's open tasks with a Project column (source
 # `tasks`, GET /tasks?allProjects=true). A row of either list opens the task with its project; "All projects" leads back.
+# Every scope goes through that one `scopeQuery`: project, global list, or `blank=true` (an unknown or unreadable
+# project: the route answers nothing, which replaces the rows of the previous scope instead of leaving them on screen).
 # Filters are links built by the route (the DSL has no component writing arbitrary URL parameters):
 # ?showAll=true also lists the tasks in a terminal status, ?parent=<id> restricts to the direct children of a task.
 # Each row carries `href` (built by the route, project query included): the row click opens the detail page.
@@ -25,7 +27,7 @@ $sources:
         params:
             # One source for both scopes: the shell keeps the last answer of a skipped source, so a second source for the
             # global list would leave the buttons of the previous project on screen after "All projects" (and the reverse).
-            query: $source.projects.tasksQuery
+            query: $source.projects.scopeQuery
             reload: $urlParam.reload
 
 $type: PageContent
@@ -83,10 +85,6 @@ sections:
       $if: $sources.tasks.warning
       label: $sources.tasks.warning
       variant: warning
-    - $type: Badge
-      $if: $sources.tasks.errorText
-      label: $sources.tasks.errorText
-      variant: danger
     - $type: DataTable
       $if: $sources.tasks.scopeText
       rows: $sources.tasks.tasks

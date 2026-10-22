@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 import { TaskConfigLoader, TaskStore } from '@wadeck-app/task-core';
 
-import { attemptRegistration, type AppCoreAttempt } from '../AppCoreRegistration.js';
+import { attemptStagedRegistration, type AppCoreAttempt } from '../AppCoreRegistration.js';
 import { resolveAppModuleManifest } from '../appModuleManifest.js';
 import { TASK_BUNDLE_NAME } from '../TaskBundleName.js';
 
@@ -101,7 +101,7 @@ export interface RollbackAppCoreDeps {
 
 const defaultRollbackDeps: RollbackAppCoreDeps = {
 	resolveManifest: () => resolveAppModuleManifest(),
-	register: attemptRegistration,
+	register: attemptStagedRegistration,
 };
 
 /**

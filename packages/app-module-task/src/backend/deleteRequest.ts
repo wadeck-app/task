@@ -82,6 +82,9 @@ export function planBody(
 	const summary = [headline, ...effectsWithNotFound(plan, 'would')].join(' ');
 	return {
 		canConfirm: count > 0,
+		// The banner of the confirm form and its button: a delete is never global, the project is named where it is confirmed.
+		projectText: `Project ${project.name} (${project.path}): only its tasks listed above will be deleted.`,
+		confirmLabel: `Delete these tasks from ${project.name}`,
 		// The body that confirms exactly this preview: the confirm form of the page submits it as is.
 		confirmRequest:
 			count === 0
@@ -100,13 +103,16 @@ export function planBody(
 		danglingLinkCount: plan.danglingLinkCount,
 		summary,
 		// What the preview area of the page shows; an executed delete has none, which clears a stale preview.
-		previewText: summary,
+		previewText: `Project ${project.name}: ${summary}`,
 	};
 }
 
 /** The answer of an executed delete. */
 export function outcomeBody(project: ProjectRef, plan: DeletePlan, deletedCount: number): Record<string, unknown> {
-	const summary = [`Deleted ${deletedCount} task(s).`, ...effectsWithNotFound(plan, 'did')].join(' ');
+	const summary = [
+		`Deleted ${deletedCount} task(s) from project ${project.name}.`,
+		...effectsWithNotFound(plan, 'did'),
+	].join(' ');
 	return {
 		project,
 		deletedCount,

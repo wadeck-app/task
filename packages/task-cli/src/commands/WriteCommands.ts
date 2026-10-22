@@ -1,6 +1,5 @@
 // Task commands that change a task: new, set-status, link/unlink, set-type, add-label, remove-label, set-parent, remove-parent, set-meta.
 import {
-	InvalidStatusError,
 	addLabel,
 	createTask,
 	deliverEvents,
@@ -79,10 +78,6 @@ export const runSetStatus: ProjectCommand = async (rest, { jsonMode, ctx, eventS
 	try {
 		result = setStatus(ctx, { id, status });
 	} catch (error) {
-		// Machine readers get the valid values in the message itself (the hint line is not part of the JSON).
-		if (error instanceof InvalidStatusError && jsonMode) {
-			return errorOutput(jsonMode, `${error.message}. Valid statuses: ${error.validStatuses.join(', ')}`);
-		}
 		return failure(jsonMode, error);
 	}
 	// The status change is delivered before the open-blocker warning, the unblocked events after it.

@@ -666,14 +666,14 @@ describe('GET /projects global view data (the Tasks page without ?project)', () 
 		expect(showAll.body['globalQuery']).toBe('allProjects=true&showAll=true');
 	});
 
-	it('tasksQuery is the project query when one is chosen, else the global query (the Tasks page has one source)', async () => {
+	it('scopeQuery is the project query when one is chosen, else the global query (the pages have one source)', async () => {
 		h.world.createProject('beta');
 		const global = await h.call('GET /projects', { query: { showAll: 'true' } });
-		expect(global.body['tasksQuery']).toBe('allProjects=true&showAll=true');
+		expect(global.body['scopeQuery']).toBe('allProjects=true&showAll=true');
 		const chosen = await h.call('GET /projects', { query: { project } });
-		expect(chosen.body['tasksQuery']).toBe(`project=${encodeURIComponent(project)}`);
+		expect(chosen.body['scopeQuery']).toBe(`project=${encodeURIComponent(project)}`);
 		const unknown = await h.call('GET /projects', { query: { project: '/nowhere/ghost' } });
-		expect(unknown.body['tasksQuery']).toBe('');
+		expect(unknown.body['scopeQuery']).toBe('blank=true');
 	});
 
 	it('is empty with a project chosen, a single project or none registered (the page skips the global source)', async () => {
@@ -2150,13 +2150,13 @@ describe('delete answers drive the page state', () => {
 	it('a preview carries previewText, an executed delete deletedText and canConfirm false (the stale preview goes away)', async () => {
 		const id = await createTask('a');
 		const preview = await h.call('POST /tasks/delete/plan', { query: { project }, body: { ids: id } });
-		expect(preview.body['previewText']).toBe(preview.body['summary']);
+		expect(preview.body['previewText']).toBe(`Project alpha: ${preview.body['summary']}`);
 		const done = await h.call('POST /tasks/delete', {
 			query: { project },
 			body: { ids: id, confirm: true },
 		});
 		expect(done.status).toBe(200);
-		expect(done.body['deletedText']).toBe('Deleted 1 task(s).');
+		expect(done.body['deletedText']).toBe('Deleted 1 task(s) from project alpha.');
 		expect(done.body['canConfirm']).toBe(false);
 		expect(done.body).not.toHaveProperty('previewText');
 	});
@@ -2247,5 +2247,349 @@ describe('registered projects that cannot be used', () => {
 		expect(answer.status).toBe(500);
 		expect(answer.body['hint']).toContain('task projects remove');
 		expect(answer.body['hint']).toContain('task init');
+	});
+});
+
+describe('GET /tree?allProjects=true (the global forest, grouped by project)', () => {
+	let beta: string;
+	const enc = encodeURIComponent;
+
+	async function createIn(dir: string, description: string, extra: Record<string, unknown> = {}): Promise<string> {
+		const answer = await h.call('POST /tasks', { query: { project: dir }, body: { description, ...extra } });
+		expect(answer.status).toBe(201);
+		return answer.body['task'].id as string;
+	}
+
+	const global = (extra: Record<string, string> = {}): Promise<Answer> =>
+		h.call('GET /tree', { query: { allProjects: 'true', ...extra } });
+
+	beforeEach(() => {
+		beta = h.world.createProject('beta', { configYml: STATUSES_YML });
+	});
+
+	it('has one top-level row per project, then its forest indented under it, each row opening its target', async () => {
+		const parent = await createIn(project, 'parent');
+		const child = await createIn(project, 'child', { parent });
+		const other = await createIn(beta, 'in beta');
+		const answer = await global();
+		expect(answer.status).toBe(200);
+		expect(answer.body['scope']).toBe('all');
+		const rows = answer.body['rows'] as Array<Record<string, any>>;
+		expect(rows.map(r => [r['id'], r['depth'], r['isProject'] ?? false])).toEqual([
+			['', 0, true],
+			[parent, 1, false],
+			[child, 2, false],
+			['', 0, true],
+			[other, 1, false],
+		]);
+		expect(rows[0]).toMatchObject({
+			label: 'alpha',
+			status: '2 tasks',
+			href: `/modules/task/tree?project=${enc(project)}`,
+		});
+		expect(rows[1]).toMatchObject({ href: `/modules/task/tasks/${parent}?project=${enc(project)}` });
+		expect(rows[1]!['label']).toMatch(/parent$/);
+		expect(rows[1]!['label']).not.toBe('parent');
+		expect(rows[3]).toMatchObject({ label: 'beta', status: '1 task' });
+		expect(answer.body['scopeText']).toBe('All projects: 2 projects, 3 open tasks.');
+	});
+
+	it('shows an empty project as a header with an explicit "no tasks" row (not as a missing project)', async () => {
+		await createIn(project, 'x');
+		const rows = (await global()).body['rows'] as Array<Record<string, any>>;
+		expect(rows.map(r => r['label'])).toEqual([
+			'alpha',
+			expect.stringMatching(/x$/),
+			'beta',
+			expect.stringMatching(/\(no open tasks\)$/),
+		]);
+		expect(rows[3]).toMatchObject({ id: '', href: `/modules/task/tree?project=${enc(beta)}` });
+		expect(rows[2]).toMatchObject({ status: '0 tasks' });
+	});
+
+	it('hides closed tasks unless showAll, and the toggle keeps the global scope', async () => {
+		const done = await createIn(project, 'closed one');
+		await h.call('POST /tasks/:id/status', { params: { id: done }, query: { project }, body: { status: 'done' } });
+		const open = await global();
+		expect(open.body['rows'].map((r: { id: string }) => r.id)).toEqual(['', '', '', '']);
+		expect(open.body['showAllToggle']).toEqual({
+			label: 'Show closed tasks',
+			href: '/modules/task/tree?showAll=true',
+		});
+		const all = await global({ showAll: 'true' });
+		expect(all.body['rows'].map((r: { id: string }) => r.id)).toEqual(['', done, '', '']);
+		expect(all.body['scopeText']).toBe('All projects: 2 projects, 1 task (closed ones included).');
+		expect(all.body['showAllToggle']).toEqual({ label: 'Hide closed tasks', href: '/modules/task/tree' });
+	});
+
+	it('reports an unreadable project in a warning besides the forests of the others, never dropped silently', async () => {
+		await createIn(project, 'in alpha');
+		const broken = h.world.createProject('broken');
+		fs.rmSync(`${broken}/.task`, { recursive: true });
+		const answer = await global();
+		expect(answer.status).toBe(200);
+		expect(answer.body['skippedCount']).toBe(1);
+		expect(answer.body['warning']).toContain('1 project not listed');
+		expect(answer.body['warning']).toContain(broken);
+		expect(answer.body['rows'].map((r: { label: string }) => r.label)).not.toContain('broken');
+		expect(answer.body['scopeText']).toBe('All projects: 2 projects, 1 open task.');
+	});
+
+	it('has no warning when every project could be read', async () => {
+		const answer = await global();
+		expect(answer.body['skippedCount']).toBe(0);
+		expect(answer.body['warning']).toBeNull();
+	});
+
+	it('answers 500 with reasons when every registered project is unreadable, inline for the views', async () => {
+		fs.rmSync(`${project}/.task`, { recursive: true });
+		fs.rmSync(`${beta}/.task`, { recursive: true });
+		const answer = await global();
+		expect(answer.status).toBe(500);
+		expect(answer.body['error']).toContain('none of the 2 registered projects');
+		const inline = await global({ inlineErrors: 'true' });
+		expect(inline.status).toBe(200);
+		expect(inline.body['errorText']).toContain('none of the 2 registered projects');
+	});
+
+	it('is a 400 together with ?project or ?id, and for a value that is not true or false', async () => {
+		const withProject = await h.call('GET /tree', { query: { allProjects: 'true', project } });
+		expect(withProject.status).toBe(400);
+		expect(withProject.body['error']).toContain('allProjects');
+		expect((await global({ id: 'abc' })).status).toBe(400);
+		expect((await h.call('GET /tree', { query: { allProjects: 'yes' } })).status).toBe(400);
+	});
+
+	it('without the flag, several registered projects and no ?project stay a 400 (API contract unchanged)', async () => {
+		expect((await h.call('GET /tree')).status).toBe(400);
+	});
+});
+
+describe('GET /types?allProjects=true (every project types, read-only list)', () => {
+	let beta: string;
+	const enc = encodeURIComponent;
+
+	beforeEach(() => {
+		beta = h.world.createProject('beta', { configYml: STATUSES_YML });
+	});
+
+	const global = (extra: Record<string, string> = {}): Promise<Answer> =>
+		h.call('GET /types', { query: { allProjects: 'true', ...extra } });
+
+	it('lists a row per project type with its project column and link, and a row saying so for a project without type', async () => {
+		await h.call('POST /types', { query: { project }, body: { name: 'bug' } });
+		await h.call('POST /types', { query: { project }, body: { name: 'feature' } });
+		const answer = await global();
+		expect(answer.status).toBe(200);
+		expect(answer.body['scope']).toBe('all');
+		const alphaHref = `/modules/task/types?project=${enc(project)}`;
+		expect(answer.body['rows']).toEqual([
+			{ projectName: 'alpha', projectPath: project, typeText: 'bug', href: alphaHref },
+			{ projectName: 'alpha', projectPath: project, typeText: 'feature', href: alphaHref },
+			{
+				projectName: 'beta',
+				projectPath: beta,
+				typeText: '(none configured: any text is accepted)',
+				href: `/modules/task/types?project=${enc(beta)}`,
+			},
+		]);
+		expect(answer.body['scopeText']).toBe(
+			'All projects: 2 projects, 2 types configured. A row opens its project, where types can be removed.'
+		);
+	});
+
+	it('offers adding to a chosen project only: no default project, unreadable ones are not selectable', async () => {
+		const broken = h.world.createProject('broken');
+		fs.rmSync(`${broken}/.task`, { recursive: true });
+		const answer = await global();
+		expect(answer.body['projectOptions']).toEqual([
+			{ value: enc(project), label: 'alpha' },
+			{ value: enc(beta), label: 'beta' },
+		]);
+		expect(answer.body['forms']).toEqual({ add: { projectParam: '', name: '' } });
+		expect(answer.body['warning']).toContain('1 project not listed');
+		expect(answer.body['warning']).toContain(broken);
+		// No remove form in the global scope: the type options depend on the project.
+		expect(answer.body).not.toHaveProperty('restricted');
+	});
+
+	it('answers 500 with reasons when no project is readable, inline for the views', async () => {
+		fs.rmSync(`${project}/.task`, { recursive: true });
+		fs.rmSync(`${beta}/.task`, { recursive: true });
+		expect((await global()).status).toBe(500);
+		const inline = await global({ inlineErrors: 'true' });
+		expect(inline.body['errorText']).toContain('none of the 2 registered projects');
+	});
+
+	it('is a 400 together with ?project', async () => {
+		expect((await h.call('GET /types', { query: { allProjects: 'true', project } })).status).toBe(400);
+	});
+
+	it('the per-project answer names the project for the page (headerActions drop the subtitle)', async () => {
+		const answer = await h.call('GET /types', { query: { project } });
+		expect(answer.body['projectText']).toBe('Project: alpha');
+	});
+
+	it('adding a type with an empty project (the unselected form select) is a 400 asking to choose', async () => {
+		const answer = await h.call('POST /types', { query: { project: '' }, body: { name: 'bug' } });
+		expect(answer.status).toBe(400);
+		expect(answer.body['error']).toContain('no project chosen');
+		expect(answer.body['hint']).toContain('Choose a project');
+	});
+});
+
+describe('scope data of GET /projects (one source per page for the global and the project views)', () => {
+	let beta: string;
+	const enc = encodeURIComponent;
+
+	beforeEach(() => {
+		beta = h.world.createProject('beta', { configYml: STATUSES_YML });
+	});
+
+	it('scopeQuery: the project, else the global scope (showAll kept) while several are registered', async () => {
+		const chosen = await h.call('GET /projects', { query: { project } });
+		expect(chosen.body['scopeQuery']).toBe(`project=${enc(project)}`);
+		const global = await h.call('GET /projects', { query: { showAll: 'true' } });
+		expect(global.body['scopeQuery']).toBe('allProjects=true&showAll=true');
+	});
+
+	it('scopeQuery asks for a blank answer when the project is unknown or unreadable, to replace the data of the previous scope', async () => {
+		const unknown = await h.call('GET /projects', { query: { project: '/nowhere/ghost' } });
+		expect(unknown.body['scopeQuery']).toBe('blank=true');
+		expect(unknown.body['projectQuery']).toBe('blank=true');
+		fs.rmSync(`${beta}/.task`, { recursive: true });
+		const unreadable = await h.call('GET /projects', { query: { project: beta } });
+		expect(unreadable.body['scopeQuery']).toBe('blank=true');
+		expect(unreadable.body['projectQuery']).toBe('blank=true');
+		// The older field keeps meaning "skip the source".
+		expect(unreadable.body['selectedQuery']).toBe('');
+	});
+
+	it('projectQuery (pages that always need one project): the project, else blank, never global', async () => {
+		const chosen = await h.call('GET /projects', { query: { project } });
+		expect(chosen.body['projectQuery']).toBe(`project=${enc(project)}`);
+		const none = await h.call('GET /projects');
+		expect(none.body['projectQuery']).toBe('blank=true');
+	});
+
+	it('with nothing registered there is no scope to ask for; a single project is its own scope', async () => {
+		fs.rmSync(projectsRegistryPath(h.world.configDir));
+		const none = await h.call('GET /projects');
+		expect(none.body['scopeQuery']).toBe('blank=true');
+		const solo = h.world.createProject('solo');
+		const single = await h.call('GET /projects');
+		expect(single.body['scopeQuery']).toBe(`project=${enc(solo)}`);
+	});
+
+	it('globalHrefs: the global page matching each project page, only while several projects are registered', async () => {
+		const chosen = await h.call('GET /projects', { query: { project } });
+		expect(chosen.body['globalHrefs']).toEqual({
+			tasks: '/modules/task/tasks',
+			tree: '/modules/task/tree',
+			types: '/modules/task/types',
+		});
+		const unknown = await h.call('GET /projects', { query: { project: '/nowhere/ghost' } });
+		expect(unknown.body['globalHrefs']).toEqual(chosen.body['globalHrefs']);
+		const global = await h.call('GET /projects');
+		expect(global.body['globalHrefs']).toBeNull();
+		fs.rmSync(projectsRegistryPath(h.world.configDir));
+		h.world.createProject('solo');
+		const single = await h.call('GET /projects');
+		expect(single.body['globalHrefs']).toBeNull();
+	});
+
+	it('projectOptions leave out the projects that cannot be read (picking one could only fail)', async () => {
+		const broken = h.world.createProject('broken');
+		fs.rmSync(`${broken}/.task`, { recursive: true });
+		const answer = await h.call('GET /projects');
+		expect(answer.body['projectOptions']).toEqual([
+			{ value: enc(project), label: 'alpha' },
+			{ value: enc(beta), label: 'beta' },
+		]);
+	});
+
+	it('the create form defaults to the only readable project among several, else asks for a choice', async () => {
+		const several = await h.call('GET /projects');
+		expect(several.body['forms']['create']['projectParam']).toBe('');
+		fs.rmSync(`${beta}/.task`, { recursive: true });
+		const one = await h.call('GET /projects');
+		expect(one.body['forms']['create']['projectParam']).toBe(enc(project));
+	});
+
+	it('the delete form never has a default project (destructive: always an explicit choice)', async () => {
+		fs.rmSync(`${beta}/.task`, { recursive: true });
+		const answer = await h.call('GET /projects');
+		expect(answer.body['forms']['delete']['projectParam']).toBe('');
+	});
+
+	it('selectedText names the selected project for the pages, null while none is selected', async () => {
+		const chosen = await h.call('GET /projects', { query: { project } });
+		expect(chosen.body['selectedText']).toBe('Project: alpha');
+		const none = await h.call('GET /projects');
+		expect(none.body['selectedText']).toBeNull();
+	});
+});
+
+describe('blank=true (a view asks it to replace the data of its previous scope)', () => {
+	it.each(['GET /tasks', 'GET /tree', 'GET /types'])(
+		'%s answers an empty body without opening any project',
+		async route => {
+			h.world.createProject('beta');
+			const answer = await h.call(route, { query: { blank: 'true', inlineErrors: 'true' } });
+			expect(answer).toEqual({ status: 200, body: { blank: true } });
+		}
+	);
+
+	it('is rejected for another value', async () => {
+		expect((await h.call('GET /tasks', { query: { blank: 'yes' } })).status).toBe(400);
+	});
+});
+
+describe('delete stays explicit per project', () => {
+	let beta: string;
+
+	beforeEach(() => {
+		beta = h.world.createProject('beta', { configYml: STATUSES_YML });
+	});
+
+	it('the preview and the confirm request name the project, with the path', async () => {
+		await createTask('a');
+		const preview = await h.call('POST /tasks/delete/plan', { query: { project }, body: { all: true } });
+		expect(preview.body['previewText']).toBe('Project alpha: Would delete 1 task(s).');
+		expect(preview.body['projectText']).toBe(
+			`Project alpha (${project}): only its tasks listed above will be deleted.`
+		);
+		expect(preview.body['confirmLabel']).toBe('Delete these tasks from alpha');
+		expect(preview.body['project']).toEqual({ name: 'alpha', path: project });
+	});
+
+	it('the executed delete names the project too', async () => {
+		const id = await createTask('a');
+		const done = await h.call('POST /tasks/delete', { query: { project }, body: { ids: id, confirm: true } });
+		expect(done.body['deletedText']).toBe('Deleted 1 task(s) from project alpha.');
+	});
+
+	it('refuses to run without a project, and ignores allProjects: nothing is ever deleted globally', async () => {
+		await createTask('a');
+		await h.call('POST /tasks', { query: { project: beta }, body: { description: 'b' } });
+		for (const route of ['POST /tasks/delete/plan', 'POST /tasks/delete']) {
+			const answer = await h.call(route, { query: { allProjects: 'true' }, body: { all: true, confirm: true } });
+			expect(answer.status, route).toBe(400);
+			expect(answer.body['error'], route).toContain('project');
+		}
+		const left = await h.call('GET /tasks', { query: { allProjects: 'true' } });
+		expect(left.body['tasks']).toHaveLength(2);
+	});
+
+	it('an empty project (the unselected form select) is a 400 asking to choose, nothing deleted', async () => {
+		await createTask('a');
+		const answer = await h.call('POST /tasks/delete', {
+			query: { project: '' },
+			body: { all: true, confirm: true },
+		});
+		expect(answer.status).toBe(400);
+		expect(answer.body['error']).toContain('no project chosen');
+		const left = await h.call('GET /tasks', { query: { project } });
+		expect(left.body['tasks']).toHaveLength(1);
 	});
 });

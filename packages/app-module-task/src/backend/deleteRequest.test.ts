@@ -94,7 +94,7 @@ describe('delete bodies', () => {
 
 	it('the outcome summary is in the past tense', () => {
 		expect(outcomeBody(project, plan, 3)['summary']).toBe(
-			'Deleted 3 task(s). 1 child task(s) became root tasks (their parent was deleted). 2 link(s) pointing to deleted tasks were removed. Not found: zz.'
+			'Deleted 3 task(s) from project proj. 1 child task(s) became root tasks (their parent was deleted). 2 link(s) pointing to deleted tasks were removed. Not found: zz.'
 		);
 	});
 });

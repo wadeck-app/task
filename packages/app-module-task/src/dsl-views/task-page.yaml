@@ -95,6 +95,10 @@ sections:
             $if: $sources.detail.hrefs
             label: All tasks
             to: $sources.detail.hrefs.tasks
+          - $type: ButtonLink
+            $if: $sources.projects.allProjectsHref
+            label: All projects
+            to: $sources.projects.allProjectsHref
     # Nothing registered yet: the welcome text of the route (the exact next step) instead of a blank page.
     - $type: Badge
       $if: $sources.projects.noProjects

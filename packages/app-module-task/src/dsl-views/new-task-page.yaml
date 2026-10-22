@@ -1,8 +1,12 @@
 # Create a task (route /new). The project comes from ?project=; with several projects registered and none given the form
-# asks for it. The parent list is the open tasks of the project, so it appears once the project is known.
+# asks for it in a select (readable projects only, none preselected unless exactly one is readable). The parent list is
+# the open tasks of the project given in the URL: a project picked in the form cannot feed it (a form cannot cascade), so
+# it appears only when the page was opened for a project.
 # Submits through a named action (conventions of task-page.yaml: projectParam, inline errors, reload);
 # the answer is published as $ctx.created: message, link to the new task, the queue events that were not delivered,
 # or the error (errorText).
+# The `tasks` source is fed by `projectQuery`: the project, else `blank=true` (an empty answer that replaces the
+# parent list of a previous project instead of leaving it on screen).
 # inlineErrors on every source: one failing source discards the answers of all the others (the page stays blank), so a
 # failure is answered as data (`errorText`) and shown by a badge.
 $sources:
@@ -13,7 +17,7 @@ $sources:
     tasks:
         url: GET /api/modules/task/tasks?{query}&inlineErrors=true
         params:
-            query: $source.projects.selectedQuery
+            query: $source.projects.projectQuery
             reload: $urlParam.reload
 
 $actions:
@@ -26,11 +30,18 @@ $type: PageContent
 sections:
     - $type: PageHeader
       title: New task
-      subtitle: $sources.tasks.project.name
     - $type: BackLink
       $if: $sources.projects.tasksHref
       to: $sources.projects.tasksHref
       label: Back to the tasks
+    - $type: BackLink
+      $if: $sources.projects.allProjectsHref
+      to: $sources.projects.allProjectsHref
+      label: All projects
+    - $type: Badge
+      $if: $sources.projects.selectedText
+      label: $sources.projects.selectedText
+      variant: info
     # Nothing registered yet: the welcome text of the route (the exact next step) instead of a blank page.
     - $type: Badge
       $if: $sources.projects.noProjects

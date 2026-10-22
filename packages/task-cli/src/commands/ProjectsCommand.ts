@@ -1,4 +1,4 @@
-// task projects list|add|remove|prune: the projects registered (by `task init` or `add`) with the task app-module. Needs no project.
+// task projects list|add|remove|prune|summary: the projects registered (by `task init` or `add`) with the task app-module. Needs no project.
 import { ConfigDir } from '@wadeck-app/shared-cli';
 import {
 	inspectRegisteredProjects,
@@ -11,6 +11,7 @@ import {
 import type { ProjectHealth } from '@wadeck-app/task-service';
 import * as path from 'node:path';
 
+import { runProjectsSummary } from './GlobalViewCommands.js';
 import { PROJECTS_HELP } from '../cli/help.js';
 import { errorOutput, failure, jsonResult } from '../cli/output.js';
 import type { CommandResult } from '../cli/output.js';
@@ -100,12 +101,14 @@ export function runProjectsCommand(rest: string[], jsonMode: boolean, cwd: strin
 				return runRemove(args, jsonMode, configDir, cwd);
 			case 'prune':
 				return runPrune(args, jsonMode, configDir);
+			case 'summary':
+				return runProjectsSummary(args, jsonMode, configDir);
 			// violations-suppress: ts/no-switch-default-break returns a user-facing error, not a silent fallback
 			default:
 				return errorOutput(
 					jsonMode,
 					`unknown task projects subcommand: ${subCmd}`,
-					'Valid subcommands: list, add, remove, prune'
+					'Valid subcommands: list, add, remove, prune, summary'
 				);
 		}
 	} catch (error) {

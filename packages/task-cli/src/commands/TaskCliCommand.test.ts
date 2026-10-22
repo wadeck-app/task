@@ -1,4 +1,6 @@
 import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { getCurrentTaskVersion, runTaskCliRollback, runTaskCliSelfCheck, runTaskCliVersion } from './TaskCliCommand.js';
@@ -70,8 +72,21 @@ describe('runTaskCliSelfCheck', () => {
 
 describe('runTaskCliRollback', () => {
 	let written: string[];
+	let sandbox: string;
+	let savedXdg: string | undefined;
+	let pkgManifest: string;
 
-	beforeEach(() => {
+	beforeEach(async () => {
+		const realFs = await vi.importActual<typeof import('node:fs')>('node:fs');
+		vi.mocked(fs.existsSync).mockImplementation(realFs.existsSync);
+		vi.mocked(fs.readFileSync).mockImplementation(realFs.readFileSync);
+		// The restored package: an installed app-module, copied (staged) before it is registered.
+		sandbox = realFs.mkdtempSync(path.join(os.tmpdir(), 'task-rollback-'));
+		savedXdg = process.env['XDG_CONFIG_HOME'];
+		process.env['XDG_CONFIG_HOME'] = path.join(sandbox, 'xdg');
+		realFs.mkdirSync(path.join(sandbox, 'pkg', 'app-module'), { recursive: true });
+		pkgManifest = path.join(sandbox, 'pkg', 'app-module', 'manifest.json');
+		realFs.writeFileSync(pkgManifest, JSON.stringify({ version: '1.2.3' }));
 		written = [];
 		vi.spyOn(process.stdout, 'write').mockImplementation(chunk => {
 			written.push(String(chunk));
@@ -88,12 +103,15 @@ describe('runTaskCliRollback', () => {
 
 	afterEach(() => {
 		vi.restoreAllMocks();
+		if (savedXdg === undefined) delete process.env['XDG_CONFIG_HOME'];
+		else process.env['XDG_CONFIG_HOME'] = savedXdg;
+		fs.rmSync(sandbox, { recursive: true, force: true });
 	});
 
 	it('delegates to cliRollbackCommand', async () => {
 		const { cliRollbackCommand } = await import('@wadeck-app/shared-cli/CliMetaCommands');
 		sdk.registerModule.mockResolvedValue({ status: 'skipped' });
-		await runTaskCliRollback({ resolveManifest: () => '/pkg/app-module/manifest.json' });
+		await runTaskCliRollback({ resolveManifest: () => pkgManifest });
 		expect(cliRollbackCommand).toHaveBeenCalledWith('@wadeck-app/task-cli', expect.any(String));
 	});
 
@@ -109,10 +127,14 @@ describe('runTaskCliRollback', () => {
 			return Promise.resolve({ status: 'registered' });
 		});
 
-		await runTaskCliRollback({ resolveManifest: () => '/pkg/app-module/manifest.json' });
+		await runTaskCliRollback({ resolveManifest: () => pkgManifest });
 
 		expect(order).toEqual(['rollback', 'register']);
-		expect(sdk.registerModule).toHaveBeenCalledWith({ id: 'task', manifestPath: '/pkg/app-module/manifest.json' });
+		// The copy in the config dir is registered, not the npm folder (which the next update replaces).
+		expect(sdk.registerModule).toHaveBeenCalledWith({
+			id: 'task',
+			manifestPath: path.join(sandbox, 'xdg', 'task', 'app-module', '1.2.3', 'manifest.json'),
+		});
 		expect(written.join('')).toContain('app-core: described registered');
 	});
 
@@ -120,9 +142,7 @@ describe('runTaskCliRollback', () => {
 		const { cliRollbackCommand } = await import('@wadeck-app/shared-cli/CliMetaCommands');
 		vi.mocked(cliRollbackCommand).mockRejectedValue(new Error('npm install failed'));
 
-		await expect(runTaskCliRollback({ resolveManifest: () => '/pkg/app-module/manifest.json' })).rejects.toThrow(
-			'npm install failed'
-		);
+		await expect(runTaskCliRollback({ resolveManifest: () => pkgManifest })).rejects.toThrow('npm install failed');
 
 		expect(sdk.registerModule).not.toHaveBeenCalled();
 	});
@@ -131,9 +151,7 @@ describe('runTaskCliRollback', () => {
 		sdk.registerModule.mockResolvedValue({ status: 'refused' });
 		sdk.describeRegistration.mockReturnValue('app-core: refused the module (bad manifest)');
 
-		await expect(
-			runTaskCliRollback({ resolveManifest: () => '/pkg/app-module/manifest.json' })
-		).resolves.toBeUndefined();
+		await expect(runTaskCliRollback({ resolveManifest: () => pkgManifest })).resolves.toBeUndefined();
 
 		expect(written.join('')).toContain('app-core: refused the module (bad manifest)');
 		expect(written.join('')).toContain('task cli register');
@@ -142,9 +160,7 @@ describe('runTaskCliRollback', () => {
 	it('never fails the rollback when the SDK rejects', async () => {
 		sdk.registerModule.mockRejectedValue(new Error('socket hang up'));
 
-		await expect(
-			runTaskCliRollback({ resolveManifest: () => '/pkg/app-module/manifest.json' })
-		).resolves.toBeUndefined();
+		await expect(runTaskCliRollback({ resolveManifest: () => pkgManifest })).resolves.toBeUndefined();
 
 		expect(written.join('')).toContain('socket hang up');
 	});

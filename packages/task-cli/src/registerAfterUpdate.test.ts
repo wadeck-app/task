@@ -2,7 +2,15 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { registerWithAppCore } from './AppCoreRegistration.js';
 import { readAppModuleVersion, registerAfterUpdate } from './registerAfterUpdate.js';
+
+const sdk = vi.hoisted(() => ({
+	registerModule: vi.fn(),
+	unregisterModule: vi.fn(),
+	describeRegistration: vi.fn(),
+}));
+vi.mock('@wadeck-app/app-core-sdk/register', () => sdk);
 
 let installDir: string;
 let manifestPath: string;
@@ -101,6 +109,50 @@ describe('registerAfterUpdate', () => {
 		await registerAfterUpdate({ manifestPath, before: { version: '1' }, register, log });
 		expect(register).not.toHaveBeenCalled();
 		expect(lines.join('\n')).toContain('manifest.json');
+		expect(lines.join('\n')).toContain('task cli register');
+	});
+});
+
+describe('registerAfterUpdate with the real registration (staging)', () => {
+	let savedXdg: string | undefined;
+
+	beforeEach(() => {
+		savedXdg = process.env['XDG_CONFIG_HOME'];
+		process.env['XDG_CONFIG_HOME'] = path.join(installDir, 'xdg');
+		sdk.describeRegistration.mockImplementation((outcome: { status: string }) => `app-core: ${outcome.status}`);
+	});
+
+	afterEach(() => {
+		if (savedXdg === undefined) delete process.env['XDG_CONFIG_HOME'];
+		else process.env['XDG_CONFIG_HOME'] = savedXdg;
+	});
+
+	it('registers the copy in the task config dir, which outlives the npm folder, and drops the previous copy', async () => {
+		const staged = (version: string): string =>
+			path.join(installDir, 'xdg', 'task', 'app-module', version, 'manifest.json');
+		sdk.registerModule.mockResolvedValue({ status: 'registered' });
+
+		writeManifest(JSON.stringify({ version: '1' }));
+		await registerAfterUpdate({ manifestPath, before: { absent: true }, register: registerWithAppCore, log });
+		writeManifest(JSON.stringify({ version: '2' }));
+		await registerAfterUpdate({ manifestPath, before: { version: '1' }, register: registerWithAppCore, log });
+
+		expect(sdk.registerModule).toHaveBeenLastCalledWith({ id: 'task', manifestPath: staged('2') });
+		expect(fs.existsSync(staged('2'))).toBe(true);
+		expect(fs.existsSync(staged('1'))).toBe(false);
+		// Uninstall: the path app-core remembers is still there.
+		fs.rmSync(path.join(installDir, 'app-module'), { recursive: true, force: true });
+		expect(fs.existsSync(staged('2'))).toBe(true);
+	});
+
+	it('logs the staging failure with the manual fix instead of throwing', async () => {
+		writeManifest(JSON.stringify({ version: '1' }));
+		// A file where the task config dir should be.
+		fs.writeFileSync(path.join(installDir, 'xdg'), 'x');
+		await expect(
+			registerAfterUpdate({ manifestPath, before: { absent: true }, register: registerWithAppCore, log })
+		).resolves.toBeUndefined();
+		expect(sdk.registerModule).not.toHaveBeenCalled();
 		expect(lines.join('\n')).toContain('task cli register');
 	});
 });

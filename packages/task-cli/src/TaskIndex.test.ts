@@ -218,9 +218,37 @@ describe('runTaskCommand — set-status error messages', () => {
 		const task = JSON.parse(created.output) as { id: string };
 		const result = await runTaskCommand(['--json', 'set-status', task.id, 'nope'], tmpDir);
 		expect(result.exitCode).toBe(1);
-		const parsed = JSON.parse(result.output) as { error: string };
-		// Same wording as the text mode (`unknown status "..."`), with the valid values since JSON carries no hint line.
-		expect(parsed.error).toBe('unknown status "nope". Valid statuses: backlog, in-progress, done');
+		const parsed = JSON.parse(result.output) as { error: string; hint: string };
+		// Same wording as the text mode: the message, and the hint line as its own key.
+		expect(parsed).toEqual({
+			error: 'unknown status "nope"',
+			hint: 'Valid statuses: backlog, in-progress, done\nDid you mean: done?',
+		});
+	});
+
+	it('--json keeps the "Did you mean" suggestion in the hint', async () => {
+		const created = await runTaskCommand(['new', 'json typo'], tmpDir);
+		const task = JSON.parse(created.output) as { id: string };
+		const result = await runTaskCommand(['--json', 'set-status', task.id, 'in-progres'], tmpDir);
+		expect((JSON.parse(result.output) as { hint: string }).hint).toContain('Did you mean: in-progress');
+	});
+
+	it('--json link with an unknown link type carries the valid types and the suggestion in the hint', async () => {
+		const a = JSON.parse((await runTaskCommand(['new', 'a'], tmpDir)).output) as { id: string };
+		const b = JSON.parse((await runTaskCommand(['new', 'b'], tmpDir)).output) as { id: string };
+		const result = await runTaskCommand(['--json', 'link', a.id, 'blockedby', b.id], tmpDir);
+		expect(result.exitCode).toBe(1);
+		const parsed = JSON.parse(result.output) as { error: string; hint: string };
+		expect(parsed.error).toContain('unknown link type');
+		expect(parsed.hint).toContain('Valid types: ');
+	});
+
+	it('--json set-type with a type outside the configured list names the valid types in the error (the strategy puts them in the message, there is no separate hint)', async () => {
+		await runTaskCommand(['type', 'add', 'bug'], tmpDir);
+		const a = JSON.parse((await runTaskCommand(['new', 'a'], tmpDir)).output) as { id: string };
+		const result = await runTaskCommand(['--json', 'set-type', a.id, 'bgu'], tmpDir);
+		expect(result.exitCode).toBe(1);
+		expect((JSON.parse(result.output) as { error: string }).error).toBe('unknown type "bgu". Valid types: bug');
 	});
 });
 

@@ -7,10 +7,10 @@ export interface CommandResult {
 	output: string;
 }
 
-/** A failed command: `{"error": ...}` in JSON mode, else `Error: <message>` followed by the hint line. */
+/** A failed command: `{"error": ..., "hint": ...}` in JSON mode (no `hint` key without one), else `Error: <message>` followed by the hint line. */
 export function errorOutput(jsonMode: boolean, message: string, hint?: string): CommandResult {
 	if (jsonMode) {
-		return { exitCode: 1, output: JSON.stringify({ error: message }) };
+		return { exitCode: 1, output: JSON.stringify(hint ? { error: message, hint } : { error: message }) };
 	}
 	const lines = [`Error: ${message}`];
 	if (hint) lines.push(hint);

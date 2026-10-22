@@ -32,7 +32,7 @@ export function withTreeLinks(project: ProjectRef, nodes: TaskTreeNode[]): unkno
 
 // Indentation of the flat tree view: em spaces survive HTML whitespace collapsing, unlike plain spaces.
 const EM_SPACE = String.fromCodePoint(0x2003);
-const BRANCH = String.fromCodePoint(0x2514);
+export const BRANCH = String.fromCodePoint(0x2514);
 
 interface TreeRow {
 	id: string;

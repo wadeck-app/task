@@ -108,7 +108,7 @@ describe('tasks page: global list without ?project (src/dsl-views/tasks-page.yam
 	it('shares the tasks source with the project page, fed by the route tasksQuery (project or global), with inlineErrors and reload', () => {
 		const block = page.slice(page.indexOf('    tasks:'), page.indexOf('$type: PageContent'));
 		expect(block).toContain('url: GET /api/modules/task/tasks?{query}&inlineErrors=true');
-		expect(block).toContain('query: $source.projects.tasksQuery');
+		expect(block).toContain('query: $source.projects.scopeQuery');
 		expect(block).toContain('reload: $urlParam.reload');
 	});
 
@@ -296,6 +296,108 @@ describe('list pages', () => {
 	});
 });
 
+describe('tree page: global forest without ?project (src/dsl-views/tree-page.yaml)', () => {
+	const page = view('tree-page.yaml');
+
+	it('has one tree source for both scopes, fed by scopeQuery (an unknown project asks for the blank answer, so no stale rows stay)', () => {
+		const block = sourceBlocks(page).get('tree')!;
+		expect(block).toContain('url: GET /api/modules/task/tree?{query}&inlineErrors=true');
+		expect(block).toContain('query: $source.projects.scopeQuery');
+		expect(block).toContain('reload: $urlParam.reload');
+	});
+
+	it('no longer asks for a project choice, shows the scope, the skipped-projects warning and the way back', () => {
+		expect(page).not.toContain('needsSelection');
+		expect(page).not.toContain('pick one');
+		expect(page).toContain('label: $sources.tree.scopeText');
+		expect(page).toContain('label: $sources.tree.warning');
+		expect(page).toContain('label: All projects');
+		expect(page).toContain('label: $sources.projects.unknownProjectText');
+	});
+
+	it('shows the rows in either scope with a row click, and the show-closed button once', () => {
+		expect(page).toContain('rows: $sources.tree.rows');
+		expect(page.match(/label: \$sources\.tree\.showAllToggle\.label/g)).toHaveLength(1);
+		expect(page).toContain('$if: $sources.tree.scopeText');
+		expect(page).toContain('$if: $sources.tree.project');
+	});
+});
+
+describe('types page: all projects side by side without ?project (src/dsl-views/types-page.yaml)', () => {
+	const page = view('types-page.yaml');
+
+	it('has one types source for both scopes, fed by scopeQuery', () => {
+		const block = sourceBlocks(page).get('types')!;
+		expect(block).toContain('url: GET /api/modules/task/types?{query}&inlineErrors=true');
+		expect(block).toContain('query: $source.projects.scopeQuery');
+	});
+
+	it('lists the types with a Project column in the global scope, every row opening its project', () => {
+		const table = page.slice(page.indexOf('$if: $sources.types.scopeText\n      rows'));
+		expect(table).toContain("navigateTo: '{href}'");
+		expect(table).toContain("key: 'projectName'");
+		expect(table).toContain("key: 'typeText'");
+		expect(table.indexOf("key: 'projectName'")).toBeLessThan(table.indexOf("key: 'typeText'"));
+		expect(page).toContain('label: $sources.types.warning');
+	});
+
+	it('adds to a project chosen in the form (no default), and removes only inside a project', () => {
+		expect(page).toMatch(
+			/\$type: FieldSelect\n {12}\$if: \$sources\.types\.projectOptions\n {12}label: Project\n {12}bind: projectParam/
+		);
+		expect(page).toContain('options: $sources.types.projectOptions');
+		expect(page).toContain('placeholder: Choose a project');
+		expect(page).toMatch(/\$if: \$sources\.types\.restricted\n {6}onSubmit: \$ctx\.removeType/);
+	});
+
+	it('no longer asks for a project choice, and says which project it shows', () => {
+		expect(page).not.toContain('needsSelection');
+		expect(page).toContain('label: $sources.projects.unknownProjectText');
+		expect(page).toContain('label: $sources.types.projectText');
+	});
+});
+
+describe('new task and delete pages: an explicit project selector', () => {
+	it('the new task page lists only readable projects (projectOptions), asks for the blank answer without a project', () => {
+		const page = view('new-task-page.yaml');
+		expect(sourceBlocks(page).get('tasks')).toContain('query: $source.projects.projectQuery');
+		expect(page).toContain('options: $sources.projects.projectOptions');
+		expect(page).toContain('label: $sources.projects.selectedText');
+	});
+
+	it('the delete page names the project in the preview and at the confirm button, and stays per project', () => {
+		const page = view('delete-page.yaml');
+		expect(page).toContain('options: $sources.projects.projectOptions');
+		expect(page).toContain('placeholder: Choose a project');
+		expect(page).toContain('label: $ctx.plan.projectText');
+		expect(page).toContain('label: $ctx.plan.confirmLabel');
+		expect(page).not.toContain('allProjects=true');
+		expect(page).not.toContain('globalHrefs');
+		expect(page).toContain('label: $sources.projects.selectedText');
+	});
+});
+
+describe('views: "All projects" leads back from every per-project page when several projects are registered', () => {
+	it.each([
+		['tasks-page.yaml', '$sources.projects.allProjectsHref'],
+		['tree-page.yaml', '$sources.projects.globalHrefs.tree'],
+		['types-page.yaml', '$sources.projects.globalHrefs.types'],
+		['new-task-page.yaml', '$sources.projects.allProjectsHref'],
+		['delete-page.yaml', '$sources.projects.allProjectsHref'],
+		['task-page.yaml', '$sources.projects.allProjectsHref'],
+		['task-history-page.yaml', '$sources.projects.allProjectsHref'],
+	])('%s links to %s', (name, target) => {
+		const text = view(name);
+		expect(text, name).toContain(`to: ${target}`);
+		expect(text, name).toContain(`$if: ${target}`);
+		expect(text, name).toContain('label: All projects');
+	});
+
+	it('the tasks page shows the error of its source once', () => {
+		expect(view('tasks-page.yaml').match(/label: \$sources\.tasks\.errorText/g)).toHaveLength(1);
+	});
+});
+
 /** The `$sources:` blocks of a view: name -> its lines. */
 function sourceBlocks(text: string): Map<string, string> {
 	const blocks = new Map<string, string>();
@@ -392,14 +494,6 @@ describe('views: feedback and refresh conventions found by driving the pages in 
 		expect(view('task-page.yaml')).toContain("key: 'titleText'");
 		expect(view('task-history-page.yaml')).toContain('$sources.history.rows');
 		expect(view('task-history-page.yaml')).toContain("key: 'time'");
-	});
-
-	it('tree and types pages offer the projects to pick from when several are registered', () => {
-		for (const name of ['tree-page.yaml', 'types-page.yaml']) {
-			const text = view(name);
-			expect(text, name).toContain('$if: $sources.projects.needsSelection');
-			expect(text, name).toContain('rows: $sources.projects.projects');
-		}
 	});
 
 	it('the delete page clears the preview and the confirm button once the delete ran (both answers share the plan state)', () => {

@@ -18,6 +18,9 @@ Usage:
   task list [--json] [--all] [--follow|-f]   List tasks as JSON array (hides terminal statuses unless --all)
   task list --parent <id>                    List only the direct children of a task
   task list --tree                           List tasks as a nested forest (kept: matching tasks + the ancestors leading to them)
+  task list --all-projects [--all] [--json]  List the tasks of every registered project (Project column; text table, --json: tasks tagged with their project);
+                                             needs no project; unreadable projects on stderr; exit 1 only if none can be read;
+                                             cannot be combined with --follow, --tree, --parent or --project-dir
   task show <id> [--json] [--with-parent] [--with-children]   Show task detail (always incl. parentId, childrenIds); flags add parent/children summaries
   task history <id> [--json] [--follow|-f]   Show status-change history for a task
   task set-status <id> <status>              Update task status (valid values from .task/config.yml)
@@ -52,10 +55,11 @@ Usage:
   task projects add [dir] [--json]           Register an initialized project (default: the cwd) with the app-module
   task projects remove <dir> [--json]        Unregister a project directory (its .task is left untouched)
   task projects prune [--dry-run] [--json]   Unregister the projects whose directory no longer exists
+  task projects summary [--json]             Open/total tasks per registered project and in total (unreadable projects listed with their reason)
 
 Global flags:
   --config <dir>       Global config directory (default: ~/.task)
-  --json               Force JSON output; errors become {"error":"..."}
+  --json               Force JSON output; errors become {"error":"...","hint":"..."} (no "hint" key when there is none)
   --project-dir <dir>  Override project directory (also: TASK_PROJECT_DIR env var)
 
 Output: all commands output JSON (tasks are JSON objects with id, description, status, type, labels, meta)
@@ -77,6 +81,8 @@ Usage:
   task projects add [dir] [--json]           Register a directory holding a .task (default: the cwd); idempotent; not initialized: run 'task init' there
   task projects remove <dir> [--json]        Unregister a directory (relative paths resolve against the cwd); .task is left untouched
   task projects prune [--dry-run] [--json]   Unregister every project whose directory no longer exists; --dry-run only prints them
+  task projects summary [--json]             Open/total tasks per project and in total; an unreadable project shows its reason and is not counted;
+                                             exit 1 only when registered projects exist and none can be read
   task projects --help                       Show this help
 
 The registry is <config dir>/projects.json. These commands need no initialized project.`;

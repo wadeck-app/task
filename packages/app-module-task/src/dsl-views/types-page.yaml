@@ -1,5 +1,12 @@
-# Task types of one project (nav /types), stored in .task/config.yml. With no type configured any text is accepted for
+# Task types (nav /types), stored in each project's .task/config.yml. With no type configured any text is accepted for
 # the type of a task; as soon as one is configured the type of a task must be one of them.
+# With ?project=<absolute dir> (optional when a single project is registered): the types of that project, which can be
+# added to and removed. WITHOUT ?project and with several projects registered: the types of every project side by side
+# (Project column, a row click opens that project). Adding is possible there too, to the project picked in the form (none
+# preselected, unreadable ones are not offered); removing is not: the types to choose from depend on the project, which a
+# form cannot cascade, so it stays on the page of one project.
+# One `types` source for every scope, fed by `scopeQuery` (see tasks-page.yaml).
+# A header with actions shows no subtitle: the project is named by `projectText` below it.
 # Forms submit through named actions (see task-page.yaml for the conventions: projectParam, inline errors, reload).
 # inlineErrors on every source: one failing source discards the answers of all the others (the page stays blank), so a
 # failure is answered as data (`errorText`) and shown by a badge.
@@ -11,7 +18,7 @@ $sources:
     types:
         url: GET /api/modules/task/types?{query}&inlineErrors=true
         params:
-            query: $source.projects.selectedQuery
+            query: $source.projects.scopeQuery
             reload: $urlParam.reload
 
 $actions:
@@ -29,7 +36,11 @@ $type: PageContent
 sections:
     - $type: PageHeader
       title: Types
-      subtitle: $sources.types.project.name
+      headerActions:
+          - $type: ButtonLink
+            $if: $sources.projects.globalHrefs.types
+            label: All projects
+            to: $sources.projects.globalHrefs.types
     # Nothing registered yet: the welcome text of the route (the exact next step) instead of a blank page.
     - $type: Badge
       $if: $sources.projects.noProjects
@@ -40,17 +51,14 @@ sections:
       label: $sources.projects.selectedProblem
       variant: danger
     - $type: Badge
-      $if: $sources.projects.needsSelection
-      label: Several projects are registered, pick one to see its types.
-      variant: warning
-    - $type: DataTable
-      $if: $sources.projects.needsSelection
-      rows: $sources.projects.projects
-      navigateTo: '{href}'
-      columns:
-          - { key: 'name', label: 'Project' }
-          - { key: 'openCount', label: 'Open tasks' }
-          - { key: 'error', label: 'Problem' }
+      $if: $sources.types.projectText
+      label: $sources.types.projectText
+      variant: info
+    # ?project=... names a directory the registry does not know: said, with the way back, not a blank page.
+    - $type: Badge
+      $if: $sources.projects.unknownProjectText
+      label: $sources.projects.unknownProjectText
+      variant: danger
     - $type: Badge
       $if: $sources.types.errorText
       label: $sources.types.errorText
@@ -63,6 +71,23 @@ sections:
       $if: $sources.types.restricted
       label: Task types are restricted to this list.
       variant: info
+    # All projects: what it covers and the projects it could not read (never dropped).
+    - $type: Badge
+      $if: $sources.types.scopeText
+      label: $sources.types.scopeText
+      variant: info
+    - $type: Badge
+      $if: $sources.types.warning
+      label: $sources.types.warning
+      variant: warning
+    - $type: DataTable
+      $if: $sources.types.scopeText
+      rows: $sources.types.rows
+      navigateTo: '{href}'
+      emptyMessage: No project to show
+      columns:
+          - { key: 'projectName', label: 'Project' }
+          - { key: 'typeText', label: 'Type' }
     - $type: DataTable
       $if: $sources.types.project
       rows: $sources.types.rows
@@ -74,6 +99,13 @@ sections:
       onSubmit: $ctx.addType
       initialData: $sources.types.forms.add
       fields:
+          # Only in the global scope: the project the type is added to is picked here, never guessed.
+          - $type: FieldSelect
+            $if: $sources.types.projectOptions
+            label: Project
+            bind: projectParam
+            options: $sources.types.projectOptions
+            placeholder: Choose a project
           - $type: FieldText
             label: New type
             bind: name

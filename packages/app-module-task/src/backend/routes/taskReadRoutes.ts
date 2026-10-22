@@ -13,10 +13,18 @@ import {
 	showTaskWithRelations,
 } from '@wadeck-app/task-service';
 
-import { allTasksBody } from '../allProjectsViews.js';
+import { readAcrossProjects } from '../acrossProjects.js';
+import { allForestBody, allTasksBody } from '../allProjectsViews.js';
 import { shortUtcTime } from '../display.js';
 import { RequestError } from '../errors.js';
-import { booleanFlag, optionalQueryValue, queryValue, showAllFlag } from '../request.js';
+import {
+	allProjectsFlag,
+	BLANK_ANSWER,
+	booleanFlag,
+	isBlankRequest,
+	optionalQueryValue,
+	showAllFlag,
+} from '../request.js';
 import { withRowLinks, linkRows } from '../rowViews.js';
 import { childrenBody, forestBody, taskDetailBody, taskTreeBody, tasksListBody } from '../taskViews.js';
 import { taskId } from './routeKit.js';
@@ -26,15 +34,9 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 	const { route, open } = kit;
 
 	route('GET', '/tasks', req => {
+		if (isBlankRequest(req.query)) return BLANK_ANSWER;
 		const showAll = showAllFlag(req.query);
-		if (booleanFlag(req.query, 'allProjects', 'Use ?allProjects=true for the tasks of every registered project.')) {
-			if (queryValue(req.query, 'project') !== undefined) {
-				throw new RequestError(
-					400,
-					'allProjects and project cannot be combined',
-					'Use ?allProjects=true for every registered project, or ?project=<absolute dir> for one.'
-				);
-			}
+		if (allProjectsFlag(req.query, 'the tasks')) {
 			return { status: 200, body: allTasksBody(listTasksAcrossProjects(kit.configDir, { showAll }), showAll) };
 		}
 		const ctx = open(req);
@@ -95,6 +97,22 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 	});
 
 	route('GET', '/tree', req => {
+		if (isBlankRequest(req.query)) return BLANK_ANSWER;
+		if (allProjectsFlag(req.query, 'the trees')) {
+			// A task id or a parent names one project: it cannot narrow the forest of all of them.
+			for (const name of ['id', 'parent']) {
+				if (optionalQueryValue(req.query, name) !== undefined) {
+					throw new RequestError(
+						400,
+						`allProjects and ${name} cannot be combined`,
+						`A task ${name} belongs to one project: use ?project=<absolute dir>&${name}=<id>.`
+					);
+				}
+			}
+			const showAll = showAllFlag(req.query);
+			const found = readAcrossProjects(kit.configDir, ctx => listForest(ctx, { showAll }));
+			return { status: 200, body: allForestBody(found, showAll) };
+		}
 		const ctx = open(req);
 		const rootOf = optionalQueryValue(req.query, 'id');
 		if (rootOf !== undefined) {

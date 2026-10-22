@@ -3,7 +3,14 @@ import { isSameProjectDir, summarizeProject, summarizeProjects } from '@wadeck-a
 import type { ProjectOverview, ProjectsSummary } from '@wadeck-app/task-service';
 
 import { projectRows, skippedOf, skippedWarning } from '../allProjectsViews.js';
-import { allProjectsTasksHref, MODULE_ID, selectedQuery, tasksPageHref } from '../hrefs.js';
+import {
+	allProjectsPageHref,
+	allProjectsTasksHref,
+	MODULE_ID,
+	projectText,
+	selectedQuery,
+	tasksPageHref,
+} from '../hrefs.js';
 import { listProjects, NO_PROJECT_HINT, openProject } from '../projects.js';
 import type { ProjectListing } from '../projects.js';
 import { optionalQueryValue, queryValue } from '../request.js';
@@ -78,6 +85,13 @@ export function registerProjectRoutes(kit: RouteKit): void {
 		const readable = selected !== undefined && selected.error === null;
 		const projectQuery = selectedQuery(readable ? selected.path : undefined, req.query);
 		const global = needsSelection && requested === undefined ? globalQuery(req.query) : '';
+		// A source asked for nothing keeps the answer of the previous scope in the shell: it asks for this empty answer instead.
+		const projectOrBlank = projectQuery === '' ? 'blank=true' : projectQuery;
+		const readableProjects = projects.filter(entry => entry.error === null);
+		// Several projects, one of them readable: nothing to hesitate over for a creation. Never for a deletion.
+		const onlyReadable = projects.length > 1 && readableProjects.length === 1 ? readableProjects[0] : undefined;
+		const createProject = selected === undefined ? onlyReadable : selected;
+		const backToGlobal = projects.length > 1 && (selected !== undefined || unknownProject);
 		const selectedProblem = selected === undefined || selected.error === null ? null : problemText(selected);
 		return {
 			status: 200,
@@ -94,11 +108,22 @@ export function registerProjectRoutes(kit: RouteKit): void {
 				needsSelection,
 				// The Tasks page across all projects: its source query while several projects exist and none is asked for.
 				globalQuery: global,
-				// What the Tasks page asks GET /tasks: the project, else the global list. One source for both, so the page never keeps the answer of the other scope.
-				tasksQuery: projectQuery === '' ? global : projectQuery,
+				// What the Tasks, Tree and Types pages ask their one source: the project, else the global scope, else an empty answer.
+				// One source for every scope, so the page never keeps the answer of the previous one (also when the project is unknown).
+				scopeQuery: projectQuery !== '' ? projectQuery : global !== '' ? global : 'blank=true',
+				// What the pages that always work on one project ask (the New task page): the project, else an empty answer.
+				projectQuery: projectOrBlank,
 				// Back to the global Tasks page from a project (or from an unknown one); a single project has no global view.
-				allProjectsHref:
-					projects.length > 1 && (selected !== undefined || unknownProject) ? allProjectsTasksHref() : null,
+				allProjectsHref: backToGlobal ? allProjectsTasksHref() : null,
+				// The same, for the page being shown: the matching global page of each module page.
+				globalHrefs: backToGlobal
+					? {
+							tasks: allProjectsTasksHref(),
+							tree: allProjectsPageHref('tree'),
+							types: allProjectsPageHref('types'),
+						}
+					: null,
+				selectedText: selected === undefined ? null : projectText(selected),
 				unknownProjectText: unknownProject
 					? `Project "${requested}" is not registered with the task app-module. Pick a registered project from "All projects", or register it with \`task projects add <dir>\`.`
 					: null,
@@ -106,13 +131,22 @@ export function registerProjectRoutes(kit: RouteKit): void {
 				selectedProblem,
 				selectedQuery: projectQuery,
 				tasksHref: selected === undefined ? `/modules/${MODULE_ID}/tasks` : tasksPageHref(selected.path),
-				projectOptions: projects.map(entry => ({ value: encodeURIComponent(entry.path), label: entry.name })),
+				// Only the projects that can be read: picking another one could only fail.
+				projectOptions: readableProjects.map(entry => ({
+					value: encodeURIComponent(entry.path),
+					label: entry.name,
+				})),
 				// No project, or a selected one that cannot be read: no form either (its submit could only fail); the views gate their forms on it.
 				forms:
 					projects.length === 0 || selectedProblem !== null
 						? null
 						: {
-								create: { ...base, description: '', parent: '' },
+								create: {
+									projectParam:
+										createProject === undefined ? '' : encodeURIComponent(createProject.path),
+									description: '',
+									parent: '',
+								},
 								delete: { ...base, ids: '', filter: '', all: false, cascade: false },
 							},
 			},

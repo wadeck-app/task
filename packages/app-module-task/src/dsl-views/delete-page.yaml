@@ -30,6 +30,14 @@ sections:
       $if: $sources.projects.tasksHref
       to: $sources.projects.tasksHref
       label: Back to the tasks
+    - $type: BackLink
+      $if: $sources.projects.allProjectsHref
+      to: $sources.projects.allProjectsHref
+      label: All projects
+    - $type: Badge
+      $if: $sources.projects.selectedText
+      label: $sources.projects.selectedText
+      variant: warning
     # Nothing registered yet: the welcome text of the route (the exact next step) instead of a blank page.
     - $type: Badge
       $if: $sources.projects.noProjects
@@ -85,6 +93,11 @@ sections:
           - { key: 'id', label: 'ID', mono: true }
           - { key: 'title', label: 'Title' }
           - { key: 'status', label: 'Status' }
+    # Which project the next button deletes from: said where the click happens.
+    - $type: Badge
+      $if: $ctx.plan.canConfirm
+      label: $ctx.plan.projectText
+      variant: danger
     - $type: Form
       $if: $ctx.plan.canConfirm
       onSubmit: $ctx.deleteTasks
@@ -92,6 +105,6 @@ sections:
       fields: []
       actions:
           - $type: ButtonAction
-            label: Delete these tasks
+            label: $ctx.plan.confirmLabel
             variant: danger
             type: submit

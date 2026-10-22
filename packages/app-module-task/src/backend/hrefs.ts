@@ -30,9 +30,14 @@ export function tasksPageHref(projectPath: string): string {
 	return `/modules/${MODULE_ID}/tasks?project=${encodeURIComponent(projectPath)}`;
 }
 
+/** A module page across all projects (no project in the query); `showAll` lists the closed tasks too. */
+export function allProjectsPageHref(page: 'tasks' | 'tree' | 'types', showAll = false): string {
+	return `/modules/${MODULE_ID}/${page}${showAll ? '?showAll=true' : ''}`;
+}
+
 /** The Tasks page across all projects (no project in the query); `showAll` lists the closed tasks too. */
 export function allProjectsTasksHref(showAll = false): string {
-	return `/modules/${MODULE_ID}/tasks${showAll ? '?showAll=true' : ''}`;
+	return allProjectsPageHref('tasks', showAll);
 }
 
 export function detailHref(project: { path: string }, taskId: string): string {

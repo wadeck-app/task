@@ -1,9 +1,11 @@
 // Routes of the project task types and of the (previewed, confirmed) deletion of tasks.
 import { addType, executeDelete, listTypes, planDelete, removeType } from '@wadeck-app/task-service';
 
+import { readAcrossProjects } from '../acrossProjects.js';
+import { allTypesBody } from '../allProjectsViews.js';
 import { DELETE_USAGE, deleteInput, outcomeBody, planBody } from '../deleteRequest.js';
 import { RequestError } from '../errors.js';
-import { bodyObject, requiredString } from '../request.js';
+import { allProjectsFlag, BLANK_ANSWER, bodyObject, isBlankRequest, requiredString } from '../request.js';
 import { typesBody } from '../taskViews.js';
 import type { RouteKit } from './routeKit.js';
 
@@ -13,6 +15,10 @@ export function registerTypeRoutes(kit: RouteKit): void {
 	const { route, open } = kit;
 
 	route('GET', '/types', req => {
+		if (isBlankRequest(req.query)) return BLANK_ANSWER;
+		if (allProjectsFlag(req.query, 'the types')) {
+			return { status: 200, body: allTypesBody(readAcrossProjects(kit.configDir, ctx => listTypes(ctx))) };
+		}
 		const ctx = open(req);
 		return { status: 200, body: typesBody(ctx.project, listTypes(ctx)) };
 	});
