@@ -1,5 +1,5 @@
 import type { ModuleContext } from '@wadeck-app/app-core-sdk';
-import type { EventSink, TaskEvent, TaskServiceContext } from '@wadeck-app/task-service';
+import type { EventSink, QueueEventSinkOptions, TaskEvent, TaskServiceContext } from '@wadeck-app/task-service';
 
 import { toHttpError, toInlineError } from '../errors.js';
 import { openProject } from '../projects.js';
@@ -14,6 +14,8 @@ export interface TaskRoutesOptions {
 	configDir?: string;
 	/** Destination of the events produced by mutating routes. Default: the queue sink, logging under `<configDir>/logs`. */
 	eventSink?: EventSink;
+	/** Builds the queue SDK publisher of the default sink (tests inject a fake). Ignored when `eventSink` is given. */
+	createPublisher?: QueueEventSinkOptions['createPublisher'];
 	/** Where 5xx failures are reported besides the task log. Default: process.stderr (app-core's own output). */
 	writeStderr?: (text: string) => void;
 }

@@ -1,5 +1,8 @@
 {
 	"id": "task",
+	"lifecycle": {
+		"teardown": "./src/backend/teardown.ts"
+	},
 	"extensionPoints": [
 		{
 			"kind": "widget",

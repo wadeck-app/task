@@ -6,7 +6,7 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { TaskConfigLoader } from '@wadeck-app/task-core';
-import { createQueueEventSink, getTaskLogDir, openTaskContext, resolveQueueJsPath } from '@wadeck-app/task-service';
+import { createQueueEventSink, getTaskLogDir, openTaskContext } from '@wadeck-app/task-service';
 import { TASK_BUNDLE_NAME } from './TaskBundleName.js';
 import { parseArgs } from './cli/args.js';
 import type { CommandEnv } from './cli/env.js';
@@ -71,11 +71,7 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 			command,
 			jsonMode,
 			ctx: openTaskContext({ projectDir: effectiveCwd, globalConfigDir: configDir }),
-			// A one-shot CLI has no event loop to keep responsive: the synchronous lookup is kept (the HTTP routes use the async default).
-			eventSink: createQueueEventSink({
-				getLogDir: () => getTaskLogDir(ConfigDir.get('task')),
-				resolveQueueJs: resolveQueueJsPath,
-			}),
+			eventSink: createQueueEventSink({ getLogDir: () => getTaskLogDir(ConfigDir.get('task')) }),
 		};
 	} catch (error) {
 		return failure(jsonMode, error);
@@ -85,7 +81,12 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 	if (handler === undefined) {
 		return errorOutput(jsonMode, `unknown command: ${command}`, VALID_COMMANDS_HINT);
 	}
-	return handler(rest, env);
+	try {
+		return await handler(rest, env);
+	} finally {
+		// main() exits the process right after: let the queue SDK finish what it has in flight first.
+		await env.eventSink.flush?.();
+	}
 }
 
 async function main(): Promise<void> {

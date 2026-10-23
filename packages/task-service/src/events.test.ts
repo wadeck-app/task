@@ -47,8 +47,26 @@ describe('deliverEvents', () => {
 
 		expect(outcome).toEqual({
 			delivered: 2,
-			undelivered: [{ event: unlinked, reason: 'exit 3', replay: replayCommand(unlinked) }],
+			undelivered: [{ event: unlinked, reason: 'exit 3', status: 'dropped', replay: replayCommand(unlinked) }],
 		});
+	});
+
+	it('keeps the status and the replay text a sink reports, the replay command being only the default', async () => {
+		const sink: EventSink = {
+			deliver: () =>
+				Promise.resolve({
+					delivered: false,
+					reason: 'maybe',
+					status: 'unknown',
+					replay: 'check queue history',
+				}),
+		};
+
+		const outcome = await deliverEvents(sink, [linked]);
+
+		expect(outcome.undelivered).toEqual([
+			{ event: linked, reason: 'maybe', status: 'unknown', replay: 'check queue history' },
+		]);
 	});
 
 	it('reports nothing undelivered for an empty list', async () => {

@@ -106,6 +106,15 @@ describe('the rules detect what they forbid', () => {
 		expect(violationsIn('task-service', "import { x } from '@wadeck-app/task-core';")).toEqual([]);
 	});
 
+	// The queue SDK is the shared delivery adapter of the events (queueEventSink.ts): both adapters get it through task-service.
+	it('task-service may import the queue SDK, while shared-cli and app-core stay forbidden there', () => {
+		expect(violationsIn('task-service', "import { createQueuePublisher } from '@wadeck-app/queue-sdk';")).toEqual(
+			[]
+		);
+		expect(violationsIn('task-service', "import { x } from '@wadeck-app/shared-cli';")).toHaveLength(1);
+		expect(violationsIn('task-service', "import { x } from '@wadeck-app/app-core-sdk';")).toHaveLength(1);
+	});
+
 	it('a forbidden package.json dependency is reported', () => {
 		const found = checkManifest('p.json', { dependencies: { 'task-cli': '*' } }, PACKAGE_RULES['app-module-task']);
 		expect(found).toHaveLength(1);

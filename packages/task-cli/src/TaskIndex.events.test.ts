@@ -1,23 +1,23 @@
-import { EventEmitter } from 'node:events';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Queue delivery is observed at the process boundary: the CLI spawns `node queue.js push <event> <json>`.
-// Resolving the queue binary and spawning are both faked so no real queue is needed (or touched).
-const spawnMock = vi.hoisted(() => vi.fn());
-vi.mock('node:child_process', async importOriginal => {
-	const actual = await importOriginal<typeof import('node:child_process')>();
-	return {
-		...actual,
-		spawn: spawnMock,
-		execSync: vi.fn(() => 'C:\\fake\\queue.cmd\n'),
-		execFileSync: vi.fn(() => '/fake/queue\n'),
-	};
-});
+// Queue delivery is observed at the SDK boundary: the CLI publishes through @wadeck-app/queue-sdk (publishAndWait, then flush).
+// The SDK is faked so no real queue is needed (or touched).
+const publishMock = vi.hoisted(() => vi.fn());
+const flushMock = vi.hoisted(() => vi.fn());
+const createPublisherMock = vi.hoisted(() => vi.fn());
+vi.mock('@wadeck-app/queue-sdk', () => ({ createQueuePublisher: createPublisherMock }));
 
-// The setup file swaps the queue sink for an instant fake: this file tests the real one (with a faked child process).
+interface Outcome {
+	status: string;
+	eventId?: string;
+	reason?: string;
+}
+const queuedOutcome: Outcome = { status: 'queued', eventId: 'e1' };
+
+// The setup file swaps the queue sink for an instant fake: this file tests the real one (with a faked SDK).
 vi.unmock('@wadeck-app/task-service');
 
 import { runTaskCommand } from './TaskIndex.js';
@@ -33,10 +33,11 @@ let configHome: string;
 let previousXdg: string | undefined;
 
 function pushedEvents(): PushedEvent[] {
-	return spawnMock.mock.calls.map(call => {
-		const args = call[1] as string[];
-		return { event: args[2]!, payload: JSON.parse(args[3]!) as Record<string, unknown> };
-	});
+	return publishMock.mock.calls.map(call => ({
+		event: call[0] as string,
+		// Through JSON, like the wire: undefined fields are absent.
+		payload: JSON.parse(JSON.stringify(call[1])) as Record<string, unknown>,
+	}));
 }
 
 beforeEach(async () => {
@@ -44,12 +45,10 @@ beforeEach(async () => {
 	configHome = fs.mkdtempSync(path.join(os.tmpdir(), 'task-events-config-'));
 	previousXdg = process.env['XDG_CONFIG_HOME'];
 	process.env['XDG_CONFIG_HOME'] = configHome;
-	// mockReset (vitest config) clears implementations between tests: re-arm the fake child process.
-	spawnMock.mockImplementation(() => {
-		const child = new EventEmitter();
-		setImmediate(() => child.emit('close', 0));
-		return child;
-	});
+	// mockReset (vitest config) clears implementations between tests: re-arm the fake publisher.
+	publishMock.mockImplementation(() => Promise.resolve(queuedOutcome));
+	flushMock.mockImplementation(() => Promise.resolve());
+	createPublisherMock.mockImplementation(() => ({ publishAndWait: publishMock, flush: flushMock }));
 	await runTaskCommand(['init'], tmpDir);
 });
 
@@ -63,7 +62,7 @@ afterEach(() => {
 describe('queue events — onTaskCreated carries the hierarchy', () => {
 	it('includes parentId (the full id) when the task is created under a parent', async () => {
 		const parent = JSON.parse((await runTaskCommand(['new', 'parent'], tmpDir)).output) as { id: string };
-		spawnMock.mockClear();
+		publishMock.mockClear();
 
 		const child = JSON.parse(
 			(await runTaskCommand(['new', 'child', '--parent', parent.id.slice(0, 4)], tmpDir)).output
@@ -119,64 +118,59 @@ describe('queue events — an undelivered event leaves a trace in the task log',
 		});
 	});
 
-	const failNextSpawn = (how: 'exit' | 'error'): void => {
-		spawnMock.mockImplementation(() => {
-			const child = new EventEmitter();
-			setImmediate(() =>
-				how === 'exit' ? child.emit('close', 1) : child.emit('error', new Error('spawn EPERM'))
-			);
-			return child;
-		});
+	const answerWith = (outcome: Outcome): void => {
+		publishMock.mockImplementation(() => Promise.resolve(outcome));
 	};
 
-	it('logs an error line (event, task, reason, replay command) when queue push exits non-zero', async () => {
+	it('logs an error line (event, task, reason, replay command) when the queue drops the event', async () => {
 		const task = await newTask('task');
-		failNextSpawn('exit');
+		answerWith({ status: 'dropped', reason: 'queue is not installed: install queue-cli' });
 
 		const result = await runTaskCommand(['set-status', task.id, 'in-progress'], tmpDir);
 
 		expect(result.exitCode).toBe(0);
 		const lines = errorLogLines();
 		expect(lines).toHaveLength(1);
-		expect(lines[0]!.msg).toContain(`queue push 'onStatusChange' for task ${task.id} not delivered: exit 1`);
+		expect(lines[0]!.msg).toContain(
+			`queue push 'onStatusChange' for task ${task.id} not delivered: queue is not installed: install queue-cli`
+		);
 		expect(lines[0]!.msg).toContain(`Replay with: cd '${tmpDir}' && queue push onStatusChange '{`);
 		expect(lines[0]!.msg).toContain(`"taskId":"${task.id}"`);
-		expect(stderr.join('')).toContain(`for task ${task.id} not delivered: exit 1`);
+		expect(stderr.join('')).toContain(`for task ${task.id} not delivered: queue is not installed`);
 		expect(stderr.join('')).toContain('task cli logs');
 	});
 
-	it('logs an error line when the queue process cannot be spawned', async () => {
+	it('logs an error line saying the event MAY be recorded, with the history check, when the outcome is unknown', async () => {
 		const task = await newTask('task');
-		failNextSpawn('error');
+		answerWith({ status: 'unknown', reason: 'the connection was reset' });
 
-		await runTaskCommand(['set-status', task.id, 'in-progress'], tmpDir);
+		const result = await runTaskCommand(['set-status', task.id, 'in-progress'], tmpDir);
 
+		expect(result.exitCode).toBe(0);
 		const lines = errorLogLines();
 		expect(lines).toHaveLength(1);
-		expect(lines[0]!.msg).toContain('not delivered: spawn EPERM');
+		expect(lines[0]!.msg).toContain('MAY be recorded');
+		expect(lines[0]!.msg).toContain('queue history');
+		expect(lines[0]!.msg).toContain('queue replay <eventId>');
+		expect(lines[0]!.msg).toContain(`"taskId":"${task.id}"`);
+		expect(stderr.join('')).toContain('MAY be recorded');
+		// Never retried automatically.
+		expect(publishMock).toHaveBeenCalledTimes(2);
 	});
 
-	it('logs an error line when queue cannot be found on PATH', async () => {
-		const { execSync, execFileSync } = await import('node:child_process');
-		vi.mocked(execSync).mockImplementation(() => {
-			throw new Error('not found');
-		});
-		vi.mocked(execFileSync).mockImplementation(() => {
-			throw new Error('not found');
-		});
-		// The resolved queue path is cached per module instance: load a fresh one.
-		vi.resetModules();
-		const fresh = await import('./TaskIndex.js');
-		const task = JSON.parse((await fresh.runTaskCommand(['new', 'lonely'], tmpDir)).output) as { id: string };
+	it('keeps the exit code 0 and the order of the events when one of them is not delivered', async () => {
+		const blocker = await newTask('blocker');
+		const blocked = await newTask('blocked');
+		await runTaskCommand(['link', blocked.id, 'blockedBy', blocker.id], tmpDir);
+		publishMock.mockClear();
+		publishMock.mockImplementationOnce(() => Promise.resolve({ status: 'dropped', reason: 'r' }));
+		publishMock.mockImplementation(() => Promise.resolve(queuedOutcome));
 
-		const lines = errorLogLines();
-		expect(
-			lines.some(l =>
-				l.msg.includes(`queue push 'onTaskCreated' for task ${task.id} not delivered: queue not found on PATH`)
-			)
-		).toBe(true);
-		expect(stderr.join('')).toContain('queue not found on PATH');
-		expect(stderr.join('')).toContain('task cli logs');
+		const result = await runTaskCommand(['set-status', blocker.id, 'done'], tmpDir);
+
+		expect(result.exitCode).toBe(0);
+		expect(pushedEvents().map(e => e.event)).toEqual(['onStatusChange', 'onTaskUnblocked']);
+		expect(errorLogLines()).toHaveLength(1);
 	});
 
 	it('writes no error line when the event is delivered', async () => {
@@ -187,27 +181,34 @@ describe('queue events — an undelivered event leaves a trace in the task log',
 		expect(errorLogLines()).toEqual([]);
 	});
 
-	it('does not double-report when the child emits both error and close', async () => {
+	it('waits for the SDK flush before the command returns (the process exits right after), and only once per command', async () => {
 		const task = await newTask('task');
-		spawnMock.mockImplementation(() => {
-			const child = new EventEmitter();
-			setImmediate(() => {
-				child.emit('error', new Error('spawn EPERM'));
-				child.emit('close', 1);
-			});
-			return child;
+		flushMock.mockClear();
+		let flushDone = false;
+		flushMock.mockImplementation(async () => {
+			await new Promise(resolve => setTimeout(resolve, 20));
+			flushDone = true;
 		});
 
 		await runTaskCommand(['set-status', task.id, 'in-progress'], tmpDir);
 
-		expect(errorLogLines()).toHaveLength(1);
+		expect(flushMock).toHaveBeenCalledTimes(1);
+		expect(flushDone).toBe(true);
+	});
+
+	it('creates the SDK publisher lazily: none for a command that produces no event', async () => {
+		createPublisherMock.mockClear();
+
+		await runTaskCommand(['list'], tmpDir);
+
+		expect(createPublisherMock).not.toHaveBeenCalled();
 	});
 });
 
 describe('queue events — onStatusChange', () => {
 	it('carries the previous status as oldStatus and the new one as newStatus', async () => {
 		const task = await newTask('task');
-		spawnMock.mockClear();
+		publishMock.mockClear();
 
 		await runTaskCommand(['set-status', task.id, 'in-progress'], tmpDir);
 
@@ -224,7 +225,7 @@ describe('queue events — onTaskLinked / onTaskUnlinked', () => {
 	it('link pushes onTaskLinked from the task that holds the link', async () => {
 		const a = await newTask('a');
 		const b = await newTask('b');
-		spawnMock.mockClear();
+		publishMock.mockClear();
 
 		await runTaskCommand(['link', a.id.slice(0, 4), 'blockedBy', b.id.slice(0, 4)], tmpDir);
 
@@ -237,7 +238,7 @@ describe('queue events — onTaskLinked / onTaskUnlinked', () => {
 	it('the inverse spelling is pushed in its stored form (holder, canonical type, target)', async () => {
 		const a = await newTask('a');
 		const b = await newTask('b');
-		spawnMock.mockClear();
+		publishMock.mockClear();
 
 		await runTaskCommand(['link', a.id, 'blocks', b.id], tmpDir);
 
@@ -248,7 +249,7 @@ describe('queue events — onTaskLinked / onTaskUnlinked', () => {
 		const a = await newTask('a');
 		const b = await newTask('b');
 		await runTaskCommand(['link', a.id, 'causedBy', b.id], tmpDir);
-		spawnMock.mockClear();
+		publishMock.mockClear();
 
 		await runTaskCommand(['unlink', a.id, 'causedBy', b.id], tmpDir);
 
@@ -262,7 +263,7 @@ describe('queue events — onTaskLinked / onTaskUnlinked', () => {
 		const a = await newTask('a');
 		const b = await newTask('b');
 		await runTaskCommand(['link', a.id, 'blockedBy', b.id], tmpDir);
-		spawnMock.mockClear();
+		publishMock.mockClear();
 
 		const cycle = await runTaskCommand(['link', b.id, 'blockedBy', a.id], tmpDir);
 		const missing = await runTaskCommand(['unlink', b.id, 'blockedBy', a.id], tmpDir);
@@ -278,7 +279,7 @@ describe('queue events — onTaskUnblocked', () => {
 		const blocker = await newTask('blocker');
 		const blocked = await newTask('blocked');
 		await runTaskCommand(['link', blocked.id, 'blockedBy', blocker.id], tmpDir);
-		spawnMock.mockClear();
+		publishMock.mockClear();
 		return { blocker, blocked };
 	};
 
@@ -298,7 +299,7 @@ describe('queue events — onTaskUnblocked', () => {
 		const y = await newTask('y');
 		await runTaskCommand(['link', x.id, 'blockedBy', blocker.id], tmpDir);
 		await runTaskCommand(['link', y.id, 'blockedBy', blocker.id], tmpDir);
-		spawnMock.mockClear();
+		publishMock.mockClear();
 
 		await runTaskCommand(['set-status', blocker.id, 'done'], tmpDir);
 
@@ -312,7 +313,7 @@ describe('queue events — onTaskUnblocked', () => {
 		const blocked = await newTask('blocked');
 		await runTaskCommand(['link', blocked.id, 'blockedBy', first.id], tmpDir);
 		await runTaskCommand(['link', blocked.id, 'blockedBy', second.id], tmpDir);
-		spawnMock.mockClear();
+		publishMock.mockClear();
 
 		await runTaskCommand(['set-status', first.id, 'done'], tmpDir);
 		expect(pushedEvents().map(e => e.event)).toEqual(['onStatusChange']);
@@ -334,7 +335,7 @@ describe('queue events — onTaskUnblocked', () => {
 	it('is not pushed for a blocked task that is already terminal', async () => {
 		const { blocker, blocked } = await setup();
 		await runTaskCommand(['set-status', blocked.id, 'done'], tmpDir);
-		spawnMock.mockClear();
+		publishMock.mockClear();
 
 		await runTaskCommand(['set-status', blocker.id, 'done'], tmpDir);
 
@@ -345,7 +346,7 @@ describe('queue events — onTaskUnblocked', () => {
 		const target = await newTask('target');
 		const other = await newTask('other');
 		await runTaskCommand(['link', other.id, 'causedBy', target.id], tmpDir);
-		spawnMock.mockClear();
+		publishMock.mockClear();
 
 		await runTaskCommand(['set-status', target.id, 'done'], tmpDir);
 
@@ -418,10 +419,10 @@ describe('set-status — closing a task that still has open blockers', () => {
 	});
 });
 
-// `queue push` finds .queue/subscribers.yml from ITS cwd: the CLI must spawn it in the project it works on, wherever it runs.
-describe('queue events — spawned in the project directory', () => {
+// The queue finds .queue/subscribers.yml from the cwd the SDK sends: the CLI must publish with the project it works on, wherever it runs.
+describe('queue events — published in the project directory', () => {
 	let elsewhere: string;
-	const spawnCwds = (): unknown[] => spawnMock.mock.calls.map(call => (call[2] as { cwd?: string }).cwd);
+	const publishCwds = (): unknown[] => publishMock.mock.calls.map(call => (call[2] as { cwd?: string }).cwd);
 
 	beforeEach(() => {
 		elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'task-events-elsewhere-'));
@@ -433,34 +434,34 @@ describe('queue events — spawned in the project directory', () => {
 	});
 
 	it('from the cwd when it is the project', async () => {
-		spawnMock.mockClear();
+		publishMock.mockClear();
 		await runTaskCommand(['new', 'x'], tmpDir);
-		expect(spawnCwds()).toEqual([tmpDir]);
+		expect(publishCwds()).toEqual([tmpDir]);
 	});
 
 	it('from --project-dir, not from the directory the command runs in', async () => {
-		spawnMock.mockClear();
+		publishMock.mockClear();
 		const result = await runTaskCommand(['new', 'x', '--project-dir', tmpDir], elsewhere);
 		expect(result.exitCode).toBe(0);
-		expect(spawnCwds()).toEqual([tmpDir]);
+		expect(publishCwds()).toEqual([tmpDir]);
 	});
 
 	it.each(['TASK_PROJECT_DIR', 'PROJECT_DIR'])('from the %s environment variable', async variable => {
 		process.env[variable] = tmpDir;
-		spawnMock.mockClear();
+		publishMock.mockClear();
 		const result = await runTaskCommand(['new', 'x'], elsewhere);
 		expect(result.exitCode).toBe(0);
-		expect(spawnCwds()).toEqual([tmpDir]);
+		expect(publishCwds()).toEqual([tmpDir]);
 	});
 
 	it('for set-status and link too, with --project-dir', async () => {
 		const a = await newTask('a');
 		const b = await newTask('b');
-		spawnMock.mockClear();
+		publishMock.mockClear();
 
 		await runTaskCommand(['set-status', a.id, 'in-progress', '--project-dir', tmpDir], elsewhere);
 		await runTaskCommand(['link', a.id, 'blockedBy', b.id, '--project-dir', tmpDir], elsewhere);
 
-		expect(spawnCwds()).toEqual([tmpDir, tmpDir]);
+		expect(publishCwds()).toEqual([tmpDir, tmpDir]);
 	});
 });

@@ -54,18 +54,32 @@ export interface TaskUnblockedEvent {
 export type TaskEvent =
 	TaskCreatedEvent | TaskStatusChangeEvent | TaskLinkedEvent | TaskUnlinkedEvent | TaskUnblockedEvent;
 
-/** Result of delivering one event. A sink reports an undeliverable event this way instead of throwing. */
-export type EventDelivery = { delivered: true } | { delivered: false; reason: string };
+/**
+ * What is known about an event that did not arrive: `dropped` = the queue did NOT record it (replaying is safe),
+ * `unknown` = it MAY be recorded (connection broke or timed out after sending: check before replaying).
+ */
+export type UndeliveredStatus = 'dropped' | 'unknown';
+
+/**
+ * Result of delivering one event. A sink reports an undeliverable event this way instead of throwing.
+ * `status` defaults to `dropped` and `replay` to {@link replayCommand} when a sink does not set them.
+ */
+export type EventDelivery =
+	{ delivered: true } | { delivered: false; reason: string; status?: UndeliveredStatus; replay?: string };
 
 /** Destination of task events (the queue, a test recorder, ...). Reports undeliverable events in its result; throws only on unexpected failures. */
 export interface EventSink {
 	deliver(event: TaskEvent): Promise<EventDelivery>;
+	/** Waits for what the sink still has in flight. A one-shot process calls it before exiting. Optional: a sink that sends synchronously has nothing to wait for. */
+	flush?(): Promise<void>;
 }
 
 export interface UndeliveredEvent {
 	event: TaskEvent;
 	reason: string;
-	/** Shell command that replays the event once the cause is fixed. */
+	/** `dropped`: not recorded by the queue. `unknown`: may be recorded, see `replay`. */
+	status: UndeliveredStatus;
+	/** Text (a shell command, or the steps to check first for `unknown`) that redelivers the event once the cause is fixed. */
 	replay: string;
 }
 
@@ -103,7 +117,12 @@ export async function deliverEvents(sink: EventSink, events: readonly TaskEvent[
 		if (result.delivered) {
 			outcome.delivered++;
 		} else {
-			outcome.undelivered.push({ event, reason: result.reason, replay: replayCommand(event) });
+			outcome.undelivered.push({
+				event,
+				reason: result.reason,
+				status: result.status ?? 'dropped',
+				replay: result.replay ?? replayCommand(event),
+			});
 		}
 	}
 	return outcome;

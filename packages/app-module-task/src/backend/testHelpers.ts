@@ -38,7 +38,7 @@ export interface RecordingSink extends EventSink {
 	events: TaskEvent[];
 }
 
-/** Fake EventSink: records instead of spawning `queue push`. */
+/** Fake EventSink: records instead of publishing to the queue. */
 export function createRecordingSink(): RecordingSink {
 	const events: TaskEvent[] = [];
 	return {

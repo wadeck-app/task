@@ -11,20 +11,34 @@ import { registerDeleteRoutes, registerTypeRoutes } from './routes/typeAndDelete
 
 export type { TaskRoutesOptions } from './routes/routeKit.js';
 
-/** Registers the task routes (`/api/modules/task/...`) on the module context. */
-export function registerTaskRoutes(ctx: ModuleContext, options: TaskRoutesOptions = {}): void {
+/** What the module keeps running between setup and teardown (app-core hands it to the teardown hook). */
+export interface TaskModuleInstance {
+	/** Waits for the queue pushes still in flight. */
+	flush(): Promise<void>;
+}
+
+/**
+ * Registers the task routes (`/api/modules/task/...`) on the module context. Returns the module instance, whose `flush`
+ * the teardown hook calls. The default queue sink holds ONE SDK publisher for the life of the module (created at the first
+ * mutation); each event is sent with the directory of its project as cwd.
+ */
+export function registerTaskRoutes(ctx: ModuleContext, options: TaskRoutesOptions = {}): TaskModuleInstance {
 	const configDir = options.configDir ?? getTaskConfigDir();
 	const logDir = getTaskLogDir(configDir);
-	const kit = createRouteKit(ctx, {
-		configDir,
-		logDir,
-		writeStderr: options.writeStderr ?? ((text: string) => void process.stderr.write(text)),
-		eventSink: options.eventSink ?? createQueueEventSink({ getLogDir: () => logDir }),
-	});
+	const writeStderr = options.writeStderr ?? ((text: string) => void process.stderr.write(text));
+	const eventSink =
+		options.eventSink ??
+		createQueueEventSink({
+			getLogDir: () => logDir,
+			writeStderr,
+			...(options.createPublisher === undefined ? {} : { createPublisher: options.createPublisher }),
+		});
+	const kit = createRouteKit(ctx, { configDir, logDir, writeStderr, eventSink });
 	registerProjectRoutes(kit);
 	registerProjectManageRoutes(kit);
 	registerTaskReadRoutes(kit);
 	registerTaskWriteRoutes(kit);
 	registerTypeRoutes(kit);
 	registerDeleteRoutes(kit);
+	return { flush: () => eventSink.flush?.() ?? Promise.resolve() };
 }

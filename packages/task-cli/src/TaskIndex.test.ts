@@ -52,6 +52,11 @@ describe('runTaskCommand — version and help', () => {
 		expect(events).toContain('.queue/subscribers.yml');
 		expect(events).toContain('task cli logs');
 		expect(events).toContain('cd ');
+		// Delivery goes through the queue SDK: the two outcomes with a doubt are explained.
+		expect(events).toContain('@wadeck-app/queue-sdk');
+		expect(events).toContain('MAY be recorded');
+		expect(events).toContain('queue history');
+		expect(events).toContain('queue replay');
 	});
 });
 

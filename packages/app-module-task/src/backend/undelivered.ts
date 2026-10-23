@@ -8,7 +8,9 @@ export interface UndeliveredAnswer {
 	event: string;
 	taskId: string | undefined;
 	reason: string;
-	/** Command that replays the event once the cause is fixed. */
+	/** `dropped`: the queue did NOT record the event. `unknown`: it MAY be recorded (check `queue history` first). */
+	status: 'dropped' | 'unknown';
+	/** Command that replays the event once the cause is fixed; for `unknown`, the check to make first, then the replay. */
 	replay: string;
 }
 
@@ -17,6 +19,7 @@ function toUndeliveredAnswer(undelivered: UndeliveredEvent): UndeliveredAnswer {
 		event: undelivered.event.name,
 		taskId: undelivered.event.payload.taskId,
 		reason: undelivered.reason,
+		status: undelivered.status,
 		replay: undelivered.replay,
 	};
 }
@@ -25,7 +28,11 @@ function toUndeliveredAnswer(undelivered: UndeliveredEvent): UndeliveredAnswer {
 function undeliveredLine(undelivered: readonly UndeliveredAnswer[]): string | null {
 	if (undelivered.length === 0) return null;
 	const details = undelivered
-		.map(entry => `${entry.event} (${entry.reason}), replay with: ${entry.replay}`)
+		.map(entry =>
+			entry.status === 'unknown'
+				? `${entry.event} (${entry.reason}), ${entry.replay}`
+				: `${entry.event} (${entry.reason}), replay with: ${entry.replay}`
+		)
 		.join('; ');
 	return `The change is saved but ${undelivered.length} queue event(s) were not delivered: ${details}`;
 }

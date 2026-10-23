@@ -3,12 +3,13 @@ import * as path from 'node:path';
 
 import type { TaskTreeNode } from '@wadeck-app/task-core';
 import { listForest, openTaskContext, projectsRegistryPath, unregisterProject } from '@wadeck-app/task-service';
-import type { EventSink } from '@wadeck-app/task-service';
+import type { EventPublisher, EventSink, PublishOutcome } from '@wadeck-app/task-service';
 import type { ModuleContext, ModuleRouteHandler } from '@wadeck-app/app-core-sdk';
 
 import backend from './index.js';
+import teardown from './teardown.js';
 import { projectSlug } from './projectRef.js';
-import { registerTaskRoutes, type TaskRoutesOptions } from './routes.js';
+import { registerTaskRoutes, type TaskModuleInstance, type TaskRoutesOptions } from './routes.js';
 import { createRecordingSink, createTestWorld, type RecordingSink, type TestWorld } from './testHelpers.js';
 
 const EXPECTED_ROUTES = [
@@ -47,6 +48,7 @@ interface Answer {
 }
 
 interface Harness {
+	instance: TaskModuleInstance;
 	world: TestWorld;
 	sink: RecordingSink;
 	routes: Map<string, ModuleRouteHandler>;
@@ -73,13 +75,16 @@ function collectRoutes(dataDir: string): { routes: Map<string, ModuleRouteHandle
 	return { routes, ctx };
 }
 
-function setup(eventSink?: EventSink, extra: Partial<TaskRoutesOptions> = {}): Harness {
+// `'default'` registers the routes WITHOUT an injected sink, so that the real queue sink (and `extra.createPublisher`) is used.
+function setup(eventSink?: EventSink | 'default', extra: Partial<TaskRoutesOptions> = {}): Harness {
 	const world = createTestWorld();
 	const sink = createRecordingSink();
 	// The module's own persistent folder (ctx.dataDir): per world, so a test never sees the state of another.
 	const { routes, ctx } = collectRoutes(path.join(world.root, 'module-data'));
-	registerTaskRoutes(ctx, { configDir: world.configDir, eventSink: eventSink ?? sink, ...extra });
+	const injected = eventSink === 'default' ? {} : { eventSink: eventSink ?? sink };
+	const instance = registerTaskRoutes(ctx, { configDir: world.configDir, ...injected, ...extra });
 	return {
+		instance,
 		world,
 		sink,
 		routes,
@@ -1019,7 +1024,7 @@ describe('links', () => {
 });
 
 describe('event delivery', () => {
-	// The queue sink spawns `queue push` in taskProjectPath: every event of every route must carry the project of the request.
+	// The queue sink publishes with cwd = taskProjectPath: every event of every route must carry the project of the request.
 	it('every event produced by the routes carries the project directory of the request', async () => {
 		const blocker = await createTask('blocker');
 		const blocked = await createTask('blocked');
@@ -1101,6 +1106,163 @@ describe('event delivery', () => {
 
 		expect(answer.status).toBe(201);
 		expect(answer.body['undelivered']).toEqual([]);
+	});
+
+	describe('through the queue SDK publisher (the default sink)', () => {
+		interface Call {
+			event: string;
+			cwd: string;
+		}
+		// Plain functions, not vi.fn(): the config's mockReset would wipe an implementation set at creation.
+		function publisherFake(answer: () => PublishOutcome): {
+			publisher: EventPublisher;
+			calls: Call[];
+			flushes: () => number;
+		} {
+			const calls: Call[] = [];
+			let flushes = 0;
+			return {
+				calls,
+				flushes: () => flushes,
+				publisher: {
+					publishAndWait(event, _payload, options) {
+						calls.push({ event, cwd: options.cwd });
+						return Promise.resolve(answer());
+					},
+					flush() {
+						flushes++;
+						return Promise.resolve();
+					},
+				},
+			};
+		}
+
+		it('creates ONE publisher for the module, lazily at the first mutation, and sends each event with its project as cwd', async () => {
+			const fake = publisherFake(() => ({ status: 'queued' }));
+			let created = 0;
+			const sdk = setup('default', {
+				createPublisher: () => {
+					created++;
+					return fake.publisher;
+				},
+			});
+			try {
+				const alpha = sdk.world.createProject('alpha');
+				const beta = sdk.world.createProject('beta');
+				await sdk.call('GET /tasks', { query: { project: alpha } });
+				expect(created).toBe(0);
+
+				await sdk.call('POST /tasks', { query: { project: alpha }, body: { description: 'a' } });
+				await sdk.call('POST /tasks', { query: { project: beta }, body: { description: 'b' } });
+				await sdk.call('POST /tasks', { query: { project: alpha }, body: { description: 'c' } });
+
+				expect(created).toBe(1);
+				expect(fake.calls).toEqual([
+					{ event: 'onTaskCreated', cwd: alpha },
+					{ event: 'onTaskCreated', cwd: beta },
+					{ event: 'onTaskCreated', cwd: alpha },
+				]);
+			} finally {
+				sdk.world.cleanup();
+			}
+		});
+
+		it('answers undelivered with status dropped, the SDK reason and the cd + queue push replay', async () => {
+			const fake = publisherFake(() => ({ status: 'dropped', reason: 'queue is not installed' }));
+			const sdk = setup('default', { createPublisher: () => fake.publisher });
+			try {
+				const dir = sdk.world.createProject('alpha');
+
+				const created = await sdk.call('POST /tasks', {
+					query: { project: dir },
+					body: { description: 'kept' },
+				});
+
+				expect(created.status).toBe(201);
+				const undelivered = created.body['undelivered'] as Array<Record<string, unknown>>;
+				expect(undelivered).toHaveLength(1);
+				expect(undelivered[0]).toMatchObject({
+					event: 'onTaskCreated',
+					status: 'dropped',
+					reason: 'queue is not installed',
+				});
+				expect(undelivered[0]!['replay']).toMatch(/^cd '.+' && queue push onTaskCreated '{.*}'$/);
+				expect(created.body['undeliveredText']).toContain('replay with: cd ');
+			} finally {
+				sdk.world.cleanup();
+			}
+		});
+
+		it('answers undelivered with status unknown: may be recorded, check queue history before replaying', async () => {
+			const fake = publisherFake(() => ({ status: 'unknown', reason: 'timed out' }));
+			const sdk = setup('default', { createPublisher: () => fake.publisher });
+			try {
+				const dir = sdk.world.createProject('alpha');
+
+				const created = await sdk.call('POST /tasks', {
+					query: { project: dir },
+					body: { description: 'kept' },
+				});
+
+				expect(created.status).toBe(201);
+				const undelivered = created.body['undelivered'] as Array<Record<string, unknown>>;
+				expect(undelivered[0]).toMatchObject({ event: 'onTaskCreated', status: 'unknown' });
+				expect(undelivered[0]!['reason']).toContain('MAY be recorded');
+				const text = created.body['undeliveredText'] as string;
+				expect(text).toContain('MAY be recorded');
+				expect(text).toContain('queue history');
+				expect(text).toContain('queue replay <eventId>');
+				expect(fake.calls).toHaveLength(1);
+			} finally {
+				sdk.world.cleanup();
+			}
+		});
+
+		it('flushes the publisher in the teardown hook, through the instance the module returned', async () => {
+			const fake = publisherFake(() => ({ status: 'queued' }));
+			const sdk = setup('default', { createPublisher: () => fake.publisher });
+			try {
+				const dir = sdk.world.createProject('alpha');
+				await sdk.call('POST /tasks', { query: { project: dir }, body: { description: 'a' } });
+
+				await teardown({
+					id: 'task',
+					version: '0.1.0',
+					previousVersion: null,
+					dataDir: sdk.world.root,
+					reason: 'shutdown',
+					instance: sdk.instance,
+				});
+
+				expect(fake.flushes()).toBe(1);
+			} finally {
+				sdk.world.cleanup();
+			}
+		});
+
+		it('the teardown hook tolerates a module that returned no instance', async () => {
+			await expect(
+				teardown({
+					id: 'task',
+					version: '0.1.0',
+					previousVersion: null,
+					dataDir: '/x',
+					reason: 'unload',
+					instance: undefined,
+				})
+			).resolves.toBeUndefined();
+		});
+
+		it('the backend entry returns the instance the teardown hook flushes', () => {
+			const world = createTestWorld();
+			try {
+				const { ctx } = collectRoutes(path.join(world.root, 'module-data'));
+				const instance = backend(ctx);
+				expect(typeof (instance as TaskModuleInstance).flush).toBe('function');
+			} finally {
+				world.cleanup();
+			}
+		});
 	});
 
 	it('builds without an injected sink (the queue sink is the default and is only used on delivery)', () => {
