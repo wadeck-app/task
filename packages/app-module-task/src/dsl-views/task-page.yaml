@@ -1,4 +1,5 @@
-# Detail of one task (/modules/task/tasks/:id). ":id" of the manifest path is $route.id; the project comes from ?project=.
+# Detail of one task (/modules/task/tasks/p/:project/:id). ":id" of the manifest path is $route.id, ":project" is
+# $route.project (the slug of the project, resolved by GET /projects). The breadcrumb leads back: no back link here.
 #
 # Every form below submits through a named action ($actions) bound with `onSubmit: $ctx.<action>`:
 # - the body is the form data; it also fills the {placeholders} of the action URL ({id} is the route id);
@@ -18,7 +19,7 @@ $sources:
     projects:
         url: GET /api/modules/task/projects
         params:
-            project: $urlParam.project
+            project: $route.project
     # inlineErrors on every source: one failing source discards the answers of all the others (the page stays blank), so a
     # failure is answered as data (`errorText`) and shown by a badge.
     # `tree` and `links` fail with the same error as `detail` when the task does not exist: `detail` shows it.
@@ -93,14 +94,6 @@ sections:
             $if: $sources.detail.taskHrefs
             label: Children
             to: $sources.detail.taskHrefs.childrenList
-          - $type: ButtonLink
-            $if: $sources.detail.hrefs
-            label: All tasks
-            to: $sources.detail.hrefs.tasks
-          - $type: ButtonLink
-            $if: $sources.projects.allProjectsHref
-            label: All projects
-            to: $sources.projects.allProjectsHref
     # Nothing registered yet: the welcome text of the route (the exact next step) instead of a blank page.
     - $type: Badge
       $if: $sources.projects.noProjects
@@ -110,6 +103,11 @@ sections:
     - $type: Badge
       $if: $sources.projects.selectedProblem
       label: $sources.projects.selectedProblem
+      variant: danger
+    # The address names a project the registry does not know (a stale bookmark): said, with the next step, not a blank page.
+    - $type: Badge
+      $if: $sources.projects.unknownProjectText
+      label: $sources.projects.unknownProjectText
       variant: danger
     # The task does not exist (or the id is ambiguous): what was asked and what to do.
     - $type: Badge

@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import type { ModuleContext, ModuleRouteHandler } from '@wadeck-app/app-core-sdk';
 import { listRegisteredProjects, projectsRegistryPath } from '@wadeck-app/task-service';
 
+import { projectSlug } from './projectRef.js';
 import { registerTaskRoutes } from './routes.js';
 import { createRecordingSink, createTestWorld } from './testHelpers.js';
 import type { TestWorld } from './testHelpers.js';
@@ -371,7 +372,7 @@ describe('GET /projects: data of the Projects page forms and table', () => {
 		const links = answer.body['openLinks'] as Array<Record<string, unknown>>;
 		expect(links).toHaveLength(1);
 		expect(links[0]).toMatchObject({ $type: 'ButtonLink', label: 'ok' });
-		expect(String(links[0]!['to'])).toContain(encodeURIComponent(ok));
+		expect(links[0]!['to']).toBe(`/modules/task/tasks/p/${projectSlug(ok)}`);
 	});
 
 	it('the unknown-project fix on the page names the Projects page, not only the CLI', async () => {

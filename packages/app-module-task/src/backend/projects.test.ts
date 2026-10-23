@@ -5,6 +5,7 @@ import { TaskStore } from '@wadeck-app/task-core';
 import { projectsRegistryPath } from '@wadeck-app/task-service';
 
 import { RequestError } from './errors.js';
+import { projectSlug } from './projectRef.js';
 import { listProjects, openProject } from './projects.js';
 import { createTestWorld, type TestWorld } from './testHelpers.js';
 
@@ -111,7 +112,7 @@ describe('listProjects', () => {
 				initialized: true,
 				openCount: 0,
 				error: null,
-				href: `/modules/task/tasks?project=${encodeURIComponent(a)}`,
+				href: `/modules/task/tasks/p/${projectSlug(a)}`,
 			},
 			{
 				name: 'beta',

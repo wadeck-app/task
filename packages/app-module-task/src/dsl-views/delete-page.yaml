@@ -1,4 +1,5 @@
-# Delete tasks (route /delete): preview, then confirm. The project comes from ?project= (asked for when several are registered).
+# Delete tasks (routes /tasks/delete and /tasks/p/:project/delete): preview, then confirm. The project is the path segment
+# `:project` ($route.project); on /tasks/delete it is asked for in a select. The breadcrumb leads back: no back link here.
 # 1. The selection form (ids, or a field=glob filter, or all; optionally with the descendants) posts to the dry-run route
 #    and publishes the preview as $ctx.plan: counts, the tasks and what would happen to children and links.
 # 2. Only once a preview selected something, the confirm form appears; its initialData is the exact request the route
@@ -11,7 +12,7 @@ $sources:
     projects:
         url: GET /api/modules/task/projects
         params:
-            project: $urlParam.project
+            project: $route.project
 
 $actions:
     previewDelete:
@@ -26,10 +27,6 @@ sections:
     - $type: PageHeader
       title: Delete tasks
       subtitle: Give one selector, preview, then confirm. Deleting cannot be undone.
-    - $type: BackLink
-      $if: $sources.projects.allProjectsHref
-      to: $sources.projects.allProjectsHref
-      label: All projects
     - $type: Badge
       $if: $sources.projects.selectedText
       label: $sources.projects.selectedText
@@ -42,6 +39,11 @@ sections:
     - $type: Badge
       $if: $sources.projects.selectedProblem
       label: $sources.projects.selectedProblem
+      variant: danger
+    # The address names a project the registry does not know (a stale bookmark): said, with the next step, not a blank page.
+    - $type: Badge
+      $if: $sources.projects.unknownProjectText
+      label: $sources.projects.unknownProjectText
       variant: danger
     - $type: Badge
       $if: $ctx.plan.errorText

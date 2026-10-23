@@ -1,5 +1,5 @@
-# Hierarchy of the tasks (nav /tree). With ?project=<absolute dir> (optional when a single project is registered): the
-# forest of that project, children indented under their parent. WITHOUT ?project and with several projects registered:
+# Hierarchy of the tasks (nav /tree, per project /tree/p/:project = $route.project; /tree also shows the only registered project): the
+# forest of that project, children indented under their parent. on /tree with several projects registered:
 # the global forest, one section per project (title, link to its own tree) whose table holds that project's forest, a
 # child indented under its parent by a label prefix (the table cannot style rows).
 # ?showAll=true includes the closed tasks, ?parent=<id> restricts to the descendants of a task, ?id=<id> shows the one
@@ -15,7 +15,7 @@ $sources:
     projects:
         url: GET /api/modules/task/projects
         params:
-            project: $urlParam.project
+            project: $route.project
             showAll: $urlParam.showAll
             parent: $urlParam.parent
             id: $urlParam.id
@@ -30,10 +30,6 @@ sections:
     - $type: PageHeader
       title: Tree
       headerActions:
-          - $type: ButtonLink
-            $if: $sources.projects.globalHrefs.tree
-            label: All projects
-            to: $sources.projects.globalHrefs.tree
           - $type: ButtonLink
             $if: $sources.tree.showAllToggle
             label: $sources.tree.showAllToggle.label
@@ -56,7 +52,7 @@ sections:
       $if: $sources.tree.errorText
       label: $sources.tree.errorText
       variant: danger
-    # ?project=... names a directory the registry does not know: said, with the way back, not a blank page.
+    # The address names a project the registry does not know: said, with the next step, not a blank page.
     - $type: Badge
       $if: $sources.projects.unknownProjectText
       label: $sources.projects.unknownProjectText

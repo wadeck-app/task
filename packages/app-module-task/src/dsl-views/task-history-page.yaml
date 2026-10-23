@@ -1,4 +1,5 @@
-# Status history of one task (/modules/task/tasks/:id/history); the project comes from ?project=.
+# Status history of one task (/modules/task/tasks/p/:project/:id/history); the project is $route.project (a path
+# segment, which the breadcrumb keeps). The breadcrumb leads back: no back link here.
 # inlineErrors on every source: one failing source discards the answers of all the others (the page stays blank), so a
 # failure is answered as data (`errorText`) and shown by a badge.
 # `history` fails with the same error as `detail` when the task does not exist: `detail` shows it.
@@ -8,7 +9,7 @@ $sources:
     projects:
         url: GET /api/modules/task/projects
         params:
-            project: $urlParam.project
+            project: $route.project
     detail:
         url: GET /api/modules/task/tasks/{id}?{query}&inlineErrors=true
         params:
@@ -26,16 +27,6 @@ $type: PageContent
 sections:
     - $type: PageHeader
       title: $sources.detail.task.title
-      headerActions:
-          # Kept although the breadcrumb has a "Task <id>" crumb: that crumb drops ?project (blank page with several projects).
-          - $type: ButtonLink
-            $if: $sources.detail.taskHrefs
-            label: Back to the task
-            to: $sources.detail.taskHrefs.detail
-          - $type: ButtonLink
-            $if: $sources.projects.allProjectsHref
-            label: All projects
-            to: $sources.projects.allProjectsHref
     # Nothing registered yet: the welcome text of the route (the exact next step) instead of a blank page.
     - $type: Badge
       $if: $sources.projects.noProjects
@@ -45,6 +36,11 @@ sections:
     - $type: Badge
       $if: $sources.projects.selectedProblem
       label: $sources.projects.selectedProblem
+      variant: danger
+    # The address names a project the registry does not know (a stale bookmark): said, with the next step, not a blank page.
+    - $type: Badge
+      $if: $sources.projects.unknownProjectText
+      label: $sources.projects.unknownProjectText
       variant: danger
     - $type: Badge
       $if: $sources.detail.errorText

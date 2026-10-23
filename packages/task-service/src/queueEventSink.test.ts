@@ -68,6 +68,62 @@ describe('createQueueEventSink', () => {
 		expect(logLines()).toEqual([]);
 	});
 
+	describe('working directory', () => {
+		const base = { taskId: 'abc', taskProjectName: 'p', taskProjectPath: '/proj/dir' };
+		// One event of every type: queue finds .queue/subscribers.yml by walking up from the cwd of `queue push`.
+		const everyEvent: TaskEvent[] = [
+			{
+				name: 'onTaskCreated',
+				payload: {
+					...base,
+					status: 'backlog',
+					description: 'd',
+					parentId: undefined,
+					type: undefined,
+					labels: [],
+				},
+			},
+			{
+				name: 'onStatusChange',
+				payload: { ...base, oldStatus: 'backlog', newStatus: 'done', type: undefined, labels: [] },
+			},
+			{ name: 'onTaskLinked', payload: { ...base, linkType: 'blockedBy', targetId: 'def' } },
+			{ name: 'onTaskUnlinked', payload: { ...base, linkType: 'blockedBy', targetId: 'def' } },
+			{
+				name: 'onTaskUnblocked',
+				payload: { ...base, blockerId: 'def', status: 'backlog', type: undefined, labels: [] },
+			},
+		];
+
+		it.each(everyEvent.map(e => [e.name, e] as const))(
+			'spawns queue push for %s in the project directory',
+			async (_name, event) => {
+				spawnMock.mockImplementation(() => fakeChild({ code: 0 }));
+
+				await makeSink().deliver(event);
+
+				expect(spawnMock.mock.calls[0]![2]).toMatchObject({ cwd: '/proj/dir' });
+			}
+		);
+
+		it.each(['missing', 'empty', 'not a string'])(
+			'refuses loudly when taskProjectPath is %s, without spawning',
+			async kind => {
+				const payload: Record<string, unknown> = { ...EVENT.payload };
+				if (kind === 'missing') delete payload['taskProjectPath'];
+				else payload['taskProjectPath'] = kind === 'empty' ? '' : 42;
+
+				const outcome = await makeSink().deliver({ name: 'onTaskLinked', payload } as unknown as TaskEvent);
+
+				expect(spawnMock).not.toHaveBeenCalled();
+				expect(outcome).toEqual({ delivered: false, reason: expect.stringContaining('taskProjectPath') });
+				expect(stderr.join('')).toContain('taskProjectPath');
+				expect(logLines()).toHaveLength(1);
+				expect(logLines()[0]!.msg).toContain('taskProjectPath');
+			}
+		);
+	});
+
 	it('reports a non-zero exit on stderr and in the ndjson log with a replay command', async () => {
 		spawnMock.mockImplementation(() => fakeChild({ code: 3 }));
 
@@ -81,7 +137,7 @@ describe('createQueueEventSink', () => {
 		expect(lines).toHaveLength(1);
 		expect(lines[0]!.level).toBe('error');
 		expect(lines[0]!.msg).toBe(
-			`queue push 'onTaskLinked' for task abc not delivered: exit 3. Replay with: queue push onTaskLinked '${JSON.stringify(EVENT.payload)}'`
+			`queue push 'onTaskLinked' for task abc not delivered: exit 3. Replay with: cd '/p' && queue push onTaskLinked '${JSON.stringify(EVENT.payload)}'`
 		);
 	});
 

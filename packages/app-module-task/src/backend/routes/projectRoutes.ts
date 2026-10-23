@@ -3,18 +3,12 @@ import { isSameProjectDir, summarizeProject, summarizeProjects } from '@wadeck-a
 import type { ProjectOverview, ProjectsSummary } from '@wadeck-app/task-service';
 
 import { projectRows, skippedOf, skippedWarning } from '../allProjectsViews.js';
-import {
-	allProjectsPageHref,
-	allProjectsTasksHref,
-	MODULE_ID,
-	projectText,
-	selectedQuery,
-	tasksPageHref,
-} from '../hrefs.js';
+import { projectText, selectedQuery } from '../hrefs.js';
 import { readLastProject } from '../lastProject.js';
 import { ADD_FORM_DEFAULTS, attentionText, manageRows, MODE_OPTIONS, openLinks } from '../projectManagement.js';
 import { listProjects, NO_PROJECT_HINT, NO_PROJECT_HINT_ON_PROJECTS_PAGE, openProject } from '../projects.js';
 import type { ProjectListing } from '../projects.js';
+import { findProjectByRef } from '../projectRef.js';
 import { optionalQueryValue, queryValue } from '../request.js';
 import type { RouteRequest } from '../request.js';
 import type { RouteKit } from './routeKit.js';
@@ -73,16 +67,24 @@ export function registerProjectRoutes(kit: RouteKit): void {
 
 	kit.route('GET', '/projects', req => {
 		const projects = listProjects(configDir);
+		// The slug of a page address (the views pass `$route.project`) or an absolute directory: one resolution for both.
 		const requested = optionalQueryValue(req.query, 'project');
+		const requestedDir =
+			requested === undefined
+				? undefined
+				: findProjectByRef(
+						projects.map(entry => entry.path),
+						requested
+					);
 		// The project the page is about: the one asked for (when registered), else the only registered one.
 		const selected =
-			projects.find(entry => requested !== undefined && isSameProjectDir(entry.path, requested)) ??
+			projects.find(entry => requestedDir !== undefined && isSameProjectDir(entry.path, requestedDir)) ??
 			(requested === undefined && projects.length === 1 ? projects[0] : undefined);
 		const projectParam = selected === undefined ? '' : encodeURIComponent(selected.path);
 		const base = { projectParam };
 		const needsSelection = projects.length > 1 && selected === undefined;
 		// A ?project the registry does not know: said on the Tasks page instead of an empty page.
-		const unknownProject = requested !== undefined && selected === undefined;
+		const unknownProject = requested !== undefined && selected === undefined && projects.length > 0;
 		// A selected project that cannot be read: the views show why instead of requesting tasks that would fail.
 		const readable = selected !== undefined && selected.error === null;
 		const projectQuery = selectedQuery(readable ? selected.path : undefined, req.query);
@@ -98,7 +100,6 @@ export function registerProjectRoutes(kit: RouteKit): void {
 			entry => lastUsed.path !== null && isSameProjectDir(entry.path, lastUsed.path)
 		);
 		const createProject = selected === undefined ? (onlyReadable ?? lastReadable) : selected;
-		const backToGlobal = projects.length > 1 && (selected !== undefined || unknownProject);
 		const taskLinks = openLinks(projects);
 		const selectedProblem = selected === undefined || selected.error === null ? null : problemText(selected);
 		return {
@@ -134,25 +135,14 @@ export function registerProjectRoutes(kit: RouteKit): void {
 				scopeQuery: projectQuery !== '' ? projectQuery : global !== '' ? global : 'blank=true',
 				// What the pages that always work on one project ask (the New task page): the project, else an empty answer.
 				projectQuery: projectOrBlank,
-				// Back to the global Tasks page from a project (or from an unknown one); a single project has no global view.
-				allProjectsHref: backToGlobal ? allProjectsTasksHref() : null,
-				// The same, for the page being shown: the matching global page of each module page.
-				globalHrefs: backToGlobal
-					? {
-							tasks: allProjectsTasksHref(),
-							tree: allProjectsPageHref('tree'),
-							types: allProjectsPageHref('types'),
-						}
-					: null,
 				selectedText: selected === undefined ? null : projectText(selected),
 				unknownProjectText: unknownProject
-					? `Project "${requested}" is not registered with the task app-module. Pick a registered project from "All projects", or register it with \`task projects add <dir>\`.`
+					? `Project "${requested}" is not registered with the task app-module. Pick a registered project on the Projects page, or register it with \`task projects add <dir>\`.`
 					: null,
 				selectedParam: projectParam,
 				selectedProblem,
 				// The remembered project cannot be read (corrupt file...): said on the New task page, not ignored.
 				lastProjectProblem: lastUsed.problem,
-				tasksHref: selected === undefined ? `/modules/${MODULE_ID}/tasks` : tasksPageHref(selected.path),
 				// Only the projects that can be read: picking another one could only fail.
 				projectOptions: readableProjects.map(entry => ({
 					value: encodeURIComponent(entry.path),

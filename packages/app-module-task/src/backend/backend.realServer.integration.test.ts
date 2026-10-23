@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { TaskStore } from '@wadeck-app/task-core';
 import { registerProject } from '@wadeck-app/task-service';
 
+import { projectSlug } from './projectRef.js';
+
 /**
  * Builds the module with `app-core-cli package` and serves the result through a REAL app-core server
  * (`app-core-cli dev` boots app-core's own buildServer), then calls the routes over HTTP. backend.test.ts calls
@@ -139,7 +141,7 @@ describe('the packaged module through a real app-core server', () => {
 				initialized: true,
 				openCount: 1,
 				error: null,
-				href: `/modules/task/tasks?project=${encodeURIComponent(projectDir)}`,
+				href: `/modules/task/tasks/p/${projectSlug(projectDir)}`,
 			},
 		]);
 	});

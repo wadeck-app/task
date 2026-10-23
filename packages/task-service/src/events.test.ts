@@ -7,8 +7,30 @@ const linked: TaskEvent = {
 const unlinked: TaskEvent = { ...linked, name: 'onTaskUnlinked' };
 
 describe('replayCommand', () => {
-	it('is the exact `queue push` command that redelivers the event', () => {
-		expect(replayCommand(linked)).toBe(`queue push onTaskLinked '${JSON.stringify(linked.payload)}'`);
+	// `queue push` has no working-directory option: it uses its cwd to find .queue/subscribers.yml, so the replay changes directory first.
+	it('changes to the project directory, then runs the exact `queue push`', () => {
+		expect(replayCommand(linked)).toBe(`cd '/p' && queue push onTaskLinked '${JSON.stringify(linked.payload)}'`);
+	});
+
+	it('quotes single quotes of the directory and of the payload for a POSIX shell', () => {
+		const event: TaskEvent = {
+			name: 'onTaskLinked',
+			payload: { ...linked.payload, taskProjectPath: "C:\\Users\\O'Neil\\my proj", targetId: "it's" },
+		};
+
+		const command = replayCommand(event);
+
+		expect(command.startsWith(`cd 'C:\\Users\\O'\\''Neil\\my proj' && queue push onTaskLinked `)).toBe(true);
+		expect(command).toContain(`it'\\''s`);
+	});
+
+	it('names the missing directory instead of silently omitting the cd', () => {
+		const payload: Record<string, unknown> = { ...linked.payload };
+		delete payload['taskProjectPath'];
+
+		expect(replayCommand({ name: 'onTaskLinked', payload } as unknown as TaskEvent)).toContain(
+			`cd '<project directory>' && queue push`
+		);
 	});
 });
 

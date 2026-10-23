@@ -39,6 +39,20 @@ describe('runTaskCommand — version and help', () => {
 		expect(result.exitCode).toBe(0);
 		expect(result.output).toContain('Usage:');
 	});
+
+	it('--help documents the queue events: names, when, cwd, failure behaviour and replay', async () => {
+		const { output } = await runTaskCommand(['--help'], tmpDir);
+		const events = output.slice(output.indexOf('Events ('));
+
+		expect(output).toContain('Events (');
+		for (const name of ['onTaskCreated', 'onStatusChange', 'onTaskLinked', 'onTaskUnlinked', 'onTaskUnblocked']) {
+			expect(events, name).toContain(name);
+		}
+		expect(events).toContain('taskProjectPath');
+		expect(events).toContain('.queue/subscribers.yml');
+		expect(events).toContain('task cli logs');
+		expect(events).toContain('cd ');
+	});
 });
 
 describe('runTaskCommand — project guard', () => {

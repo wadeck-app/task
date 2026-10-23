@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { promisify } from 'node:util';
 
-import { replayCommand, type EventDelivery, type EventSink, type TaskEvent } from './events.js';
+import { eventProjectDir, replayCommand, type EventDelivery, type EventSink, type TaskEvent } from './events.js';
 
 /**
  * Locates queue's JS entry point (`.../@wadeck-app/queue-cli/bin/queue.js`) from PATH -- avoids shell and quoting issues
@@ -61,7 +61,8 @@ export interface QueueEventSinkOptions {
 }
 
 /**
- * Default Node sink: delivers each event with `node queue.js push <event> <json>`.
+ * Default Node sink: delivers each event with `node queue.js push <event> <json>`, run in the project directory
+ * (`payload.taskProjectPath`: queue has no cwd option and finds the project's subscribers from its cwd).
  * A failed delivery never throws: it is reported on stderr AND in the task log (stderr is lost when task runs
  * inside a flow step, the log is not), and returned as `{ delivered: false, reason }` so callers without a terminal
  * (the HTTP routes) can surface it. The log line carries the exact command that replays the event.
@@ -119,6 +120,14 @@ export function createQueueEventSink(options: QueueEventSinkOptions): EventSink 
 	return {
 		async deliver(event: TaskEvent): Promise<EventDelivery> {
 			const json = JSON.stringify(event.payload);
+			// queue finds the project's .queue/subscribers.yml from the cwd of the process it spawns: never fall back to our own cwd.
+			const projectDir = eventProjectDir(event);
+			if (projectDir === undefined) {
+				const reason =
+					'the event payload has no taskProjectPath, so the project whose subscribers must receive it is unknown (bug in the code that produced the event: please report it)';
+				reportUndelivered(event, reason);
+				return { delivered: false, reason };
+			}
 			let queueJs: string;
 			try {
 				queueJs = await lookUpQueueJs();
@@ -143,6 +152,7 @@ export function createQueueEventSink(options: QueueEventSinkOptions): EventSink 
 					}
 				};
 				const child = spawn(process.execPath, [queueJs, 'push', event.name, json], {
+					cwd: projectDir,
 					stdio: 'inherit',
 					windowsHide: true,
 				});

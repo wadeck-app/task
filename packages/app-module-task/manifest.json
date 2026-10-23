@@ -53,28 +53,8 @@
 		{
 			"kind": "page",
 			"slot": "route",
-			"label": "Task",
-			"path": "/tasks/:id",
-			"view": {
-				"type": "path",
-				"value": "./src/dsl-views/task-page.yaml"
-			}
-		},
-		{
-			"kind": "page",
-			"slot": "route",
-			"label": "Task history",
-			"path": "/tasks/:id/history",
-			"view": {
-				"type": "path",
-				"value": "./src/dsl-views/task-history-page.yaml"
-			}
-		},
-		{
-			"kind": "page",
-			"slot": "route",
 			"label": "New task",
-			"path": "/new",
+			"path": "/tasks/new",
 			"view": {
 				"type": "path",
 				"value": "./src/dsl-views/new-task-page.yaml"
@@ -84,10 +64,80 @@
 			"kind": "page",
 			"slot": "route",
 			"label": "Delete tasks",
-			"path": "/delete",
+			"path": "/tasks/delete",
 			"view": {
 				"type": "path",
 				"value": "./src/dsl-views/delete-page.yaml"
+			}
+		},
+		{
+			"kind": "page",
+			"slot": "route",
+			"label": "Project",
+			"path": "/tasks/p/:project",
+			"view": {
+				"type": "path",
+				"value": "./src/dsl-views/tasks-page.yaml"
+			}
+		},
+		{
+			"kind": "page",
+			"slot": "route",
+			"label": "Task",
+			"path": "/tasks/p/:project/:id",
+			"view": {
+				"type": "path",
+				"value": "./src/dsl-views/task-page.yaml"
+			}
+		},
+		{
+			"kind": "page",
+			"slot": "route",
+			"label": "Task history",
+			"path": "/tasks/p/:project/:id/history",
+			"view": {
+				"type": "path",
+				"value": "./src/dsl-views/task-history-page.yaml"
+			}
+		},
+		{
+			"kind": "page",
+			"slot": "route",
+			"label": "New task",
+			"path": "/tasks/p/:project/new",
+			"view": {
+				"type": "path",
+				"value": "./src/dsl-views/new-task-page.yaml"
+			}
+		},
+		{
+			"kind": "page",
+			"slot": "route",
+			"label": "Delete tasks",
+			"path": "/tasks/p/:project/delete",
+			"view": {
+				"type": "path",
+				"value": "./src/dsl-views/delete-page.yaml"
+			}
+		},
+		{
+			"kind": "page",
+			"slot": "route",
+			"label": "Project",
+			"path": "/tree/p/:project",
+			"view": {
+				"type": "path",
+				"value": "./src/dsl-views/tree-page.yaml"
+			}
+		},
+		{
+			"kind": "page",
+			"slot": "route",
+			"label": "Project",
+			"path": "/types/p/:project",
+			"view": {
+				"type": "path",
+				"value": "./src/dsl-views/types-page.yaml"
 			}
 		}
 	]

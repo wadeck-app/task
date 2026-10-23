@@ -74,9 +74,25 @@ export interface DeliveryOutcome {
 	undelivered: UndeliveredEvent[];
 }
 
-/** The `queue push` command that redelivers `event`. */
+/** POSIX single-quoting (bash, Git Bash, zsh): a single quote inside the text becomes '\''. */
+function shellQuote(text: string): string {
+	return `'${text.replaceAll("'", "'\\''")}'`;
+}
+
+/** Directory the queue command must run in for this event (queue looks for .queue/subscribers.yml from there); undefined when the payload has none. */
+export function eventProjectDir(event: TaskEvent): string | undefined {
+	const dir: unknown = (event.payload as { taskProjectPath?: unknown }).taskProjectPath;
+	return typeof dir === 'string' && dir.length > 0 ? dir : undefined;
+}
+
+/**
+ * The shell command that redelivers `event`: `cd '<project dir>' && queue push <event> '<json>'` (POSIX quoting).
+ * The queue command has no working-directory option, it uses its cwd, hence the `cd`. A payload without project directory
+ * (a bug of the producer) shows a placeholder, so that the text does not look replayable from anywhere.
+ */
 export function replayCommand(event: TaskEvent): string {
-	return `queue push ${event.name} '${JSON.stringify(event.payload)}'`;
+	const dir = eventProjectDir(event) ?? '<project directory>';
+	return `cd ${shellQuote(dir)} && queue push ${event.name} ${shellQuote(JSON.stringify(event.payload))}`;
 }
 
 /** Delivers events sequentially, in order, and reports which ones did not arrive. */

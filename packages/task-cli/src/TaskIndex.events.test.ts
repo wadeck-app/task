@@ -139,7 +139,7 @@ describe('queue events — an undelivered event leaves a trace in the task log',
 		const lines = errorLogLines();
 		expect(lines).toHaveLength(1);
 		expect(lines[0]!.msg).toContain(`queue push 'onStatusChange' for task ${task.id} not delivered: exit 1`);
-		expect(lines[0]!.msg).toContain(`Replay with: queue push onStatusChange '{`);
+		expect(lines[0]!.msg).toContain(`Replay with: cd '${tmpDir}' && queue push onStatusChange '{`);
 		expect(lines[0]!.msg).toContain(`"taskId":"${task.id}"`);
 		expect(stderr.join('')).toContain(`for task ${task.id} not delivered: exit 1`);
 		expect(stderr.join('')).toContain('task cli logs');
@@ -415,5 +415,52 @@ describe('set-status — closing a task that still has open blockers', () => {
 		await runTaskCommand(['set-status', task.id, 'done'], tmpDir);
 
 		expect(stderr.join('')).not.toContain('Warning');
+	});
+});
+
+// `queue push` finds .queue/subscribers.yml from ITS cwd: the CLI must spawn it in the project it works on, wherever it runs.
+describe('queue events — spawned in the project directory', () => {
+	let elsewhere: string;
+	const spawnCwds = (): unknown[] => spawnMock.mock.calls.map(call => (call[2] as { cwd?: string }).cwd);
+
+	beforeEach(() => {
+		elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'task-events-elsewhere-'));
+	});
+	afterEach(() => {
+		fs.rmSync(elsewhere, { recursive: true, force: true });
+		delete process.env['TASK_PROJECT_DIR'];
+		delete process.env['PROJECT_DIR'];
+	});
+
+	it('from the cwd when it is the project', async () => {
+		spawnMock.mockClear();
+		await runTaskCommand(['new', 'x'], tmpDir);
+		expect(spawnCwds()).toEqual([tmpDir]);
+	});
+
+	it('from --project-dir, not from the directory the command runs in', async () => {
+		spawnMock.mockClear();
+		const result = await runTaskCommand(['new', 'x', '--project-dir', tmpDir], elsewhere);
+		expect(result.exitCode).toBe(0);
+		expect(spawnCwds()).toEqual([tmpDir]);
+	});
+
+	it.each(['TASK_PROJECT_DIR', 'PROJECT_DIR'])('from the %s environment variable', async variable => {
+		process.env[variable] = tmpDir;
+		spawnMock.mockClear();
+		const result = await runTaskCommand(['new', 'x'], elsewhere);
+		expect(result.exitCode).toBe(0);
+		expect(spawnCwds()).toEqual([tmpDir]);
+	});
+
+	it('for set-status and link too, with --project-dir', async () => {
+		const a = await newTask('a');
+		const b = await newTask('b');
+		spawnMock.mockClear();
+
+		await runTaskCommand(['set-status', a.id, 'in-progress', '--project-dir', tmpDir], elsewhere);
+		await runTaskCommand(['link', a.id, 'blockedBy', b.id, '--project-dir', tmpDir], elsewhere);
+
+		expect(spawnCwds()).toEqual([tmpDir, tmpDir]);
 	});
 });

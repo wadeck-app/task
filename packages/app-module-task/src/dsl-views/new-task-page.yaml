@@ -1,5 +1,5 @@
-# Create a task (route /new). The project comes from ?project=; with several projects registered and none given the form
-# asks for it in a select (readable projects only, none preselected unless exactly one is readable). The parent list is
+# Create a task (routes /tasks/new and /tasks/p/:project/new). The project is the path segment `:project` ($route.project);
+# on /tasks/new, with several projects registered, the form asks for it in a select (readable projects only, none preselected unless exactly one is readable). The parent list is
 # the open tasks of the project given in the URL: a project picked in the form cannot feed it (a form cannot cascade), so
 # it appears only when the page was opened for a project.
 # Submits through a named action (conventions of task-page.yaml: projectParam, inline errors, reload);
@@ -13,7 +13,7 @@ $sources:
     projects:
         url: GET /api/modules/task/projects
         params:
-            project: $urlParam.project
+            project: $route.project
     tasks:
         url: GET /api/modules/task/tasks?{query}&inlineErrors=true
         params:
@@ -30,10 +30,6 @@ $type: PageContent
 sections:
     - $type: PageHeader
       title: New task
-    - $type: BackLink
-      $if: $sources.projects.allProjectsHref
-      to: $sources.projects.allProjectsHref
-      label: All projects
     - $type: Badge
       $if: $sources.projects.selectedText
       label: $sources.projects.selectedText
@@ -46,6 +42,11 @@ sections:
     - $type: Badge
       $if: $sources.projects.selectedProblem
       label: $sources.projects.selectedProblem
+      variant: danger
+    # The address names a project the registry does not know (a stale bookmark): said, with the next step, not a blank page.
+    - $type: Badge
+      $if: $sources.projects.unknownProjectText
+      label: $sources.projects.unknownProjectText
       variant: danger
     # The project select starts on the last project a task was created in (route: forms.create.projectParam); a
     # remembered value that cannot be used is said here instead of silently preselecting nothing.

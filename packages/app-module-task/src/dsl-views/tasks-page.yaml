@@ -1,6 +1,7 @@
-# Tasks of one project (?project=<absolute dir>; optional when a single project is registered), or, WITHOUT ?project
+# Tasks of one project (/tasks/p/:project: the project is the path segment `:project` = $route.project; /tasks also shows
+# the only registered project), or, on /tasks WITHOUT a project
 # and with several projects registered, the global list: every project's open tasks with a Project column (source
-# `tasks`, GET /tasks?allProjects=true). A row of either list opens the task with its project; "All projects" leads back.
+# `tasks`, GET /tasks?allProjects=true). A row of either list opens the task with its project; the breadcrumb leads back (Tasks = the global list).
 # Every scope goes through that one `scopeQuery`: project, global list, or `blank=true` (an unknown or unreadable
 # project: the route answers nothing, which replaces the rows of the previous scope instead of leaving them on screen).
 # Filters are links built by the route (the DSL has no component writing arbitrary URL parameters):
@@ -18,7 +19,7 @@ $sources:
     projects:
         url: GET /api/modules/task/projects
         params:
-            project: $urlParam.project
+            project: $route.project
             showAll: $urlParam.showAll
             parent: $urlParam.parent
             id: $urlParam.id
@@ -26,7 +27,7 @@ $sources:
         url: GET /api/modules/task/tasks?{query}&inlineErrors=true
         params:
             # One source for both scopes: the shell keeps the last answer of a skipped source, so a second source for the
-            # global list would leave the buttons of the previous project on screen after "All projects" (and the reverse).
+            # global list would leave the buttons of the previous project on screen after a trip to the global list (and the reverse).
             query: $source.projects.scopeQuery
             reload: $urlParam.reload
 
@@ -35,10 +36,6 @@ sections:
     - $type: PageHeader
       title: Tasks
       headerActions:
-          - $type: ButtonLink
-            $if: $sources.projects.allProjectsHref
-            label: All projects
-            to: $sources.projects.allProjectsHref
           - $type: ButtonLink
             $if: $sources.tasks.hrefs
             label: New task
@@ -71,7 +68,7 @@ sections:
       $if: $sources.tasks.errorText
       label: $sources.tasks.errorText
       variant: danger
-    # ?project=... names a directory the registry does not know: said, with the way back, not a blank page.
+    # The address names a project the registry does not know: said, with the next step, not a blank page.
     - $type: Badge
       $if: $sources.projects.unknownProjectText
       label: $sources.projects.unknownProjectText

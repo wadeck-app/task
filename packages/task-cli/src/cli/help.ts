@@ -63,6 +63,16 @@ Global flags:
   --json               Force JSON output; errors become {"error":"...","hint":"..."} (no "hint" key when there is none)
   --project-dir <dir>  Override project directory (also: TASK_PROJECT_DIR env var)
 
+Events (pushed to queue after the change is saved, in the project directory so its .queue/subscribers.yml is used):
+  onTaskCreated    new                              taskId, status, description, parentId, type, labels
+  onStatusChange   set-status                       taskId, oldStatus, newStatus, type, labels
+  onTaskLinked     link                             taskId, linkType, targetId
+  onTaskUnlinked   unlink                           taskId, linkType, targetId
+  onTaskUnblocked  set-status, last blocker closed  taskId (the unblocked task), blockerId, status, type, labels
+  Every payload also has taskProjectName and taskProjectPath. Subscriber filter example: when: payload.newStatus=done
+  A failed push never fails the command: it goes to stderr and to the log with its replay command
+  (cd '<project dir>' && queue push <event> '<json>'); read it with: task cli logs
+
 Output: all commands output JSON (tasks are JSON objects with id, description, status, type, labels, meta)
 
 Exit codes:

@@ -7,6 +7,7 @@ import type { EventSink } from '@wadeck-app/task-service';
 import type { ModuleContext, ModuleRouteHandler } from '@wadeck-app/app-core-sdk';
 
 import backend from './index.js';
+import { projectSlug } from './projectRef.js';
 import { registerTaskRoutes, type TaskRoutesOptions } from './routes.js';
 import { createRecordingSink, createTestWorld, type RecordingSink, type TestWorld } from './testHelpers.js';
 
@@ -223,7 +224,7 @@ describe('GET /projects', () => {
 				initialized: true,
 				openCount: 0,
 				error: null,
-				href: `/modules/task/tasks?project=${encodeURIComponent(project)}`,
+				href: `/modules/task/tasks/p/${projectSlug(project)}`,
 			},
 		]);
 	});
@@ -270,9 +271,7 @@ describe('GET /tasks', () => {
 	it('gives every row the encoded link to its detail page', async () => {
 		const id = await createTask('linked');
 		const answer = await h.call('GET /tasks', { query: { project } });
-		expect(answer.body['tasks'][0]['href']).toBe(
-			`/modules/task/tasks/${id}?project=${encodeURIComponent(project)}`
-		);
+		expect(answer.body['tasks'][0]['href']).toBe(`/modules/task/tasks/p/${projectSlug(project)}/${id}`);
 	});
 
 	it('restricts to the direct children of ?parent', async () => {
@@ -302,9 +301,7 @@ describe('GET /tasks/:id', () => {
 		const parentAnswer = await h.call('GET /tasks/:id', { params: { id: parent }, query: { project } });
 		expect(parentAnswer.body['parent']).toBeNull();
 		expect(parentAnswer.body['children'].map((c: { id: string }) => c.id)).toEqual([child]);
-		expect(parentAnswer.body['children'][0]['href']).toBe(
-			`/modules/task/tasks/${child}?project=${encodeURIComponent(project)}`
-		);
+		expect(parentAnswer.body['children'][0]['href']).toBe(`/modules/task/tasks/p/${projectSlug(project)}/${child}`);
 	});
 
 	it('has no warnings for a healthy task', async () => {
@@ -506,7 +503,7 @@ describe('GET /summary per-project rows (the global dashboard widget)', () => {
 				openText: '1',
 				totalText: '2',
 				problem: '',
-				href: `/modules/task/tasks?project=${encodeURIComponent(project)}`,
+				href: `/modules/task/tasks/p/${projectSlug(project)}`,
 			},
 			{
 				name: 'beta',
@@ -515,7 +512,7 @@ describe('GET /summary per-project rows (the global dashboard widget)', () => {
 				openText: '0',
 				totalText: '0',
 				problem: '',
-				href: `/modules/task/tasks?project=${encodeURIComponent(beta)}`,
+				href: `/modules/task/tasks/p/${projectSlug(beta)}`,
 			},
 		]);
 		expect(answer.body).toMatchObject({ open: 1, total: 2, projectCount: 2 });
@@ -576,9 +573,9 @@ describe('GET /tasks?allProjects=true (the global task list)', () => {
 				projectName: 'alpha',
 				projectPath: project,
 				titleText: 'in alpha',
-				href: `/modules/task/tasks/${a}?project=${encodeURIComponent(project)}`,
+				href: `/modules/task/tasks/p/${projectSlug(project)}/${a}`,
 			},
-			{ id: b, projectName: 'beta', href: `/modules/task/tasks/${b}?project=${encodeURIComponent(beta)}` },
+			{ id: b, projectName: 'beta', href: `/modules/task/tasks/p/${projectSlug(beta)}/${b}` },
 		]);
 		expect(answer.body['tasks'][0].created).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d$/);
 		expect(answer.body['scopeText']).toBe('All projects: 2 projects, 2 open tasks.');
@@ -667,7 +664,6 @@ describe('GET /projects global view data (the Tasks page without ?project)', () 
 		h.world.createProject('beta');
 		const plain = await h.call('GET /projects');
 		expect(plain.body['globalQuery']).toBe('allProjects=true');
-		expect(plain.body['allProjectsHref']).toBeNull();
 		const showAll = await h.call('GET /projects', { query: { showAll: 'true' } });
 		expect(showAll.body['globalQuery']).toBe('allProjects=true&showAll=true');
 	});
@@ -693,24 +689,38 @@ describe('GET /projects global view data (the Tasks page without ?project)', () 
 		expect(none.body['globalQuery']).toBe('');
 	});
 
-	it('with a project chosen among several, allProjectsHref goes back to the global Tasks page', async () => {
+	it('answers no back link: the breadcrumb leads back to the parent pages (allProjectsHref, globalHrefs, tasksHref are gone)', async () => {
 		h.world.createProject('beta');
 		const answer = await h.call('GET /projects', { query: { project } });
-		expect(answer.body['allProjectsHref']).toBe('/modules/task/tasks');
+		expect(answer.body).not.toHaveProperty('allProjectsHref');
+		expect(answer.body).not.toHaveProperty('globalHrefs');
+		expect(answer.body).not.toHaveProperty('tasksHref');
 	});
 
-	it('has no allProjectsHref with a single project (the global view would be the same page)', async () => {
-		const answer = await h.call('GET /projects', { query: { project } });
-		expect(answer.body['allProjectsHref']).toBeNull();
+	it('names the project of a page by the slug of its address, the way the directory is accepted (one resolution)', async () => {
+		h.world.createProject('beta');
+		const bySlug = await h.call('GET /projects', { query: { project: projectSlug(project) } });
+		expect(bySlug.body['selectedText']).toBe('Project: alpha');
+		expect(bySlug.body['projectQuery']).toBe(`project=${encodeURIComponent(project)}`);
+		expect(bySlug.body['scopeQuery']).toBe(`project=${encodeURIComponent(project)}`);
+		expect(bySlug.body['unknownProjectText']).toBeNull();
+		const byDir = await h.call('GET /projects', { query: { project } });
+		expect(byDir.body['projectQuery']).toBe(bySlug.body['projectQuery']);
 	});
 
-	it('an unregistered ?project is named in unknownProjectText and offers the way back, without a global query', async () => {
+	it('keeps the page filters when the project is a slug', async () => {
+		h.world.createProject('beta');
+		const answer = await h.call('GET /projects', { query: { project: projectSlug(project), showAll: 'true' } });
+		expect(answer.body['projectQuery']).toBe(`project=${encodeURIComponent(project)}&showAll=true`);
+	});
+
+	it('an unregistered project (slug or directory) is named in unknownProjectText with the next step, without a global query', async () => {
 		h.world.createProject('beta');
 		const answer = await h.call('GET /projects', { query: { project: '/nowhere/ghost' } });
 		expect(answer.body['globalQuery']).toBe('');
 		expect(answer.body['unknownProjectText']).toContain('/nowhere/ghost');
 		expect(answer.body['unknownProjectText']).toContain('not registered');
-		expect(answer.body['allProjectsHref']).toBe('/modules/task/tasks');
+		expect(answer.body['unknownProjectText']).toContain('Projects page');
 	});
 
 	it('has no unknownProjectText for a registered or absent ?project', async () => {
@@ -718,6 +728,13 @@ describe('GET /projects global view data (the Tasks page without ?project)', () 
 		expect(answer.body['unknownProjectText']).toBeNull();
 		const none = await h.call('GET /projects');
 		expect(none.body['unknownProjectText']).toBeNull();
+	});
+
+	it('says only that nothing is registered (not also that the project is unknown) when the registry is empty', async () => {
+		fs.rmSync(projectsRegistryPath(h.world.configDir));
+		const answer = await h.call('GET /projects', { query: { project: projectSlug(project) } });
+		expect(answer.body['noProjects']).toBe(true);
+		expect(answer.body['unknownProjectText']).toBeNull();
 	});
 });
 
@@ -1002,6 +1019,32 @@ describe('links', () => {
 });
 
 describe('event delivery', () => {
+	// The queue sink spawns `queue push` in taskProjectPath: every event of every route must carry the project of the request.
+	it('every event produced by the routes carries the project directory of the request', async () => {
+		const blocker = await createTask('blocker');
+		const blocked = await createTask('blocked');
+		const other = await createTask('other');
+		await h.call('POST /tasks', { query: { project }, body: { description: 'created through the route' } });
+		const link = { params: { id: blocked }, query: { project }, body: { type: 'blockedBy', target: blocker } };
+		await h.call('POST /tasks/:id/links', link);
+		await h.call('DELETE /tasks/:id/links', link);
+		await h.call('POST /tasks/:id/links', link);
+		await h.call('POST /tasks/:id/status', {
+			params: { id: blocker },
+			query: { project },
+			body: { status: 'done' },
+		});
+		await h.call('POST /tasks/:id/status', { params: { id: other }, query: { project }, body: { status: 'done' } });
+
+		const names = new Set(h.sink.events.map(e => e.name));
+		expect([...names].sort()).toEqual(
+			['onStatusChange', 'onTaskCreated', 'onTaskLinked', 'onTaskUnblocked', 'onTaskUnlinked'].sort()
+		);
+		for (const event of h.sink.events) {
+			expect(event.payload.taskProjectPath, event.name).toBe(project);
+		}
+	});
+
 	it('answers 500 saying the change WAS applied when the sink throws', async () => {
 		const failing: EventSink = { deliver: () => Promise.reject(new Error('queue exploded')) };
 		const failingHarness = setup(failing);
@@ -1039,7 +1082,7 @@ describe('event delivery', () => {
 			expect(undelivered).toHaveLength(1);
 			expect(undelivered[0]).toMatchObject({ event: 'onTaskCreated', reason: 'exit 3' });
 			expect(undelivered[0]!['taskId']).toBe(created.body['task'].id);
-			expect(undelivered[0]!['replay']).toMatch(/^queue push onTaskCreated '\{.*\}'$/);
+			expect(undelivered[0]!['replay']).toMatch(/^cd '.+' && queue push onTaskCreated '\{.*\}'$/);
 
 			const status = await failingHarness.call('POST /tasks/:id/status', {
 				params: { id: created.body['task'].id },
@@ -1147,7 +1190,7 @@ describe('server-side logging of unexpected errors (5xx)', () => {
 	});
 });
 
-const hrefOf = (id: string): string => `/modules/task/tasks/${id}?project=${encodeURIComponent(project)}`;
+const hrefOf = (id: string): string => `/modules/task/tasks/p/${projectSlug(project)}/${id}`;
 
 describe('GET /tree rows (flat, navigable view of the forest)', () => {
 	it('flattens the forest depth-first with depth, an indented label and the encoded detail link', async () => {
@@ -1793,15 +1836,16 @@ describe('undeliveredText (ready-to-display line for the views)', () => {
 
 describe('view data: page links, filters and form defaults', () => {
 	const projectParam = (): string => encodeURIComponent(project);
-	const page = (name: string, query = ''): string =>
-		`/modules/task/${name}?project=${encodeURIComponent(project)}${query}`;
+	// The address of a page of the project: the slug is a path segment (the breadcrumb keeps those, not the query).
+	const page = (name: 'tasks' | 'tree' | 'types' | 'new' | 'delete', query = ''): string => {
+		const section = name === 'new' || name === 'delete' ? 'tasks' : name;
+		const tail = name === 'new' || name === 'delete' ? `/${name}` : '';
+		return `/modules/task/${section}/p/${projectSlug(project)}${tail}${query}`;
+	};
 
-	it('GET /tasks, /tree, /types and /tasks/:id carry the encoded links to the pages of the project', async () => {
+	it('GET /tasks, /tree, /types and /tasks/:id link the pages that act on the project, by path (no ?project=)', async () => {
 		const id = await createTask('t');
 		const expected = {
-			tasks: page('tasks'),
-			tree: page('tree'),
-			types: page('types'),
 			newTask: page('new'),
 			deleteTasks: page('delete'),
 			projects: '/modules/task/projects',
@@ -1824,7 +1868,7 @@ describe('view data: page links, filters and form defaults', () => {
 			expect(plain.body['filters']).toEqual({ showAll: false, parent: null });
 			expect(plain.body['showAllToggle']).toEqual({
 				label: 'Show closed tasks',
-				href: page('tasks', '&showAll=true'),
+				href: page('tasks', '?showAll=true'),
 			});
 			expect(plain.body['clearParentHref']).toBeNull();
 
@@ -1832,9 +1876,9 @@ describe('view data: page links, filters and form defaults', () => {
 			expect(filtered.body['filters']).toEqual({ showAll: true, parent });
 			expect(filtered.body['showAllToggle']).toEqual({
 				label: 'Hide closed tasks',
-				href: page('tasks', `&parent=${parent}`),
+				href: page('tasks', `?parent=${parent}`),
 			});
-			expect(filtered.body['clearParentHref']).toBe(page('tasks', '&showAll=true'));
+			expect(filtered.body['clearParentHref']).toBe(page('tasks', '?showAll=true'));
 			expect(filtered.body['parentFilterText']).toContain(parent);
 		});
 
@@ -1855,7 +1899,7 @@ describe('view data: page links, filters and form defaults', () => {
 		const answer = await h.call('GET /tree', { query: { project } });
 		expect(answer.body['showAllToggle']).toEqual({
 			label: 'Show closed tasks',
-			href: page('tree', '&showAll=true'),
+			href: page('tree', '?showAll=true'),
 		});
 	});
 
@@ -1908,9 +1952,9 @@ describe('view data: page links, filters and form defaults', () => {
 			const id = await createTask('t');
 			const answer = await h.call('GET /tasks/:id', { params: { id }, query: { project } });
 			expect(answer.body['taskHrefs']).toEqual({
-				detail: `/modules/task/tasks/${id}?project=${projectParam()}`,
-				history: `/modules/task/tasks/${id}/history?project=${projectParam()}`,
-				childrenList: page('tasks', `&parent=${id}&showAll=true`),
+				detail: `/modules/task/tasks/p/${projectSlug(project)}/${id}`,
+				history: `/modules/task/tasks/p/${projectSlug(project)}/${id}/history`,
+				childrenList: page('tasks', `?parent=${id}&showAll=true`),
 			});
 		});
 	});
@@ -1985,7 +2029,7 @@ describe('view data: page links, filters and form defaults', () => {
 			const answer = await h.call('POST /tasks', { query: { project }, body: { description: 'new one' } });
 			const id = answer.body['task'].id as string;
 			expect(answer.body['message']).toBe(`Created task ${id}: new one`);
-			expect(answer.body['href']).toBe(`/modules/task/tasks/${id}?project=${projectParam()}`);
+			expect(answer.body['href']).toBe(`/modules/task/tasks/p/${projectSlug(project)}/${id}`);
 		});
 	});
 
@@ -2280,12 +2324,10 @@ describe('GET /summary display rows', () => {
 });
 
 describe('GET /projects tasks link', () => {
-	it('gives the tasks page of the selected project, else the plain tasks page', async () => {
+	it('is gone: the views have no link to the tasks page, the breadcrumb leads there', async () => {
 		h.world.createProject('beta');
 		const selected = await h.call('GET /projects', { query: { project } });
-		expect(selected.body['tasksHref']).toBe(`/modules/task/tasks?project=${encodeURIComponent(project)}`);
-		const none = await h.call('GET /projects');
-		expect(none.body['tasksHref']).toBe('/modules/task/tasks');
+		expect(selected.body).not.toHaveProperty('tasksHref');
 	});
 });
 
@@ -2387,7 +2429,7 @@ describe('GET /tree?allProjects=true (the global forest, grouped by project)', (
 		expect(link).toMatchObject({
 			$type: 'ButtonLink',
 			label: 'Open the tree of alpha',
-			to: `/modules/task/tree?project=${enc(project)}`,
+			to: `/modules/task/tree/p/${projectSlug(project)}`,
 		});
 		expect(table).toMatchObject({ $type: 'DataTable', navigateTo: '{href}' });
 		const rows = table['rows'] as Array<Record<string, any>>;
@@ -2397,7 +2439,7 @@ describe('GET /tree?allProjects=true (the global forest, grouped by project)', (
 		]);
 		expect(rows[0]).toMatchObject({
 			label: 'parent',
-			href: `/modules/task/tasks/${parent}?project=${enc(project)}`,
+			href: `/modules/task/tasks/p/${projectSlug(project)}/${parent}`,
 		});
 		expect(rows[1]!['label']).toMatch(/child$/);
 		expect(rows[1]!['label']).not.toBe('child');
@@ -2688,23 +2730,6 @@ describe('scope data of GET /projects (one source per page for the global and th
 		const solo = h.world.createProject('solo');
 		const single = await h.call('GET /projects');
 		expect(single.body['scopeQuery']).toBe(`project=${enc(solo)}`);
-	});
-
-	it('globalHrefs: the global page matching each project page, only while several projects are registered', async () => {
-		const chosen = await h.call('GET /projects', { query: { project } });
-		expect(chosen.body['globalHrefs']).toEqual({
-			tasks: '/modules/task/tasks',
-			tree: '/modules/task/tree',
-			types: '/modules/task/types',
-		});
-		const unknown = await h.call('GET /projects', { query: { project: '/nowhere/ghost' } });
-		expect(unknown.body['globalHrefs']).toEqual(chosen.body['globalHrefs']);
-		const global = await h.call('GET /projects');
-		expect(global.body['globalHrefs']).toBeNull();
-		fs.rmSync(projectsRegistryPath(h.world.configDir));
-		h.world.createProject('solo');
-		const single = await h.call('GET /projects');
-		expect(single.body['globalHrefs']).toBeNull();
 	});
 
 	it('projectOptions leave out the projects that cannot be read (picking one could only fail)', async () => {
