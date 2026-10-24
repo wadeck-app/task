@@ -72,6 +72,15 @@ describe('runAppCoreCommand register', () => {
 		});
 	});
 
+	it('exits 0 when the registration is unconfirmed, printing the message with the retry command (not a failure, not "registered")', async () => {
+		const message = 'app-core: registration of module "task" not confirmed: timeout. Run: task cli register';
+		const d = deps({ register: vi.fn(async () => ({ ok: true, status: 'unconfirmed', message })) });
+		expect(await runAppCoreCommand('register', false, d)).toEqual({ exitCode: 0, output: message });
+		const json = await runAppCoreCommand('register', true, d);
+		expect(json.exitCode).toBe(0);
+		expect(JSON.parse(json.output)).toEqual({ ok: true, status: 'unconfirmed', message });
+	});
+
 	it('--json: failures are {"error": ...} like the other commands, with a non-zero exit', async () => {
 		const d = deps({
 			register: vi.fn(async () => ({

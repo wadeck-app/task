@@ -1,4 +1,5 @@
 import { describeRegistration, registerModule, unregisterModule } from '@wadeck-app/app-core-sdk/register';
+import type { RegistrationOutcome, UnregistrationOutcome } from '@wadeck-app/app-core-sdk/register';
 import { ConfigDir } from '@wadeck-app/shared-cli/ConfigDir';
 import { isPackagedInstall, pruneStagedModules, stageAppModule } from './appModuleStaging.js';
 import type { StagedModule } from './appModuleStaging.js';
@@ -9,7 +10,7 @@ export const APP_CORE_MODULE_ID = 'task';
 export interface AppCoreAttempt {
 	/** False when app-core refused or the call itself failed: the caller must fix something. App-core being absent is ok. */
 	ok: boolean;
-	/** An outcome status of the SDK, or `failed` when the SDK rejected. */
+	/** An outcome status of the SDK (`unconfirmed` = ok, but app-core did not confirm: see {@link describeOutcome}), or `failed` when the SDK rejected. */
 	status: string;
 	/** One line, ready to print. */
 	message: string;
@@ -18,6 +19,17 @@ export interface AppCoreAttempt {
 type LogDiagnostic = (entry: { source: string; message: string }) => void;
 
 const SOURCE = 'AppCoreRegistration';
+
+/**
+ * The SDK wording of an outcome. `unconfirmed` (app-core reachable, no answer in time: it may have applied the call) is
+ * neither a failure nor a confirmation, so it gets the exact command that settles it, next to the SDK's own advice.
+ */
+function describeOutcome(outcome: RegistrationOutcome | UnregistrationOutcome): string {
+	const text = describeRegistration(outcome, APP_CORE_MODULE_ID);
+	if (outcome.status !== 'unconfirmed') return text;
+	const command = 'action' in outcome ? 'task cli unregister' : 'task cli register';
+	return `${text} To settle it, wait a few seconds and run: ${command}`;
+}
 
 function errorMessage(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
@@ -35,7 +47,7 @@ export async function attemptRegistration(manifestPath: string): Promise<AppCore
 		return {
 			ok: outcome.status !== 'refused',
 			status: outcome.status,
-			message: describeRegistration(outcome, APP_CORE_MODULE_ID),
+			message: describeOutcome(outcome),
 		};
 	} catch (err) {
 		return {
@@ -85,7 +97,7 @@ export async function attemptUnregistration(): Promise<AppCoreAttempt> {
 		return {
 			ok: outcome.status !== 'refused',
 			status: outcome.status,
-			message: describeRegistration(outcome, APP_CORE_MODULE_ID),
+			message: describeOutcome(outcome),
 		};
 	} catch (err) {
 		return {

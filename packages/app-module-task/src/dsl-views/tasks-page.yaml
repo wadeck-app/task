@@ -90,7 +90,7 @@ sections:
       columns:
           - { key: 'projectName', label: 'Project' }
           - { key: 'id', label: 'ID', mono: true, nowrap: true }
-          - { key: 'titleText', label: 'Title' }
+          - { key: 'titleText', label: 'Title', truncate: true, title: '{title}' }
           - { key: 'status', label: 'Status', nowrap: true }
           - { key: 'created', label: 'Created (UTC)', nowrap: true }
     - $type: HorizontalStack
@@ -111,6 +111,6 @@ sections:
       emptyMessage: No open tasks yet. Use "New task" to create one ("Show closed tasks" includes the closed ones)
       columns:
           - { key: 'id', label: 'ID', mono: true, nowrap: true }
-          - { key: 'titleText', label: 'Title' }
+          - { key: 'titleText', label: 'Title', truncate: true, title: '{title}' }
           - { key: 'status', label: 'Status', nowrap: true }
           - { key: 'created', label: 'Created (UTC)', nowrap: true }

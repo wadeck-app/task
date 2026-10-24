@@ -111,9 +111,28 @@ describe('the packaged module through a real app-core server', () => {
 		SERVER_START_TIMEOUT_MS + PACKAGE_TIMEOUT_MS + 5_000
 	);
 
-	afterAll(() => {
-		child?.kill();
-		rmSync(workDir, { recursive: true, force: true });
+	afterAll(async () => {
+		if (child && child.exitCode === null) {
+			const exited = new Promise<void>(resolveExit => child!.once('exit', () => resolveExit()));
+			child.kill();
+			// Windows: the folder stays locked until the server has really exited (EPERM with app-core-cli 2026.10.24), so wait for it.
+			await Promise.race([
+				exited,
+				new Promise<void>((_, rejectTimeout) =>
+					setTimeout(
+						() =>
+							rejectTimeout(
+								new Error(
+									'app-core-cli dev did not exit within 10 s after kill(): its folder cannot be removed'
+								)
+							),
+						10_000
+					)
+				),
+			]);
+		}
+		// The exit event can precede the release of the handles by a few ms on Windows.
+		rmSync(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 	});
 
 	async function call(

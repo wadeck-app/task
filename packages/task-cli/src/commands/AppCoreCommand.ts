@@ -27,7 +27,10 @@ function failure(jsonMode: boolean, message: string, status?: string): CommandRe
 
 /**
  * Exit 0 when app-core took it, or is absent / not running (deferred, skipped: nothing to fix, said
- * clearly). Exit 1 with the reason when app-core refuses, the call fails or the manifest cannot be found.
+ * clearly). `unconfirmed` (app-core is up but did not answer in time; it may have applied the call) is exit 0 too: it
+ * is not a failure and nothing is known to be wrong, so a script chaining on the exit code is not broken by a slow
+ * module load; the text and `--json` carry `status: 'unconfirmed'` plus the command to re-run, and a script that needs
+ * certainty tests `status`. Exit 1 with the reason when app-core refuses, the call fails or the manifest cannot be found.
  */
 export async function runAppCoreCommand(
 	action: 'register' | 'unregister',

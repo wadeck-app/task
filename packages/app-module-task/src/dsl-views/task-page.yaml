@@ -353,7 +353,7 @@ sections:
                 - { key: 'relation', label: 'Relation' }
                 - { key: 'direction', label: 'Direction' }
                 - { key: 'id', label: 'Task', mono: true, nowrap: true }
-                - { key: 'titleText', label: 'Title' }
+                - { key: 'titleText', label: 'Title', truncate: true, title: '{title}' }
                 - { key: 'status', label: 'Status', nowrap: true }
           - $type: Form
             $if: $sources.detail.linkTypeOptions
@@ -396,5 +396,5 @@ sections:
             emptyMessage: No children
             columns:
                 - { key: 'id', label: 'ID', mono: true, nowrap: true }
-                - { key: 'titleText', label: 'Title' }
+                - { key: 'titleText', label: 'Title', truncate: true, title: '{title}' }
                 - { key: 'status', label: 'Status', nowrap: true }

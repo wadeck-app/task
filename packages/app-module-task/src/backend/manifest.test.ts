@@ -277,6 +277,17 @@ describe('views: columns holding short codes never wrap (nowrap)', () => {
 	});
 });
 
+// dsl-ui >= 2026.10.19-122 (app-core-cli 2026.10.24-094 verified in a browser): `truncate` cuts a long cell with an ellipsis instead of
+// wrapping it anywhere, `title` gives the full text as tooltip. The route already shortens `titleText`; the full `title` is in the row.
+describe('views: the title columns truncate and keep the full title as tooltip', () => {
+	it.each(viewNames)('%s: every titleText column has truncate and a title tooltip', name => {
+		for (const [column] of view(name).matchAll(/\{ key: 'titleText'[^\n]*\}/g)) {
+			expect(column, name).toContain('truncate: true');
+			expect(column, name).toContain("title: '{title}'");
+		}
+	});
+});
+
 describe('task detail page: forms and links', () => {
 	const page = view('task-page.yaml');
 

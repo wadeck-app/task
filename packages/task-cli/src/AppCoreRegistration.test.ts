@@ -57,7 +57,44 @@ describe('attemptRegistration', () => {
 	});
 });
 
+describe('attemptRegistration, outcome "unconfirmed"', () => {
+	const unconfirmed = { status: 'unconfirmed', port: 4850, failure: 'timeout', timeoutMs: 3000 };
+
+	it('is not a failure (ok) and is not "registered": the status stays, the SDK wording is kept and the retry command is added', async () => {
+		sdk.registerModule.mockResolvedValue(unconfirmed);
+		const result = await attemptRegistration('/abs/manifest.json');
+		expect(result).toMatchObject({ ok: true, status: 'unconfirmed' });
+		expect(result.message).toContain('described:unconfirmed');
+		expect(result.message).toContain('task cli register');
+	});
+
+	it('does not add the retry command to the outcomes that need none', async () => {
+		sdk.registerModule.mockResolvedValue({ status: 'registered' });
+		expect((await attemptRegistration('/abs/manifest.json')).message).toBe('described:registered');
+	});
+
+	it('is logged with the retry command by the best-effort caller (updater)', async () => {
+		sdk.registerModule.mockResolvedValue(unconfirmed);
+		await registerWithAppCore('/abs/manifest.json', log);
+		expect(lines[0]!.message).toContain('described:unconfirmed');
+		expect(lines[0]!.message).toContain('task cli register');
+	});
+});
+
 describe('attemptUnregistration', () => {
+	it('outcome "unconfirmed" is ok but says to run "task cli unregister" again', async () => {
+		sdk.unregisterModule.mockResolvedValue({
+			status: 'unconfirmed',
+			action: 'unregister',
+			port: 4850,
+			failure: 'reset',
+		});
+		const result = await attemptUnregistration();
+		expect(result).toMatchObject({ ok: true, status: 'unconfirmed' });
+		expect(result.message).toContain('described:unconfirmed');
+		expect(result.message).toContain('task cli unregister');
+	});
+
 	it.each([
 		['unregistered', true],
 		['not-registered', true],
