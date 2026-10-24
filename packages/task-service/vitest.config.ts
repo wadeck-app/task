@@ -9,6 +9,8 @@ export default defineConfig({
 		exclude: ['**/node_modules/**', '**/dist/**'],
 		mockReset: true,
 		restoreMocks: true,
+		// Sets QUEUE_SDK_OFF=1: no test can push to a real queue.
+		setupFiles: ['./vitest.setup.ts'],
 	},
 	resolve: {
 		extensions: ['.ts', '.tsx', '.js', '.jsx', '.json'],

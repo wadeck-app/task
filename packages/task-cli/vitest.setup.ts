@@ -11,6 +11,10 @@ afterAll(() => {
 	fs.rmSync(sandbox, { recursive: true, force: true });
 });
 
+// Second layer: QUEUE_SDK_OFF=1 makes the SDK send nothing, also in child processes spawned by tests (the packaged CLI),
+// which the mock below cannot reach.
+process.env['QUEUE_SDK_OFF'] = '1';
+
 // No test may reach the real queue: runTaskCommand builds its event sink with createQueueEventSink, whose delivery goes
 // through @wadeck-app/queue-sdk (finds the daemon, may start it with `queue start`). On a machine with queue installed that
 // would push real events and cost seconds per mutating command. Every test file gets an instant sink instead. Files that

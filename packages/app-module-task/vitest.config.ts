@@ -6,6 +6,8 @@ export default defineConfig({
 		globals: true,
 		environment: 'node',
 		restoreMocks: true,
+		// Sets QUEUE_SDK_OFF=1: no test, nor the app-core it spawns, can push to a real queue.
+		setupFiles: ['./src/backend/vitest.setup.ts'],
 		include: ['src/**/*.test.ts'],
 		// The real-server test spawns app-core and packages the module: it has its own, longer timeouts.
 		testTimeout: 15_000,
