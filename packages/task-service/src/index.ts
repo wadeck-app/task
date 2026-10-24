@@ -10,6 +10,7 @@ export {
 	InvalidTaskTypeError,
 	InvalidDeleteFilterError,
 	AmbiguousDeletePrefixError,
+	PartialDeleteError,
 	DanglingParentError,
 	ProjectsRegistryError,
 	InvalidProjectPathError,

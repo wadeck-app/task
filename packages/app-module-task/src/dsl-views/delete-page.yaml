@@ -53,6 +53,11 @@ sections:
       $if: $ctx.plan.deletedText
       label: $ctx.plan.deletedText
       variant: success
+    # A delete emits one event per deleted task: the text says how many the queue did not receive. The tasks are deleted anyway.
+    - $type: Badge
+      $if: $ctx.plan.undeliveredText
+      label: $ctx.plan.undeliveredText
+      variant: warning
     - $type: Form
       $if: $sources.projects.forms
       onSubmit: $ctx.previewDelete

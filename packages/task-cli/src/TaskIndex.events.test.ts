@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { TaskStore } from '@wadeck-app/task-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Queue delivery is observed at the SDK boundary: the CLI publishes through @wadeck-app/queue-sdk (publishAndWait, then flush).
@@ -906,5 +907,49 @@ describe('queue events — the task events are declared to the queue (registerEv
 			const unknown = await runTaskCommand(['cli', 'nope'], tmpDir);
 			expect(unknown.output).toContain('declare-events');
 		});
+	});
+});
+
+describe('queue events — a delete that fails partway through its plan', () => {
+	it('delivers the events of the tasks already deleted, then fails (exit 1) naming how many were deleted', async () => {
+		const tasks = [await newTask('one'), await newTask('two'), await newTask('three'), await newTask('four')];
+		publishMock.mockClear();
+		const original = TaskStore.prototype.deleteTask;
+		let calls = 0;
+		vi.spyOn(TaskStore.prototype, 'deleteTask').mockImplementation(function (this: TaskStore, id: string) {
+			calls++;
+			if (calls === 3) throw new Error('EPERM: operation not permitted');
+			return original.call(this, id);
+		});
+
+		const result = await runTaskCommand(['delete', '--all'], tmpDir);
+
+		expect(result.exitCode).toBe(1);
+		expect(result.output).toContain('deleted 2 of 4 task(s)');
+		expect(result.output).toContain('EPERM');
+		expect(result.output).toContain('cannot be restored');
+		// The two deleted tasks are reported to the queue although the command failed.
+		const delivered = pushedEvents();
+		expect(delivered.map(e => e.event)).toEqual(['onTaskDeleted', 'onTaskDeleted']);
+		const deletedIds = delivered.map(e => e.payload['taskId']);
+		const remaining = tasks.filter(task => !deletedIds.includes(task.id));
+		expect(remaining).toHaveLength(2);
+		vi.restoreAllMocks();
+		const list = JSON.parse((await runTaskCommand(['list'], tmpDir)).output) as Array<{ id: string }>;
+		expect(list.map(task => task.id).sort()).toEqual(remaining.map(task => task.id).sort());
+	});
+
+	it('still fails with the original error and pushes nothing when the very first deletion fails', async () => {
+		await newTask('one');
+		publishMock.mockClear();
+		vi.spyOn(TaskStore.prototype, 'deleteTask').mockImplementation(() => {
+			throw new Error('EPERM: operation not permitted');
+		});
+
+		const result = await runTaskCommand(['delete', '--all'], tmpDir);
+
+		expect(result.exitCode).toBe(1);
+		expect(result.output).toContain('EPERM');
+		expect(pushedEvents()).toEqual([]);
 	});
 });

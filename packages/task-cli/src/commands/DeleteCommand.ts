@@ -1,5 +1,6 @@
 // task delete: argument parsing and output over planDelete / executeDelete.
 import {
+	PartialDeleteError,
 	TaskServiceError,
 	deliverEvents,
 	describeDeleteEffects,
@@ -7,7 +8,7 @@ import {
 	planDelete,
 	selectDeleteTargets,
 } from '@wadeck-app/task-service';
-import type { DeletePlan, DeleteSelectionProblem } from '@wadeck-app/task-service';
+import type { DeletePlan, DeleteSelectionProblem, ExecuteDeleteResult } from '@wadeck-app/task-service';
 
 import type { ProjectCommand } from '../cli/env.js';
 import { errorOutput, failure, taskLine } from '../cli/output.js';
@@ -98,7 +99,17 @@ export const runDelete: ProjectCommand = async (rest, { jsonMode, ctx, eventSink
 	if (dryRun) {
 		return { exitCode: 0, output: previewText(plan) };
 	}
-	const { deletedCount, events } = executeDelete(ctx, plan);
+	let result: ExecuteDeleteResult;
+	try {
+		result = executeDelete(ctx, plan);
+	} catch (error) {
+		// Tasks deleted before the failure are gone for good: their events are delivered before the failure is reported.
+		if (error instanceof PartialDeleteError) {
+			await deliverEvents(eventSink, error.events);
+		}
+		return failure(jsonMode, error);
+	}
+	const { deletedCount, events } = result;
 	// Delivered after the deletion is done (a failed push only warns, see the sink).
 	await deliverEvents(eventSink, events);
 	return {

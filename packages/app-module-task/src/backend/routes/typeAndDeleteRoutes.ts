@@ -1,5 +1,13 @@
 // Routes of the project task types and of the (previewed, confirmed) deletion of tasks.
-import { addType, executeDelete, listTypes, planDelete, removeType } from '@wadeck-app/task-service';
+import {
+	addType,
+	executeDelete,
+	listTypes,
+	PartialDeleteError,
+	planDelete,
+	removeType,
+} from '@wadeck-app/task-service';
+import type { ExecuteDeleteResult } from '@wadeck-app/task-service';
 
 import { readAcrossProjects } from '../acrossProjects.js';
 import { allTypesBody } from '../allProjectsViews.js';
@@ -76,7 +84,21 @@ export function registerDeleteRoutes(kit: RouteKit): void {
 				{ plan: planBody(ctx.project, plan, body) }
 			);
 		}
-		const { deletedCount, events } = executeDelete(ctx, plan);
+		let result: ExecuteDeleteResult;
+		try {
+			result = executeDelete(ctx, plan);
+		} catch (error) {
+			if (!(error instanceof PartialDeleteError)) throw error;
+			// The tasks deleted before the failure are gone: their events are delivered, and the 5xx says what happened.
+			const undelivered = await deliver(error.events);
+			throw new RequestError(500, error.message, error.hint, {
+				deletedCount: error.deletedCount,
+				plannedCount: error.plannedCount,
+				partial: true,
+				...undeliveredFields(undelivered),
+			});
+		}
+		const { deletedCount, events } = result;
 		const undelivered = await deliver(events);
 		return {
 			status: 200,

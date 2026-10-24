@@ -1,7 +1,7 @@
 import type { TaskSummary } from '@wadeck-app/task-core';
 
 import { projectEnv, type TaskServiceContext } from './context.js';
-import { AmbiguousDeletePrefixError, InvalidDeleteFilterError } from './errors.js';
+import { AmbiguousDeletePrefixError, InvalidDeleteFilterError, PartialDeleteError } from './errors.js';
 import type { TaskEvent } from './events.js';
 import { matchGlob } from './text.js';
 
@@ -127,6 +127,9 @@ function depthOf(id: string, parentOf: ReadonlyMap<string, string | undefined>):
  * the plan order). Each deleted task yields an `onTaskDeleted` carrying what it was and what its deletion did: the
  * children that became root tasks, and the links held by the tasks still present that pointed to it (a holder deleted
  * later in the same plan is still counted). Called with a plan only: a preview never produces events.
+ *
+ * A store failure after at least one deletion throws a {@link PartialDeleteError} carrying the events of the tasks already
+ * deleted (they are gone: the caller must still deliver them); with nothing deleted yet the original error propagates.
  */
 export function executeDelete(ctx: TaskServiceContext, plan: DeletePlan): ExecuteDeleteResult {
 	const parentOf = new Map(ctx.store.list().map(t => [t.id, t.parentId]));
@@ -145,7 +148,14 @@ export function executeDelete(ctx: TaskServiceContext, plan: DeletePlan): Execut
 			.filter(t => t.id !== task.id)
 			.flatMap(t => t.links ?? [])
 			.filter(link => link.target === task.id).length;
-		if (ctx.store.deleteTask(task.id)) {
+		let removed: boolean;
+		try {
+			removed = ctx.store.deleteTask(task.id);
+		} catch (error) {
+			if (deletedCount === 0) throw error;
+			throw new PartialDeleteError(deletedCount, ordered.length, task.id, events, error);
+		}
+		if (removed) {
 			deletedCount++;
 			events.push({
 				name: 'onTaskDeleted',

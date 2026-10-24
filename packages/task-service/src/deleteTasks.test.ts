@@ -1,4 +1,6 @@
-import { AmbiguousDeletePrefixError, InvalidDeleteFilterError } from './errors.js';
+import { AmbiguousDeletePrefixError, InvalidDeleteFilterError, PartialDeleteError } from './errors.js';
+import { describeError } from './describeError.js';
+import type { TaskServiceContext } from './context.js';
 import { DELETE_FILTER_FIELDS, executeDelete, parseDeleteFilter, planDelete } from './deleteTasks.js';
 import { createTestContext, type TestContext } from './testHelpers.js';
 
@@ -271,5 +273,86 @@ describe('executeDelete events (onTaskDeleted)', () => {
 			deletedCount: 0,
 			events: [],
 		});
+	});
+});
+
+/** The context's store, but `deleteTask` throws on its `failOn`th call (1-based): an fs error partway through a plan. */
+function failingOnNthDelete(ctx: TaskServiceContext, failOn: number): TaskServiceContext {
+	let calls = 0;
+	const store = new Proxy(ctx.store, {
+		get(target, prop) {
+			if (prop === 'deleteTask') {
+				return (id: string): boolean => {
+					calls++;
+					if (calls === failOn) throw new Error('EPERM: operation not permitted');
+					return target.deleteTask(id);
+				};
+			}
+			const value: unknown = Reflect.get(target, prop);
+			return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+		},
+	});
+	return { ...ctx, store };
+}
+
+describe('executeDelete when the store fails partway through the plan', () => {
+	const ids = (...selected: string[]) => ({ kind: 'ids' as const, ids: selected });
+	let t: TestContext;
+	beforeEach(() => {
+		t = createTestContext();
+	});
+	afterEach(() => t.cleanup());
+
+	function failureOf(run: () => unknown): PartialDeleteError {
+		try {
+			run();
+		} catch (error) {
+			expect(error).toBeInstanceOf(PartialDeleteError);
+			return error as PartialDeleteError;
+		}
+		throw new Error('executeDelete did not throw');
+	}
+
+	it('throws a PartialDeleteError carrying the events of the tasks already deleted, and what failed', () => {
+		const tasks = ['a', 'b', 'c', 'd', 'e'].map(title => t.ctx.store.create(title, 'backlog'));
+		const plan = planDelete(t.ctx, { selector: ids(...tasks.map(task => task.id)) });
+
+		const error = failureOf(() => executeDelete(failingOnNthDelete(t.ctx, 3), plan));
+
+		expect(error.deletedCount).toBe(2);
+		expect(error.plannedCount).toBe(5);
+		expect(error.failedTaskId).toBe(tasks[2]!.id);
+		expect(error.events.map(event => event.payload.taskId)).toEqual([tasks[0]!.id, tasks[1]!.id]);
+		expect(error.events.every(event => event.name === 'onTaskDeleted')).toBe(true);
+		expect((error.cause as Error).message).toContain('EPERM');
+		// The two first tasks really are gone, the others are still there.
+		expect(
+			t.ctx.store
+				.list()
+				.map(task => task.id)
+				.sort()
+		).toEqual([tasks[2]!.id, tasks[3]!.id, tasks[4]!.id].sort());
+	});
+
+	it('names how many tasks were deleted, the cause and the way to finish, never claiming nothing happened', () => {
+		const tasks = ['a', 'b', 'c'].map(title => t.ctx.store.create(title, 'backlog'));
+		const plan = planDelete(t.ctx, { selector: ids(...tasks.map(task => task.id)) });
+
+		const error = failureOf(() => executeDelete(failingOnNthDelete(t.ctx, 2), plan));
+
+		expect(error.message).toContain('deleted 1 of 3 task(s)');
+		expect(error.message).toContain(tasks[1]!.id);
+		expect(error.message).toContain('EPERM');
+		expect(error.hint).toContain('cannot be restored');
+		expect(error.hint).toContain('task delete');
+		expect(describeError(error).kind).toBe('internal');
+	});
+
+	it('keeps the original error when nothing was deleted yet (nothing to report)', () => {
+		const a = t.ctx.store.create('a', 'backlog');
+		const plan = planDelete(t.ctx, { selector: ids(a.id) });
+
+		expect(() => executeDelete(failingOnNthDelete(t.ctx, 1), plan)).toThrow('EPERM');
+		expect(() => executeDelete(failingOnNthDelete(t.ctx, 1), plan)).not.toThrow(PartialDeleteError);
 	});
 });

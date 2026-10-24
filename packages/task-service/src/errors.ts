@@ -1,3 +1,5 @@
+import type { TaskEvent } from './events.js';
+
 /**
  * Base class of the domain errors raised by task-service operations.
  * `hint` is an optional actionable follow-up line for the user (valid values, "Did you mean", a fix command).
@@ -127,3 +129,25 @@ export class ProjectAlreadyRegisteredError extends TaskServiceError {
 
 /** `<configDir>/projects.json` is unreadable, corrupt, or the directory to register is invalid. Never auto-repaired. */
 export class ProjectsRegistryError extends TaskServiceError {}
+
+/**
+ * A delete failed partway through its plan: the tasks deleted before the failure ARE deleted and cannot be restored.
+ * Carries their `onTaskDeleted` events so the caller still delivers them before reporting the failure.
+ */
+export class PartialDeleteError extends TaskServiceError {
+	constructor(
+		/** Tasks really deleted before the failure (at least one). */
+		readonly deletedCount: number,
+		readonly plannedCount: number,
+		readonly failedTaskId: string,
+		/** One `onTaskDeleted` per task deleted before the failure, in deletion order. */
+		readonly events: readonly TaskEvent[],
+		cause: unknown
+	) {
+		super(
+			`deleted ${deletedCount} of ${plannedCount} task(s), then failed on task ${failedTaskId}: ${cause instanceof Error ? cause.message : String(cause)}`,
+			`The ${deletedCount} deleted task(s) cannot be restored; the others are still there. Fix the cause, then run \`task delete\` again for the remaining tasks.`
+		);
+		this.cause = cause;
+	}
+}

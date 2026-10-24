@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { TaskStore } from '@wadeck-app/task-core';
 import type { TaskTreeNode } from '@wadeck-app/task-core';
 import { listForest, openTaskContext, projectsRegistryPath, unregisterProject } from '@wadeck-app/task-service';
 import {
@@ -2397,6 +2398,74 @@ describe('delete', () => {
 		} finally {
 			failing.world.cleanup();
 		}
+	});
+
+	describe('when the store fails partway through the plan', () => {
+		function failOnNthDelete(failOn: number): void {
+			const original = TaskStore.prototype.deleteTask;
+			let calls = 0;
+			vi.spyOn(TaskStore.prototype, 'deleteTask').mockImplementation(function (this: TaskStore, id: string) {
+				calls++;
+				if (calls === failOn) throw new Error('EPERM: operation not permitted');
+				return original.call(this, id);
+			});
+		}
+		afterEach(() => vi.restoreAllMocks());
+
+		it('delivers the events of the tasks already deleted, then answers a 5xx saying how many were deleted', async () => {
+			for (const title of ['a', 'b', 'c', 'd']) await createTask(title);
+			failOnNthDelete(3);
+
+			const answer = await remove({ all: true, confirm: true });
+
+			expect(answer.status).toBe(500);
+			expect(answer.body['error']).toContain('deleted 2 of 4 task(s)');
+			expect(answer.body['error']).toContain('EPERM');
+			expect(answer.body['hint']).toContain('cannot be restored');
+			expect(answer.body).toMatchObject({ deletedCount: 2, plannedCount: 4, partial: true, undelivered: [] });
+			expect(h.sink.events.map(e => e.name)).toEqual(['onTaskDeleted', 'onTaskDeleted']);
+			vi.restoreAllMocks();
+			expect(await ids()).toHaveLength(2);
+		});
+
+		it('lists the events the queue did not receive, and shows both texts to a view (inlineErrors)', async () => {
+			const unreachable: EventSink = { deliver: () => Promise.resolve({ delivered: false, reason: 'exit 3' }) };
+			const stderr: string[] = [];
+			const failing = setup(unreachable, { writeStderr: text => void stderr.push(text) });
+			try {
+				const dir = failing.world.createProject('beta');
+				for (const title of ['a', 'b', 'c']) {
+					await failing.call('POST /tasks', { query: { project: dir }, body: { description: title } });
+				}
+				failOnNthDelete(2);
+
+				const answer = await failing.call('POST /tasks/delete', {
+					query: { project: dir, inlineErrors: 'true' },
+					body: { all: true, confirm: true },
+				});
+
+				expect(answer.body).toMatchObject({ failed: true, httpStatus: 500, deletedCount: 1, partial: true });
+				expect(answer.body['undelivered']).toMatchObject([{ event: 'onTaskDeleted', reason: 'exit 3' }]);
+				expect(answer.body['undeliveredText']).toContain('1 queue event(s) were not delivered');
+				expect(answer.body['errorText']).toContain('deleted 1 of 3 task(s)');
+				// Logged as any 5xx.
+				expect(stderr.join('')).toContain('[task] POST /tasks/delete failed (500)');
+			} finally {
+				failing.world.cleanup();
+			}
+		});
+
+		it('keeps the plain error (no deletedCount) when the very first deletion fails', async () => {
+			await createTask('a');
+			failOnNthDelete(1);
+
+			const answer = await remove({ all: true, confirm: true });
+
+			expect(answer.status).toBe(500);
+			expect(answer.body['error']).toContain('EPERM');
+			expect(answer.body['deletedCount']).toBeUndefined();
+			expect(h.sink.events).toEqual([]);
+		});
 	});
 
 	it('POST /tasks/delete with confirm:true and nothing matching is a 200 deleting nothing', async () => {

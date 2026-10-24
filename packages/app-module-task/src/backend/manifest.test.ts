@@ -1021,3 +1021,63 @@ describe('manifest: the labels the breadcrumb shows (app-core-cli >= 2026.10.19-
 		});
 	});
 });
+
+// A mutating route that produces queue events answers `undeliveredText`: the page that fires it must show it where the
+// user is looking (the answer is kept under the action's resultKey). A route that emits nothing is listed here, so a NEW
+// mutating action fails this test until it either shows the text or is declared event-free on purpose.
+describe('views: every mutating action that produces queue events shows what the queue did not receive', () => {
+	const EVENT_FREE_URLS = [
+		// The delete preview deletes nothing.
+		'/api/modules/task/tasks/delete/plan',
+		// Project types and the project registry are not task changes.
+		'/api/modules/task/types',
+		'/api/modules/task/projects',
+	];
+
+	function actionsOf(text: string): Array<{ name: string; url: string; key: string }> {
+		const section = /^\$actions:\n((?: {4}.*\n|\n)+)/m.exec(text)?.[1];
+		if (section === undefined) return [];
+		return section
+			.split(/^ {4}(?=\w+:\s*$)/m)
+			.filter(block => block.replace(/^\s*#.*$/gm, '').trim() !== '')
+			.map(block => ({
+				name: block.split(':')[0]!,
+				url: /url: (?:POST|DELETE) (\S+)/.exec(block)?.[1] ?? '',
+				key: /resultKey: (\w+)/.exec(block)?.[1] ?? '',
+			}))
+			.filter(action => action.url !== '');
+	}
+
+	const mutating = viewNames.flatMap(name =>
+		actionsOf(view(name))
+			.filter(action => !EVENT_FREE_URLS.some(free => action.url.startsWith(free)))
+			.map(action => ({ page: name, ...action }))
+	);
+
+	it('finds the mutating actions of the task, create and delete pages', () => {
+		expect(mutating.map(action => `${action.page}:${action.name}`).sort()).toEqual([
+			'delete-page.yaml:deleteTasks',
+			'new-task-page.yaml:createTask',
+			'task-page.yaml:addLabel',
+			'task-page.yaml:addLink',
+			'task-page.yaml:removeLabel',
+			'task-page.yaml:removeLink',
+			'task-page.yaml:removeParent',
+			'task-page.yaml:setMeta',
+			'task-page.yaml:setParent',
+			'task-page.yaml:setStatus',
+			'task-page.yaml:setType',
+		]);
+	});
+
+	it.each(mutating.map(action => [`${action.page}:${action.name}`, action] as const))(
+		'%s: a warning badge is bound to its answer',
+		(_label, action) => {
+			const text = view(action.page);
+			const bound = `$ctx.${action.key}.undeliveredText`.replace(/[$.]/g, String.raw`\$&`);
+			expect(text, `${action.page}: ${action.name}`).toMatch(
+				new RegExp(String.raw`- \$type: Badge\n\s+\$if: ${bound}\n\s+label: ${bound}\n\s+variant: warning`)
+			);
+		}
+	);
+});

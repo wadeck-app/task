@@ -172,6 +172,11 @@ sections:
             $if: $ctx.typeResult.errorText
             label: $ctx.typeResult.errorText
             variant: danger
+          # Events the queue did not receive: the change itself is saved.
+          - $type: Badge
+            $if: $ctx.typeResult.undeliveredText
+            label: $ctx.typeResult.undeliveredText
+            variant: warning
           # With configured types the choice is restricted; without any, every string is accepted.
           - $type: Form
             $if: $sources.detail.hasTypes
@@ -210,6 +215,11 @@ sections:
             $if: $ctx.labelResult.errorText
             label: $ctx.labelResult.errorText
             variant: danger
+          # Events the queue did not receive: the change itself is saved.
+          - $type: Badge
+            $if: $ctx.labelResult.undeliveredText
+            label: $ctx.labelResult.undeliveredText
+            variant: warning
           - $type: DataTable
             rows: $sources.detail.labelRows
             emptyMessage: No labels
@@ -250,6 +260,11 @@ sections:
             $if: $ctx.metaResult.errorText
             label: $ctx.metaResult.errorText
             variant: danger
+          # Events the queue did not receive: the change itself is saved.
+          - $type: Badge
+            $if: $ctx.metaResult.undeliveredText
+            label: $ctx.metaResult.undeliveredText
+            variant: warning
           - $type: DataTable
             rows: $sources.detail.metaRows
             emptyMessage: No metadata
@@ -279,6 +294,11 @@ sections:
             $if: $ctx.parentResult.errorText
             label: $ctx.parentResult.errorText
             variant: danger
+          # Events the queue did not receive: the change itself is saved.
+          - $type: Badge
+            $if: $ctx.parentResult.undeliveredText
+            label: $ctx.parentResult.undeliveredText
+            variant: warning
           # The whole tree containing this task (its ancestors, siblings, children); its own row says "(this task)".
           - $type: DataTable
             rows: $sources.tree.rows
