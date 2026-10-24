@@ -25,12 +25,23 @@ interface JsonSummary {
 	total: number;
 }
 
+function restoreEnv(name: string, value: string | undefined): void {
+	if (value === undefined) delete process.env[name];
+	else process.env[name] = value;
+}
+
 describe('global view commands (task list --all-projects, task projects summary)', () => {
 	let root: string;
 	let previousXdg: string | undefined;
 	let stderr: string[];
+	let previousTaskProjectDir: string | undefined;
+	let previousProjectDir: string | undefined;
 
 	beforeEach(() => {
+		previousTaskProjectDir = process.env['TASK_PROJECT_DIR'];
+		previousProjectDir = process.env['PROJECT_DIR'];
+		delete process.env['TASK_PROJECT_DIR'];
+		delete process.env['PROJECT_DIR'];
 		root = fs.mkdtempSync(path.join(os.tmpdir(), 'task-global-cmd-'));
 		previousXdg = process.env['XDG_CONFIG_HOME'];
 		process.env['XDG_CONFIG_HOME'] = path.join(root, 'xdg');
@@ -44,6 +55,8 @@ describe('global view commands (task list --all-projects, task projects summary)
 	afterEach(() => {
 		vi.restoreAllMocks();
 		process.env['XDG_CONFIG_HOME'] = previousXdg;
+		restoreEnv('TASK_PROJECT_DIR', previousTaskProjectDir);
+		restoreEnv('PROJECT_DIR', previousProjectDir);
 		fs.rmSync(root, { recursive: true, force: true });
 	});
 
@@ -211,10 +224,152 @@ describe('global view commands (task list --all-projects, task projects summary)
 			expect(result.output).toContain('--all-projects');
 		});
 
+		it('--project-dir: the message names the flag and the hint says how to get out', async () => {
+			const { alpha } = await twoProjects();
+			const result = await runTaskCommand(['list', '--all-projects', '--project-dir', alpha], root);
+			expect(result.exitCode).toBe(1);
+			expect(result.output).toBe(
+				'Error: --all-projects cannot be combined with --project-dir: one project and all projects contradict\n' +
+					'Drop --project-dir, or drop --all-projects to list that one project.'
+			);
+		});
+
+		it('TASK_PROJECT_DIR is rejected the same way, naming the variable', async () => {
+			const { alpha } = await twoProjects();
+			process.env['TASK_PROJECT_DIR'] = alpha;
+			const result = await runTaskCommand(['list', '--all-projects'], root);
+			expect(result.exitCode).toBe(1);
+			expect(result.output).toBe(
+				'Error: --all-projects cannot be combined with the TASK_PROJECT_DIR environment variable: one project and all projects contradict\n' +
+					'Unset TASK_PROJECT_DIR, or drop --all-projects to list that one project.'
+			);
+		});
+
+		it('--json: --project-dir and TASK_PROJECT_DIR give the same {"error", "hint"} shape', async () => {
+			const { alpha } = await twoProjects();
+			const viaFlag = await runTaskCommand(['--json', 'list', '--all-projects', '--project-dir', alpha], root);
+			process.env['TASK_PROJECT_DIR'] = alpha;
+			const viaEnv = await runTaskCommand(['--json', 'list', '--all-projects'], root);
+			expect(viaFlag.exitCode).toBe(1);
+			expect(viaEnv.exitCode).toBe(1);
+			const flag = JSON.parse(viaFlag.output) as { error: string; hint: string };
+			const env = JSON.parse(viaEnv.output) as { error: string; hint: string };
+			expect(Object.keys(env)).toEqual(Object.keys(flag));
+			expect(flag.error).toContain('--project-dir');
+			expect(env.error).toContain('TASK_PROJECT_DIR');
+			expect(env.hint).toContain('Unset TASK_PROJECT_DIR');
+		});
+
+		it('the flag wins over TASK_PROJECT_DIR in the message', async () => {
+			const { alpha } = await twoProjects();
+			process.env['TASK_PROJECT_DIR'] = alpha;
+			const result = await runTaskCommand(['list', '--all-projects', '--project-dir', alpha], root);
+			expect(result.exitCode).toBe(1);
+			expect(result.output).toContain('combined with --project-dir');
+		});
+
+		it('an empty TASK_PROJECT_DIR counts as unset', async () => {
+			await twoProjects();
+			process.env['TASK_PROJECT_DIR'] = '';
+			const result = await runTaskCommand(['list', '--all-projects'], root);
+			expect(result.exitCode).toBe(0);
+		});
+
+		it('PROJECT_DIR (generic, may be set by a parent tool) is not an error: listed anyway, said ignored once on stderr', async () => {
+			const { alpha } = await twoProjects();
+			process.env['PROJECT_DIR'] = alpha;
+			const result = await runTaskCommand(['list', '--all-projects'], root);
+			expect(result.exitCode).toBe(0);
+			expect(result.output).toContain('beta open task');
+			const notes = stderr.filter(line => line.includes('PROJECT_DIR'));
+			expect(notes).toEqual([
+				`Note: the PROJECT_DIR environment variable (${alpha}) is ignored: --all-projects lists every registered project.\n`,
+			]);
+		});
+
+		it('--json with PROJECT_DIR: stdout stays the pure JSON answer, the note goes to stderr', async () => {
+			const { alpha } = await twoProjects();
+			process.env['PROJECT_DIR'] = alpha;
+			const result = await runTaskCommand(['--json', 'list', '--all-projects'], root);
+			expect(result.exitCode).toBe(0);
+			expect(Object.keys(JSON.parse(result.output) as object).sort()).toEqual([
+				'readableCount',
+				'tasks',
+				'unreadable',
+			]);
+			expect(stderr.filter(line => line.includes('PROJECT_DIR'))).toHaveLength(1);
+		});
+
+		it('no note when PROJECT_DIR is not set', async () => {
+			await twoProjects();
+			await runTaskCommand(['list', '--all-projects'], root);
+			expect(stderr.join('')).not.toContain('PROJECT_DIR');
+		});
+
 		it('is not shadowed by a per-project list: plain `task list` still prints the JSON array of the project', async () => {
 			const { alpha } = await twoProjects();
 			const result = await runTaskCommand(['list'], alpha);
 			expect(Array.isArray(JSON.parse(result.output))).toBe(true);
+		});
+	});
+
+	describe('project selection on `task projects ...` (registry commands use no project)', () => {
+		it('add rejects --project-dir instead of silently registering the cwd, and registers nothing', async () => {
+			const { alpha } = await twoProjects();
+			const elsewhere = path.join(root, 'elsewhere');
+			fs.mkdirSync(elsewhere);
+			const result = await runTaskCommand(['projects', 'add', '--project-dir', alpha], elsewhere);
+			expect(result.exitCode).toBe(1);
+			expect(result.output).toBe(
+				'Error: task projects add cannot use --project-dir: it registers the directory given as argument (default: the cwd)\n' +
+					'Run: task projects add <dir>'
+			);
+			const list = await runTaskCommand(['projects', 'list'], root);
+			expect(list.output).not.toContain('elsewhere');
+		});
+
+		it('--json: add with --project-dir is {"error", "hint"}', async () => {
+			const result = await runTaskCommand(['--json', 'projects', 'add', '--project-dir', root], root);
+			expect(result.exitCode).toBe(1);
+			const parsed = JSON.parse(result.output) as { error: string; hint: string };
+			expect(parsed.error).toContain('--project-dir');
+			expect(parsed.hint).toBe('Run: task projects add <dir>');
+		});
+
+		it('the other registry commands ignore project selection (nothing contradicts): list works with TASK_PROJECT_DIR and PROJECT_DIR set', async () => {
+			const { alpha } = await twoProjects();
+			process.env['TASK_PROJECT_DIR'] = alpha;
+			process.env['PROJECT_DIR'] = alpha;
+			const result = await runTaskCommand(['projects', 'summary'], root);
+			expect(result.exitCode).toBe(0);
+			expect(stderr.join('')).toBe('');
+		});
+
+		it('--config does not change the all-projects behaviour (not a project selection)', async () => {
+			await twoProjects();
+			const result = await runTaskCommand(
+				['--config', path.join(root, 'other-config'), 'list', '--all-projects'],
+				root
+			);
+			expect(result.exitCode).toBe(0);
+			expect(result.output).toContain('alpha open task');
+		});
+	});
+
+	describe('help text', () => {
+		it('task --help documents that --project-dir and TASK_PROJECT_DIR are refused, and PROJECT_DIR ignored, with --all-projects', async () => {
+			const help = (await runTaskCommand(['--help'], root)).output;
+			expect(help).toContain(
+				'cannot be combined with --follow, --tree, --parent, --project-dir or TASK_PROJECT_DIR'
+			);
+			expect(help).toContain('PROJECT_DIR is ignored (stderr note)');
+			expect(help).toContain('task projects add cannot use --project-dir');
+		});
+
+		it('task projects --help says no project is used and --project-dir is refused by add', async () => {
+			const help = (await runTaskCommand(['projects', '--help'], root)).output;
+			expect(help).toContain('--project-dir, TASK_PROJECT_DIR and PROJECT_DIR select no project here');
+			expect(help).toContain('add refuses --project-dir');
 		});
 	});
 

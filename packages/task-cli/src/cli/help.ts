@@ -20,7 +20,8 @@ Usage:
   task list --tree                           List tasks as a nested forest (kept: matching tasks + the ancestors leading to them)
   task list --all-projects [--all] [--json]  List the tasks of every registered project (Project column; text table, --json: tasks tagged with their project);
                                              needs no project; unreadable projects on stderr; exit 1 only if none can be read;
-                                             cannot be combined with --follow, --tree, --parent or --project-dir
+                                             cannot be combined with --follow, --tree, --parent, --project-dir or TASK_PROJECT_DIR
+                                             (a single project contradicts all of them); PROJECT_DIR is ignored (stderr note)
   task show <id> [--json] [--with-parent] [--with-children]   Show task detail (always incl. parentId, childrenIds); flags add parent/children summaries
   task history <id> [--json] [--follow|-f]   Show status-change history for a task
   task set-status <id> <status>              Update task status (valid values from .task/config.yml)
@@ -61,7 +62,8 @@ Usage:
 Global flags:
   --config <dir>       Global config directory (default: ~/.task)
   --json               Force JSON output; errors become {"error":"...","hint":"..."} (no "hint" key when there is none)
-  --project-dir <dir>  Override project directory (also: TASK_PROJECT_DIR env var)
+  --project-dir <dir>  Override project directory (also: TASK_PROJECT_DIR env var, then PROJECT_DIR)
+                       Refused by 'task list --all-projects' (as is TASK_PROJECT_DIR) and by 'task projects add' (task projects add cannot use --project-dir)
 
 Events (pushed to queue through @wadeck-app/queue-sdk after the change is saved, with the project directory as cwd so its .queue/subscribers.yml is used):
   onTaskCreated    new                              taskId, status, description, parentId, type, labels
@@ -83,7 +85,8 @@ Exit codes:
 
 Environment variables:
   TASK_CONFIG       Override global config directory (default: ~/.task)
-  TASK_PROJECT_DIR  Override project directory`;
+  TASK_PROJECT_DIR  Override project directory
+  PROJECT_DIR       Fallback project directory when TASK_PROJECT_DIR is not set (ignored, with a stderr note, by 'task list --all-projects')`;
 }
 
 /** `task projects --help`. */
@@ -101,7 +104,9 @@ Usage:
                                              exit 1 only when registered projects exist and none can be read
   task projects --help                       Show this help
 
-The registry is <config dir>/projects.json. These commands need no initialized project.`;
+The registry is <config dir>/projects.json. These commands need no initialized project:
+--project-dir, TASK_PROJECT_DIR and PROJECT_DIR select no project here (the registry is global); add refuses --project-dir
+(it would register the cwd instead), pass the directory: task projects add <dir>.`;
 
 /** `task type --help`. */
 export const TYPE_HELP = `task type - manage valid task types for this project

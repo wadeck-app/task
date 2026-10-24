@@ -19,6 +19,26 @@ const INCOMPATIBLE_FLAGS: ReadonlyMap<string, string> = new Map([
 	['--parent', 'a task id belongs to one project'],
 ]);
 
+/** What chose a single project for this run: an explicit choice contradicts `--all-projects`, the ambient `PROJECT_DIR` does not. */
+export interface ProjectSelection {
+	explicit?: { name: '--project-dir' | 'TASK_PROJECT_DIR'; description: string };
+	ignoredProjectDir?: string;
+}
+
+/** Reads the three project sources in the order the CLI uses them (flag, TASK_PROJECT_DIR, PROJECT_DIR); empty values count as unset. */
+export function describeProjectSelection(projectDirFlag: string | undefined): ProjectSelection {
+	if (projectDirFlag !== undefined) {
+		return { explicit: { name: '--project-dir', description: '--project-dir' } };
+	}
+	if (process.env['TASK_PROJECT_DIR']) {
+		return {
+			explicit: { name: 'TASK_PROJECT_DIR', description: 'the TASK_PROJECT_DIR environment variable' },
+		};
+	}
+	const generic = process.env['PROJECT_DIR'];
+	return generic ? { ignoredProjectDir: generic } : {};
+}
+
 function table(header: string[], rows: string[][]): string {
 	const widths = header.map((title, column) => Math.max(title.length, ...rows.map(row => row[column]!.length)));
 	const line = (cells: string[]): string =>
@@ -38,7 +58,7 @@ export function runListAllProjects(
 	rest: string[],
 	jsonMode: boolean,
 	configDir: string,
-	projectDir?: string
+	selection: ProjectSelection = {}
 ): CommandResult {
 	let showAll = false;
 	for (const arg of rest) {
@@ -55,11 +75,18 @@ export function runListAllProjects(
 			return errorOutput(jsonMode, `unknown flag: ${arg}`, LIST_ALL_PROJECTS_USAGE);
 		}
 	}
-	if (projectDir !== undefined) {
+	if (selection.explicit !== undefined) {
+		const { description, name } = selection.explicit;
 		return errorOutput(
 			jsonMode,
-			'--all-projects cannot be combined with --project-dir: one project and all projects contradict',
-			'Drop --project-dir, or drop --all-projects to list that one project.'
+			`--all-projects cannot be combined with ${description}: one project and all projects contradict`,
+			`${name === '--project-dir' ? 'Drop' : 'Unset'} ${name}, or drop --all-projects to list that one project.`
+		);
+	}
+	// Ambient and generic (a parent tool may set it): not a contradiction, but never silent. Stderr in both modes keeps stdout the pure answer.
+	if (selection.ignoredProjectDir !== undefined) {
+		process.stderr.write(
+			`Note: the PROJECT_DIR environment variable (${selection.ignoredProjectDir}) is ignored: --all-projects lists every registered project.\n`
 		);
 	}
 	let answer: TasksAcrossProjects;

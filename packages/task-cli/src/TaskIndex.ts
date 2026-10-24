@@ -15,7 +15,7 @@ import { errorOutput, failure } from './cli/output.js';
 import type { CommandResult } from './cli/output.js';
 import { printUpdateNotice } from './cli/updateNotice.js';
 import { runCliSubcommand } from './commands/CliSubcommands.js';
-import { runListAllProjects } from './commands/GlobalViewCommands.js';
+import { describeProjectSelection, runListAllProjects } from './commands/GlobalViewCommands.js';
 import { runInit } from './commands/InitCommand.js';
 import { runPluginsCommand } from './commands/PluginsCommand.js';
 import { runProjectsCommand } from './commands/ProjectsCommand.js';
@@ -54,12 +54,12 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 		return runPluginsCommand(rest, jsonMode);
 	}
 	if (command === 'projects') {
-		return runProjectsCommand(rest, jsonMode, cwd);
+		return runProjectsCommand(rest, jsonMode, cwd, projectDir);
 	}
 
 	// Across every registered project: needs no project here (the registry is in the global config dir).
 	if (command === 'list' && rest.includes('--all-projects')) {
-		return runListAllProjects(rest, jsonMode, ConfigDir.get('task'), projectDir);
+		return runListAllProjects(rest, jsonMode, ConfigDir.get('task'), describeProjectSelection(projectDir));
 	}
 
 	if (!TaskConfigLoader.isInitialized(effectiveCwd)) {
