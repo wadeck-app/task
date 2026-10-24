@@ -1,8 +1,17 @@
+import {
+	AmbiguousReferenceError,
+	NoProjectInScopeError,
+	ProjectError,
+	ProjectNotFoundError,
+	VirtualProjectError,
+} from '@wadeck-app/project-sdk';
 import { AmbiguousTaskPrefixError, TaskConflictError, TaskNotFoundError } from '@wadeck-app/task-core';
 
 import {
 	AmbiguousDeletePrefixError,
+	ConflictingProjectSelectionError,
 	InvalidLinkTypeError,
+	ProjectNotInitializedError,
 	InvalidStatusError,
 	InvalidDeleteFilterError,
 	InvalidTaskTypeError,
@@ -73,6 +82,36 @@ export function describeError(error: unknown): ErrorDescription {
 	if (error instanceof NoReadableProjectsError) {
 		return describe('internal', error, error.hint, { skipped: error.failures });
 	}
+	if (error instanceof ConflictingProjectSelectionError) return describe('invalid', error, error.hint);
+	if (error instanceof ProjectNotInitializedError) {
+		return describe(
+			'not-found',
+			error,
+			error.hint,
+			error.scopeError === undefined ? {} : { registered: error.scopeError.registered }
+		);
+	}
 	if (error instanceof TaskServiceError) return describe('internal', error, error.hint);
+	if (error instanceof ProjectError) return describeProjectError(error);
 	return { kind: 'internal', message: error instanceof Error ? error.message : String(error), details: {} };
+}
+
+/** The shared project registry's own errors (resolution of a project reference, unreadable registry): neutral messages, hints built from their data. */
+function describeProjectError(error: ProjectError): ErrorDescription {
+	if (error instanceof ProjectNotFoundError)
+		return describe('not-found', error, undefined, { suggestions: error.suggestions });
+	if (error instanceof AmbiguousReferenceError) {
+		return describe('ambiguous', error, undefined, { candidates: error.candidates });
+	}
+	if (error instanceof NoProjectInScopeError) {
+		return describe('not-found', error, error.hint, { cwd: error.cwd, registered: error.registered });
+	}
+	if (error instanceof VirtualProjectError) {
+		return describe(
+			'invalid',
+			error,
+			'A project without path holds configuration only: give a project that has a path, or add one to this project with the project CLI (project paths add).'
+		);
+	}
+	return describe('internal', error, undefined, { code: error.code });
 }

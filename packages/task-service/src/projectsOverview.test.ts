@@ -7,6 +7,8 @@ import { NoReadableProjectsError } from './errors.js';
 import { openTaskContext } from './openContext.js';
 import { listTasksAcrossProjects, summarizeProjects } from './projectsOverview.js';
 import { registerProject } from './projectsRegistry.js';
+import { createSharedRegistrySandbox } from './testHelpers.js';
+import type { SharedRegistrySandbox } from './testHelpers.js';
 
 const CONFIG_YML = ['statuses:', '  - backlog', '  - name: done', '    terminal: true', ''].join('\n');
 
@@ -166,7 +168,12 @@ describe('projects overview (all registered projects)', () => {
 			expect(result.tasks).toHaveLength(1);
 			expect(result.readableCount).toBe(1);
 			expect(result.unreadable).toEqual([
-				{ name: 'bare', path: bare, error: expect.stringContaining('not initialized') as unknown },
+				{
+					name: 'bare',
+					path: bare,
+					registered: false,
+					error: expect.stringContaining('not initialized') as unknown,
+				},
 			]);
 		});
 
@@ -180,5 +187,103 @@ describe('projects overview (all registered projects)', () => {
 			fs.writeFileSync(path.join(configDir, 'projects.json'), '{not json');
 			expect(() => listTasksAcrossProjects(configDir)).toThrow();
 		});
+	});
+});
+
+describe('projects overview with the shared project registry (stage 1)', () => {
+	let sandbox: SharedRegistrySandbox;
+	let configDir: string;
+
+	beforeEach(() => {
+		sandbox = createSharedRegistrySandbox();
+		configDir = path.join(sandbox.root, 'task-config');
+		fs.mkdirSync(configDir, { recursive: true });
+	});
+
+	afterEach(() => {
+		sandbox.cleanup();
+	});
+
+	/** An initialised project directory holding the given tasks; `legacy` also lists it in projects.json. */
+	function taskDir(name: string, tasks: Array<[string, string]>, legacy = false): string {
+		const dir = sandbox.dir(name, { task: true });
+		fs.writeFileSync(path.join(dir, '.task', 'config.yml'), CONFIG_YML);
+		const ctx = openTaskContext({ projectDir: dir });
+		for (const [title, status] of tasks) ctx.store.create(title, status);
+		if (legacy) registerProject(configDir, dir);
+		return dir;
+	}
+
+	it('summarizeProjects lists the registered projects first (id, registry name, registered) and the legacy-only ones second', async () => {
+		const shared = taskDir('shared-dir', [['s1', 'backlog']]);
+		const old = taskDir('old-dir', [['o1', 'backlog']], true);
+		const project = await sandbox.register('shop', shared);
+
+		const summary = summarizeProjects(configDir, { env: sandbox.env });
+
+		expect(summary.projects.map(p => [p.id, p.name, p.registered, p.open])).toEqual([
+			[project.id, 'shop', true, 1],
+			[undefined, 'old-dir', false, 1],
+		]);
+		expect(summary.projects[0]!.path).toBe(path.resolve(shared));
+		expect(summary.projects[1]!.path).toBe(path.resolve(old));
+		expect(summary.total).toBe(2);
+		expect(summary).not.toHaveProperty('registryProblem');
+	});
+
+	it('a project in both registries is counted once', async () => {
+		const dir = taskDir('both', [['t', 'backlog']], true);
+		await sandbox.register('both', dir);
+
+		const summary = summarizeProjects(configDir, { env: sandbox.env });
+
+		expect(summary.projects).toHaveLength(1);
+		expect(summary.total).toBe(1);
+	});
+
+	it('an unreadable shared registry is reported next to the legacy projects, which are still summarised', () => {
+		taskDir('old-dir', [['o1', 'backlog']], true);
+		fs.mkdirSync(sandbox.registryDir, { recursive: true });
+		fs.writeFileSync(path.join(sandbox.registryDir, 'registry.json'), '{ nope');
+
+		const summary = summarizeProjects(configDir, { env: sandbox.env });
+
+		expect(summary.registryProblem).toContain('registry.json');
+		expect(summary.projects.map(p => p.name)).toEqual(['old-dir']);
+	});
+
+	it('listTasksAcrossProjects tags each task with its project, id included for a registered one', async () => {
+		const shared = taskDir('shared-dir', [['s1', 'backlog']]);
+		taskDir('old-dir', [['o1', 'backlog']], true);
+		const project = await sandbox.register('shop', shared);
+
+		const answer = listTasksAcrossProjects(configDir, { env: sandbox.env });
+
+		const byTitle = Object.fromEntries(answer.tasks.map(task => [task.title, task.project]));
+		expect(byTitle['s1']).toEqual({ id: project.id, name: 'shop', path: path.resolve(shared) });
+		expect(byTitle['o1']).toEqual({
+			name: 'old-dir',
+			path: path.resolve(path.join(sandbox.root, 'work', 'old-dir')),
+		});
+	});
+
+	it('listTasksAcrossProjects reports an unreadable registered project with its id and registered flag', async () => {
+		const shared = taskDir('shared-dir', [['s1', 'backlog']]);
+		const broken = taskDir('broken-dir', [], true);
+		await sandbox.register('shop', shared);
+		const brokenProject = await sandbox.register('broken', broken);
+		fs.rmSync(path.join(broken, '.task'), { recursive: true });
+
+		const answer = listTasksAcrossProjects(configDir, { env: sandbox.env });
+
+		expect(answer.unreadable).toEqual([
+			{
+				id: brokenProject.id,
+				name: 'broken',
+				path: path.resolve(broken),
+				registered: true,
+				error: expect.stringContaining('not initialized') as unknown,
+			},
+		]);
 	});
 });

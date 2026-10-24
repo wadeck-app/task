@@ -1,17 +1,10 @@
 // Reads every registered project with one callback (the forest, the types...): the unreadable ones are reported, never dropped.
-import * as path from 'node:path';
-
-import {
-	inspectRegisteredProjects,
-	NoReadableProjectsError,
-	openTaskContext,
-	type TaskServiceContext,
-} from '@wadeck-app/task-service';
+import { inspectKnownProjects, NoReadableProjectsError, type TaskServiceContext } from '@wadeck-app/task-service';
 
 import type { SkippedProject } from './allProjectsViews.js';
 
 export interface ProjectRead<T> {
-	project: { name: string; path: string };
+	project: { id?: string; name: string; path: string };
 	value: T;
 }
 
@@ -20,6 +13,8 @@ export interface AcrossProjects<T> {
 	entries: ProjectRead<T>[];
 	/** The projects that could not be read, with why. */
 	unreadable: SkippedProject[];
+	/** Why the shared registry could not be read (the legacy projects are still read); null when it was. */
+	registryProblem: string | null;
 }
 
 function compareText(a: string, b: string): number {
@@ -32,18 +27,17 @@ function compareText(a: string, b: string): number {
  * none readable throw {@link NoReadableProjectsError} (an empty answer would read as "no tasks"); a corrupt registry throws its error.
  */
 export function readAcrossProjects<T>(configDir: string, read: (ctx: TaskServiceContext) => T): AcrossProjects<T> {
-	const health = inspectRegisteredProjects(configDir);
+	const { entries: inspected, registryProblem } = inspectKnownProjects(configDir);
 	const entries: ProjectRead<T>[] = [];
 	const unreadable: SkippedProject[] = [];
-	for (const entry of health) {
-		if (entry.error !== null) {
-			unreadable.push({ path: entry.path, error: entry.error });
+	for (const { health, context } of inspected) {
+		if (context === null) {
+			unreadable.push({ path: health.path, error: health.error ?? 'unreadable' });
 			continue;
 		}
-		const ctx = openTaskContext({ projectDir: entry.path });
-		entries.push({ project: { name: path.basename(entry.path), path: entry.path }, value: read(ctx) });
+		entries.push({ project: context.project, value: read(context) });
 	}
-	if (health.length > 0 && entries.length === 0) throw new NoReadableProjectsError(unreadable);
+	if (inspected.length > 0 && entries.length === 0) throw new NoReadableProjectsError(unreadable);
 	entries.sort((a, b) => compareText(a.project.name, b.project.name) || compareText(a.project.path, b.project.path));
-	return { entries, unreadable };
+	return { entries, unreadable, registryProblem };
 }

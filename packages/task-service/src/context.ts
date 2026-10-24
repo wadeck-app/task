@@ -6,10 +6,15 @@ import type { TaskProjectEnv } from './events.js';
 export interface TaskServiceContext {
 	store: TaskStore;
 	config: TaskResolvedConfig;
-	project: { name: string; path: string };
+	/** `id` is the id in the shared project registry; absent for a project found by the legacy rule (a directory holding a `.task`). */
+	project: { id?: string; name: string; path: string };
 }
 
-/** The `taskProjectName` / `taskProjectPath` fields appended to every event payload. */
+/** The `taskProjectId` (registered projects only), `taskProjectName` / `taskProjectPath` fields appended to every event payload. */
 export function projectEnv(ctx: TaskServiceContext): TaskProjectEnv {
-	return { taskProjectName: ctx.project.name, taskProjectPath: ctx.project.path };
+	return {
+		...(ctx.project.id === undefined ? {} : { taskProjectId: ctx.project.id }),
+		taskProjectName: ctx.project.name,
+		taskProjectPath: ctx.project.path,
+	};
 }

@@ -40,6 +40,16 @@ const NO_CONSOLE_NO_EXIT = [
 	{ pattern: /\bprocess\.argv\b/, why: 'argv parsing belongs to the CLI' },
 ];
 
+/**
+ * The shared project registry (@wadeck-app/project-sdk) is read through task-service only: one resolution rule
+ * (`resolveProject`, `listKnownProjects`), one description of its typed errors (`describeError`), the same for both adapters.
+ * Tests may use the SDK's mutations to build a registry fixture, so this is a source rule (non-test files), not an import rule.
+ */
+const NO_PROJECT_SDK_OUTSIDE_SERVICE = {
+	pattern: /@wadeck-app\/project-sdk/,
+	why: 'the shared project registry is read through task-service (resolveProject, listKnownProjects, describeError), not directly',
+};
+
 export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 	'task-core': {
 		forbiddenImports: [
@@ -47,7 +57,7 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 			{ pattern: TASK_CLI, why: 'storage must not depend on an adapter' },
 			{ pattern: APP_MODULE, why: 'storage must not depend on an adapter' },
 		],
-		forbiddenSource: NO_CONSOLE_NO_EXIT,
+		forbiddenSource: [...NO_CONSOLE_NO_EXIT, NO_PROJECT_SDK_OUTSIDE_SERVICE],
 	},
 	'task-service': {
 		forbiddenImports: [
@@ -63,14 +73,14 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 		forbiddenImports: [
 			{ pattern: APP_MODULE, why: 'the adapters must not know each other: share through task-service' },
 		],
-		forbiddenSource: [],
+		forbiddenSource: [NO_PROJECT_SDK_OUTSIDE_SERVICE],
 	},
 	'app-module-task': {
 		forbiddenImports: [
 			{ pattern: TASK_CLI, why: 'the adapters must not know each other: share through task-service' },
 			{ pattern: SHARED_CLI, why: 'CLI libraries belong to task-cli; share through task-service' },
 		],
-		forbiddenSource: [],
+		forbiddenSource: [NO_PROJECT_SDK_OUTSIDE_SERVICE],
 	},
 };
 

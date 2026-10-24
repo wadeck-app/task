@@ -5,8 +5,14 @@ import { resolveOwnBundlePath } from '@wadeck-app/shared-cli/resolveOwnBundlePat
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { TaskConfigLoader } from '@wadeck-app/task-core';
-import { createQueueEventSink, getTaskLogDir, openTaskContext } from '@wadeck-app/task-service';
+import {
+	appendTaskLog,
+	createQueueEventSink,
+	getTaskLogDir,
+	openTaskContext,
+	resolveProject,
+} from '@wadeck-app/task-service';
+import type { ResolvedProject } from '@wadeck-app/task-service';
 import { declareBeforeFirstDelivery } from './QueueEventsDeclaration.js';
 import { TASK_BUNDLE_NAME } from './TaskBundleName.js';
 import { parseArgs } from './cli/args.js';
@@ -26,9 +32,10 @@ import { VERSION } from './version.js';
 export type { CommandResult } from './cli/output.js';
 
 export async function runTaskCommand(args: string[], cwd: string): Promise<CommandResult> {
-	const { configDir, projectDir, jsonMode, command, rest } = parseArgs(args);
-	const effectiveProjectDir = projectDir ?? process.env['TASK_PROJECT_DIR'] ?? process.env['PROJECT_DIR'];
-	const effectiveCwd = effectiveProjectDir ? path.resolve(cwd, effectiveProjectDir) : cwd;
+	const { configDir, projectDir, projectRef, jsonMode, command, rest } = parseArgs(args);
+	// `task init` keeps the pre-registry rule in stage 1: it creates a .task in --project-dir / TASK_PROJECT_DIR / PROJECT_DIR / cwd.
+	const legacyProjectDir = projectDir ?? process.env['TASK_PROJECT_DIR'] ?? process.env['PROJECT_DIR'];
+	const effectiveCwd = legacyProjectDir ? path.resolve(cwd, legacyProjectDir) : cwd;
 
 	// Log every CLI invocation to ~/.config/task/logs/YYYY-MM-DD.ndjson
 	try {
@@ -55,23 +62,31 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 		return runPluginsCommand(rest, jsonMode);
 	}
 	if (command === 'projects') {
-		return runProjectsCommand(rest, jsonMode, cwd, projectDir);
+		return runProjectsCommand(rest, jsonMode, cwd, { projectDir, projectRef });
 	}
 
 	// Across every registered project: needs no project here (the registry is in the global config dir).
 	if (command === 'list' && rest.includes('--all-projects')) {
-		return runListAllProjects(rest, jsonMode, ConfigDir.get('task'), describeProjectSelection(projectDir));
+		return runListAllProjects(
+			rest,
+			jsonMode,
+			ConfigDir.get('task'),
+			describeProjectSelection(projectDir, projectRef)
+		);
 	}
 
-	if (!TaskConfigLoader.isInitialized(effectiveCwd)) {
-		return errorOutput(jsonMode, 'project not initialized', 'Run: task init');
-	}
 	let env: CommandEnv;
 	try {
+		const resolved = resolveProject({ cwd, projectRef, projectDir });
+		announceResolution(resolved);
 		env = {
 			command,
 			jsonMode,
-			ctx: openTaskContext({ projectDir: effectiveCwd, globalConfigDir: configDir }),
+			ctx: openTaskContext({
+				projectDir: resolved.path,
+				globalConfigDir: configDir,
+				project: { id: resolved.id, name: resolved.name },
+			}),
 			// The first event of the process declares the task events to the queue, unless the marker says it was done.
 			eventSink: declareBeforeFirstDelivery(
 				createQueueEventSink({ getLogDir: () => getTaskLogDir(ConfigDir.get('task')) }),
@@ -92,6 +107,15 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 		// main() exits the process right after: let the queue SDK finish what it has in flight first.
 		await env.eventSink.flush?.();
 	}
+}
+
+/**
+ * How the project was found goes to the task log (Decision #12b). A project found by the legacy rule (not in the shared
+ * registry) is announced on stderr, whatever the output mode, so that stdout stays the answer.
+ */
+function announceResolution(resolved: ResolvedProject): void {
+	appendTaskLog(getTaskLogDir(ConfigDir.get('task')), 'info', resolved.logLine);
+	if (resolved.legacyWarning !== undefined) process.stderr.write(resolved.legacyWarning + '\n');
 }
 
 async function main(): Promise<void> {

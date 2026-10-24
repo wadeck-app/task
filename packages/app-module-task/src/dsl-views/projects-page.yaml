@@ -53,6 +53,12 @@ sections:
       $if: $sources.projects.attentionText
       label: $sources.projects.attentionText
       variant: warning
+    # Stage 1 of the shared project registry: the projects found only through the legacy list (with the command that registers
+    # each), or a shared registry that could not be read. Rows of the shared registry are managed with the project CLI.
+    - $type: Badge
+      $if: $sources.projects.registryNotice
+      label: $sources.projects.registryNotice
+      variant: warning
     - $type: Badge
       $if: $ctx.addResult.messageText
       label: $ctx.addResult.messageText
@@ -85,6 +91,7 @@ sections:
           - { key: 'name', label: 'Project' }
           - { key: 'path', label: 'Directory', mono: true }
           - { key: 'openText', label: 'Open tasks', nowrap: true }
+          - { key: 'registryText', label: 'Registry' }
           - { key: 'problemText', label: 'Problem' }
           - type: actions
             items:

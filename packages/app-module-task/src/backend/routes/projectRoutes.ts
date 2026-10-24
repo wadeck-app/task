@@ -1,14 +1,29 @@
 // GET /projects and GET /summary: which projects the module knows and how many tasks they hold.
-import { isSameProjectDir, summarizeProject, summarizeProjects } from '@wadeck-app/task-service';
+import * as path from 'node:path';
+
+import {
+	describeError,
+	isSameProjectDir,
+	resolveProjectReference,
+	summarizeProject,
+	summarizeProjects,
+} from '@wadeck-app/task-service';
 import type { ProjectOverview, ProjectsSummary } from '@wadeck-app/task-service';
 
 import { projectRows, skippedOf, skippedWarning } from '../allProjectsViews.js';
 import { projectText, selectedQuery } from '../hrefs.js';
 import { readLastProject } from '../lastProject.js';
-import { ADD_FORM_DEFAULTS, attentionText, manageRows, MODE_OPTIONS, openLinks } from '../projectManagement.js';
-import { listProjects, NO_PROJECT_HINT, NO_PROJECT_HINT_ON_PROJECTS_PAGE, openProject } from '../projects.js';
+import {
+	ADD_FORM_DEFAULTS,
+	attentionText,
+	manageRows,
+	MODE_OPTIONS,
+	openLinks,
+	registryNotice,
+} from '../projectManagement.js';
+import { NO_PROJECT_HINT, NO_PROJECT_HINT_ON_PROJECTS_PAGE, openProject, readProjects } from '../projects.js';
 import type { ProjectListing } from '../projects.js';
-import { findProjectByRef } from '../projectRef.js';
+import { apiRef, findProjectByRef } from '../projectRef.js';
 import { optionalQueryValue, queryValue } from '../request.js';
 import type { RouteRequest } from '../request.js';
 import type { RouteKit } from './routeKit.js';
@@ -47,6 +62,8 @@ function summaryBody(scope: 'all' | 'project', summary: ProjectsSummary): Record
 		})),
 		// One row per registered project: figures and link, or the reason it is not counted.
 		projectRows: projectRows(summary.projects),
+		// The projects outside the shared registry (with the command that registers each), or a registry that cannot be read.
+		registryNotice: registryNotice(summary.projects, summary.registryProblem ?? null),
 	};
 }
 
@@ -66,28 +83,31 @@ export function registerProjectRoutes(kit: RouteKit): void {
 	const { configDir } = kit;
 
 	kit.route('GET', '/projects', req => {
-		const projects = listProjects(configDir);
-		// The slug of a page address (the views pass `$route.project`) or an absolute directory: one resolution for both.
+		const { projects, registryProblem } = readProjects(configDir);
+		// What a page address or a query names (the views pass `$route.project`): a registry id, an older slug or a directory
+		// by lookup; a name, alias or id prefix is the shared registry's to resolve. Why it did not resolve is said on the page.
 		const requested = optionalQueryValue(req.query, 'project');
-		const requestedDir =
-			requested === undefined
-				? undefined
-				: findProjectByRef(
-						projects.map(entry => entry.path),
-						requested
-					);
-		// The project the page is about: the one asked for (when registered), else the only registered one.
+		let requestedProject = requested === undefined ? undefined : findProjectByRef(projects, requested);
+		let unresolvedReason: string | null = null;
+		if (requested !== undefined && requestedProject === undefined && !path.isAbsolute(requested)) {
+			try {
+				const resolved = resolveProjectReference(requested);
+				requestedProject = projects.find(entry => entry.id === resolved.id);
+			} catch (error) {
+				unresolvedReason = describeError(error).message;
+			}
+		}
+		// The project the page is about: the one asked for (when known), else the only known one.
 		const selected =
-			projects.find(entry => requestedDir !== undefined && isSameProjectDir(entry.path, requestedDir)) ??
-			(requested === undefined && projects.length === 1 ? projects[0] : undefined);
-		const projectParam = selected === undefined ? '' : encodeURIComponent(selected.path);
+			requestedProject ?? (requested === undefined && projects.length === 1 ? projects[0] : undefined);
+		const projectParam = selected === undefined ? '' : encodeURIComponent(apiRef(selected));
 		const base = { projectParam };
 		const needsSelection = projects.length > 1 && selected === undefined;
 		// A ?project the registry does not know: said on the Tasks page instead of an empty page.
 		const unknownProject = requested !== undefined && selected === undefined && projects.length > 0;
 		// A selected project that cannot be read: the views show why instead of requesting tasks that would fail.
 		const readable = selected !== undefined && selected.error === null;
-		const projectQuery = selectedQuery(readable ? selected.path : undefined, req.query);
+		const projectQuery = selectedQuery(readable ? apiRef(selected) : undefined, req.query);
 		const global = needsSelection && requested === undefined ? globalQuery(req.query) : '';
 		// A source asked for nothing keeps the answer of the previous scope in the shell: it asks for this empty answer instead.
 		const projectOrBlank = projectQuery === '' ? 'blank=true' : projectQuery;
@@ -137,15 +157,17 @@ export function registerProjectRoutes(kit: RouteKit): void {
 				projectQuery: projectOrBlank,
 				selectedText: selected === undefined ? null : projectText(selected),
 				unknownProjectText: unknownProject
-					? `Project "${requested}" is not registered with the task app-module. Pick a registered project on the Projects page, or register it with \`task projects add <dir>\`.`
+					? `Project "${requested}" is not registered with the task app-module${unresolvedReason === null ? '' : ` (${unresolvedReason})`}. Pick a registered project on the Projects page, or register it with \`project add <dir>\`.`
 					: null,
+				// The projects outside the shared registry (each with the command that registers it), or a registry that could not be read.
+				registryNotice: registryNotice(projects, registryProblem),
 				selectedParam: projectParam,
 				selectedProblem,
 				// The remembered project cannot be read (corrupt file...): said on the New task page, not ignored.
 				lastProjectProblem: lastUsed.problem,
 				// Only the projects that can be read: picking another one could only fail.
 				projectOptions: readableProjects.map(entry => ({
-					value: encodeURIComponent(entry.path),
+					value: encodeURIComponent(apiRef(entry)),
 					label: entry.name,
 				})),
 				// No project, or a selected one that cannot be read: no form either (its submit could only fail); the views gate their forms on it.
@@ -155,7 +177,7 @@ export function registerProjectRoutes(kit: RouteKit): void {
 						: {
 								create: {
 									projectParam:
-										createProject === undefined ? '' : encodeURIComponent(createProject.path),
+										createProject === undefined ? '' : encodeURIComponent(apiRef(createProject)),
 									description: '',
 									parent: '',
 								},
@@ -175,7 +197,9 @@ export function registerProjectRoutes(kit: RouteKit): void {
 		const ctx = openProject(configDir, requested);
 		const figures = summarizeProject(ctx);
 		const overview: ProjectOverview = {
+			...(ctx.project.id === undefined ? {} : { id: ctx.project.id }),
 			name: ctx.project.name,
+			registered: ctx.project.id !== undefined,
 			path: ctx.project.path,
 			exists: true,
 			initialized: true,

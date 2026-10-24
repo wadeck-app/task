@@ -13,6 +13,7 @@
 		"clean": "rimraf dist dist-types"
 	},
 	"dependencies": {
+		"@wadeck-app/project-sdk": "latest",
 		"@wadeck-app/queue-sdk": "2026.10.24-191-aa6c1b79",
 		"@wadeck-app/task-core": "*"
 	},

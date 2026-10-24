@@ -1,21 +1,23 @@
 // Cross-project reads: what every registered project holds, for the callers that show them together.
-import * as path from 'node:path';
-
 import type { TaskSummary } from '@wadeck-app/task-core';
 
 import type { TaskServiceContext } from './context.js';
 import { NoReadableProjectsError } from './errors.js';
 import type { ProjectFailure } from './errors.js';
 import { listTasks } from './listTasks.js';
-import { inspectProject } from './projectsHealth.js';
-import { listRegisteredProjects } from './projectsRegistry.js';
+import type { ListKnownProjectsOptions } from './knownProjects.js';
+import { inspectKnownProjects } from './projectsHealth.js';
 import { countTasksByStatus } from './taskStats.js';
 import type { StatusCount } from './taskStats.js';
 
 /** One registered project and what it holds. */
 export interface ProjectOverview {
-	/** Directory name. */
+	/** Id in the shared project registry; absent for a project known only by the legacy projects.json. */
+	id?: string;
+	/** Registry name when registered, else the directory name. */
 	name: string;
+	/** In the shared project registry (the legacy projects.json is removed in stage 2: unregistered projects need `project add`). */
+	registered: boolean;
 	path: string;
 	/** The directory exists. */
 	exists: boolean;
@@ -40,6 +42,8 @@ export interface ProjectsSummary {
 	total: number;
 	/** Statuses summed over the readable projects. */
 	byStatus: StatusCount[];
+	/** Present only when the shared registry could not be read: why. The legacy projects are still summarised. */
+	registryProblem?: string;
 }
 
 /** The figures of one project's tasks. */
@@ -55,20 +59,23 @@ export function summarizeProject(ctx: TaskServiceContext): { open: number; total
 /**
  * What every registered project holds. Nothing registered is an empty summary (the caller says what to do);
  * a project that cannot be read is listed with its reason and left out of the totals, never silently dropped.
+ * "Registered" is the shared project registry first, then the legacy projects.json entries it does not cover (see {@link listKnownProjects}).
  * Throws {@link NoReadableProjectsError} when projects are registered and none can be read (zeros would read as "no tasks"),
  * and the registry error when `projects.json` is corrupt.
  */
-export function summarizeProjects(configDir: string): ProjectsSummary {
+export function summarizeProjects(configDir: string, options: ListKnownProjectsOptions = {}): ProjectsSummary {
 	const projects: ProjectOverview[] = [];
 	const merged = new Map<string, StatusCount>();
 	let readableCount = 0;
 	let open = 0;
 	let total = 0;
-	for (const dir of listRegisteredProjects(configDir)) {
-		const { health, context } = inspectProject(dir);
+	const inspected = inspectKnownProjects(configDir, options);
+	for (const { known, health, context } of inspected.entries) {
 		const base = {
-			name: path.basename(dir),
-			path: dir,
+			...(known.id === undefined ? {} : { id: known.id }),
+			name: known.name,
+			registered: known.registered,
+			path: known.path,
 			exists: health.exists,
 			initialized: health.initialized,
 		};
@@ -88,7 +95,14 @@ export function summarizeProjects(configDir: string): ProjectsSummary {
 		}
 	}
 	throwIfNoneReadable(projects.length, readableCount, failuresOf(projects));
-	return { projects, readableCount, open, total, byStatus: [...merged.values()] };
+	return {
+		projects,
+		readableCount,
+		open,
+		total,
+		byStatus: [...merged.values()],
+		...(inspected.registryProblem === null ? {} : { registryProblem: inspected.registryProblem }),
+	};
 }
 
 function failuresOf(projects: readonly ProjectOverview[]): ProjectFailure[] {
@@ -101,12 +115,14 @@ function throwIfNoneReadable(registered: number, readable: number, failures: Pro
 
 /** A task and the project it belongs to. */
 export interface ProjectTask extends TaskSummary {
-	project: { name: string; path: string };
+	project: { id?: string; name: string; path: string };
 }
 
 export interface ListTasksAcrossProjectsInput {
 	/** Include tasks in a terminal status (hidden by default). */
 	showAll?: boolean;
+	/** Default `process.env`: XDG_CONFIG_HOME locates the shared project registry, read at call time. */
+	env?: NodeJS.ProcessEnv;
 }
 
 export interface TasksAcrossProjects {
@@ -115,7 +131,9 @@ export interface TasksAcrossProjects {
 	/** Projects that could be read. */
 	readableCount: number;
 	/** Projects that could not be read, with why: reported, never dropped. */
-	unreadable: Array<{ name: string; path: string; error: string }>;
+	unreadable: Array<{ id?: string; name: string; path: string; registered: boolean; error: string }>;
+	/** Present only when the shared registry could not be read: why. The legacy projects are still listed. */
+	registryProblem?: string;
 }
 
 /**
@@ -126,13 +144,19 @@ export function listTasksAcrossProjects(
 	configDir: string,
 	input: ListTasksAcrossProjectsInput = {}
 ): TasksAcrossProjects {
+	const inspected = inspectKnownProjects(configDir, { env: input.env });
 	const tasks: ProjectTask[] = [];
 	const unreadable: TasksAcrossProjects['unreadable'] = [];
-	const registered = listRegisteredProjects(configDir);
-	for (const dir of registered) {
-		const { health, context } = inspectProject(dir);
+	const registered = inspected.entries;
+	for (const { known, health, context } of registered) {
 		if (context === null) {
-			unreadable.push({ name: path.basename(dir), path: dir, error: health.error ?? 'unreadable' });
+			unreadable.push({
+				...(known.id === undefined ? {} : { id: known.id }),
+				name: known.name,
+				path: known.path,
+				registered: known.registered,
+				error: health.error ?? 'unreadable',
+			});
 			continue;
 		}
 		for (const task of listTasks(context, { showAll: input.showAll })) {
@@ -146,7 +170,12 @@ export function listTasksAcrossProjects(
 			compareText(a.project.path, b.project.path) ||
 			compareText(a.createdAt, b.createdAt)
 	);
-	return { tasks, readableCount: registered.length - unreadable.length, unreadable };
+	return {
+		tasks,
+		readableCount: registered.length - unreadable.length,
+		unreadable,
+		...(inspected.registryProblem === null ? {} : { registryProblem: inspected.registryProblem }),
+	};
 }
 
 function compareText(a: string, b: string): number {

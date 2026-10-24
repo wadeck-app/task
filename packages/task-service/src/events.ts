@@ -2,6 +2,8 @@ import type { LinkType } from '@wadeck-app/task-core';
 
 /** Project identification appended to every event payload. */
 export interface TaskProjectEnv {
+	/** Id in the shared project registry; absent for a project that is not registered there. */
+	taskProjectId?: string;
 	taskProjectName: string;
 	taskProjectPath: string;
 }

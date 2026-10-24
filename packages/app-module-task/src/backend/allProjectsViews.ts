@@ -13,6 +13,7 @@ import {
 	tasksPageHref,
 } from './hrefs.js';
 import { projectTasksSection } from './dslNodes.js';
+import { registryHintFor } from './projects.js';
 import { flattenTree } from './rowViews.js';
 
 const NO_TYPE_TEXT = '(none configured: any text is accepted)';
@@ -50,6 +51,9 @@ function shortProblem(project: ProjectOverview): string {
 export function projectRows(projects: readonly ProjectOverview[]): Record<string, unknown>[] {
 	return projects.map(p => ({
 		name: p.name,
+		registered: p.registered,
+		// Not in the shared registry: what to run to register it (the widget shows the notice of the route; the label stays about the data).
+		registryHint: p.registered ? null : registryHintFor(p.path),
 		// The widget table has no room for a Problem column: the reason's gist sits next to the name, the full one is in `problem`.
 		label: p.error === null ? p.name : `${p.name} (${shortProblem(p)})`,
 		path: p.path,
@@ -57,7 +61,7 @@ export function projectRows(projects: readonly ProjectOverview[]): Record<string
 		openText: p.open === null ? '-' : String(p.open),
 		totalText: p.total === null ? '-' : String(p.total),
 		problem: p.error ?? '',
-		href: p.error === null ? tasksPageHref(p.path) : null,
+		href: p.error === null ? tasksPageHref(p) : null,
 	}));
 }
 
@@ -157,7 +161,7 @@ export function allTypesBody(found: AcrossProjects<string[]>): Record<string, un
 		),
 		// Adding names its project in the form: only the ones that can be written to, none preselected.
 		projectOptions: found.entries.map(({ project }) => ({
-			value: encodeURIComponent(project.path),
+			value: encodedProject(project),
 			label: project.name,
 		})),
 		forms: { add: { projectParam: '', name: '' } },

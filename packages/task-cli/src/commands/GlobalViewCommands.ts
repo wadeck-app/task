@@ -21,14 +21,26 @@ const INCOMPATIBLE_FLAGS: ReadonlyMap<string, string> = new Map([
 
 /** What chose a single project for this run: an explicit choice contradicts `--all-projects`, the ambient `PROJECT_DIR` does not. */
 export interface ProjectSelection {
-	explicit?: { name: '--project-dir' | 'TASK_PROJECT_DIR'; description: string };
+	explicit?: { name: '--project' | '--project-dir' | 'TASK_PROJECT' | 'TASK_PROJECT_DIR'; description: string };
 	ignoredProjectDir?: string;
 }
 
-/** Reads the three project sources in the order the CLI uses them (flag, TASK_PROJECT_DIR, PROJECT_DIR); empty values count as unset. */
-export function describeProjectSelection(projectDirFlag: string | undefined): ProjectSelection {
+/**
+ * Reads the project sources: the flags (`--project`, `--project-dir`), then TASK_PROJECT, TASK_PROJECT_DIR and the generic
+ * PROJECT_DIR; empty values count as unset.
+ */
+export function describeProjectSelection(
+	projectDirFlag: string | undefined,
+	projectRefFlag?: string
+): ProjectSelection {
+	if (projectRefFlag !== undefined) {
+		return { explicit: { name: '--project', description: '--project' } };
+	}
 	if (projectDirFlag !== undefined) {
 		return { explicit: { name: '--project-dir', description: '--project-dir' } };
+	}
+	if (process.env['TASK_PROJECT']) {
+		return { explicit: { name: 'TASK_PROJECT', description: 'the TASK_PROJECT environment variable' } };
 	}
 	if (process.env['TASK_PROJECT_DIR']) {
 		return {
@@ -37,6 +49,25 @@ export function describeProjectSelection(projectDirFlag: string | undefined): Pr
 	}
 	const generic = process.env['PROJECT_DIR'];
 	return generic ? { ignoredProjectDir: generic } : {};
+}
+
+/**
+ * Text mode only (the JSON answer carries `registered` and `registryProblem`): the shared registry that could not be read, and
+ * the projects found only through the legacy projects.json, with the command that registers each. One line each, on stderr.
+ */
+function registryNotes(unregisteredPaths: readonly string[], registryProblem: string | undefined): void {
+	if (registryProblem !== undefined) {
+		process.stderr.write(
+			`Warning: the shared project registry was not read, only the legacy projects are listed: ${registryProblem}\n`
+		);
+	}
+	const paths = [...new Set(unregisteredPaths)];
+	if (paths.length > 0) {
+		const commands = paths.map(dir => `project add "${dir}"`).join('; ');
+		process.stderr.write(
+			`Deprecated: ${paths.length} listed project(s) are not in the shared project registry (the legacy list is removed in a later version): ${commands}\n`
+		);
+	}
 }
 
 function table(header: string[], rows: string[][]): string {
@@ -80,7 +111,7 @@ export function runListAllProjects(
 		return errorOutput(
 			jsonMode,
 			`--all-projects cannot be combined with ${description}: one project and all projects contradict`,
-			`${name === '--project-dir' ? 'Drop' : 'Unset'} ${name}, or drop --all-projects to list that one project.`
+			`${name.startsWith('--') ? 'Drop' : 'Unset'} ${name}, or drop --all-projects to list that one project.`
 		);
 	}
 	// Ambient and generic (a parent tool may set it): not a contradiction, but never silent. Stderr in both modes keeps stdout the pure answer.
@@ -100,6 +131,13 @@ export function runListAllProjects(
 	for (const project of answer.unreadable) {
 		process.stderr.write(`Warning: project ${project.path} not listed: ${project.error}\n`);
 	}
+	registryNotes(
+		[
+			...answer.tasks.filter(task => task.project.id === undefined).map(task => task.project.path),
+			...answer.unreadable.filter(project => !project.registered).map(project => project.path),
+		],
+		answer.registryProblem
+	);
 	if (answer.readableCount === 0) {
 		return { exitCode: 0, output: NO_PROJECT_TEXT };
 	}
@@ -143,7 +181,12 @@ export function runProjectsSummary(rest: string[], jsonMode: boolean, configDir:
 	}
 	try {
 		const summary = summarizeProjects(configDir);
-		return jsonMode ? jsonResult(summary) : { exitCode: 0, output: summaryText(summary) };
+		if (jsonMode) return jsonResult(summary);
+		registryNotes(
+			summary.projects.filter(project => !project.registered).map(project => project.path),
+			summary.registryProblem
+		);
+		return { exitCode: 0, output: summaryText(summary) };
 	} catch (error) {
 		return failure(jsonMode, error);
 	}

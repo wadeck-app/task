@@ -1081,3 +1081,20 @@ describe('views: every mutating action that produces queue events shows what the
 		}
 	);
 });
+
+describe('shared project registry (stage 1): the views say which projects are not in it', () => {
+	it('the Projects page has a Registry column and a warning badge bound to registryNotice', () => {
+		const page = readFileSync(join(packageDir, 'src/dsl-views/projects-page.yaml'), 'utf8');
+		expect(page).toContain("{ key: 'registryText', label: 'Registry' }");
+		expect(page).toMatch(
+			/\$if: \$sources\.projects\.registryNotice\n\s+label: \$sources\.projects\.registryNotice\n\s+variant: warning/
+		);
+	});
+
+	it('the dashboard widget shows the same notice in a warning badge', () => {
+		const widget = readFileSync(join(packageDir, 'src/dsl-views/tasks-widget.yaml'), 'utf8');
+		expect(widget).toMatch(
+			/\$if: \$sources\.summary\.registryNotice\n\s+label: \$sources\.summary\.registryNotice\n\s+variant: warning/
+		);
+	});
+});

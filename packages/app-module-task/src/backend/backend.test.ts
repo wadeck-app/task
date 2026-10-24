@@ -244,6 +244,9 @@ describe('GET /projects', () => {
 			{
 				name: 'alpha',
 				path: project,
+				// Stage 1: a project outside the shared registry is marked, with the command that registers it.
+				registered: false,
+				registryHint: `Not in the shared project registry: project add "${project}"`,
 				exists: true,
 				initialized: true,
 				openCount: 0,
@@ -522,6 +525,8 @@ describe('GET /summary per-project rows (the global dashboard widget)', () => {
 		expect(answer.body['projectRows']).toEqual([
 			{
 				name: 'alpha',
+				registered: false,
+				registryHint: `Not in the shared project registry: project add "${project}"`,
 				label: 'alpha',
 				path: project,
 				openText: '1',
@@ -531,6 +536,8 @@ describe('GET /summary per-project rows (the global dashboard widget)', () => {
 			},
 			{
 				name: 'beta',
+				registered: false,
+				registryHint: `Not in the shared project registry: project add "${beta}"`,
 				label: 'beta',
 				path: beta,
 				openText: '0',

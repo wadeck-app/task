@@ -93,17 +93,18 @@ export function runProjectsCommand(
 	rest: string[],
 	jsonMode: boolean,
 	cwd: string,
-	projectDirFlag?: string
+	projectFlags: { projectDir?: string; projectRef?: string } = {}
 ): CommandResult {
 	const [subCmd, ...args] = rest;
 	if (subCmd === undefined || subCmd === '--help') {
 		return { exitCode: 0, output: PROJECTS_HELP };
 	}
 	// `add` is the one registry command that picks a directory by default: the flag would be swallowed and the cwd registered instead.
-	if (subCmd === 'add' && projectDirFlag !== undefined) {
+	if (subCmd === 'add' && (projectFlags.projectDir !== undefined || projectFlags.projectRef !== undefined)) {
+		const flag = projectFlags.projectDir !== undefined ? '--project-dir' : '--project';
 		return errorOutput(
 			jsonMode,
-			'task projects add cannot use --project-dir: it registers the directory given as argument (default: the cwd)',
+			`task projects add cannot use ${flag}: it registers the directory given as argument (default: the cwd)`,
 			'Run: task projects add <dir>'
 		);
 	}

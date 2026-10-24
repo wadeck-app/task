@@ -57,12 +57,24 @@ export const QUEUE_EVENT_LIMITS = {
 const string = { type: 'string' } as const;
 const labels = { type: 'array', items: string } as const;
 const projectProperties = {
-	taskProjectName: { type: 'string', description: 'Name of the project (its directory name).' },
+	taskProjectId: {
+		type: 'string',
+		description:
+			'Id of the project in the shared project registry (8 hex characters). Absent when the project is not registered there.',
+	},
+	taskProjectName: {
+		type: 'string',
+		description: 'Name of the project (its name in the shared registry, else its directory name).',
+	},
 	taskProjectPath: { type: 'string', description: 'Absolute path of the project directory.' },
 } as const;
 const projectRequired = ['taskProjectName', 'taskProjectPath'] as const;
 
-const projectExample = { taskProjectName: 'my-project', taskProjectPath: '/work/my-project' } as const;
+const projectExample = {
+	taskProjectId: '3fa9c1d2',
+	taskProjectName: 'my-project',
+	taskProjectPath: '/work/my-project',
+} as const;
 
 const linkProperties = {
 	taskId: { type: 'string', description: 'The holder of the stored link.' },

@@ -27,6 +27,22 @@ describe('openTaskContext', () => {
 		expect(openTaskContext({ projectDir }).project).toEqual({ name: 'my-project', path: projectDir });
 	});
 
+	it('takes the identity of a registered project (id and name of the shared registry) and still reads <path>/.task', () => {
+		const projectDir = initProject('statuses:\n  - todo\n');
+
+		const { project, store } = openTaskContext({ projectDir, project: { id: 'a1b2c3d4', name: 'shop' } });
+
+		expect(project).toEqual({ id: 'a1b2c3d4', name: 'shop', path: projectDir });
+		expect(store.create('x', 'todo').id).toBeTruthy();
+		expect(fs.readdirSync(path.join(projectDir, '.task', 'tasks'))).not.toEqual([]);
+	});
+
+	it('has no id key for a project that is not registered', () => {
+		const projectDir = initProject('statuses:\n  - todo\n');
+
+		expect(Object.keys(openTaskContext({ projectDir }).project)).toEqual(['name', 'path']);
+	});
+
 	it('resolves the project config.yml', () => {
 		const projectDir = initProject('statuses:\n  - todo\n  - name: done\n    terminal: true\n');
 		const { config } = openTaskContext({ projectDir });

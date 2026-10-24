@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import {
 	addProject,
 	isSameProjectDir,
+	listKnownProjects,
 	listRegisteredProjects,
 	ProjectNotRegisteredError,
 	relocateProject,
@@ -41,6 +42,24 @@ function failWith(error: unknown, extra: Record<string, unknown>): never {
 	);
 }
 
+/**
+ * The Projects page edits the legacy list (projects.json) only. A project of the shared registry is managed with the project
+ * CLI: refuse before touching anything, saying which command does it (the row buttons are shown for every row).
+ */
+function refuseSharedProject(configDir: string, dir: string, action: 'remove' | 'move'): void {
+	const shared = listKnownProjects(configDir).projects.find(
+		entry => entry.registered && isSameProjectDir(entry.path, dir)
+	);
+	if (shared === undefined) return;
+	throw new RequestError(
+		409,
+		`${shared.name} (${shared.id}) is in the shared project registry: the Projects page cannot ${action} it`,
+		action === 'remove'
+			? `Run: project remove "${shared.name}" (its tasks and .task stay on disk).`
+			: `Run: project paths move (see 'project paths --help') to give ${shared.name} its new directory.`
+	);
+}
+
 export function registerProjectManageRoutes(kit: RouteKit): void {
 	const { route, configDir } = kit;
 
@@ -71,6 +90,7 @@ export function registerProjectManageRoutes(kit: RouteKit): void {
 		const to = requiredString(body, 'to', RELOCATE_USAGE);
 		let moved: { from: string; to: string };
 		try {
+			refuseSharedProject(configDir, from, 'move');
 			moved = relocateProject(configDir, from, to);
 		} catch (error) {
 			return failWith(error, { from, to, editPrompt: editPromptText(path.basename(from), from) });
@@ -84,6 +104,7 @@ export function registerProjectManageRoutes(kit: RouteKit): void {
 	route('POST', '/projects/remove', req => {
 		const body = bodyObject(req.body, REMOVE_USAGE);
 		const wanted = validateProjectPath(requiredString(body, 'path', REMOVE_USAGE));
+		refuseSharedProject(configDir, wanted, 'remove');
 		// Unknown project: say so before asking to confirm anything.
 		const stored = listRegisteredProjects(configDir).find(entry => isSameProjectDir(entry, wanted));
 		if (stored === undefined) throw new ProjectNotRegisteredError(wanted);

@@ -8,6 +8,7 @@ Concepts:
   task        A work item with id, description, status, type, labels, and metadata
   parent      Optional parentId on a task; hierarchy depth is unlimited (delete a parent: children become roots, or --cascade-delete)
   link        Typed, directional, acyclic relation between two tasks: blockedBy, duplicateOf, causedBy (inverses blocks, duplicates, causes are derived)
+  project     A project of the shared project registry (managed by the 'project' CLI): id (8 hex), name, aliases, paths. Selected with -p, TASK_PROJECT or the cwd; its tasks are stored in <main path>/.task
   config      Project config at .task/config.yml (defines valid statuses; default: backlog, in-progress, done)
   init        Creates .task/ directory and config.yml in the current working directory
   id          Short prefix of the task UUID - any unambiguous prefix is accepted
@@ -63,8 +64,16 @@ Usage:
 Global flags:
   --config <dir>       Global config directory (default: ~/.task)
   --json               Force JSON output; errors become {"error":"...","hint":"..."} (no "hint" key when there is none)
-  --project-dir <dir>  Override project directory (also: TASK_PROJECT_DIR env var, then PROJECT_DIR)
+  -p, --project <ref>  Project of the shared registry: name, alias, id or unique id prefix (min 4), case-insensitive; never a path. Also: TASK_PROJECT env var.
+                       Order: -p, then TASK_PROJECT, then the registered project that contains the cwd (deepest registered folder wins). A reference that
+                       does not resolve is an error (suggestions listed), never a fallback. Refused with --project-dir, by 'task list --all-projects'
+                       and by 'task projects add'. Register a project with the project CLI: project add "<dir>"
+  --project-dir <dir>  DEPRECATED. Directory of the project (also: TASK_PROJECT_DIR env var, then PROJECT_DIR); looked up in the registry like a cwd.
                        Refused by 'task list --all-projects' (as is TASK_PROJECT_DIR) and by 'task projects add' (task projects add cannot use --project-dir)
+
+Projects not in the shared registry (deprecated, removed in a later version): a directory holding a .task still works as before (cwd, --project-dir,
+TASK_PROJECT_DIR, PROJECT_DIR), with one warning line on stderr (also with --json; stdout stays the answer) naming the directory and the command
+to register it: project add "<dir>". A registered project reads its tasks from <main path>/.task. How the project was resolved is in 'task cli logs'.
 
 Events (pushed to queue through @wadeck-app/queue-sdk after the change is saved, with the project directory as cwd so its .queue/subscribers.yml is used):
   onTaskCreated        new                              taskId, status, description, parentId, type, labels
@@ -82,7 +91,8 @@ Events (pushed to queue through @wadeck-app/queue-sdk after the change is saved,
   Nothing fires when nothing changed (same type, label already there or absent, same meta value, same parent) or when the command fails.
   delete fires one onTaskDeleted per deleted task, after the deletion; never for --dry-run. With --cascade-delete the order is
   leaves before parents (deepest first).
-  Every payload also has taskProjectName and taskProjectPath. Subscriber filter example: when: payload.newStatus=done
+  Every payload also has taskProjectName and taskProjectPath, and taskProjectId (the id in the shared project registry) when the project is registered there
+  (absent otherwise; taskProjectName is then the registry name). Subscriber filter example: when: payload.newStatus=done
   The events are declared to the queue (name, when it fires, payload schema, example; 'queue events list' shows them, source: task):
   once per declaration, just before the first event after an install or update, never at every command, recorded in
   <config dir>/queue-events.json. A failed declaration never fails the command and is retried by the next event; see it in 'task cli logs'.
@@ -100,8 +110,9 @@ Exit codes:
 
 Environment variables:
   TASK_CONFIG       Override global config directory (default: ~/.task)
-  TASK_PROJECT_DIR  Override project directory
-  PROJECT_DIR       Fallback project directory when TASK_PROJECT_DIR is not set (ignored, with a stderr note, by 'task list --all-projects')`;
+  TASK_PROJECT      Project of the shared registry (name, alias or id), below -p; refused by 'task list --all-projects'
+  TASK_PROJECT_DIR  DEPRECATED. Override project directory
+  PROJECT_DIR       DEPRECATED. Fallback project directory when TASK_PROJECT_DIR is not set (ignored, with a stderr note, by 'task list --all-projects')`;
 }
 
 /** `task projects --help`. */

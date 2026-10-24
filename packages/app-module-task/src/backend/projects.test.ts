@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { TaskStore } from '@wadeck-app/task-core';
-import { projectsRegistryPath } from '@wadeck-app/task-service';
+import { describeError, projectsRegistryPath } from '@wadeck-app/task-service';
 
 import { RequestError } from './errors.js';
 import { projectSlug } from './projectRef.js';
@@ -71,11 +71,18 @@ describe('openProject', () => {
 		expect(JSON.stringify([error.message, error.hint, error.extra])).not.toContain(registered);
 	});
 
-	it('400 for a relative project path', () => {
+	// Stage 1: a reference that is not an absolute directory is a project name, alias or id of the shared registry.
+	it('404 for a relative project path: it is read as a project name of the shared registry, which has none', () => {
 		world.createProject('alpha');
-		const error = failure(() => openProject(world.configDir, 'alpha'));
-		expect(error.status).toBe(400);
-		expect(error.message).toContain('absolute');
+		let thrown: unknown;
+		try {
+			openProject(world.configDir, 'alpha');
+		} catch (error) {
+			thrown = error;
+		}
+		expect(thrown).toBeInstanceOf(Error);
+		expect(describeError(thrown).kind).toBe('not-found');
+		expect((thrown as Error).message).toContain("no project matches 'alpha'");
 	});
 
 	it('accepts a non-normalized spelling of a registered path', () => {
@@ -108,6 +115,8 @@ describe('listProjects', () => {
 			{
 				name: 'alpha',
 				path: a,
+				registered: false,
+				registryHint: `Not in the shared project registry: project add "${a}"`,
 				exists: true,
 				initialized: true,
 				openCount: 0,
@@ -117,6 +126,8 @@ describe('listProjects', () => {
 			{
 				name: 'beta',
 				path: b,
+				registered: false,
+				registryHint: `Not in the shared project registry: project add "${b}"`,
 				exists: true,
 				initialized: false,
 				openCount: null,

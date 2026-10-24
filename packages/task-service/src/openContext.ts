@@ -9,6 +9,8 @@ export interface OpenTaskContextInput {
 	projectDir: string;
 	/** Global config directory (global hooks and defaults). Default: the config loader's own default. */
 	globalConfigDir?: string;
+	/** Identity in the shared project registry; without it the project is named after its directory and has no id. */
+	project?: { id?: string; name?: string };
 }
 
 /**
@@ -21,6 +23,10 @@ export function openTaskContext(input: OpenTaskContextInput): TaskServiceContext
 	return {
 		store: new TaskStore(path.join(projectDir, '.task', 'tasks')),
 		config: TaskConfigLoader.load({ configDir: input.globalConfigDir, projectDir }),
-		project: { name: path.basename(projectDir), path: projectDir },
+		project: {
+			...(input.project?.id === undefined ? {} : { id: input.project.id }),
+			name: input.project?.name ?? path.basename(projectDir),
+			path: projectDir,
+		},
 	};
 }

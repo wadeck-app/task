@@ -115,6 +115,18 @@ describe('the rules detect what they forbid', () => {
 		expect(violationsIn('task-service', "import { x } from '@wadeck-app/app-core-sdk';")).toHaveLength(1);
 	});
 
+	// The shared project registry: task-service owns the reading (resolution, listing, error description); the adapters and the
+	// storage go through it. Tests of the adapters may build a registry fixture with the SDK's own mutations.
+	it('task-service may import the project SDK; the adapters and task-core must not in their sources, their tests may', () => {
+		const sdk = "import { loadRegistry } from '@wadeck-app/project-sdk';";
+		expect(violationsIn('task-service', sdk)).toEqual([]);
+		for (const pkg of ['task-cli', 'app-module-task', 'task-core'] as const) {
+			expect(violationsIn(pkg, sdk), pkg).toHaveLength(1);
+			expect(violationsIn(pkg, sdk, { isTest: true, resolveRelative: noRelative }), `${pkg} test`).toEqual([]);
+		}
+		expect(violationsIn('task-cli', '// see @wadeck-app/project-sdk in task-service')).toEqual([]);
+	});
+
 	it('a forbidden package.json dependency is reported', () => {
 		const found = checkManifest('p.json', { dependencies: { 'task-cli': '*' } }, PACKAGE_RULES['app-module-task']);
 		expect(found).toHaveLength(1);

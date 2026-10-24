@@ -83,6 +83,9 @@ describe('global view commands (task list --all-projects, task projects summary)
 		await addTask(alpha, 'alpha open task');
 		await addTask(alpha, 'alpha done task', 'done');
 		await addTask(beta, 'beta open task');
+		// The setup runs commands in projects that are not in the shared registry (deprecation line on stderr): the tests below
+		// assert on the stderr of the command under test only.
+		stderr.length = 0;
 		return { alpha, beta };
 	}
 
@@ -342,7 +345,10 @@ describe('global view commands (task list --all-projects, task projects summary)
 			process.env['PROJECT_DIR'] = alpha;
 			const result = await runTaskCommand(['projects', 'summary'], root);
 			expect(result.exitCode).toBe(0);
-			expect(stderr.join('')).toBe('');
+			// The only stderr line allowed is the stage-1 deprecation of unregistered projects: nothing about the selection variables.
+			expect(stderr.join('')).not.toContain('ignored');
+			expect(stderr.join('')).not.toContain('PROJECT_DIR');
+			expect(stderr.join('').split('\n').filter(Boolean)).toHaveLength(1);
 		});
 
 		it('--config does not change the all-projects behaviour (not a project selection)', async () => {

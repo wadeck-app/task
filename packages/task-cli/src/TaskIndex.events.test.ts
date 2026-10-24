@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { addProject as addSharedProject, defaultRegistryDir } from '@wadeck-app/project-sdk';
 import { TaskStore } from '@wadeck-app/task-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -951,5 +952,32 @@ describe('queue events — a delete that fails partway through its plan', () => 
 		expect(result.exitCode).toBe(1);
 		expect(result.output).toContain('EPERM');
 		expect(pushedEvents()).toEqual([]);
+	});
+});
+
+// Stage 1 of the shared project registry: a project that is registered there carries its id (and its registry name) in every payload.
+describe('queue events — taskProjectId', () => {
+	it('is absent from the payload of a project that is not in the shared registry', async () => {
+		await runTaskCommand(['new', 'legacy task'], tmpDir);
+
+		const payload = pushedEvents()[0]!.payload;
+		expect(payload).not.toHaveProperty('taskProjectId');
+		expect(payload['taskProjectPath']).toBe(tmpDir);
+	});
+
+	it('is the registry id for a registered project, next to its registry name; the queue cwd stays the project path', async () => {
+		const project = await addSharedProject(defaultRegistryDir(process.env), { name: 'shared-name', path: tmpDir });
+		const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'task-events-elsewhere-'));
+		try {
+			await runTaskCommand(['new', 'shared task', '-p', 'shared-name'], elsewhere);
+		} finally {
+			fs.rmSync(elsewhere, { recursive: true, force: true });
+		}
+
+		const payload = pushedEvents()[0]!.payload;
+		expect(payload['taskProjectId']).toBe(project.id);
+		expect(payload['taskProjectName']).toBe('shared-name');
+		expect(payload['taskProjectPath']).toBe(tmpDir);
+		expect((publishMock.mock.calls[0]![2] as { cwd?: string }).cwd).toBe(tmpDir);
 	});
 });

@@ -6,6 +6,10 @@ import * as path from 'node:path';
 // ConfigDir.get('task') honours XDG_CONFIG_HOME, and spawned child processes inherit it.
 const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'task-cli-xdg-'));
 process.env['XDG_CONFIG_HOME'] = sandbox;
+// The shared project SDK has no off switch: it reads $XDG_CONFIG_HOME/project, else <home>/.config/project. HOME and
+// USERPROFILE complete the isolation (the registry is a sub-folder of the sandbox, never the real one).
+process.env['HOME'] = sandbox;
+process.env['USERPROFILE'] = sandbox;
 
 afterAll(() => {
 	fs.rmSync(sandbox, { recursive: true, force: true });

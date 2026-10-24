@@ -17,6 +17,8 @@ export {
 	ProjectNotRegisteredError,
 	ProjectAlreadyRegisteredError,
 	NoReadableProjectsError,
+	ConflictingProjectSelectionError,
+	ProjectNotInitializedError,
 } from './errors.js';
 export type { ProjectFailure } from './errors.js';
 export type { ErrorDescription, ErrorKind } from './describeError.js';
@@ -100,7 +102,8 @@ export type { AddProjectInput, AddProjectMode, AddProjectResult } from './addPro
 export { ADD_PROJECT_MODES, addProject } from './addProject.js';
 export { assertExistingDirectory, validateProjectPath } from './projectPaths.js';
 export type { ProjectHealth } from './projectsHealth.js';
-export { inspectRegisteredProjects } from './projectsHealth.js';
+export type { InspectedProject } from './projectsHealth.js';
+export { inspectKnownProjects, inspectProject, inspectRegisteredProjects } from './projectsHealth.js';
 export type {
 	ProjectOverview,
 	ProjectsSummary,
@@ -109,3 +112,7 @@ export type {
 	TasksAcrossProjects,
 } from './projectsOverview.js';
 export { summarizeProject, summarizeProjects, listTasksAcrossProjects } from './projectsOverview.js';
+export type { ProjectSource, ResolveProjectInput, ResolvedProject } from './resolveProject.js';
+export { resolveProject, resolveProjectReference } from './resolveProject.js';
+export type { KnownProject, KnownProjects, ListKnownProjectsOptions } from './knownProjects.js';
+export { listKnownProjects } from './knownProjects.js';

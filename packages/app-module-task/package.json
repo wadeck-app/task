@@ -24,6 +24,7 @@
 		"@types/node": "^26.2.0",
 		"@wadeck-app/app-core-cli": "latest",
 		"@wadeck-app/app-core-sdk": "latest",
+		"@wadeck-app/project-sdk": "latest",
 		"rimraf": "^6.0.1",
 		"typescript": "^7.0.0",
 		"vitest": "^4.0.14"

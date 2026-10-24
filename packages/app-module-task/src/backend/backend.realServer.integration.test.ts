@@ -137,6 +137,8 @@ describe('the packaged module through a real app-core server', () => {
 			{
 				name: 'proj',
 				path: projectDir,
+				registered: false,
+				registryHint: `Not in the shared project registry: project add "${projectDir}"`,
 				exists: true,
 				initialized: true,
 				openCount: 1,
