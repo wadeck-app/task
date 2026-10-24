@@ -4,7 +4,7 @@ import { inspectKnownProjects, NoReadableProjectsError, type TaskServiceContext 
 import type { SkippedProject } from './allProjectsViews.js';
 
 export interface ProjectRead<T> {
-	project: { id?: string; name: string; path: string };
+	project: { id: string; name: string; path: string };
 	value: T;
 }
 
@@ -13,7 +13,7 @@ export interface AcrossProjects<T> {
 	entries: ProjectRead<T>[];
 	/** The projects that could not be read, with why. */
 	unreadable: SkippedProject[];
-	/** Why the shared registry could not be read (the legacy projects are still read); null when it was. */
+	/** Why the shared registry could not be read (then no project is listed); null when it was. */
 	registryProblem: string | null;
 }
 
@@ -26,8 +26,8 @@ function compareText(a: string, b: string): number {
  * Runs `read` on every readable registered project. Nothing registered is an empty answer; projects registered but
  * none readable throw {@link NoReadableProjectsError} (an empty answer would read as "no tasks"); a corrupt registry throws its error.
  */
-export function readAcrossProjects<T>(configDir: string, read: (ctx: TaskServiceContext) => T): AcrossProjects<T> {
-	const { entries: inspected, registryProblem } = inspectKnownProjects(configDir);
+export function readAcrossProjects<T>(read: (ctx: TaskServiceContext) => T): AcrossProjects<T> {
+	const { entries: inspected, registryProblem } = inspectKnownProjects();
 	const entries: ProjectRead<T>[] = [];
 	const unreadable: SkippedProject[] = [];
 	for (const { known, health, context } of inspected) {
@@ -35,7 +35,7 @@ export function readAcrossProjects<T>(configDir: string, read: (ctx: TaskService
 			unreadable.push({ path: health.path, error: health.error ?? 'unreadable' });
 			continue;
 		}
-		entries.push({ project: { ...context.project, path: known.path }, value: read(context) });
+		entries.push({ project: { id: known.id, name: context.project.name, path: known.path }, value: read(context) });
 	}
 	if (inspected.length > 0 && entries.length === 0) throw new NoReadableProjectsError(unreadable);
 	entries.sort((a, b) => compareText(a.project.name, b.project.name) || compareText(a.project.path, b.project.path));

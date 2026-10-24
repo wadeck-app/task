@@ -230,16 +230,6 @@ describe('migrateData: refusals (nothing is written)', () => {
 		expect(error.message).toContain('virtual');
 	});
 
-	it('a folder found by the legacy rule must be registered first: the hint is project add', () => {
-		const fixture = legacyProject('old');
-		const project = resolveProject({ cwd: fixture.dir, env: sandbox.env });
-
-		const error = failureOf(() => migrateData(project));
-
-		expect(error.message).toContain('not in the shared project registry');
-		expect(error.hint).toContain(`project add "${fixture.dir}"`);
-	});
-
 	it('nothing to copy: a main path without .task data or config', async () => {
 		const project = await resolved('shop', sandbox.dir('shop'));
 

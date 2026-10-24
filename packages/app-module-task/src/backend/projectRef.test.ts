@@ -2,51 +2,47 @@ import * as path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { findProjectByRef, projectSlug } from './projectRef.js';
+import { apiRef, pageRef, retiredRefKind } from './projectRef.js';
 
-const alpha = path.resolve('/work/alpha');
-const beta = path.resolve('/work/beta');
+describe('pageRef / apiRef: a project is named by its registry id, nothing else', () => {
+	const project = { id: 'a1b2c3d4', path: path.resolve('/work/alpha') };
 
-describe('projectSlug: how a project is named in a page address (the breadcrumb prints it)', () => {
-	it('is the directory name, a tilde and six hex digits of the directory', () => {
-		expect(projectSlug(alpha)).toMatch(/^alpha~[0-9a-f]{6}$/);
+	it('names the project by its id in a page address and in an API query', () => {
+		expect(pageRef(project)).toBe('a1b2c3d4');
+		expect(apiRef(project)).toBe('a1b2c3d4');
 	});
 
-	it('only holds characters the address needs no encoding for', () => {
-		expect(projectSlug(path.resolve('/work/My proj (2)/é.x'))).toMatch(/^[\w-]+~[0-9a-f]{6}$/);
-	});
-
-	it('is stable and the same for the spellings of one directory', () => {
-		expect(projectSlug(alpha)).toBe(projectSlug(alpha));
-		expect(projectSlug(`${alpha}${path.sep}.`)).toBe(projectSlug(alpha));
-		expect(projectSlug(`${alpha}${path.sep}..${path.sep}alpha`)).toBe(projectSlug(alpha));
-	});
-
-	it('tells two directories with the same name apart', () => {
-		expect(projectSlug(path.resolve('/one/task'))).not.toBe(projectSlug(path.resolve('/two/task')));
-	});
-
-	it('has a name for a directory without one (a drive root)', () => {
-		expect(projectSlug(path.parse(alpha).root)).toMatch(/^project~[0-9a-f]{6}$/);
+	it('never puts the directory in either', () => {
+		expect(pageRef(project)).not.toContain('alpha');
+		expect(apiRef(project)).not.toContain('alpha');
 	});
 });
 
-describe('findProjectByRef: the registered project an address or a query names (one resolution for both)', () => {
-	const registered = [alpha, beta];
-
-	it('finds a project by its slug', () => {
-		expect(findProjectByRef(registered, projectSlug(beta))).toBe(beta);
+describe('retiredRefKind: the two spellings that were project references before the registry and are refused now', () => {
+	it('recognises an absolute directory, POSIX or Windows, whatever the platform', () => {
+		expect(retiredRefKind(path.resolve('/work/alpha'))).toBe('directory');
+		expect(retiredRefKind('/work/alpha')).toBe('directory');
+		expect(retiredRefKind('C:\\work\\alpha')).toBe('directory');
+		expect(retiredRefKind('C:/work/alpha')).toBe('directory');
 	});
 
-	it('finds a project by its absolute directory (the API and older links)', () => {
-		expect(findProjectByRef(registered, alpha)).toBe(alpha);
-		expect(findProjectByRef(registered, `${alpha}${path.sep}.`)).toBe(alpha);
+	it('recognises an old page slug (directory name, a tilde, six hex digits)', () => {
+		expect(retiredRefKind('alpha~0a1b2c')).toBe('slug');
+		expect(retiredRefKind('my-proj_2~ffffff')).toBe('slug');
 	});
 
-	it('finds nothing for an unregistered directory, a slug nobody has, or an empty reference', () => {
-		expect(findProjectByRef(registered, path.resolve('/work/gamma'))).toBeUndefined();
-		expect(findProjectByRef(registered, projectSlug(path.resolve('/work/gamma')))).toBeUndefined();
-		expect(findProjectByRef(registered, '')).toBeUndefined();
-		expect(findProjectByRef(registered, 'alpha')).toBeUndefined();
+	it('leaves ids, names, aliases and id prefixes to the registry', () => {
+		for (const ref of [
+			'a1b2c3d4',
+			'a1b2',
+			'alpha',
+			'Shop',
+			'my-alias',
+			'alpha~',
+			'alpha~xyz123',
+			'alpha~0a1b2c3',
+		]) {
+			expect(retiredRefKind(ref), ref).toBeNull();
+		}
 	});
 });

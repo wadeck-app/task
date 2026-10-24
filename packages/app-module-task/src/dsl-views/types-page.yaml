@@ -1,4 +1,4 @@
-# Task types (nav /types), stored in each project's .task/config.yml. With no type configured any text is accepted for
+# Task types (nav /types), stored in each project's own config.yml in the shared registry. With no type configured any text is accepted for
 # the type of a task; as soon as one is configured the type of a task must be one of them.
 # On /types/p/:project ($route.project; /types also shows the only registered project): the types of that project, which can be
 # added to and removed. On /types with several projects registered: the types of every project side by side

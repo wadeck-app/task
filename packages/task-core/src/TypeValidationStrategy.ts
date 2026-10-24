@@ -23,7 +23,7 @@ export interface TypeValidationStrategy {
 
 /**
  * Default strategy: accepts any string without validation.
- * Used when no types are configured in .task/config.yml.
+ * Used when no types are configured in the project config.yml.
  */
 export class OpenTypeStrategy implements TypeValidationStrategy {
 	readonly name = 'open';
@@ -35,7 +35,7 @@ export class OpenTypeStrategy implements TypeValidationStrategy {
 
 /**
  * Fixed-list strategy: value must be one of the configured types.
- * Used when a non-empty `types` list is present in .task/config.yml.
+ * Used when a non-empty `types` list is present in the project config.yml.
  */
 export class FixedListTypeStrategy implements TypeValidationStrategy {
 	readonly name = 'fixed-list';

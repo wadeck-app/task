@@ -121,11 +121,6 @@ export class TaskConfigLoader {
 		return TaskConfigLoader.expandTilde(raw);
 	}
 
-	static isInitialized(projectDir?: string): boolean {
-		const dir = projectDir ?? process.cwd();
-		return fs.existsSync(path.join(dir, '.task'));
-	}
-
 	/** Parses one config file (absent or empty: undefined). Invalid YAML or a top level that is not a mapping throws, naming the file. */
 	static readConfigFile<T = Record<string, unknown>>(filePath: string): T | undefined {
 		return loadYamlFile<T>(filePath);
@@ -166,13 +161,16 @@ export class TaskConfigLoader {
 		};
 	}
 
-	/** Legacy layout: the project config is `<projectDir>/.task/config.yml`. */
-	static load(options?: { configDir?: string; projectDir?: string }): TaskResolvedConfig {
-		const projectDir = options?.projectDir ?? process.cwd();
+	/**
+	 * The global config plus ONE project config file (unknown keys ignored); without `projectConfigFile`, the defaults of the global config only.
+	 * The caller says where the file is (this class knows no project layout).
+	 */
+	static load(options?: { configDir?: string; projectConfigFile?: string }): TaskResolvedConfig {
+		const file = options?.projectConfigFile;
 		return TaskConfigLoader.resolve({
 			global: TaskConfigLoader.loadGlobal(options?.configDir),
-			project: loadYamlFile<TaskProjectConfig>(path.join(projectDir, '.task', 'config.yml')) ?? {},
-			source: '.task/config.yml',
+			project: file === undefined ? {} : (loadYamlFile<TaskProjectConfig>(file) ?? {}),
+			source: file ?? 'the default statuses',
 		});
 	}
 
@@ -191,17 +189,5 @@ export class TaskConfigLoader {
 		projectConfig.types = change(projectConfig.types ?? []);
 		if (options.createDirectory === true) fs.mkdirSync(path.dirname(configPath), { recursive: true });
 		writeFile(configPath, yaml.dump(projectConfig));
-	}
-
-	static addType(projectDir: string, typeName: string): void {
-		TaskConfigLoader.updateTypes(path.join(projectDir, '.task', 'config.yml'), types =>
-			types.includes(typeName) ? types : [...types, typeName]
-		);
-	}
-
-	static removeType(projectDir: string, typeName: string): void {
-		TaskConfigLoader.updateTypes(path.join(projectDir, '.task', 'config.yml'), types =>
-			types.filter(t => t !== typeName)
-		);
 	}
 }

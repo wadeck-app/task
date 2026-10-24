@@ -2,7 +2,6 @@
 import { ConfigDir, UpdateManager } from '@wadeck-app/shared-cli';
 import { logCliInvocation } from '@wadeck-app/shared-cli/CliLogger';
 import { resolveOwnBundlePath } from '@wadeck-app/shared-cli/resolveOwnBundlePath';
-import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -15,9 +14,9 @@ import {
 import type { ResolvedProject } from '@wadeck-app/task-service';
 import { declareBeforeFirstDelivery } from './QueueEventsDeclaration.js';
 import { TASK_BUNDLE_NAME } from './TaskBundleName.js';
-import { parseArgs } from './cli/args.js';
+import { parseArgs, usesRemovedProjectDir } from './cli/args.js';
 import type { CommandEnv } from './cli/env.js';
-import { taskHelp } from './cli/help.js';
+import { STATUS_HELP, taskHelp } from './cli/help.js';
 import { errorOutput, failure } from './cli/output.js';
 import type { CommandResult } from './cli/output.js';
 import { printUpdateNotice } from './cli/updateNotice.js';
@@ -26,17 +25,15 @@ import { describeProjectSelection, runListAllProjects } from './commands/GlobalV
 import { runMigrateData } from './commands/MigrateDataCommand.js';
 import { runPluginsCommand } from './commands/PluginsCommand.js';
 import { runProjectsCommand } from './commands/ProjectsCommand.js';
-import { runRemovedInit } from './commands/RemovedCommands.js';
+import { isStatusHelp } from './commands/StatusCommand.js';
+import { runRemovedInit, runRemovedProjectDirFlag, warnIgnoredTaskProjectDir } from './commands/RemovedCommands.js';
 import { PROJECT_COMMANDS, VALID_COMMANDS_HINT } from './commands/projectCommands.js';
 import { VERSION } from './version.js';
 
 export type { CommandResult } from './cli/output.js';
 
 export async function runTaskCommand(args: string[], cwd: string): Promise<CommandResult> {
-	const { configDir, projectDir, projectRef, jsonMode, command, rest } = parseArgs(args);
-	// `task init` is gone: the directory it answers with is the one it used to initialise (--project-dir / TASK_PROJECT_DIR / PROJECT_DIR / cwd).
-	const legacyProjectDir = projectDir ?? process.env['TASK_PROJECT_DIR'] ?? process.env['PROJECT_DIR'];
-	const effectiveCwd = legacyProjectDir ? path.resolve(cwd, legacyProjectDir) : cwd;
+	const { configDir, projectRef, jsonMode, command, rest } = parseArgs(args);
 
 	// Log every CLI invocation to ~/.config/task/logs/YYYY-MM-DD.ndjson
 	try {
@@ -44,6 +41,9 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 	} catch {
 		/* never block the CLI on logging failure */
 	}
+
+	// A removed selector is refused (or called out) before anything runs: never taken for an argument, never silently ignored.
+	if (usesRemovedProjectDir(args)) return runRemovedProjectDirFlag(jsonMode);
 
 	printUpdateNotice();
 
@@ -53,12 +53,13 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 	if (command === '--version' || command === '-V') {
 		return { exitCode: 0, output: VERSION };
 	}
+	warnIgnoredTaskProjectDir();
 	if (command === 'init') {
-		return runRemovedInit(effectiveCwd, jsonMode);
+		return runRemovedInit(cwd, jsonMode);
 	}
 	if (command === 'cli' && rest[0] === 'migrate-data') {
 		return runMigrateData(rest.slice(1), jsonMode, () => {
-			const resolved = resolveProject({ cwd, projectRef, projectDir });
+			const resolved = resolveProject({ cwd, projectRef });
 			announceResolution(resolved);
 			return resolved;
 		});
@@ -72,25 +73,24 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 	if (command === 'projects') {
 		return runProjectsCommand(rest, jsonMode, cwd);
 	}
+	// Help needs no project (the listing itself does: it goes through the handler below).
+	if (command === 'status' && isStatusHelp(rest)) {
+		return { exitCode: 0, output: STATUS_HELP };
+	}
 
-	// Across every registered project: needs no project here (the registry is in the global config dir).
+	// Across every registered project: needs no project here.
 	if (command === 'list' && rest.includes('--all-projects')) {
-		return runListAllProjects(
-			rest,
-			jsonMode,
-			ConfigDir.get('task'),
-			describeProjectSelection(projectDir, projectRef)
-		);
+		return runListAllProjects(rest, jsonMode, describeProjectSelection(projectRef));
 	}
 
 	let env: CommandEnv;
 	try {
-		const resolved = resolveProject({ cwd, projectRef, projectDir });
+		const resolved = resolveProject({ cwd, projectRef });
 		announceResolution(resolved);
 		env = {
 			command,
 			jsonMode,
-			// A registered project whose data is still in its .task keeps working on it (notice below); a real split is refused.
+			// A registered project whose data is still in its old folder keeps working on it (notice below); a real split is refused.
 			ctx: openResolvedProject(resolved, configDir),
 			// The first event of the process declares the task events to the queue, unless the marker says it was done.
 			eventSink: declareBeforeFirstDelivery(
@@ -119,13 +119,9 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 	}
 }
 
-/**
- * How the project was found goes to the task log (Decision #12b). A project found by the legacy rule (not in the shared
- * registry) is announced on stderr, whatever the output mode, so that stdout stays the answer.
- */
+/** How the project was found goes to the task log (Decision #12b). */
 function announceResolution(resolved: ResolvedProject): void {
 	appendTaskLog(getTaskLogDir(ConfigDir.get('task')), 'info', resolved.logLine);
-	if (resolved.legacyWarning !== undefined) process.stderr.write(resolved.legacyWarning + '\n');
 }
 
 async function main(): Promise<void> {

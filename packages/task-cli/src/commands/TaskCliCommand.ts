@@ -145,7 +145,7 @@ export async function runTaskCliSelfCheck(): Promise<void> {
 		// Check 2: Config loading -- load task config from a temp directory (no config file present, falls back to defaults)
 		async () => {
 			try {
-				const config = TaskConfigLoader.load({ configDir: os.tmpdir(), projectDir: os.tmpdir() });
+				const config = TaskConfigLoader.load({ configDir: os.tmpdir() });
 				if (!Array.isArray(config.statuses) || config.statuses.length === 0)
 					throw new Error('statuses default is missing or empty');
 				return { name: 'Config loading', ok: true };
@@ -207,7 +207,7 @@ export async function runTaskCliSelfCheck(): Promise<void> {
 		// Check 6: Task config schema -- verify default statuses and priority are present
 		async () => {
 			try {
-				const config = TaskConfigLoader.load({ configDir: os.tmpdir(), projectDir: os.tmpdir() });
+				const config = TaskConfigLoader.load({ configDir: os.tmpdir() });
 				if (typeof config.defaults.priority !== 'string' || config.defaults.priority.length === 0) {
 					throw new Error(`defaults.priority is not a non-empty string: ${config.defaults.priority}`);
 				}

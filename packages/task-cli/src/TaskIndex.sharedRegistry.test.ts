@@ -5,7 +5,6 @@ import { addProject, defaultRegistryDir } from '@wadeck-app/project-sdk';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { runTaskCommand } from './TaskIndex.js';
-import { initLegacyProject } from './testHelpers.js';
 
 // Project selection through the shared registry (stage 1, unchanged in 2a): -p / --project, TASK_PROJECT, the registry lookup of the cwd, and the loud legacy path.
 // Every test gets its own registry (XDG_CONFIG_HOME -> temp dir, set by vitest.setup.ts for the file and replaced here per test).
@@ -46,11 +45,6 @@ function plainDir(name: string): string {
 	const dir = path.join(root, 'work', name);
 	fs.mkdirSync(dir, { recursive: true });
 	return dir;
-}
-
-/** A LEGACY project directory: a .task, in no shared registry (the stage-2a fallback, removed in 2b). */
-function legacyDir(name: string): string {
-	return initLegacyProject(plainDir(name));
 }
 
 async function register(name: string, dir: string | undefined, aliases: string[] = []): Promise<{ id: string }> {
@@ -131,16 +125,6 @@ describe('-p / --project and TASK_PROJECT', () => {
 		expect((JSON.parse(json.output) as { error: string }).error).toContain("no project matches 'shpo'");
 	});
 
-	it('-p together with --project-dir is refused', async () => {
-		const dir = plainDir('shop');
-		await register('shop', dir);
-
-		const result = await runTaskCommand(['list', '-p', 'shop', '--project-dir', dir], root);
-
-		expect(result.exitCode).toBe(1);
-		expect(result.output).toContain('--project-dir');
-	});
-
 	it('an unreadable registry is reported, with the file', async () => {
 		fs.mkdirSync(registryDir(), { recursive: true });
 		fs.writeFileSync(path.join(registryDir(), 'registry.json'), '{ nope');
@@ -163,78 +147,12 @@ describe('-p / --project and TASK_PROJECT', () => {
 	});
 });
 
-describe('the legacy path: an unregistered project keeps working, loudly', () => {
-	it('prints ONE deprecation line on stderr naming the dir and the command to register it, and works as before', async () => {
-		const dir = legacyDir('old');
-		await runTaskCommand(['new', 'x'], dir);
-		stderr.length = 0;
-
-		const listed = await runTaskCommand(['list', '--json'], dir);
-
-		expect(tasksIn(listed.output)).toEqual(['x']);
-		const lines = stderr.join('').split('\n').filter(Boolean);
-		expect(lines).toHaveLength(1);
-		expect(lines[0]).toContain(dir);
-		expect(lines[0]).toContain(`project add "${dir}"`);
-		expect(lines[0]).toContain('removed');
-		expect(lines[0]).toContain('task cli migrate-data');
-	});
-
-	it('is stderr only in JSON mode: stdout stays the pure answer', async () => {
-		const dir = legacyDir('old');
-
-		const listed = await runTaskCommand(['--json', 'list'], dir);
-
-		expect(() => JSON.parse(listed.output) as unknown).not.toThrow();
-		expect(listed.output).not.toContain('project add');
-		expect(stderr.join('')).toContain('project add');
-	});
-
-	it('covers --project-dir, TASK_PROJECT_DIR and PROJECT_DIR', async () => {
-		const dir = legacyDir('old');
-
-		await runTaskCommand(['list', '--project-dir', dir], root);
-		const byFlag = stderr.join('');
-		stderr.length = 0;
-		process.env['TASK_PROJECT_DIR'] = dir;
-		await runTaskCommand(['list'], root);
-		const byEnv = stderr.join('');
-		stderr.length = 0;
-		delete process.env['TASK_PROJECT_DIR'];
-		process.env['PROJECT_DIR'] = dir;
-		const generic = await runTaskCommand(['list'], root);
-
-		for (const text of [byFlag, byEnv, stderr.join('')]) expect(text).toContain(`project add "${dir}"`);
-		expect(generic.exitCode).toBe(0);
-	});
-
-	it('is silent for a project registered in the shared registry, also through --project-dir', async () => {
-		const dir = plainDir('shop');
-		await register('shop', dir);
-
-		const result = await runTaskCommand(['list', '--project-dir', dir], root);
-
-		expect(result.exitCode).toBe(0);
-		expect(stderr.join('')).toBe('');
-	});
-
+describe('commands that resolve no project', () => {
 	it('a command that fails before resolving a project prints no deprecation line', async () => {
 		const result = await runTaskCommand(['--version'], root);
 
 		expect(result.exitCode).toBe(0);
 		expect(stderr.join('')).toBe('');
-	});
-
-	it('nothing resolves and nothing is initialised: says so and points to project add (task init is gone)', async () => {
-		const bare = path.join(root, 'bare');
-		fs.mkdirSync(bare);
-
-		const result = await runTaskCommand(['list'], bare);
-
-		expect(result.exitCode).toBe(1);
-		expect(result.output).toContain('no task project');
-		expect(result.output).not.toContain('task init');
-		expect(result.output).toContain('project add');
 	});
 });
 
@@ -259,23 +177,15 @@ describe('the task log records how the project was resolved', () => {
 		expect(line).toContain('via --project');
 		expect(line).toContain(registryDir());
 	});
-
-	it('records the legacy source too', async () => {
-		const dir = legacyDir('old');
-
-		await runTaskCommand(['list'], dir);
-
-		expect(logLines().find(msg => msg.includes('via legacy'))).toContain(registryDir());
-	});
 });
 
 describe('--help', () => {
-	it('lists -p / --project and TASK_PROJECT, the legacy flags as deprecated, and taskProjectId', async () => {
+	it('lists -p / --project and TASK_PROJECT, --project-dir as removed, and taskProjectId', async () => {
 		const { output } = await runTaskCommand(['--help'], root);
 
 		expect(output).toMatch(/-p, --project <ref>/);
 		expect(output).toContain('TASK_PROJECT ');
-		expect(output).toMatch(/--project-dir <dir>[^\n]*deprecated/i);
+		expect(output).toMatch(/--project-dir\s+REMOVED/);
 		expect(output).toContain('taskProjectId');
 	});
 });

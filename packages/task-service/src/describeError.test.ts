@@ -11,7 +11,6 @@ import {
 	InvalidLinkTypeError,
 	InvalidStatusError,
 	InvalidTaskTypeError,
-	ProjectsRegistryError,
 	TaskServiceError,
 } from './errors.js';
 
@@ -75,13 +74,7 @@ describe('describeError', () => {
 		expect(filter.hint).toBe('Valid fields: id');
 	});
 
-	it('other service errors (registry, base class) are "internal" and keep their hint', () => {
-		expect(describeError(new ProjectsRegistryError('corrupt', 'delete the file'))).toEqual({
-			kind: 'internal',
-			message: 'corrupt',
-			hint: 'delete the file',
-			details: {},
-		});
+	it('other service errors (base class) are "internal" and keep their hint', () => {
 		expect(describeError(new TaskServiceError('boom', 'try later')).hint).toBe('try later');
 	});
 

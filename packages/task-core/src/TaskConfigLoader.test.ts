@@ -46,20 +46,12 @@ describe('TaskConfigLoader', () => {
 		});
 	});
 
-	describe('TaskConfigLoader.isInitialized()', () => {
-		it('returns false when .task dir is absent', () => {
-			expect(TaskConfigLoader.isInitialized(tmpDir)).toBe(false);
-		});
-
-		it('returns true when .task dir exists', () => {
-			fs.mkdirSync(path.join(tmpDir, '.task'));
-			expect(TaskConfigLoader.isInitialized(tmpDir)).toBe(true);
-		});
-	});
-
 	describe('TaskConfigLoader.load()', () => {
 		it('returns defaults when no config files exist', () => {
-			const config = TaskConfigLoader.load({ configDir: tmpDir, projectDir: tmpDir });
+			const config = TaskConfigLoader.load({
+				configDir: tmpDir,
+				projectConfigFile: path.join(tmpDir, '.task', 'config.yml'),
+			});
 			expect(config.statuses).toEqual(['backlog', 'in-progress', 'done']);
 			expect(config.defaultStatus).toBe('backlog');
 			expect(config.terminalStatuses).toEqual([]);
@@ -70,7 +62,10 @@ describe('TaskConfigLoader', () => {
 
 		it('loads global defaults', () => {
 			fs.writeFileSync(path.join(tmpDir, 'config.yml'), 'defaults:\n  priority: high\n');
-			const config = TaskConfigLoader.load({ configDir: tmpDir, projectDir: tmpDir });
+			const config = TaskConfigLoader.load({
+				configDir: tmpDir,
+				projectConfigFile: path.join(tmpDir, '.task', 'config.yml'),
+			});
 			expect(config.defaults.priority).toBe('high');
 		});
 
@@ -78,14 +73,20 @@ describe('TaskConfigLoader', () => {
 			fs.writeFileSync(path.join(tmpDir, 'config.yml'), 'defaults:\n  priority: low\n');
 			fs.mkdirSync(path.join(tmpDir, '.task'), { recursive: true });
 			fs.writeFileSync(path.join(tmpDir, '.task', 'config.yml'), 'defaults:\n  priority: critical\n');
-			const config = TaskConfigLoader.load({ configDir: tmpDir, projectDir: tmpDir });
+			const config = TaskConfigLoader.load({
+				configDir: tmpDir,
+				projectConfigFile: path.join(tmpDir, '.task', 'config.yml'),
+			});
 			expect(config.defaults.priority).toBe('critical');
 		});
 
 		it('project statuses replace defaults', () => {
 			fs.mkdirSync(path.join(tmpDir, '.task'), { recursive: true });
 			fs.writeFileSync(path.join(tmpDir, '.task', 'config.yml'), 'statuses:\n  - todo\n  - doing\n  - done\n');
-			const config = TaskConfigLoader.load({ configDir: tmpDir, projectDir: tmpDir });
+			const config = TaskConfigLoader.load({
+				configDir: tmpDir,
+				projectConfigFile: path.join(tmpDir, '.task', 'config.yml'),
+			});
 			expect(config.statuses).toEqual(['todo', 'doing', 'done']);
 		});
 
@@ -95,7 +96,10 @@ describe('TaskConfigLoader', () => {
 				path.join(tmpDir, '.task', 'config.yml'),
 				'statuses:\n  - backlog\n  - in-progress\n  - name: done\n    terminal: true\n'
 			);
-			const config = TaskConfigLoader.load({ configDir: tmpDir, projectDir: tmpDir });
+			const config = TaskConfigLoader.load({
+				configDir: tmpDir,
+				projectConfigFile: path.join(tmpDir, '.task', 'config.yml'),
+			});
 			expect(config.statuses).toEqual(['backlog', 'in-progress', 'done']);
 			expect(config.terminalStatuses).toEqual(['done']);
 			expect(config.defaultStatus).toBe('backlog');
@@ -107,14 +111,20 @@ describe('TaskConfigLoader', () => {
 				path.join(tmpDir, '.task', 'config.yml'),
 				'statuses:\n  - backlog\n  - name: in-progress\n    default: true\n  - name: done\n    terminal: true\n'
 			);
-			const config = TaskConfigLoader.load({ configDir: tmpDir, projectDir: tmpDir });
+			const config = TaskConfigLoader.load({
+				configDir: tmpDir,
+				projectConfigFile: path.join(tmpDir, '.task', 'config.yml'),
+			});
 			expect(config.defaultStatus).toBe('in-progress');
 		});
 
 		it('falls back to the first status when none is marked default', () => {
 			fs.mkdirSync(path.join(tmpDir, '.task'), { recursive: true });
 			fs.writeFileSync(path.join(tmpDir, '.task', 'config.yml'), 'statuses:\n  - todo\n  - doing\n  - done\n');
-			const config = TaskConfigLoader.load({ configDir: tmpDir, projectDir: tmpDir });
+			const config = TaskConfigLoader.load({
+				configDir: tmpDir,
+				projectConfigFile: path.join(tmpDir, '.task', 'config.yml'),
+			});
 			expect(config.defaultStatus).toBe('todo');
 		});
 
@@ -124,14 +134,20 @@ describe('TaskConfigLoader', () => {
 				path.join(tmpDir, '.task', 'config.yml'),
 				'statuses:\n  - name: backlog\n    default: true\n  - name: done\n    default: true\n'
 			);
-			expect(() => TaskConfigLoader.load({ configDir: tmpDir, projectDir: tmpDir })).toThrow(
-				/Multiple statuses marked "default: true"/
-			);
+			expect(() =>
+				TaskConfigLoader.load({
+					configDir: tmpDir,
+					projectConfigFile: path.join(tmpDir, '.task', 'config.yml'),
+				})
+			).toThrow(/Multiple statuses marked "default: true"/);
 		});
 
 		it('loads global hooks', () => {
 			fs.writeFileSync(path.join(tmpDir, 'config.yml'), 'hooks:\n  onTaskCreated: echo created\n');
-			const config = TaskConfigLoader.load({ configDir: tmpDir, projectDir: tmpDir });
+			const config = TaskConfigLoader.load({
+				configDir: tmpDir,
+				projectConfigFile: path.join(tmpDir, '.task', 'config.yml'),
+			});
 			expect(config.globalHooks['onTaskCreated']).toBe('echo created');
 		});
 
@@ -139,7 +155,10 @@ describe('TaskConfigLoader', () => {
 			fs.writeFileSync(path.join(tmpDir, 'config.yml'), 'hooks:\n  onTaskCreated: echo global\n');
 			fs.mkdirSync(path.join(tmpDir, '.task'), { recursive: true });
 			fs.writeFileSync(path.join(tmpDir, '.task', 'config.yml'), 'hooks:\n  onStatusChange: node notify.js\n');
-			const config = TaskConfigLoader.load({ configDir: tmpDir, projectDir: tmpDir });
+			const config = TaskConfigLoader.load({
+				configDir: tmpDir,
+				projectConfigFile: path.join(tmpDir, '.task', 'config.yml'),
+			});
 			expect(config.globalHooks['onTaskCreated']).toBe('echo global');
 			expect(config.projectHooks['onStatusChange']).toBe('node notify.js');
 			expect(config.globalHooks['onStatusChange']).toBeUndefined();

@@ -3,20 +3,21 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { openTaskContext } from '@wadeck-app/task-service';
+import { openTaskContext, ownConfigFile } from '@wadeck-app/task-service';
 import type { EventSink } from '@wadeck-app/task-service';
 
 import type { CommandEnv } from '../cli/env.js';
 import { runTaskCommand } from '../TaskIndex.js';
 import { runType } from './TypeCommand.js';
-import { initLegacyProject } from '../testHelpers.js';
+import { type RegisteredTestProject, registerTestProject } from '../testHelpers.js';
 
 describe('task type', () => {
 	let tmpDir: string;
+	let project: RegisteredTestProject;
 
 	beforeEach(async () => {
 		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-type-cmd-'));
-		initLegacyProject(tmpDir);
+		project = await registerTestProject(tmpDir);
 	});
 
 	afterEach(() => {
@@ -36,27 +37,29 @@ describe('task type', () => {
 	});
 
 	describe('when the config cannot be written', () => {
-		// The context was opened over a project whose .task vanished: the loader's write fails with a raw fs error.
-		function envWithoutTaskDir(jsonMode: boolean): CommandEnv {
-			const ctx = openTaskContext({ projectDir: tmpDir });
-			fs.rmSync(path.join(tmpDir, '.task'), { recursive: true });
+		// The context was opened over a project whose config folder then became a plain file: creating the folder for the write fails with a raw fs error naming it (same on every platform, unlike a read-only file).
+		function envWithUnwritableConfig(jsonMode: boolean): CommandEnv {
+			const ctx = openTaskContext({ storage: project.storage, project: { id: project.id, name: project.name } });
+			const configDir = path.dirname(ownConfigFile(project.storage));
+			fs.rmSync(configDir, { recursive: true, force: true });
+			fs.writeFileSync(configDir, 'in the way');
 			return { command: 'type', jsonMode, ctx, eventSink: {} as EventSink };
 		}
 
 		for (const sub of ['add', 'remove']) {
 			it(`${sub}: prints the standard "Error: <message>" without a doubled prefix`, async () => {
-				const result = await runType([sub, 'bug'], envWithoutTaskDir(false));
+				const result = await runType([sub, 'bug'], envWithUnwritableConfig(false));
 				expect(result.exitCode).toBe(1);
 				expect(result.output.startsWith('Error: ')).toBe(true);
 				expect(result.output).not.toContain('Error: Error');
-				expect(result.output).toContain('config.yml');
+				expect(result.output).toContain(path.dirname(ownConfigFile(project.storage)));
 			});
 
 			it(`${sub}: --json prints {"error": ...}`, async () => {
-				const result = await runType([sub, 'bug'], envWithoutTaskDir(true));
+				const result = await runType([sub, 'bug'], envWithUnwritableConfig(true));
 				expect(result.exitCode).toBe(1);
 				const parsed = JSON.parse(result.output) as { error: string };
-				expect(parsed.error).toContain('config.yml');
+				expect(parsed.error).toContain(path.dirname(ownConfigFile(project.storage)));
 				expect(parsed.error).not.toMatch(/^Error/);
 			});
 		}

@@ -11,7 +11,6 @@ import {
 } from '@wadeck-app/project-sdk';
 
 import { describeError } from './describeError.js';
-import { ConflictingProjectSelectionError, ProjectNotInitializedError } from './errors.js';
 import { resolveProject, resolveProjectReference } from './resolveProject.js';
 import { createSharedRegistrySandbox } from './testHelpers.js';
 import type { SharedRegistrySandbox } from './testHelpers.js';
@@ -49,7 +48,6 @@ describe('resolveProject: the shared registry', () => {
 			dataDir: projectToolDir(sandbox.registryDir, project.id, 'task', 'data'),
 			legacyDir: path.join(native(dir), '.task'),
 		});
-		expect(resolved.legacyWarning).toBeUndefined();
 	});
 
 	it('-p accepts an alias, an id and a unique id prefix, case-insensitively', async () => {
@@ -91,7 +89,6 @@ describe('resolveProject: the shared registry', () => {
 		const resolved = resolveProject({ cwd: sub, env: sandbox.env });
 
 		expect(resolved).toMatchObject({ id: project.id, path: native(dir), source: 'cwd', via: 'cwd' });
-		expect(resolved.legacyWarning).toBeUndefined();
 	});
 
 	it('the cwd in a secondary path of the project resolves to the MAIN path (events run there)', async () => {
@@ -175,35 +172,6 @@ describe('resolveProject: the shared registry', () => {
 		expect(resolved.logLine).toContain('virtual');
 	});
 
-	it('-p together with --project-dir is a contradiction', async () => {
-		const dir = sandbox.dir('shop', { task: true });
-		await sandbox.register('shop', dir);
-
-		const failure = captureError(() =>
-			resolveProject({ cwd: dir, projectRef: 'shop', projectDir: dir, env: sandbox.env })
-		);
-
-		expect(failure).toBeInstanceOf(ConflictingProjectSelectionError);
-		expect(describeError(failure).hint).toContain('--project-dir');
-	});
-
-	it('a registered directory given by --project-dir, TASK_PROJECT_DIR or PROJECT_DIR resolves in the registry without warning', async () => {
-		const dir = sandbox.dir('shop', { task: true });
-		const project = await sandbox.register('shop', dir);
-
-		const byFlag = resolveProject({ cwd: sandbox.root, projectDir: dir, env: sandbox.env });
-		const byTaskEnv = resolveProject({ cwd: sandbox.root, env: { ...sandbox.env, TASK_PROJECT_DIR: dir } });
-		const byGeneric = resolveProject({ cwd: sandbox.root, env: { ...sandbox.env, PROJECT_DIR: dir } });
-
-		for (const resolved of [byFlag, byTaskEnv, byGeneric]) {
-			expect(resolved).toMatchObject({ id: project.id, source: 'cwd', path: native(dir) });
-			expect(resolved.legacyWarning).toBeUndefined();
-		}
-		expect(byFlag.via).toBe('--project-dir');
-		expect(byTaskEnv.via).toBe('TASK_PROJECT_DIR');
-		expect(byGeneric.via).toBe('PROJECT_DIR');
-	});
-
 	it('the log line says how the project was resolved: project, source, path and registry dir', async () => {
 		const dir = sandbox.dir('shop', { task: true });
 		const project = await sandbox.register('shop', dir);
@@ -217,49 +185,31 @@ describe('resolveProject: the shared registry', () => {
 	});
 });
 
-describe('resolveProject: the legacy path (removed in stage 2)', () => {
-	it('an unregistered cwd holding a .task still works, with a warning naming the dir and the command to register it', () => {
+describe('resolveProject: folders the registry does not know (the legacy path is gone)', () => {
+	it('an unregistered cwd fails with the neutral registry error and the hint to register it, even when it holds a .task', () => {
 		const dir = sandbox.dir('old', { task: true });
 
-		const resolved = resolveProject({ cwd: dir, env: sandbox.env });
+		const failure = captureError(() => resolveProject({ cwd: dir, env: sandbox.env }));
 
-		expect(resolved).toMatchObject({ name: 'old', path: native(dir), source: 'legacy', via: 'cwd' });
-		expect(resolved.storage).toMatchObject({ kind: 'legacy', dataDir: path.join(native(dir), '.task') });
-		expect(resolved.id).toBeUndefined();
-		expect(resolved.legacyWarning).toContain(native(dir));
-		expect(resolved.legacyWarning).toContain(`project add "${native(dir)}"`);
-		expect(resolved.legacyWarning).toContain('removed');
-		expect(resolved.logLine).toContain('legacy');
-		expect(resolved.logLine).toContain(sandbox.registryDir);
+		expect(failure).toBeInstanceOf(NoProjectInScopeError);
+		const described = describeError(failure);
+		expect(described.kind).toBe('not-found');
+		expect(described.message).toContain(native(dir));
+		expect(described.hint).toContain(`project add "${native(dir)}"`);
+		expect(described.hint).not.toContain('task init');
+		expect(described.hint).not.toContain('migrate-data');
 	});
 
-	it('--project-dir, TASK_PROJECT_DIR and PROJECT_DIR keep working for an unregistered dir, in that order, with the warning', () => {
-		const flagDir = sandbox.dir('by-flag', { task: true });
-		const taskDir = sandbox.dir('by-task-env', { task: true });
-		const genericDir = sandbox.dir('by-generic-env', { task: true });
-		const env = { ...sandbox.env, TASK_PROJECT_DIR: taskDir, PROJECT_DIR: genericDir };
+	it('the registry is not created by a failed resolution (first-use state)', () => {
+		const dir = sandbox.dir('old', { task: true });
 
-		const byFlag = resolveProject({ cwd: sandbox.root, projectDir: flagDir, env });
-		const byTask = resolveProject({ cwd: sandbox.root, env });
-		const byGeneric = resolveProject({ cwd: sandbox.root, env: { ...sandbox.env, PROJECT_DIR: genericDir } });
-
-		expect(byFlag).toMatchObject({ path: native(flagDir), source: 'legacy', via: '--project-dir' });
-		expect(byTask).toMatchObject({ path: native(taskDir), source: 'legacy', via: 'TASK_PROJECT_DIR' });
-		expect(byGeneric).toMatchObject({ path: native(genericDir), source: 'legacy', via: 'PROJECT_DIR' });
-		for (const resolved of [byFlag, byTask, byGeneric]) {
-			expect(resolved.legacyWarning).toContain(`project add "${resolved.path}"`);
-		}
+		expect(captureError(() => resolveProject({ cwd: dir, env: sandbox.env }))).toBeInstanceOf(
+			NoProjectInScopeError
+		);
+		expect(fs.existsSync(sandbox.registryDir)).toBe(false);
 	});
 
-	it('a relative --project-dir is resolved against the cwd, as before', () => {
-		const dir = sandbox.dir('rel', { task: true });
-
-		const resolved = resolveProject({ cwd: path.dirname(dir), projectDir: 'rel', env: sandbox.env });
-
-		expect(resolved.path).toBe(native(dir));
-	});
-
-	it('a subfolder with its own .task inside a registered project keeps its own data (never silently switched), with a warning', async () => {
+	it('a subfolder with a .task of its own inside a registered folder resolves to the registered project', async () => {
 		const parent = sandbox.dir('mono', { task: true });
 		const nested = path.join(parent, 'packages', 'app');
 		fs.mkdirSync(path.join(nested, '.task', 'tasks'), { recursive: true });
@@ -267,47 +217,25 @@ describe('resolveProject: the legacy path (removed in stage 2)', () => {
 
 		const resolved = resolveProject({ cwd: nested, env: sandbox.env });
 
-		expect(resolved).toMatchObject({ path: native(nested), source: 'legacy' });
-		expect(resolved.legacyWarning).toContain(native(nested));
-		expect(resolved.legacyWarning).toContain(project.name);
+		expect(resolved).toMatchObject({ id: project.id, source: 'cwd', path: native(parent) });
 	});
 
-	it('a registered folder itself wins over its own .task copy being a legacy entry (the folder is registered)', async () => {
-		const worktree = sandbox.dir('shop-feature', { task: true });
-		const main = sandbox.dir('shop', { task: true });
-		await sandbox.register('shop', main);
-		await addPath(sandbox.registryDir, 'shop', worktree);
+	it('TASK_PROJECT_DIR and PROJECT_DIR select nothing: the cwd decides', async () => {
+		const registered = sandbox.dir('shop', { task: true });
+		await sandbox.register('shop', registered);
+		const elsewhere = sandbox.dir('elsewhere');
 
-		const resolved = resolveProject({ cwd: worktree, env: sandbox.env });
-
-		expect(resolved).toMatchObject({ source: 'cwd', path: native(main) });
+		for (const name of ['TASK_PROJECT_DIR', 'PROJECT_DIR']) {
+			const env = { ...sandbox.env, [name]: registered };
+			expect(
+				captureError(() => resolveProject({ cwd: elsewhere, env })),
+				name
+			).toBeInstanceOf(NoProjectInScopeError);
+			expect(resolveProject({ cwd: registered, env: { ...env, [name]: elsewhere } }).via, name).toBe('cwd');
+		}
 	});
 
-	it('nothing resolves and there is no .task: says so and points to project add (task init no longer exists)', () => {
-		const dir = sandbox.dir('bare');
-
-		const failure = captureError(() => resolveProject({ cwd: dir, env: sandbox.env }));
-
-		expect(failure).toBeInstanceOf(ProjectNotInitializedError);
-		const described = describeError(failure);
-		expect(described.message).toContain('no task project');
-		expect(described.hint).not.toContain('task init');
-		// The hint is the SDK's own (its normalised form of the folder: forward slashes).
-		expect(described.hint).toContain(`project add "${normalizePath(dir)}"`);
-	});
-
-	it('a corrupt registry does not break a legacy project: it works, and the warning carries the registry problem', () => {
-		const dir = sandbox.dir('old', { task: true });
-		fs.mkdirSync(sandbox.registryDir, { recursive: true });
-		fs.writeFileSync(path.join(sandbox.registryDir, 'registry.json'), '{ not json');
-
-		const resolved = resolveProject({ cwd: dir, env: sandbox.env });
-
-		expect(resolved.source).toBe('legacy');
-		expect(resolved.legacyWarning).toContain('registry.json');
-	});
-
-	it('a corrupt registry is the error when there is nothing to fall back on, and when a reference is given', () => {
+	it('a corrupt registry is the error, for the cwd and for a reference', () => {
 		const bare = sandbox.dir('bare');
 		fs.mkdirSync(sandbox.registryDir, { recursive: true });
 		fs.writeFileSync(path.join(sandbox.registryDir, 'registry.json'), '{ not json');
@@ -319,22 +247,6 @@ describe('resolveProject: the legacy path (removed in stage 2)', () => {
 			expect((failure as Error).name).toBe('RegistryCorruptError');
 			expect(describeError(failure).kind).toBe('internal');
 		}
-	});
-
-	it('no registry file at all is the first-use state: the legacy path works', () => {
-		const dir = sandbox.dir('old', { task: true });
-
-		expect(fs.existsSync(sandbox.registryDir)).toBe(false);
-		expect(resolveProject({ cwd: dir, env: sandbox.env }).source).toBe('legacy');
-		expect(fs.existsSync(sandbox.registryDir)).toBe(false);
-	});
-
-	it('the NoProjectInScopeError data is carried by the not-initialized error', () => {
-		const dir = sandbox.dir('bare');
-
-		const failure = captureError(() => resolveProject({ cwd: dir, env: sandbox.env }));
-
-		expect((failure as ProjectNotInitializedError).scopeError).toBeInstanceOf(NoProjectInScopeError);
 	});
 });
 

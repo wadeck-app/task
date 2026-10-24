@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import { addProject as addSharedProject, defaultRegistryDir } from '@wadeck-app/project-sdk';
 import { TaskStore } from '@wadeck-app/task-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { initLegacyProject } from './testHelpers.js';
+import { registerTestProject } from './testHelpers.js';
 
 // Queue delivery is observed at the SDK boundary: the CLI publishes through @wadeck-app/queue-sdk (publishAndWait, then flush).
 // The SDK is faked so no real queue is needed (or touched).
@@ -34,6 +34,7 @@ interface PushedEvent {
 }
 
 let tmpDir: string;
+let project: Awaited<ReturnType<typeof registerTestProject>>;
 // Redirects ~/.config/task (CLI invocation + failure logs) so tests never write to the real log.
 let configHome: string;
 let previousXdg: string | undefined;
@@ -60,7 +61,7 @@ beforeEach(async () => {
 		registerEvents: registerMock,
 		flush: flushMock,
 	}));
-	initLegacyProject(tmpDir);
+	project = await registerTestProject(tmpDir);
 });
 
 afterEach(() => {
@@ -558,7 +559,8 @@ describe('queue events — onTaskDeleted', () => {
 			status: 'backlog',
 			orphanedChildIds: [child.id],
 			removedLinkCount: 1,
-			taskProjectName: path.basename(tmpDir),
+			taskProjectId: project.id,
+			taskProjectName: project.name,
 			taskProjectPath: tmpDir,
 		});
 	});
@@ -702,8 +704,7 @@ describe('queue events — published in the project directory', () => {
 	});
 	afterEach(() => {
 		fs.rmSync(elsewhere, { recursive: true, force: true });
-		delete process.env['TASK_PROJECT_DIR'];
-		delete process.env['PROJECT_DIR'];
+		delete process.env['TASK_PROJECT'];
 	});
 
 	it('from the cwd when it is the project', async () => {
@@ -712,28 +713,28 @@ describe('queue events — published in the project directory', () => {
 		expect(publishCwds()).toEqual([tmpDir]);
 	});
 
-	it('from --project-dir, not from the directory the command runs in', async () => {
+	it('from -p, not from the directory the command runs in', async () => {
 		publishMock.mockClear();
-		const result = await runTaskCommand(['new', 'x', '--project-dir', tmpDir], elsewhere);
+		const result = await runTaskCommand(['new', 'x', '-p', project.name], elsewhere);
 		expect(result.exitCode).toBe(0);
 		expect(publishCwds()).toEqual([tmpDir]);
 	});
 
-	it.each(['TASK_PROJECT_DIR', 'PROJECT_DIR'])('from the %s environment variable', async variable => {
-		process.env[variable] = tmpDir;
+	it('from the TASK_PROJECT environment variable', async () => {
+		process.env['TASK_PROJECT'] = project.name;
 		publishMock.mockClear();
 		const result = await runTaskCommand(['new', 'x'], elsewhere);
 		expect(result.exitCode).toBe(0);
 		expect(publishCwds()).toEqual([tmpDir]);
 	});
 
-	it('for set-status and link too, with --project-dir', async () => {
+	it('for set-status and link too, with -p', async () => {
 		const a = await newTask('a');
 		const b = await newTask('b');
 		publishMock.mockClear();
 
-		await runTaskCommand(['set-status', a.id, 'in-progress', '--project-dir', tmpDir], elsewhere);
-		await runTaskCommand(['link', a.id, 'blockedBy', b.id, '--project-dir', tmpDir], elsewhere);
+		await runTaskCommand(['set-status', a.id, 'in-progress', '-p', project.name], elsewhere);
+		await runTaskCommand(['link', a.id, 'blockedBy', b.id, '-p', project.name], elsewhere);
 
 		expect(publishCwds()).toEqual([tmpDir, tmpDir]);
 	});
@@ -958,14 +959,6 @@ describe('queue events — a delete that fails partway through its plan', () => 
 
 // Stage 1 of the shared project registry: a project that is registered there carries its id (and its registry name) in every payload.
 describe('queue events — taskProjectId', () => {
-	it('is absent from the payload of a project that is not in the shared registry', async () => {
-		await runTaskCommand(['new', 'legacy task'], tmpDir);
-
-		const payload = pushedEvents()[0]!.payload;
-		expect(payload).not.toHaveProperty('taskProjectId');
-		expect(payload['taskProjectPath']).toBe(tmpDir);
-	});
-
 	it('is the registry id for a registered project, next to its registry name; the queue cwd stays the project path', async () => {
 		// A registered project keeps its data in the registry: its folder needs no .task (and must not hold unmigrated data).
 		const registeredDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-events-registered-'));

@@ -9,7 +9,7 @@ $sources:
 $type: VerticalStack
 gap: gap-3
 items:
-    # Every registered project failed (or projects.json is corrupt): the reason and the fix (inlineErrors: a failed source blanks the widget).
+    # Every registered project failed (or the shared registry cannot be read): the reason and the fix (inlineErrors: a failed source blanks the widget).
     - $type: Badge
       $if: $sources.summary.errorText
       label: $sources.summary.errorText
@@ -25,12 +25,11 @@ items:
       $if: $sources.summary.skippedCount
       label: $sources.summary.skippedText
       variant: warning
-    # Stage 1 of the shared project registry: projects found only through the legacy list (with the command that registers
-    # each), or a shared registry that could not be read.
+    # The shared registry could not be read: no project is counted, this says why.
     - $type: Badge
-      $if: $sources.summary.registryNotice
-      label: $sources.summary.registryNotice
-      variant: warning
+      $if: $sources.summary.registryProblem
+      label: $sources.summary.registryProblem
+      variant: danger
     # The figures only when a project was counted: after a failure or with nothing registered the badge above is the whole answer.
     - $type: HorizontalStack
       gap: gap-3

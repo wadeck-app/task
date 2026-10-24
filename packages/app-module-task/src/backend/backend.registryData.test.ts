@@ -71,7 +71,7 @@ const configDirOf = (id: string): string => projectToolDir(world.registryDir, id
 
 /** A folder with an old-style `.task` holding one task (and the config template): data not migrated. */
 function unmigratedDir(name: string): string {
-	const dir = world.createProject(name, { register: false, configYml: 'types:\n  - bug\n' });
+	const dir = world.createFolder(name, { configYml: 'types:\n  - bug\n' });
 	fs.writeFileSync(path.join(dir, '.task', 'tasks', 'abc12345.json'), '{}');
 	return dir;
 }
@@ -118,7 +118,7 @@ describe('a registered project keeps its data and config in the shared registry'
 		const created = await call('POST /tasks', { query: { project: 'fresh' }, body: { description: 'first' } });
 
 		expect(projects.body['projects']).toEqual([
-			expect.objectContaining({ id: project.id, name: 'fresh', registered: true, openCount: 0, error: null }),
+			expect.objectContaining({ id: project.id, name: 'fresh', openCount: 0, error: null }),
 		]);
 		expect(created.status).toBe(201);
 	});
@@ -191,7 +191,7 @@ describe('a registered project whose data is still in <main path>/.task keeps wo
 		const answer = await call('GET /projects');
 
 		const [entry] = answer.body['projects'] as Array<Record<string, any>>;
-		expect(entry).toMatchObject({ name: 'shop', registered: true, openCount: 1, error: null });
+		expect(entry).toMatchObject({ name: 'shop', openCount: 1, error: null });
 	});
 
 	it('right after migration (same task ids in both places) the registry is used, and the old copy is noted in the log once', async () => {
@@ -232,22 +232,17 @@ describe('a registered project whose data is still in <main path>/.task keeps wo
 });
 
 describe('the Projects page is a read-only list', () => {
-	it('GET /projects carries the registered/unregistered marker and the exact project add command per legacy project, and no form data', async () => {
+	it('GET /projects lists the registry projects with id, name, main path and open count; no marker, no registry column, no form data', async () => {
 		const registeredDir = path.join(world.root, 'reg-dir');
 		fs.mkdirSync(registeredDir);
-		await world.registerShared('shop', registeredDir);
-		const legacy = world.createProject('old-dir');
+		const project = await world.registerShared('shop', registeredDir);
 
 		const answer = await call('GET /projects', { query: { page: 'projects' } });
 
-		const rows = answer.body['projectRows'] as Array<Record<string, any>>;
-		expect(rows.map(row => [row['name'], row['registered']])).toEqual([
-			['shop', true],
-			['old-dir', false],
+		expect(answer.body['projectRows']).toEqual([
+			{ id: project.id, name: 'shop', path: path.resolve(registeredDir), openText: '0', problemText: '' },
 		]);
-		expect(rows[0]!['registryText']).toContain('shared registry');
-		expect(rows[1]!['registryText']).toContain(`project add "${legacy}"`);
-		for (const removed of ['projectForm', 'modeOptions', 'manageRows']) {
+		for (const removed of ['projectForm', 'modeOptions', 'manageRows', 'registryNotice']) {
 			expect(answer.body, removed).not.toHaveProperty(removed);
 		}
 	});
@@ -256,16 +251,16 @@ describe('the Projects page is a read-only list', () => {
 		expect(routes.has(route)).toBe(false);
 	});
 
-	it('the legacy list is never written by the module', async () => {
-		world.createProject('old-dir');
-		const file = path.join(world.configDir, 'projects.json');
-		const before = fs.readFileSync(file, 'utf8');
+	it('the module creates no projects.json next to its config', async () => {
+		const dir = path.join(world.root, 'reg-dir');
+		fs.mkdirSync(dir);
+		await world.registerShared('shop', dir);
 
 		await call('GET /projects');
 		await call('GET /summary');
+		await call('POST /tasks', { query: { project: 'shop' }, body: { description: 'x' } });
 
-		expect(fs.readFileSync(file, 'utf8')).toBe(before);
-		expect(fs.readdirSync(world.configDir).filter(name => name.startsWith('projects.json.'))).toEqual([]);
+		expect(fs.existsSync(path.join(world.configDir, 'projects.json'))).toBe(false);
 	});
 
 	it('with nothing registered, the hint points to the project CLI, not to task init nor to a form that no longer exists', async () => {
@@ -318,15 +313,5 @@ describe('the last project is remembered by id', () => {
 			.join('');
 		expect(log).toContain('last-project.json');
 		expect(log).toContain('old format');
-	});
-
-	it('a legacy project (no id) is not remembered, and says so nowhere as an error', async () => {
-		const legacy = world.createProject('old-dir');
-
-		const created = await call('POST /tasks', { query: { project: legacy }, body: { description: 'x' } });
-
-		expect(created.status).toBe(201);
-		expect(created.body['lastProjectWarning']).toBeNull();
-		expect(fs.existsSync(lastFile())).toBe(false);
 	});
 });

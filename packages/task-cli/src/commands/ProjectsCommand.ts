@@ -1,6 +1,4 @@
 // task projects summary: open/total tasks per project. The other `task projects` subcommands moved to the project CLI.
-import { ConfigDir } from '@wadeck-app/shared-cli';
-
 import { runProjectsSummary } from './GlobalViewCommands.js';
 import { REMOVED_PROJECTS_SUBCOMMANDS, runRemovedProjectsSubcommand } from './RemovedCommands.js';
 import { PROJECTS_HELP } from '../cli/help.js';
@@ -23,9 +21,9 @@ export function runProjectsCommand(rest: string[], jsonMode: boolean, cwd: strin
 		);
 	}
 	try {
-		return runProjectsSummary(args, jsonMode, ConfigDir.get('task'));
+		return runProjectsSummary(args, jsonMode);
 	} catch (error) {
-		// A corrupt legacy list: the registry error carries its fix.
+		// The registry error carries its own fix.
 		return failure(jsonMode, error);
 	}
 }

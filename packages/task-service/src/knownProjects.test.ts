@@ -1,33 +1,26 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { ProjectsRegistryError } from './errors.js';
 import { listKnownProjects } from './knownProjects.js';
-import { addLegacyEntry, createSharedRegistrySandbox } from './testHelpers.js';
+import { createSharedRegistrySandbox } from './testHelpers.js';
 import type { SharedRegistrySandbox } from './testHelpers.js';
 
 let sandbox: SharedRegistrySandbox;
-let configDir: string;
 
 beforeEach(() => {
 	sandbox = createSharedRegistrySandbox();
-	// The legacy registry (projects.json) lives in the task config dir.
-	configDir = path.join(sandbox.root, 'task-config');
-	fs.mkdirSync(configDir, { recursive: true });
 });
 
 afterEach(() => {
 	sandbox.cleanup();
 });
 
-const list = (): ReturnType<typeof listKnownProjects> => listKnownProjects(configDir, { env: sandbox.env });
+const list = (): ReturnType<typeof listKnownProjects> => listKnownProjects({ env: sandbox.env });
 
-describe('listKnownProjects: the shared registry first, the legacy projects.json second', () => {
-	it('lists registered projects with their id and registry name, then the legacy-only ones marked unregistered', async () => {
+describe('listKnownProjects: the projects of the shared registry that have a folder', () => {
+	it('lists registered projects with their id, registry name, main path and registry storage', async () => {
 		const shop = sandbox.dir('shop-dir', { task: true });
-		const old = sandbox.dir('old', { task: true });
 		const project = await sandbox.register('shop', shop);
-		addLegacyEntry(configDir, old);
 
 		const known = list();
 
@@ -37,43 +30,15 @@ describe('listKnownProjects: the shared registry first, the legacy projects.json
 				id: project.id,
 				name: 'shop',
 				path: path.resolve(shop),
-				registered: true,
 				storage: expect.objectContaining({ kind: 'registry' }) as unknown,
-			},
-			{
-				name: 'old',
-				path: path.resolve(old),
-				registered: false,
-				storage: expect.objectContaining({
-					kind: 'legacy',
-					dataDir: path.join(path.resolve(old), '.task'),
-				}) as unknown,
 			},
 		]);
 	});
 
-	it('shows a project once when both registries name it: the registry row wins (and its name)', async () => {
-		const dir = sandbox.dir('shop-dir', { task: true });
-		await sandbox.register('shop', dir);
-		addLegacyEntry(configDir, dir);
-
-		const known = list();
-
-		expect(known.projects.map(p => [p.name, p.registered])).toEqual([['shop', true]]);
-	});
-
-	it('lists a registered project that has no .task and no legacy entry: its data lives in the registry, any project can hold tasks', async () => {
+	it('lists a registered project that has no .task: its data lives in the registry, any project can hold tasks', async () => {
 		await sandbox.register('fresh', sandbox.dir('fresh'));
 
-		expect(list().projects.map(p => [p.name, p.registered])).toEqual([['fresh', true]]);
-	});
-
-	it('lists a registered project once when the legacy list names it too', async () => {
-		const dir = sandbox.dir('gone');
-		await sandbox.register('gone', dir);
-		addLegacyEntry(configDir, dir);
-
-		expect(list().projects.map(p => [p.name, p.registered])).toEqual([['gone', true]]);
+		expect(list().projects.map(p => p.name)).toEqual(['fresh']);
 	});
 
 	it('a broken parent chain does not hide the project: it is listed with the problem, on its own storage', async () => {
@@ -85,7 +50,7 @@ describe('listKnownProjects: the shared registry first, the legacy projects.json
 
 		const [entry] = list().projects;
 
-		expect(entry).toMatchObject({ id: child.id, registered: true });
+		expect(entry).toMatchObject({ id: child.id });
 		expect(entry!.problem).toContain('deadbeef');
 		expect(entry!.storage.dataDir).toContain(child.id);
 	});
@@ -96,26 +61,18 @@ describe('listKnownProjects: the shared registry first, the legacy projects.json
 		expect(list().projects).toEqual([]);
 	});
 
-	it('an unreadable shared registry does not hide the legacy projects: they are listed and the problem is reported', () => {
-		const old = sandbox.dir('old', { task: true });
-		addLegacyEntry(configDir, old);
+	it('an unreadable shared registry lists nothing and reports the problem', () => {
 		fs.mkdirSync(sandbox.registryDir, { recursive: true });
 		fs.writeFileSync(path.join(sandbox.registryDir, 'registry.json'), '{ nope');
 
 		const known = list();
 
-		expect(known.projects.map(p => [p.name, p.registered])).toEqual([['old', false]]);
+		expect(known.projects).toEqual([]);
 		expect(known.registryProblem).toContain('registry.json');
 	});
 
 	it('a missing shared registry is the first-use state, not a problem', () => {
 		expect(list()).toMatchObject({ projects: [], registryProblem: null });
 		expect(fs.existsSync(sandbox.registryDir)).toBe(false);
-	});
-
-	it('a corrupt projects.json is still an error (never read as nothing registered)', () => {
-		fs.writeFileSync(path.join(configDir, 'projects.json'), '{ nope');
-
-		expect(list).toThrow(ProjectsRegistryError);
 	});
 });

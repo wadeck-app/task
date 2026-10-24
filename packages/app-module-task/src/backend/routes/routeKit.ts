@@ -12,7 +12,7 @@ import { deliverForRequest } from '../undelivered.js';
 import type { UndeliveredAnswer } from '../undelivered.js';
 
 export interface TaskRoutesOptions {
-	/** Directory holding logs/ and the legacy projects.json (read only). Default: {@link getTaskConfigDir}. */
+	/** Directory holding logs/. Default: {@link getTaskConfigDir}. */
 	configDir?: string;
 	/** Destination of the events produced by mutating routes. Default: the queue sink, logging under `<configDir>/logs`. */
 	eventSink?: EventSink;
@@ -24,7 +24,6 @@ export interface TaskRoutesOptions {
 
 /** What the route modules share: route registration with error mapping, project selection, event delivery. */
 export interface RouteKit {
-	configDir: string;
 	/** The module's own persistent folder (ModuleContext.dataDir): state of the views, not of the projects. */
 	dataDir: string;
 	/** Registers a route; every error thrown by `run` becomes its HTTP answer (see errors.ts). */
@@ -46,9 +45,9 @@ export function taskId(req: RouteRequest): string {
 
 export function createRouteKit(
 	ctx: ModuleContext,
-	deps: { configDir: string; eventSink: EventSink; logDir: string; writeStderr: (text: string) => void }
+	deps: { eventSink: EventSink; logDir: string; writeStderr: (text: string) => void }
 ): RouteKit {
-	const { configDir, eventSink, logDir, writeStderr } = deps;
+	const { eventSink, logDir, writeStderr } = deps;
 	const logged = new Set<string>();
 	const logOnce = (key: string, message: string): void => {
 		if (logged.has(key)) return;
@@ -56,7 +55,6 @@ export function createRouteKit(
 		appendTaskLog(logDir, 'info', message);
 	};
 	return {
-		configDir,
 		dataDir: ctx.dataDir,
 		route(method, subPath, run) {
 			ctx.registerRoute(method, subPath, async (req, reply) => {
@@ -80,7 +78,7 @@ export function createRouteKit(
 			});
 		},
 		open(req) {
-			const opened = openProject(configDir, queryValue(req.query, 'project'));
+			const opened = openProject(queryValue(req.query, 'project'));
 			// A registered project still on its .task, or an old copy left after migration: said once in the task log (no terminal here).
 			for (const notice of opened.notices ?? []) logOnce(notice, notice);
 			return opened;

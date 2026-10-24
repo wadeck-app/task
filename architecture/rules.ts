@@ -17,7 +17,7 @@ interface PackageRule {
 	/** Import specifiers this package must never use (matched against the module specifier). */
 	forbiddenImports: { pattern: RegExp; why: string }[];
 	/** Patterns forbidden in the non-test source text of this package. */
-	forbiddenSource: { pattern: RegExp; why: string }[];
+	forbiddenSource: { pattern: RegExp; why: string; exceptFiles?: RegExp }[];
 }
 
 /** Specifier of a workspace package: its npm name, or the path of its folder (a relative import resolved from the repository root). */
@@ -51,8 +51,29 @@ const NO_PROJECT_SDK_OUTSIDE_SERVICE = {
 };
 
 /**
- * Task never writes the project registry (Decision #20, stage 2a): the shared registry belongs to the project CLI, and the legacy
- * `projects.json` is read only (its writers, `task init` and their lock are gone). Source rules (non-test files; tests build registry
+ * Stage 2b: the legacy `projects.json` list is not read any more (the shared registry is the only list of projects), so no
+ * source names the file. Tests may (they prove it is ignored).
+ */
+const NO_PROJECTS_JSON = {
+	pattern: /projects\.json/,
+	why: 'the legacy projects.json is not read any more: the shared project registry (project CLI) is the only list of projects',
+};
+
+/**
+ * `.task` as a path segment (`'.task'`, `"/.task"`, `` `${dir}/.task` ``) belongs to ONE module, task-service `legacyData.ts`, which is
+ * used only by the unmigrated-project read (`chooseDataLocation`) and `migrate-data`. Everything else asks it, so removing that
+ * read (stage 2b-2) removes the knowledge of the folder with it. The global config dir default (`path.join(os.homedir(), '.task')`)
+ * is not project data. Source rule: tests and comments are out of scope.
+ */
+const NO_LEGACY_DATA_PATH = {
+	pattern: /(?<!\bhomedir\(\)\s*,\s*)(?:['"`]\.task(?:['"`/\\])|(?<!~)[/\\]\.task\b)/,
+	why: 'the `.task` folder is known by task-service legacyData.ts only (the unmigrated read and migrate-data); ask it for the path',
+	exceptFiles: /(^|\/)packages\/task-service\/src\/legacyData\.ts$/,
+};
+
+/**
+ * Task never writes the project registry (Decision #20, stage 2a): the shared registry belongs to the project CLI, and its
+ * writers (`task init`, `task projects add|remove|move|prune` and their lock) are gone. Source rules (non-test files; tests build registry
  * fixtures with the SDK's own mutations): no import of an SDK mutation, no function of the deleted legacy writers.
  */
 const NO_REGISTRY_WRITE = [
@@ -75,7 +96,13 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 			{ pattern: TASK_CLI, why: 'storage must not depend on an adapter' },
 			{ pattern: APP_MODULE, why: 'storage must not depend on an adapter' },
 		],
-		forbiddenSource: [...NO_CONSOLE_NO_EXIT, NO_PROJECT_SDK_OUTSIDE_SERVICE, ...NO_REGISTRY_WRITE],
+		forbiddenSource: [
+			...NO_CONSOLE_NO_EXIT,
+			NO_PROJECT_SDK_OUTSIDE_SERVICE,
+			...NO_REGISTRY_WRITE,
+			NO_PROJECTS_JSON,
+			NO_LEGACY_DATA_PATH,
+		],
 	},
 	'task-service': {
 		forbiddenImports: [
@@ -85,20 +112,20 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 			{ pattern: APP_CORE, why: 'app-core belongs to app-module-task and the registration in task-cli' },
 			{ pattern: HTTP_AND_CLI_LIBS, why: 'HTTP and CLI frameworks belong to the adapters' },
 		],
-		forbiddenSource: [...NO_CONSOLE_NO_EXIT, ...NO_REGISTRY_WRITE],
+		forbiddenSource: [...NO_CONSOLE_NO_EXIT, ...NO_REGISTRY_WRITE, NO_PROJECTS_JSON, NO_LEGACY_DATA_PATH],
 	},
 	'task-cli': {
 		forbiddenImports: [
 			{ pattern: APP_MODULE, why: 'the adapters must not know each other: share through task-service' },
 		],
-		forbiddenSource: [NO_PROJECT_SDK_OUTSIDE_SERVICE, ...NO_REGISTRY_WRITE],
+		forbiddenSource: [NO_PROJECT_SDK_OUTSIDE_SERVICE, ...NO_REGISTRY_WRITE, NO_PROJECTS_JSON, NO_LEGACY_DATA_PATH],
 	},
 	'app-module-task': {
 		forbiddenImports: [
 			{ pattern: TASK_CLI, why: 'the adapters must not know each other: share through task-service' },
 			{ pattern: SHARED_CLI, why: 'CLI libraries belong to task-cli; share through task-service' },
 		],
-		forbiddenSource: [NO_PROJECT_SDK_OUTSIDE_SERVICE, ...NO_REGISTRY_WRITE],
+		forbiddenSource: [NO_PROJECT_SDK_OUTSIDE_SERVICE, ...NO_REGISTRY_WRITE, NO_PROJECTS_JSON, NO_LEGACY_DATA_PATH],
 	},
 };
 
@@ -143,7 +170,8 @@ export function checkSource(
 	}
 	if (!options.isTest) {
 		const code = stripComments(source);
-		for (const { pattern, why } of rule.forbiddenSource) {
+		for (const { pattern, why, exceptFiles } of rule.forbiddenSource) {
+			if (exceptFiles?.test(file) === true) continue;
 			if (pattern.test(code)) {
 				violations.push({ file, rule: 'forbidden-source', detail: `matches ${pattern}: ${why}` });
 			}

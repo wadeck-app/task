@@ -7,6 +7,7 @@ import { loadRegistry } from '@wadeck-app/project-sdk';
 import { ProjectDataSplitError } from './errors.js';
 import { openResolvedProject, openTaskContext } from './openContext.js';
 import { resolveProject } from './resolveProject.js';
+import { legacyStorage } from './legacyData.js';
 import { ownConfigFile, registryStorage } from './storage.js';
 import { createSharedRegistrySandbox } from './testHelpers.js';
 import type { SharedRegistrySandbox } from './testHelpers.js';
@@ -28,16 +29,28 @@ function initProject(configYml: string): string {
 	return projectDir;
 }
 
+/** A context on the `.task` of a directory (the unmigrated layout), named after the directory. */
+function open(projectDir: string, globalConfigDir?: string): ReturnType<typeof openTaskContext> {
+	return openTaskContext({
+		storage: legacyStorage(projectDir),
+		globalConfigDir,
+		project: { name: path.basename(projectDir), path: projectDir },
+	});
+}
+
 describe('openTaskContext', () => {
 	it('names the project after its directory and keeps the directory as path', () => {
 		const projectDir = initProject('statuses:\n  - todo\n  - done\n');
-		expect(openTaskContext({ projectDir }).project).toEqual({ name: 'my-project', path: projectDir });
+		expect(open(projectDir).project).toEqual({ name: 'my-project', path: projectDir });
 	});
 
 	it('takes the identity of a registered project (id and name of the shared registry) and still reads <path>/.task', () => {
 		const projectDir = initProject('statuses:\n  - todo\n');
 
-		const { project, store } = openTaskContext({ projectDir, project: { id: 'a1b2c3d4', name: 'shop' } });
+		const { project, store } = openTaskContext({
+			storage: legacyStorage(projectDir),
+			project: { id: 'a1b2c3d4', name: 'shop', path: projectDir },
+		});
 
 		expect(project).toEqual({ id: 'a1b2c3d4', name: 'shop', path: projectDir });
 		expect(store.create('x', 'todo').id).toBeTruthy();
@@ -47,19 +60,19 @@ describe('openTaskContext', () => {
 	it('has no id key for a project that is not registered', () => {
 		const projectDir = initProject('statuses:\n  - todo\n');
 
-		expect(Object.keys(openTaskContext({ projectDir }).project)).toEqual(['name', 'path']);
+		expect(Object.keys(open(projectDir).project)).toEqual(['name', 'path']);
 	});
 
 	it('resolves the project config.yml', () => {
 		const projectDir = initProject('statuses:\n  - todo\n  - name: done\n    terminal: true\n');
-		const { config } = openTaskContext({ projectDir });
+		const { config } = open(projectDir);
 		expect(config.statuses).toEqual(['todo', 'done']);
 		expect(config.terminalStatuses).toEqual(['done']);
 	});
 
 	it('stores tasks under <project>/.task/tasks', () => {
 		const projectDir = initProject('statuses:\n  - todo\n');
-		const { store } = openTaskContext({ projectDir });
+		const { store } = open(projectDir);
 		const task = store.create('hello', 'todo');
 		expect(fs.readdirSync(path.join(projectDir, '.task', 'tasks')).some(file => file.includes(task.id))).toBe(true);
 	});
@@ -69,14 +82,14 @@ describe('openTaskContext', () => {
 		const globalDir = path.join(root, 'global');
 		fs.mkdirSync(globalDir);
 		fs.writeFileSync(path.join(globalDir, 'config.yml'), 'hooks:\n  onTaskCreated: echo hi\n', 'utf8');
-		expect(openTaskContext({ projectDir, globalConfigDir: globalDir }).config.globalHooks).toEqual({
+		expect(open(projectDir, globalDir).config.globalHooks).toEqual({
 			onTaskCreated: 'echo hi',
 		});
 	});
 
 	it('fails loudly on an invalid config.yml instead of falling back to defaults', () => {
 		const projectDir = initProject('statuses: []\n');
-		expect(() => openTaskContext({ projectDir })).toThrow('at least one status');
+		expect(() => open(projectDir)).toThrow('at least one status');
 	});
 });
 
@@ -181,10 +194,6 @@ describe('openTaskContext: a project of the shared registry', () => {
 		expect(identity).toEqual({ id: project.id, name: 'notes' });
 		expect(fs.readdirSync(path.join(storage.dataDir, 'tasks'))).toHaveLength(1);
 	});
-
-	it('needs a storage or a projectDir', () => {
-		expect(() => openTaskContext({})).toThrow(/projectDir|storage/);
-	});
 });
 
 describe('openResolvedProject', () => {
@@ -206,15 +215,6 @@ describe('openResolvedProject', () => {
 
 		expect(ctx.project).toEqual({ id: project.id, name: 'shop', path: path.resolve(dir) });
 		expect(ctx.storage.kind).toBe('registry');
-	});
-
-	it('opens a legacy folder on its .task, without id', () => {
-		const dir = sandbox.dir('old', { task: true });
-
-		const ctx = openResolvedProject(resolveProject({ cwd: dir, env: sandbox.env }));
-
-		expect(ctx.project).toEqual({ name: 'old', path: path.resolve(dir) });
-		expect(ctx.storage.kind).toBe('legacy');
 	});
 
 	it('opens an unmigrated registered project on its .task (stage 1 behaviour) with the notice', async () => {

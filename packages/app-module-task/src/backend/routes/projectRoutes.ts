@@ -1,16 +1,14 @@
 // GET /projects and GET /summary: which projects the module knows and how many tasks they hold.
-import * as path from 'node:path';
-
 import { describeError, resolveProjectReference, summarizeProject, summarizeProjects } from '@wadeck-app/task-service';
 import type { ProjectOverview, ProjectsSummary } from '@wadeck-app/task-service';
 
 import { projectRows, skippedOf, skippedWarning } from '../allProjectsViews.js';
 import { projectText, selectedQuery } from '../hrefs.js';
 import { readLastProject } from '../lastProject.js';
-import { attentionText, listRows, openLinks, registryNotice } from '../projectManagement.js';
+import { attentionText, listRows, openLinks, registryProblemText } from '../projectManagement.js';
 import { NO_PROJECT_HINT, openProject, readProjects } from '../projects.js';
 import type { ProjectListing } from '../projects.js';
-import { apiRef, findProjectByRef } from '../projectRef.js';
+import { apiRef, retiredRefKind } from '../projectRef.js';
 import { optionalQueryValue, queryValue } from '../request.js';
 import type { RouteRequest } from '../request.js';
 import type { RouteKit } from './routeKit.js';
@@ -49,8 +47,8 @@ function summaryBody(scope: 'all' | 'project', summary: ProjectsSummary): Record
 		})),
 		// One row per registered project: figures and link, or the reason it is not counted.
 		projectRows: projectRows(summary.projects),
-		// The projects outside the shared registry (with the command that registers each), or a registry that cannot be read.
-		registryNotice: registryNotice(summary.projects, summary.registryProblem ?? null),
+		// A shared registry that cannot be read: no project is listed, and this says why.
+		registryProblem: registryProblemText(summary.registryProblem ?? null),
 	};
 }
 
@@ -61,16 +59,20 @@ function problemText(project: ProjectListing): string {
 }
 
 export function registerProjectRoutes(kit: RouteKit): void {
-	const { configDir } = kit;
-
 	kit.route('GET', '/projects', req => {
-		const { projects, registryProblem } = readProjects(configDir);
-		// What a page address or a query names (the views pass `$route.project`): a registry id, an older slug or a directory
-		// by lookup; a name, alias or id prefix is the shared registry's to resolve. Why it did not resolve is said on the page.
+		const { projects, registryProblem } = readProjects();
+		// What a page address or a query names (the views pass `$route.project`): an id, an id prefix, a name or an alias, which
+		// the shared registry resolves. A folder or an old slug is no project reference any more. Why it did not resolve is said on the page.
 		const requested = optionalQueryValue(req.query, 'project');
-		let requestedProject = requested === undefined ? undefined : findProjectByRef(projects, requested);
+		let requestedProject: ProjectListing | undefined;
 		let unresolvedReason: string | null = null;
-		if (requested !== undefined && requestedProject === undefined && !path.isAbsolute(requested)) {
+		const retired = requested === undefined ? null : retiredRefKind(requested);
+		if (retired !== null) {
+			unresolvedReason =
+				retired === 'directory'
+					? 'a project folder is no longer accepted: use the id, name or alias'
+					: 'an old page slug is no longer accepted: use the project id';
+		} else if (requested !== undefined) {
 			try {
 				const resolved = resolveProjectReference(requested);
 				requestedProject = projects.find(entry => entry.id === resolved.id);
@@ -105,7 +107,7 @@ export function registerProjectRoutes(kit: RouteKit): void {
 			status: 200,
 			body: {
 				projects,
-				// The Projects page is a read-only list: the table rows (marker, registry column, problem with its fix),
+				// The Projects page is a read-only list: the table rows (id, name, folder, open count, problem with its fix),
 				// links to the tasks of the readable projects, the banner. Projects are managed with the project CLI.
 				projectRows: listRows(projects),
 				openLinks: taskLinks,
@@ -131,8 +133,8 @@ export function registerProjectRoutes(kit: RouteKit): void {
 				unknownProjectText: unknownProject
 					? `Project "${requested}" is not registered with the task app-module${unresolvedReason === null ? '' : ` (${unresolvedReason})`}. Pick a registered project on the Projects page, or register it with \`project add <dir>\`.`
 					: null,
-				// The projects outside the shared registry (each with the command that registers it), or a registry that could not be read.
-				registryNotice: registryNotice(projects, registryProblem),
+				// A shared registry that could not be read: no project is listed, and this says why.
+				registryProblem: registryProblemText(registryProblem),
 				selectedParam: projectParam,
 				selectedProblem,
 				// The remembered project cannot be read (corrupt file...): said on the New task page, not ignored.
@@ -163,18 +165,16 @@ export function registerProjectRoutes(kit: RouteKit): void {
 		const requested = queryValue(req.query, 'project');
 		if (requested === undefined) {
 			// Every registered project (nothing registered is an empty summary; none readable throws with the reasons).
-			return { status: 200, body: summaryBody('all', summarizeProjects(configDir)) };
+			return { status: 200, body: summaryBody('all', summarizeProjects()) };
 		}
 		// Naming a project explicitly must fail loudly: an unreadable one is an error, not a skipped entry.
-		const ctx = openProject(configDir, requested);
+		const ctx = openProject(requested);
 		const figures = summarizeProject(ctx);
 		const overview: ProjectOverview = {
-			...(ctx.project.id === undefined ? {} : { id: ctx.project.id }),
+			id: ctx.project.id,
 			name: ctx.project.name,
-			registered: ctx.project.id !== undefined,
 			path: ctx.project.path,
 			exists: true,
-			initialized: true,
 			...figures,
 			error: null,
 		};

@@ -22,11 +22,12 @@ Usage:
   task list --tree                           List tasks as a nested forest (kept: matching tasks + the ancestors leading to them)
   task list --all-projects [--all] [--json]  List the tasks of every registered project (Project column; text table, --json: tasks tagged with their project);
                                              needs no project; unreadable projects on stderr; exit 1 only if none can be read;
-                                             cannot be combined with --follow, --tree, --parent, --project-dir or TASK_PROJECT_DIR
-                                             (a single project contradicts all of them); PROJECT_DIR is ignored (stderr note)
+                                             cannot be combined with --follow, --tree, --parent, -p or TASK_PROJECT
+                                             (a single project contradicts all of them)
   task show <id> [--json] [--with-parent] [--with-children]   Show task detail (always incl. parentId, childrenIds); flags add parent/children summaries
   task history <id> [--json] [--follow|-f]   Show status-change history for a task
-  task set-status <id> <status>              Update task status (valid values from .task/config.yml)
+  task set-status <id> <status>              Update task status (valid values: task status list)
+  task status list [--json]                  List the valid statuses of the project in order, marking the default (initial status of a new task) and the terminal ones
   task set-type <id> <type>                  Update task type (validated if types configured)
   task type list                             List valid types for this project
   task type add <name>                       Add a valid type
@@ -65,17 +66,15 @@ Global flags:
   --json               Force JSON output; errors become {"error":"...","hint":"..."} (no "hint" key when there is none)
   -p, --project <ref>  Project of the shared registry: name, alias, id or unique id prefix (min 4), case-insensitive; never a path. Also: TASK_PROJECT env var.
                        Order: -p, then TASK_PROJECT, then the registered project that contains the cwd (deepest registered folder wins). A reference that
-                       does not resolve is an error (suggestions listed), never a fallback. Refused with --project-dir, by 'task list --all-projects'
-                       Register a project with the project CLI: project add "<dir>"
-  --project-dir <dir>  DEPRECATED. Directory of the project (also: TASK_PROJECT_DIR env var, then PROJECT_DIR); looked up in the registry like a cwd.
-                       Refused by 'task list --all-projects' (as is TASK_PROJECT_DIR)
+                       does not resolve is an error (suggestions listed), never a fallback; so is a folder that is in no registered project (the error gives: project add "<dir>").
+                       Refused with 'task list --all-projects'. Register a project with the project CLI: project add "<dir>"
+  --project-dir        REMOVED: refused with exit 1 ("--project-dir was removed: use -p <id|name|alias> or run from a registered folder"), wherever it is typed
 
-Projects not in the shared registry (deprecated, removed in a later version): a directory holding a .task still works as before (cwd, --project-dir,
-TASK_PROJECT_DIR, PROJECT_DIR), with one warning line on stderr (also with --json; stdout stays the answer) naming the directory and the command
-to register it: project add "<dir>". A REGISTERED project whose tasks are still in its .task (the registry holds none) keeps working on that .task exactly as
-before, with one stderr line (also with --json) giving the command that copies them: task cli migrate-data -p <name> (COPY only; delete the .task by hand
-once checked). After the copy the registry is used and each command prints "old copy still in <dir>/.task: delete it by hand once checked". Tasks in
-BOTH places with different ids are a real split: the command fails naming both folders (keep one, remove the other by hand).
+A folder holding a .task that is in no registered project is not a project any more (register it: project add "<dir>"). A REGISTERED project whose tasks are
+still in the .task folder of its main path (the registry holds none) keeps working on that folder for now, with one stderr line (also with --json) giving the
+command that copies them: task cli migrate-data -p <name> (COPY only; delete the .task folder by hand once checked). After the copy the registry is used and
+each command prints "old copy still in <folder>: delete it by hand once checked". Tasks in BOTH places with different ids are a real split: the command fails
+naming both folders (keep one, remove the other by hand). This read of the .task folder is going away: migrate now.
 How the project was resolved is in 'task cli logs'.
 
 Events (pushed to queue through @wadeck-app/queue-sdk after the change is saved, with the project directory as cwd so its .queue/subscribers.yml is used):
@@ -115,8 +114,8 @@ Exit codes:
 Environment variables:
   TASK_CONFIG       Override global config directory (default: ~/.task)
   TASK_PROJECT      Project of the shared registry (name, alias or id), below -p; refused by 'task list --all-projects'
-  TASK_PROJECT_DIR  DEPRECATED. Override project directory
-  PROJECT_DIR       DEPRECATED. Fallback project directory when TASK_PROJECT_DIR is not set (ignored, with a stderr note, by 'task list --all-projects')`;
+  TASK_PROJECT_DIR  REMOVED, ignored with one stderr line ("Ignored: TASK_PROJECT_DIR was removed, use TASK_PROJECT"); it does not fail the command
+  PROJECT_DIR       Not read (a generic variable of other tools): the cwd, -p or TASK_PROJECT select the project`;
 }
 
 /** `task projects --help`. */
@@ -134,7 +133,7 @@ task projects add|remove|move|prune|list moved to the project CLI (they answer w
   task projects prune        ->  project list, then project remove / project paths move
   task projects list         ->  project list
 
-These commands need no project: --project-dir, TASK_PROJECT_DIR and PROJECT_DIR select no project here (the registry is global).`;
+These commands need no project: the registry is global (-p and TASK_PROJECT are not used here).`;
 
 /** `task type --help`. */
 export const TYPE_HELP = `task type - manage valid task types for this project
@@ -145,6 +144,17 @@ Usage:
   task type remove <name>     Remove a valid type
   task type --help            Show this help
 
-Types are stored in .task/config.yml under the 'types' key.
+Types are stored in the project's own config.yml (see 'task --help', config) under the 'types' key.
 When types are configured, 'task set-type' validates against this list.
 When no types are configured, any string is accepted (backwards compatible).`;
+
+/** `task status --help`. */
+export const STATUS_HELP = `task status - the valid statuses of this project
+
+Usage:
+  task status list [--json]   The statuses 'task set-status' accepts, in config order, one per line: a status that is the
+                              default (the initial status of a new task) is marked "(default)", a terminal one (hidden from
+                              'task list' unless --all) "(terminal)". --json: [{"name": "...", "default": false, "terminal": false}]
+  task status --help          Show this help
+
+The list is the statuses of the project's merged config.yml (see 'task --help', config); without any, backlog, in-progress, done.`;

@@ -1,4 +1,4 @@
-// Commands that moved to the `project` CLI in stage 2a (Decision #20): they stay as words that fail loudly with the replacement,
+// Commands and selectors that moved to the `project` CLI (Decision #20) or were removed (stage 2b): they stay as words that fail loudly with the replacement,
 // never as silent no-ops. `task projects summary` and `task list --all-projects` are task features and stay.
 import * as path from 'node:path';
 
@@ -46,3 +46,23 @@ export function runRemovedProjectsSubcommand(
 
 /** The subcommands of `task projects` that were removed. */
 export const REMOVED_PROJECTS_SUBCOMMANDS: ReadonlySet<string> = new Set(['add', 'remove', 'move', 'prune', 'list']);
+
+/** `--project-dir <dir>` (removed in stage 2b): refused, never taken for an argument of the command nor ignored. */
+export function runRemovedProjectDirFlag(jsonMode: boolean): CommandResult {
+	return errorOutput(
+		jsonMode,
+		'--project-dir was removed: use -p <id|name|alias> or run from a registered folder',
+		'Register a folder with: project add "<dir>" [--name <name>] (see `project list` for the registered projects)'
+	);
+}
+
+/**
+ * `TASK_PROJECT_DIR` (removed in stage 2b) is an ambient variable that a parent process may still set, so it does not fail the
+ * command: one stderr line says it is ignored (stdout stays the answer). An empty value counts as unset.
+ * `PROJECT_DIR` is a generic variable of other tools and is not read at all.
+ */
+export function warnIgnoredTaskProjectDir(env: NodeJS.ProcessEnv = process.env): void {
+	if (env['TASK_PROJECT_DIR']) {
+		process.stderr.write('Ignored: TASK_PROJECT_DIR was removed, use TASK_PROJECT\n');
+	}
+}

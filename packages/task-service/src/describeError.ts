@@ -10,11 +10,9 @@ import { AmbiguousTaskPrefixError, TaskConflictError, TaskNotFoundError } from '
 
 import {
 	AmbiguousDeletePrefixError,
-	ConflictingProjectSelectionError,
 	DataMigrationError,
 	InvalidLinkTypeError,
 	ProjectDataSplitError,
-	ProjectNotInitializedError,
 	InvalidStatusError,
 	InvalidDeleteFilterError,
 	InvalidTaskTypeError,
@@ -79,7 +77,6 @@ export function describeError(error: unknown): ErrorDescription {
 	if (error instanceof NoReadableProjectsError) {
 		return describe('internal', error, error.hint, { skipped: error.failures });
 	}
-	if (error instanceof ConflictingProjectSelectionError) return describe('invalid', error, error.hint);
 	if (error instanceof ProjectDataSplitError) {
 		return describe('conflict', error, error.hint, {
 			project: error.projectName,
@@ -88,14 +85,6 @@ export function describeError(error: unknown): ErrorDescription {
 		});
 	}
 	if (error instanceof DataMigrationError) return describe('invalid', error, error.hint);
-	if (error instanceof ProjectNotInitializedError) {
-		return describe(
-			'not-found',
-			error,
-			error.hint,
-			error.scopeError === undefined ? {} : { registered: error.scopeError.registered }
-		);
-	}
 	if (error instanceof TaskServiceError) return describe('internal', error, error.hint);
 	if (error instanceof ProjectError) return describeProjectError(error);
 	return { kind: 'internal', message: error instanceof Error ? error.message : String(error), details: {} };

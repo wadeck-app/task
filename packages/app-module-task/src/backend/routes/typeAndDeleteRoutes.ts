@@ -26,7 +26,7 @@ export function registerTypeRoutes(kit: RouteKit): void {
 	route('GET', '/types', req => {
 		if (isBlankRequest(req.query)) return BLANK_ANSWER;
 		if (allProjectsFlag(req.query, 'the types')) {
-			return { status: 200, body: allTypesBody(readAcrossProjects(kit.configDir, ctx => listTypes(ctx))) };
+			return { status: 200, body: allTypesBody(readAcrossProjects(ctx => listTypes(ctx))) };
 		}
 		const ctx = open(req);
 		return { status: 200, body: typesBody(ctx.project, listTypes(ctx)) };

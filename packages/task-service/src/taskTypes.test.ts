@@ -3,6 +3,7 @@ import * as path from 'node:path';
 
 import { TaskConfigLoader } from '@wadeck-app/task-core';
 
+import { ownConfigFile } from './storage.js';
 import { addType, listTypes, removeType } from './taskTypes.js';
 import { createTestContext, type TestContext } from './testHelpers.js';
 
@@ -22,7 +23,10 @@ describe('task types', () => {
 
 	// Re-reads the project config from disk; the global config dir is an empty tmp dir so the user's real one is ignored.
 	function reload() {
-		return TaskConfigLoader.load({ configDir: path.join(t.rootDir, 'global'), projectDir: t.rootDir });
+		return TaskConfigLoader.load({
+			configDir: path.join(t.rootDir, 'global'),
+			projectConfigFile: ownConfigFile(t.ctx.storage),
+		});
 	}
 
 	function storedTypes(): string[] {

@@ -1,10 +1,9 @@
-import { parseArgs } from './args.js';
+import { parseArgs, usesRemovedProjectDir } from './args.js';
 
 describe('parseArgs', () => {
 	it('splits the command from its arguments', () => {
 		expect(parseArgs(['set-status', 'abc', 'done'])).toEqual({
 			configDir: undefined,
-			projectDir: undefined,
 			jsonMode: false,
 			command: 'set-status',
 			rest: ['abc', 'done'],
@@ -16,22 +15,8 @@ describe('parseArgs', () => {
 		expect(parsed).toMatchObject({ configDir: '/cfg', jsonMode: true, command: 'list', rest: [] });
 	});
 
-	it('reads --json and --project-dir after the command and removes them from the arguments', () => {
-		const parsed = parseArgs(['show', 'abc', '--json', '--project-dir', '/proj', '--with-parent']);
-		expect(parsed).toMatchObject({
-			projectDir: '/proj',
-			jsonMode: true,
-			command: 'show',
-			rest: ['abc', '--with-parent'],
-		});
-	});
-
 	it('keeps --config after the command as a plain argument (it is a global flag only)', () => {
 		expect(parseArgs(['list', '--config', '/cfg']).rest).toEqual(['--config', '/cfg']);
-	});
-
-	it('leaves a --project-dir without value in the arguments, for the command to reject as an unknown flag', () => {
-		expect(parseArgs(['list', '--project-dir']).rest).toEqual(['--project-dir']);
 	});
 
 	it('has no command when only global flags are given', () => {
@@ -60,12 +45,35 @@ describe('parseArgs: -p / --project <ref>', () => {
 		expect(parseArgs(['list', '-p', '']).projectRef).toBe('');
 	});
 
-	it('leaves a -p without value in the arguments, like --project-dir', () => {
+	it('leaves a -p without value in the arguments, for the command to reject as an unknown flag', () => {
 		expect(parseArgs(['list', '-p']).rest).toEqual(['-p']);
 		expect(parseArgs(['list', '-p']).projectRef).toBeUndefined();
 	});
 
 	it('is undefined when not given', () => {
 		expect(parseArgs(['list']).projectRef).toBeUndefined();
+	});
+});
+
+describe('--project-dir (removed)', () => {
+	it('is no longer read: it stays in the arguments, and usesRemovedProjectDir tells it was typed', () => {
+		const args = ['show', 'abc', '--project-dir', '/proj'];
+		expect(parseArgs(args)).toMatchObject({ rest: ['abc', '--project-dir', '/proj'] });
+		expect(parseArgs(args)).not.toHaveProperty('projectDir');
+		expect(usesRemovedProjectDir(args)).toBe(true);
+	});
+
+	it.each([
+		[['--project-dir', '/proj', 'list']],
+		[['list', '--project-dir=/proj']],
+		[['list', '--project-dir']],
+		[['--json', 'list', '-p', 'shop', '--project-dir', '.']],
+	])('is found anywhere in %j', args => {
+		expect(usesRemovedProjectDir(args)).toBe(true);
+	});
+
+	it('is not found in other arguments', () => {
+		expect(usesRemovedProjectDir(['list', '-p', 'shop', '--json'])).toBe(false);
+		expect(usesRemovedProjectDir(['new', 'a title about project-dir'])).toBe(false);
 	});
 });

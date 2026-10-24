@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { runTaskCommand } from './TaskIndex.js';
-import { initLegacyProject } from './testHelpers.js';
+import { registerTestProject } from './testHelpers.js';
 
 let tmpDir: string;
 
@@ -124,10 +124,10 @@ describe('runTaskCommand — project guard', () => {
 		const result = await runTaskCommand(['--json', 'list'], tmpDir);
 		expect(result.exitCode).toBe(1);
 		const parsed = JSON.parse(result.output) as { error: string };
-		expect(parsed.error).toContain('no task project');
+		expect(parsed.error).toContain('no project in scope');
 	});
 
-	it('list, new, show, set-status all need a project (registered, or a legacy folder with a .task)', async () => {
+	it('list, new, show, set-status all need a project (a folder of a registered project)', async () => {
 		const commands = [['list'], ['new', 'test task'], ['show', 'abc123'], ['set-status', 'abc123', 'done']];
 		for (const cmd of commands) {
 			const result = await runTaskCommand(cmd, tmpDir);
@@ -138,16 +138,16 @@ describe('runTaskCommand — project guard', () => {
 	});
 
 	it('approve is no longer a valid command', async () => {
-		initLegacyProject(tmpDir);
+		await registerTestProject(tmpDir);
 		const result = await runTaskCommand(['approve', 'abc123'], tmpDir);
 		expect(result.exitCode).toBe(1);
 		expect(result.output).toContain('unknown command');
 	});
 });
 
-describe('runTaskCommand — a legacy project', () => {
-	it('after the folder holds a .task, list succeeds', async () => {
-		initLegacyProject(tmpDir);
+describe('runTaskCommand — a registered project', () => {
+	it('after the folder is registered, list succeeds', async () => {
+		await registerTestProject(tmpDir);
 		const result = await runTaskCommand(['list'], tmpDir);
 		expect(result.exitCode).toBe(0);
 	});
@@ -155,7 +155,7 @@ describe('runTaskCommand — a legacy project', () => {
 
 describe('runTaskCommand — prefix match', () => {
 	beforeEach(async () => {
-		initLegacyProject(tmpDir);
+		await registerTestProject(tmpDir);
 	});
 
 	it('show accepts a full id', async () => {
@@ -196,7 +196,7 @@ describe('runTaskCommand — prefix match', () => {
 
 describe('runTaskCommand — set-status error messages', () => {
 	beforeEach(async () => {
-		initLegacyProject(tmpDir);
+		await registerTestProject(tmpDir);
 	});
 
 	it('shows human-readable error with Did you mean suggestion', async () => {
@@ -247,43 +247,30 @@ describe('runTaskCommand — set-status error messages', () => {
 	});
 });
 
-describe('runTaskCommand — --project-dir flag', () => {
+describe('runTaskCommand — -p flag', () => {
 	let projectDir: string;
+	let projectName: string;
 
 	beforeEach(async () => {
-		projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-project-dir-test-'));
-		initLegacyProject(projectDir);
+		projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-project-flag-test-'));
+		projectName = (await registerTestProject(projectDir)).name;
 	});
 
 	afterEach(() => {
 		fs.rmSync(projectDir, { recursive: true, force: true });
 	});
 
-	it('absolute --project-dir loads project from that path, not cwd', async () => {
-		const created = await runTaskCommand(['new', 'project-dir task'], projectDir);
+	it('-p loads the project of the registry, not the one of the cwd (tmpDir is in no registered project)', async () => {
+		const created = await runTaskCommand(['new', 'project flag task'], projectDir);
 		const task = JSON.parse(created.output) as { id: string };
 
-		// cwd is tmpDir (uninitialized), project-dir is the initialized projectDir
-		const result = await runTaskCommand(['show', task.id, '--project-dir', projectDir], tmpDir);
+		const result = await runTaskCommand(['show', task.id, '-p', projectName], tmpDir);
 		expect(result.exitCode).toBe(0);
 		const shown = JSON.parse(result.output) as { id: string };
 		expect(shown.id).toBe(task.id);
 	});
 
-	it('relative --project-dir is resolved against cwd', async () => {
-		const created = await runTaskCommand(['new', 'relative task'], projectDir);
-		const task = JSON.parse(created.output) as { id: string };
-
-		const parentDir = path.dirname(projectDir);
-		const relPath = path.relative(parentDir, projectDir);
-
-		const result = await runTaskCommand(['show', task.id, '--project-dir', relPath], parentDir);
-		expect(result.exitCode).toBe(0);
-		const shown = JSON.parse(result.output) as { id: string };
-		expect(shown.id).toBe(task.id);
-	});
-
-	it('absent --project-dir falls back to cwd (existing behavior unchanged)', async () => {
+	it('absent -p falls back to cwd (existing behavior unchanged)', async () => {
 		const created = await runTaskCommand(['new', 'cwd fallback task'], projectDir);
 		const task = JSON.parse(created.output) as { id: string };
 
@@ -291,12 +278,12 @@ describe('runTaskCommand — --project-dir flag', () => {
 		expect(result.exitCode).toBe(0);
 	});
 
-	it('--project-dir is filtered from args passed to the command', async () => {
-		// set-status with --project-dir should not confuse the command's arg parsing
+	it('-p is filtered from args passed to the command', async () => {
+		// set-status with -p should not confuse the command's arg parsing
 		const created = await runTaskCommand(['new', 'filter test'], projectDir);
 		const task = JSON.parse(created.output) as { id: string };
 
-		const result = await runTaskCommand(['set-status', task.id, 'done', '--project-dir', projectDir], tmpDir);
+		const result = await runTaskCommand(['set-status', task.id, 'done', '-p', projectName], tmpDir);
 		expect(result.exitCode).toBe(0);
 		const updated = JSON.parse(result.output) as { status: string };
 		expect(updated.status).toBe('done');
@@ -305,7 +292,7 @@ describe('runTaskCommand — --project-dir flag', () => {
 
 describe('runTaskCommand — delete', () => {
 	beforeEach(async () => {
-		initLegacyProject(tmpDir);
+		await registerTestProject(tmpDir);
 	});
 
 	it('deletes a task by full id', async () => {
@@ -496,7 +483,7 @@ describe('runTaskCommand — delete', () => {
 
 describe('runTaskCommand — list hides terminal statuses by default', () => {
 	beforeEach(async () => {
-		initLegacyProject(tmpDir);
+		await registerTestProject(tmpDir);
 	});
 
 	it('list omits tasks in a terminal status (done) unless --all is passed', async () => {
@@ -518,14 +505,16 @@ describe('runTaskCommand — list hides terminal statuses by default', () => {
 	});
 });
 
-describe('runTaskCommand — TASK_PROJECT_DIR / PROJECT_DIR env vars', () => {
+describe('runTaskCommand — TASK_PROJECT env var', () => {
 	let projectDir: string;
+	let projectName: string;
 	const origEnv = process.env;
 
 	beforeEach(async () => {
 		projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-env-dir-test-'));
-		initLegacyProject(projectDir);
 		process.env = { ...origEnv };
+		delete process.env['TASK_PROJECT'];
+		projectName = (await registerTestProject(projectDir)).name;
 	});
 
 	afterEach(() => {
@@ -533,50 +522,29 @@ describe('runTaskCommand — TASK_PROJECT_DIR / PROJECT_DIR env vars', () => {
 		fs.rmSync(projectDir, { recursive: true, force: true });
 	});
 
-	it('TASK_PROJECT_DIR is used when no --project-dir flag', async () => {
+	it('TASK_PROJECT is used when no -p flag', async () => {
 		const created = await runTaskCommand(['new', 'env task'], projectDir);
 		const task = JSON.parse(created.output) as { id: string };
 
-		process.env['TASK_PROJECT_DIR'] = projectDir;
+		process.env['TASK_PROJECT'] = projectName;
 		const result = await runTaskCommand(['show', task.id], tmpDir);
 		expect(result.exitCode).toBe(0);
 		const shown = JSON.parse(result.output) as { id: string };
 		expect(shown.id).toBe(task.id);
 	});
 
-	it('PROJECT_DIR is used when no --project-dir and no TASK_PROJECT_DIR', async () => {
-		const created = await runTaskCommand(['new', 'env task 2'], projectDir);
-		const task = JSON.parse(created.output) as { id: string };
-
-		process.env['PROJECT_DIR'] = projectDir;
-		const result = await runTaskCommand(['show', task.id], tmpDir);
-		expect(result.exitCode).toBe(0);
-		const shown = JSON.parse(result.output) as { id: string };
-		expect(shown.id).toBe(task.id);
-	});
-
-	it('TASK_PROJECT_DIR takes precedence over PROJECT_DIR', async () => {
-		const created = await runTaskCommand(['new', 'precedence task'], projectDir);
-		const task = JSON.parse(created.output) as { id: string };
-
-		process.env['TASK_PROJECT_DIR'] = projectDir;
-		process.env['PROJECT_DIR'] = tmpDir;
-		const result = await runTaskCommand(['show', task.id], tmpDir);
-		expect(result.exitCode).toBe(0);
-	});
-
-	it('--project-dir flag takes precedence over TASK_PROJECT_DIR', async () => {
+	it('-p takes precedence over TASK_PROJECT', async () => {
 		const created = await runTaskCommand(['new', 'flag wins task'], projectDir);
 		const task = JSON.parse(created.output) as { id: string };
 
-		process.env['TASK_PROJECT_DIR'] = tmpDir;
-		const result = await runTaskCommand(['show', task.id, '--project-dir', projectDir], tmpDir);
+		process.env['TASK_PROJECT'] = 'no-such-project';
+		const result = await runTaskCommand(['show', task.id, '-p', projectName], tmpDir);
 		expect(result.exitCode).toBe(0);
 		const shown = JSON.parse(result.output) as { id: string };
 		expect(shown.id).toBe(task.id);
 	});
 
-	it('no env vars and no flag falls back to cwd', async () => {
+	it('no env var and no flag falls back to cwd', async () => {
 		const created = await runTaskCommand(['new', 'no env task'], projectDir);
 		const task = JSON.parse(created.output) as { id: string };
 

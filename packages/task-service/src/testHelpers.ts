@@ -8,7 +8,7 @@ import { TaskStore } from '@wadeck-app/task-core';
 import type { TaskResolvedConfig } from '@wadeck-app/task-core';
 
 import type { TaskServiceContext } from './context.js';
-import { legacyStorage } from './storage.js';
+import { legacyStorage } from './legacyData.js';
 
 export interface TestContext {
 	ctx: TaskServiceContext;

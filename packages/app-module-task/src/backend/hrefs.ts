@@ -8,8 +8,7 @@ export const MODULE_ID = 'task';
 
 /**
  * The views build action URLs by text substitution, which does not encode: forms carry the project already encoded
- * (`projectParam`) and the action URL uses `?project={projectParam}`. That is the API: it takes the registry id, else
- * (a project not in the shared registry) the directory.
+ * (`projectParam`) and the action URL uses `?project={projectParam}`. That is the API: it takes the registry id.
  */
 export function encodedProject(project: ProjectIdentity): string {
 	return encodeURIComponent(apiRef(project));
@@ -20,7 +19,7 @@ export function projectText(project: { name: string }): string {
 	return `Project: ${project.name}`;
 }
 
-/** The module pages that exist once per project; the address of each is `/<section>/p/<slug>[/<tail>]`. */
+/** The module pages that exist once per project; the address of each is `/<section>/p/<id>[/<tail>]`. */
 type ProjectPage = 'tasks' | 'tree' | 'types' | 'new' | 'delete';
 
 const PROJECT_PAGE_ADDRESS: Record<ProjectPage, { section: string; tail: string }> = {
@@ -34,7 +33,7 @@ const PROJECT_PAGE_ADDRESS: Record<ProjectPage, { section: string; tail: string 
 /**
  * The address of a page of one project. The project is a PATH segment, not a query: the shell's breadcrumb links each
  * crumb to the current address up to that page (path parameters substituted, query dropped), so only a path segment
- * survives a click on a crumb. Pages that act on a task are below the Tasks section (`/tasks/p/<slug>/<id>`).
+ * survives a click on a crumb. Pages that act on a task are below the Tasks section (`/tasks/p/<project id>/<task id>`).
  */
 function projectAddress(project: ProjectIdentity, page: ProjectPage, below = ''): string {
 	const { section, tail } = PROJECT_PAGE_ADDRESS[page];
@@ -50,8 +49,8 @@ export function pageLink(project: ProjectIdentity, name: ProjectPage, extra: Rec
 }
 
 /** Link to the tasks list page of a project. */
-export function tasksPageHref(project: ProjectIdentity | string): string {
-	return pageLink(typeof project === 'string' ? { path: project } : project, 'tasks');
+export function tasksPageHref(project: ProjectIdentity): string {
+	return pageLink(project, 'tasks');
 }
 
 /** A module page across all projects (no project in the address); `showAll` lists the closed tasks too. */
@@ -82,8 +81,7 @@ export function pageHrefs(project: ProjectIdentity): Record<string, string> {
 }
 
 /**
- * The query string a view appends to its sources: the encoded project reference (`apiRef`: the registry id, else the
- * directory) plus the filters of the page URL (the loader cannot append to a URL that already has a "?"). Empty while no
+ * The query string a view appends to its sources: the encoded project reference (`apiRef`: the registry id) plus the filters of the page URL (the loader cannot append to a URL that already has a "?"). Empty while no
  * project is selected, which makes the view skip the source.
  */
 export function selectedQuery(projectRef: string | undefined, query: RouteRequest['query']): string {

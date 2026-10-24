@@ -12,24 +12,20 @@ import type { StatusCount } from './taskStats.js';
 
 /** One registered project and what it holds. */
 export interface ProjectOverview {
-	/** Id in the shared project registry; absent for a project known only by the legacy projects.json. */
-	id?: string;
-	/** Registry name when registered, else the directory name. */
+	/** Id in the shared project registry. */
+	id: string;
+	/** Registry name. */
 	name: string;
-	/** In the shared project registry (the legacy projects.json is removed in stage 2: unregistered projects need `project add`). */
-	registered: boolean;
 	path: string;
 	/** The directory exists. */
 	exists: boolean;
-	/** The directory holds a `.task` project. */
-	initialized: boolean;
 	/** Tasks in a non-terminal status; null when the project cannot be read. */
 	open: number | null;
 	/** Every task, closed ones included; null when the project cannot be read. */
 	total: number | null;
 	/** Tasks per status (see {@link countTasksByStatus}); empty when the project cannot be read. */
 	byStatus: StatusCount[];
-	/** Why the project cannot be read (directory gone, not initialized, config.yml invalid), with the fix when there is one; null when it can. */
+	/** Why the project cannot be read (broken parent chain, data split between the registry and the old folder, config.yml invalid), with the fix when there is one; null when it can. */
 	error: string | null;
 }
 
@@ -42,7 +38,7 @@ export interface ProjectsSummary {
 	total: number;
 	/** Statuses summed over the readable projects. */
 	byStatus: StatusCount[];
-	/** Present only when the shared registry could not be read: why. The legacy projects are still summarised. */
+	/** Present only when the shared registry could not be read: why. */
 	registryProblem?: string;
 }
 
@@ -59,25 +55,22 @@ export function summarizeProject(ctx: TaskServiceContext): { open: number; total
 /**
  * What every registered project holds. Nothing registered is an empty summary (the caller says what to do);
  * a project that cannot be read is listed with its reason and left out of the totals, never silently dropped.
- * "Registered" is the shared project registry first, then the legacy projects.json entries it does not cover (see {@link listKnownProjects}).
  * Throws {@link NoReadableProjectsError} when projects are registered and none can be read (zeros would read as "no tasks"),
- * and the registry error when `projects.json` is corrupt.
+ * A registry that cannot be read is not an error here: it is reported in `registryProblem`.
  */
-export function summarizeProjects(configDir: string, options: ListKnownProjectsOptions = {}): ProjectsSummary {
+export function summarizeProjects(options: ListKnownProjectsOptions = {}): ProjectsSummary {
 	const projects: ProjectOverview[] = [];
 	const merged = new Map<string, StatusCount>();
 	let readableCount = 0;
 	let open = 0;
 	let total = 0;
-	const inspected = inspectKnownProjects(configDir, options);
+	const inspected = inspectKnownProjects(options);
 	for (const { known, health, context } of inspected.entries) {
 		const base = {
-			...(known.id === undefined ? {} : { id: known.id }),
+			id: known.id,
 			name: known.name,
-			registered: known.registered,
 			path: known.path,
 			exists: health.exists,
-			initialized: health.initialized,
 		};
 		if (context === null) {
 			projects.push({ ...base, open: null, total: null, byStatus: [], error: health.error });
@@ -115,7 +108,7 @@ function throwIfNoneReadable(registered: number, readable: number, failures: Pro
 
 /** A task and the project it belongs to. */
 export interface ProjectTask extends TaskSummary {
-	project: { id?: string; name: string; path: string };
+	project: { id: string; name: string; path: string };
 }
 
 export interface ListTasksAcrossProjectsInput {
@@ -131,8 +124,8 @@ export interface TasksAcrossProjects {
 	/** Projects that could be read. */
 	readableCount: number;
 	/** Projects that could not be read, with why: reported, never dropped. */
-	unreadable: Array<{ id?: string; name: string; path: string; registered: boolean; error: string }>;
-	/** Present only when the shared registry could not be read: why. The legacy projects are still listed. */
+	unreadable: Array<{ id: string; name: string; path: string; error: string }>;
+	/** Present only when the shared registry could not be read: why. */
 	registryProblem?: string;
 }
 
@@ -140,27 +133,23 @@ export interface TasksAcrossProjects {
  * The tasks of every registered project, each carrying its project. Nothing registered is an empty answer;
  * projects that cannot be read are reported in `unreadable`. Throws like {@link summarizeProjects} when none can be read.
  */
-export function listTasksAcrossProjects(
-	configDir: string,
-	input: ListTasksAcrossProjectsInput = {}
-): TasksAcrossProjects {
-	const inspected = inspectKnownProjects(configDir, { env: input.env });
+export function listTasksAcrossProjects(input: ListTasksAcrossProjectsInput = {}): TasksAcrossProjects {
+	const inspected = inspectKnownProjects({ env: input.env });
 	const tasks: ProjectTask[] = [];
 	const unreadable: TasksAcrossProjects['unreadable'] = [];
 	const registered = inspected.entries;
 	for (const { known, health, context } of registered) {
 		if (context === null) {
 			unreadable.push({
-				...(known.id === undefined ? {} : { id: known.id }),
+				id: known.id,
 				name: known.name,
 				path: known.path,
-				registered: known.registered,
 				error: health.error ?? 'unreadable',
 			});
 			continue;
 		}
 		for (const task of listTasks(context, { showAll: input.showAll })) {
-			tasks.push({ ...task, project: { ...context.project, path: known.path } });
+			tasks.push({ ...task, project: { id: known.id, name: context.project.name, path: known.path } });
 		}
 	}
 	throwIfNoneReadable(registered.length, registered.length - unreadable.length, unreadable);

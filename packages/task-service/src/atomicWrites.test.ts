@@ -5,7 +5,8 @@ import { loadRegistry } from '@wadeck-app/project-sdk';
 import * as sdk from '@wadeck-app/project-sdk';
 
 import { openTaskContext } from './openContext.js';
-import { legacyStorage, ownConfigFile, registryStorage } from './storage.js';
+import { legacyStorage } from './legacyData.js';
+import { ownConfigFile, registryStorage } from './storage.js';
 import { addType, removeType } from './taskTypes.js';
 import { createSharedRegistrySandbox } from './testHelpers.js';
 import type { SharedRegistrySandbox } from './testHelpers.js';

@@ -59,11 +59,9 @@ function unusable(file: string, reason: string): string {
 
 /**
  * Remembers the project a task was just created in. The task exists by then, so a failure here must not fail the
- * request: it is returned as the warning text the view shows (null when remembered). A project without registry id (the legacy
- * list) has nothing to remember it by: nothing is written.
+ * request: it is returned as the warning text the view shows (null when remembered).
  */
-export function rememberLastProject(dataDir: string, projectId: string | undefined): string | null {
-	if (projectId === undefined) return null;
+export function rememberLastProject(dataDir: string, projectId: string): string | null {
 	const file = fileOf(dataDir);
 	// Written aside, then renamed: a crash leaves the previous file, never half of a new one.
 	const temp = `${file}.${process.pid}.tmp`;

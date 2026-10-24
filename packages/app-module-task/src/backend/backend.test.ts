@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import { TaskStore } from '@wadeck-app/task-core';
 import type { TaskTreeNode } from '@wadeck-app/task-core';
 import { projectToolDir, removeProject } from '@wadeck-app/project-sdk';
-import { listForest, openTaskContext, projectsRegistryPath } from '@wadeck-app/task-service';
+import { listForest } from '@wadeck-app/task-service';
 import {
 	queueEventDeclarations,
 	type EventPublisher,
@@ -16,8 +16,8 @@ import {
 import type { ModuleContext, ModuleRouteHandler } from '@wadeck-app/app-core-sdk';
 
 import backend from './index.js';
+import { openProject } from './projects.js';
 import teardown from './teardown.js';
-import { projectSlug } from './projectRef.js';
 import { registerTaskRoutes, type TaskModuleInstance, type TaskRoutesOptions } from './routes.js';
 import { createRecordingSink, createTestWorld, type RecordingSink, type TestWorld } from './testHelpers.js';
 
@@ -127,11 +127,14 @@ const STATUSES_YML = ['statuses:', '  - backlog', '  - in-progress', '  - name: 
 );
 
 let h: Harness;
+// The registry id of the project `alpha` (what `?project=` and the page addresses take) and its folder.
 let project: string;
+let projectDir: string;
 
-beforeEach(() => {
+beforeEach(async () => {
 	h = setup();
-	project = h.world.createProject('alpha', { configYml: STATUSES_YML });
+	project = await h.world.createProject('alpha', { configYml: STATUSES_YML });
+	projectDir = h.world.dirOf(project);
 });
 afterEach(() => h.world.cleanup());
 
@@ -169,22 +172,41 @@ describe('project selection', () => {
 	it('uses the only registered project when ?project is missing', async () => {
 		const answer = await h.call('GET /tasks');
 		expect(answer.status).toBe(200);
-		expect(answer.body['project']).toEqual({ name: 'alpha', path: project });
+		expect(answer.body['project']).toEqual({ id: project, name: 'alpha', path: projectDir });
 	});
 
 	it('400 listing the registered projects when several exist and ?project is missing', async () => {
-		const beta = h.world.createProject('beta');
+		const beta = await h.world.createProject('beta');
 		const answer = await h.call('GET /tasks');
 		expect(answer.status).toBe(400);
-		expect(answer.body['registeredProjects']).toEqual([project, beta]);
+		expect(answer.body['registeredProjects']).toEqual([projectDir, h.world.dirOf(beta)]);
+		expect(answer.body['hint']).toContain(`beta (${beta})`);
 		expect(answer.body['hint']).toContain('?project=');
 	});
 
-	it('404 for an unregistered project, listing nothing', async () => {
-		const other = h.world.createProject('other', { register: false });
-		const answer = await h.call('GET /tasks', { query: { project: other } });
+	it('404 for an unregistered project name, listing nothing of the registered ones', async () => {
+		const answer = await h.call('GET /tasks', { query: { project: 'other' } });
 		expect(answer.status).toBe(404);
-		expect(JSON.stringify(answer.body)).not.toContain(project);
+		expect(answer.body['error']).toContain("no project matches 'other'");
+		expect(JSON.stringify(answer.body)).not.toContain(projectDir);
+	});
+
+	it('the id, the name (any case) and a unique id prefix all select the project', async () => {
+		for (const ref of [project, project.slice(0, 4), 'alpha', 'ALPHA']) {
+			const answer = await h.call('GET /tasks', { query: { project: ref } });
+			expect(answer.status, ref).toBe(200);
+			expect(answer.body['project'], ref).toEqual({ id: project, name: 'alpha', path: projectDir });
+		}
+	});
+
+	it('the absolute directory of the project and an old slug are refused: 404 no project matches, hint naming id, name or alias', async () => {
+		for (const ref of [projectDir, 'alpha~0a1b2c']) {
+			const answer = await h.call('GET /tasks', { query: { project: ref } });
+			expect(answer.status, ref).toBe(404);
+			expect(answer.body['error'], ref).toBe(`no project matches "${ref}"`);
+			expect(answer.body['hint'], ref).toContain('id, name or alias');
+			expect(answer.body['hint'], ref).toContain('no longer accepted');
+		}
 	});
 
 	it('400 when ?project is repeated', async () => {
@@ -193,16 +215,14 @@ describe('project selection', () => {
 		expect(answer.body['error']).toContain('project');
 	});
 
-	it('500 with the registry fix when projects.json is corrupt', async () => {
-		fs.writeFileSync(projectsRegistryPath(h.world.configDir), '{not json');
+	it('a corrupt projects.json next to the config is ignored: the registry projects work as before', async () => {
+		fs.mkdirSync(h.world.configDir, { recursive: true });
+		fs.writeFileSync(path.join(h.world.configDir, 'projects.json'), '{not json');
 		const answer = await h.call('GET /tasks', { query: { project } });
-		expect(answer.status).toBe(500);
-		expect(answer.body['error']).toContain('projects registry');
-		expect(answer.body['hint']).toContain('Fix or delete');
+		expect(answer.status).toBe(200);
 	});
 
 	it('every route resolves the project (mutating ones answer 404 before touching anything)', async () => {
-		const other = h.world.createProject('other', { register: false });
 		const calls: [string, Record<string, string>, unknown][] = [
 			['GET /tasks/:id', { id: 'x' }, undefined],
 			['GET /tasks/:id/history', { id: 'x' }, undefined],
@@ -228,34 +248,31 @@ describe('project selection', () => {
 			['DELETE /tasks/:id/links', { id: 'x' }, { type: 'blockedBy', target: 'y' }],
 		];
 		for (const [route, params, body] of calls) {
-			const answer = await h.call(route, { params, query: { project: other }, body });
+			const answer = await h.call(route, { params, query: { project: 'other' }, body });
 			expect(answer.status, route).toBe(404);
 		}
 	});
 });
 
 describe('GET /projects', () => {
-	it('lists the registered projects with their initialization state', async () => {
+	it('lists the registered projects with their id, open count and link', async () => {
 		const answer = await h.call('GET /projects');
 		expect(answer.status).toBe(200);
 		expect(answer.body['projects']).toEqual([
 			{
+				id: project,
 				name: 'alpha',
-				path: project,
-				// Stage 1: a project outside the shared registry is marked, with the command that registers it.
-				registered: false,
-				registryHint: `Not in the shared project registry: project add "${project}"`,
+				path: projectDir,
 				exists: true,
-				initialized: true,
 				openCount: 0,
 				error: null,
-				href: `/modules/task/tasks/p/${projectSlug(project)}`,
+				href: `/modules/task/tasks/p/${project}`,
 			},
 		]);
 	});
 
 	it('is an empty list (not an error) when nothing is registered', async () => {
-		fs.rmSync(projectsRegistryPath(h.world.configDir));
+		await h.world.unregister(project);
 		const answer = await h.call('GET /projects');
 		expect(answer.status).toBe(200);
 		expect(answer.body).toMatchObject({ projects: [], multiple: false, needsSelection: false });
@@ -296,7 +313,7 @@ describe('GET /tasks', () => {
 	it('gives every row the encoded link to its detail page', async () => {
 		const id = await createTask('linked');
 		const answer = await h.call('GET /tasks', { query: { project } });
-		expect(answer.body['tasks'][0]['href']).toBe(`/modules/task/tasks/p/${projectSlug(project)}/${id}`);
+		expect(answer.body['tasks'][0]['href']).toBe(`/modules/task/tasks/p/${project}/${id}`);
 	});
 
 	it('restricts to the direct children of ?parent', async () => {
@@ -326,7 +343,7 @@ describe('GET /tasks/:id', () => {
 		const parentAnswer = await h.call('GET /tasks/:id', { params: { id: parent }, query: { project } });
 		expect(parentAnswer.body['parent']).toBeNull();
 		expect(parentAnswer.body['children'].map((c: { id: string }) => c.id)).toEqual([child]);
-		expect(parentAnswer.body['children'][0]['href']).toBe(`/modules/task/tasks/p/${projectSlug(project)}/${child}`);
+		expect(parentAnswer.body['children'][0]['href']).toBe(`/modules/task/tasks/p/${project}/${child}`);
 	});
 
 	it('has no warnings for a healthy task', async () => {
@@ -340,7 +357,7 @@ describe('GET /tasks/:id', () => {
 		const parent = await createTask('parent');
 		const child = await createTask('child', { parent });
 		// Corrupt the hierarchy on purpose: drop the parent from the index only.
-		const indexPath = `${project}/.task/task-index.json`;
+		const indexPath = path.join(h.world.dataDirOf(project), 'task-index.json');
 		const index = JSON.parse(fs.readFileSync(indexPath, 'utf8')) as { tasks: Array<{ id: string }> };
 		index.tasks = index.tasks.filter(x => x.id !== parent);
 		fs.writeFileSync(indexPath, JSON.stringify(index));
@@ -430,7 +447,7 @@ describe('GET /summary', () => {
 
 	it('without ?project, aggregates every registered project instead of failing', async () => {
 		await createTask('in alpha');
-		const beta = h.world.createProject('beta');
+		const beta = await h.world.createProject('beta');
 		await h.call('POST /tasks', { query: { project: beta }, body: { description: 'in beta' } });
 		const answer = await h.call('GET /summary');
 		expect(answer.status).toBe(200);
@@ -440,29 +457,29 @@ describe('GET /summary', () => {
 
 	it('the aggregate reports the projects it could not read, by path and reason', async () => {
 		await createTask('in alpha');
-		const gone = h.world.createProject('gone');
-		fs.rmSync(`${gone}/.task`, { recursive: true });
+		const gone = await h.world.createProject('gone');
+		h.world.breakConfig(gone);
 		const answer = await h.call('GET /summary');
 		expect(answer.status).toBe(200);
 		expect(answer.body['projectCount']).toBe(1);
 		expect(answer.body['skipped']).toEqual([
-			{ path: gone, error: expect.stringContaining('not initialized') as unknown },
+			{ path: h.world.dirOf(gone), error: expect.stringContaining('config.yml') as unknown },
 		]);
 	});
 
 	it('a partial aggregate states how many projects were skipped and why, in a ready-to-display warning', async () => {
 		await createTask('in alpha');
-		const gone = h.world.createProject('gone');
-		fs.rmSync(`${gone}/.task`, { recursive: true });
+		const gone = await h.world.createProject('gone');
+		h.world.breakConfig(gone);
 		const answer = await h.call('GET /summary');
 		expect(answer.status).toBe(200);
 		expect(answer.body['skippedCount']).toBe(1);
 		expect(answer.body['warning']).toContain('1 project');
 		expect(answer.body['warning']).toContain('not counted');
-		// Each reason carries its own fix (the project CLI command that registers the folder).
-		expect(answer.body['warning']).toContain('project add');
+		// Each reason names the file to repair.
+		expect(answer.body['warning']).toContain('config.yml');
 		expect(answer.body['warning']).not.toContain('task init');
-		expect(answer.body['warning']).toContain(gone);
+		expect(answer.body['warning']).toContain(h.world.dirOf(gone));
 	});
 
 	it('a complete aggregate has skippedCount 0 and no warning', async () => {
@@ -473,22 +490,22 @@ describe('GET /summary', () => {
 	});
 
 	it('the aggregate answers 500 (not zeros) when every registered project is unreadable, with the reasons and a hint', async () => {
-		fs.rmSync(`${project}/.task`, { recursive: true });
-		const gone = h.world.createProject('gone');
-		fs.rmSync(`${gone}/.task`, { recursive: true });
+		h.world.breakConfig(project);
+		const gone = await h.world.createProject('gone');
+		h.world.breakConfig(gone);
 		const answer = await h.call('GET /summary');
 		expect(answer.status).toBe(500);
 		expect(answer.body['error']).toContain('none of the 2 registered projects');
 		expect(answer.body['hint']).toContain('project CLI');
 		expect(answer.body['skipped']).toHaveLength(2);
 		expect(answer.body['skipped'][0]).toMatchObject({
-			path: project,
-			error: expect.stringContaining('not initialized'),
+			path: projectDir,
+			error: expect.stringContaining('config.yml'),
 		});
 	});
 
 	it('the aggregate with no registered project is a 200 flagged noProjects, with the two ways to register (not an error)', async () => {
-		fs.rmSync(projectsRegistryPath(h.world.configDir));
+		await h.world.unregister(project);
 		const answer = await h.call('GET /summary');
 		expect(answer.status).toBe(200);
 		expect(answer.body).toMatchObject({ scope: 'all', noProjects: true, projectCount: 0, open: 0, total: 0 });
@@ -500,9 +517,26 @@ describe('GET /summary', () => {
 	});
 
 	it('an explicit unregistered ?project stays a 404 (naming a project must fail loudly)', async () => {
-		const other = h.world.createProject('other', { register: false });
-		const answer = await h.call('GET /summary', { query: { project: other } });
+		const answer = await h.call('GET /summary', { query: { project: 'other' } });
 		expect(answer.status).toBe(404);
+	});
+
+	it('the summary of one project by the absolute folder is a 404 too (the registry id, name or alias only)', async () => {
+		const answer = await h.call('GET /summary', { query: { project: projectDir } });
+		expect(answer.status).toBe(404);
+		expect(answer.body['error']).toBe(`no project matches "${projectDir}"`);
+	});
+
+	it('the summary answers carry no registered marker: the field is gone from the rows', async () => {
+		for (const query of [{}, { project }]) {
+			const answer = await h.call('GET /summary', { query });
+			for (const row of answer.body['projectRows'] as Array<Record<string, unknown>>) {
+				for (const field of ['registered', 'registryHint', 'initialized'])
+					expect(row).not.toHaveProperty(field);
+			}
+			expect(answer.body).not.toHaveProperty('registryNotice');
+			expect(answer.body['registryProblem']).toBeNull();
+		}
 	});
 
 	it('has noProjects false and no text once a project is registered', async () => {
@@ -521,58 +555,55 @@ describe('GET /summary per-project rows (the global dashboard widget)', () => {
 			body: { status: 'done' },
 		});
 		await createTask('open one');
-		const beta = h.world.createProject('beta');
+		const beta = await h.world.createProject('beta');
 		const answer = await h.call('GET /summary');
 		expect(answer.body['projectRows']).toEqual([
 			{
 				name: 'alpha',
-				registered: false,
-				registryHint: `Not in the shared project registry: project add "${project}"`,
 				label: 'alpha',
-				path: project,
+				path: projectDir,
 				openText: '1',
 				totalText: '2',
 				problem: '',
-				href: `/modules/task/tasks/p/${projectSlug(project)}`,
+				href: `/modules/task/tasks/p/${project}`,
 			},
 			{
 				name: 'beta',
-				registered: false,
-				registryHint: `Not in the shared project registry: project add "${beta}"`,
 				label: 'beta',
-				path: beta,
+				path: h.world.dirOf(beta),
 				openText: '0',
 				totalText: '0',
 				problem: '',
-				href: `/modules/task/tasks/p/${projectSlug(beta)}`,
+				href: `/modules/task/tasks/p/${beta}`,
 			},
 		]);
 		expect(answer.body).toMatchObject({ open: 1, total: 2, projectCount: 2 });
 	});
 
 	it('shows an unreadable project with its reason and no figures nor link, besides the readable ones', async () => {
-		const broken = h.world.createProject('broken');
-		fs.rmSync(`${broken}/.task`, { recursive: true });
-		const gone = h.world.createProject('gone');
-		fs.rmSync(gone, { recursive: true });
+		const broken = await h.world.createProject('broken');
+		h.world.breakConfig(broken);
+		const gone = await h.world.createProject('gone');
+		h.world.breakConfig(gone);
+		fs.rmSync(h.world.dirOf(gone), { recursive: true });
 		const answer = await h.call('GET /summary');
 		const [, brokenRow, goneRow] = answer.body['projectRows'];
 		expect(brokenRow).toMatchObject({
 			name: 'broken',
-			label: 'broken (not initialized)',
+			label: 'broken (invalid config)',
 			openText: '-',
 			totalText: '-',
 			href: null,
 		});
-		expect(brokenRow.problem).toContain('not initialized');
+		expect(brokenRow.problem).toContain('config.yml');
 		expect(goneRow).toMatchObject({ name: 'gone', label: 'gone (missing)', href: null });
-		expect(goneRow.problem).toContain('does not exist');
+		expect(goneRow.problem).toContain('config.yml');
 		expect(answer.body['projectCount']).toBe(1);
 	});
 
 	it('with ?project, has the single row of that project and scope project', async () => {
 		await createTask('a');
-		h.world.createProject('beta');
+		await h.world.createProject('beta');
 		const answer = await h.call('GET /summary', { query: { project } });
 		expect(answer.body['scope']).toBe('project');
 		expect(answer.body['projectRows']).toHaveLength(1);
@@ -589,8 +620,8 @@ describe('GET /tasks?allProjects=true (the global task list)', () => {
 		return answer.body['task'].id as string;
 	}
 
-	beforeEach(() => {
-		beta = h.world.createProject('beta', { configYml: STATUSES_YML });
+	beforeEach(async () => {
+		beta = await h.world.createProject('beta', { configYml: STATUSES_YML });
 	});
 
 	it('lists the open tasks of every project, each with its project name and a detail link keeping the project', async () => {
@@ -603,11 +634,11 @@ describe('GET /tasks?allProjects=true (the global task list)', () => {
 			{
 				id: a,
 				projectName: 'alpha',
-				projectPath: project,
+				projectPath: projectDir,
 				titleText: 'in alpha',
-				href: `/modules/task/tasks/p/${projectSlug(project)}/${a}`,
+				href: `/modules/task/tasks/p/${project}/${a}`,
 			},
-			{ id: b, projectName: 'beta', href: `/modules/task/tasks/p/${projectSlug(beta)}/${b}` },
+			{ id: b, projectName: 'beta', href: `/modules/task/tasks/p/${beta}/${b}` },
 		]);
 		expect(answer.body['tasks'][0].created).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d$/);
 		expect(answer.body['scopeText']).toBe('All projects: 2 projects, 2 open tasks.');
@@ -639,15 +670,15 @@ describe('GET /tasks?allProjects=true (the global task list)', () => {
 
 	it('reports an unreadable project in a ready-to-display warning, besides the tasks of the others', async () => {
 		await createIn(project, 'in alpha');
-		const broken = h.world.createProject('broken');
-		fs.rmSync(`${broken}/.task`, { recursive: true });
+		const broken = await h.world.createProject('broken');
+		h.world.breakConfig(broken);
 		const answer = await h.call('GET /tasks', { query: { allProjects: 'true' } });
 		expect(answer.status).toBe(200);
 		expect(answer.body['tasks']).toHaveLength(1);
 		expect(answer.body['skippedCount']).toBe(1);
 		expect(answer.body['warning']).toContain('1 project not listed');
-		expect(answer.body['warning']).toContain(broken);
-		expect(answer.body['warning']).toContain('not initialized');
+		expect(answer.body['warning']).toContain(h.world.dirOf(broken));
+		expect(answer.body['warning']).toContain('config.yml');
 	});
 
 	it('has no warning when every project could be read', async () => {
@@ -657,8 +688,8 @@ describe('GET /tasks?allProjects=true (the global task list)', () => {
 	});
 
 	it('answers 500 (not an empty list) when every registered project is unreadable, with reasons and hint', async () => {
-		fs.rmSync(`${project}/.task`, { recursive: true });
-		fs.rmSync(`${beta}/.task`, { recursive: true });
+		h.world.breakConfig(project);
+		h.world.breakConfig(beta);
 		const answer = await h.call('GET /tasks', { query: { allProjects: 'true' } });
 		expect(answer.status).toBe(500);
 		expect(answer.body['error']).toContain('none of the 2 registered projects');
@@ -677,8 +708,8 @@ describe('GET /tasks?allProjects=true (the global task list)', () => {
 	});
 
 	it('answers inline errors like the other view requests', async () => {
-		fs.rmSync(`${project}/.task`, { recursive: true });
-		fs.rmSync(`${beta}/.task`, { recursive: true });
+		h.world.breakConfig(project);
+		h.world.breakConfig(beta);
 		const answer = await h.call('GET /tasks', { query: { allProjects: 'true', inlineErrors: 'true' } });
 		expect(answer.status).toBe(200);
 		expect(answer.body['failed']).toBe(true);
@@ -693,7 +724,7 @@ describe('GET /tasks?allProjects=true (the global task list)', () => {
 
 describe('GET /projects global view data (the Tasks page without ?project)', () => {
 	it('several projects and none chosen: globalQuery asks for the global list, keeping showAll', async () => {
-		h.world.createProject('beta');
+		await h.world.createProject('beta');
 		const plain = await h.call('GET /projects');
 		expect(plain.body['globalQuery']).toBe('allProjects=true');
 		const showAll = await h.call('GET /projects', { query: { showAll: 'true' } });
@@ -701,7 +732,7 @@ describe('GET /projects global view data (the Tasks page without ?project)', () 
 	});
 
 	it('scopeQuery is the project query when one is chosen, else the global query (the pages have one source)', async () => {
-		h.world.createProject('beta');
+		await h.world.createProject('beta');
 		const global = await h.call('GET /projects', { query: { showAll: 'true' } });
 		expect(global.body['scopeQuery']).toBe('allProjects=true&showAll=true');
 		const chosen = await h.call('GET /projects', { query: { project } });
@@ -713,46 +744,62 @@ describe('GET /projects global view data (the Tasks page without ?project)', () 
 	it('is empty with a project chosen, a single project or none registered (the page skips the global source)', async () => {
 		const single = await h.call('GET /projects');
 		expect(single.body['globalQuery']).toBe('');
-		h.world.createProject('beta');
+		const beta = await h.world.createProject('beta');
 		const chosen = await h.call('GET /projects', { query: { project } });
 		expect(chosen.body['globalQuery']).toBe('');
-		fs.rmSync(projectsRegistryPath(h.world.configDir));
+		await h.world.unregister(project);
+		await h.world.unregister(beta);
 		const none = await h.call('GET /projects');
 		expect(none.body['globalQuery']).toBe('');
 	});
 
 	it('answers no back link: the breadcrumb leads back to the parent pages (allProjectsHref, globalHrefs, tasksHref are gone)', async () => {
-		h.world.createProject('beta');
+		await h.world.createProject('beta');
 		const answer = await h.call('GET /projects', { query: { project } });
 		expect(answer.body).not.toHaveProperty('allProjectsHref');
 		expect(answer.body).not.toHaveProperty('globalHrefs');
 		expect(answer.body).not.toHaveProperty('tasksHref');
 	});
 
-	it('names the project of a page by the slug of its address, the way the directory is accepted (one resolution)', async () => {
-		h.world.createProject('beta');
-		const bySlug = await h.call('GET /projects', { query: { project: projectSlug(project) } });
-		expect(bySlug.body['selectedText']).toBe('Project: alpha');
-		expect(bySlug.body['projectQuery']).toBe(`project=${encodeURIComponent(project)}`);
-		expect(bySlug.body['scopeQuery']).toBe(`project=${encodeURIComponent(project)}`);
-		expect(bySlug.body['unknownProjectText']).toBeNull();
-		const byDir = await h.call('GET /projects', { query: { project } });
-		expect(byDir.body['projectQuery']).toBe(bySlug.body['projectQuery']);
+	it('names the project of a page by its id, its name or an id prefix: one resolution, and the API query is the id', async () => {
+		await h.world.createProject('beta');
+		for (const ref of [project, project.slice(0, 4), 'alpha', 'ALPHA']) {
+			const answer = await h.call('GET /projects', { query: { project: ref } });
+			expect(answer.body['selectedText'], ref).toBe('Project: alpha');
+			expect(answer.body['projectQuery'], ref).toBe(`project=${project}`);
+			expect(answer.body['scopeQuery'], ref).toBe(`project=${project}`);
+			expect(answer.body['unknownProjectText'], ref).toBeNull();
+		}
 	});
 
-	it('keeps the page filters when the project is a slug', async () => {
-		h.world.createProject('beta');
-		const answer = await h.call('GET /projects', { query: { project: projectSlug(project), showAll: 'true' } });
-		expect(answer.body['projectQuery']).toBe(`project=${encodeURIComponent(project)}&showAll=true`);
+	it('keeps the page filters when the project is named by its id', async () => {
+		await h.world.createProject('beta');
+		const answer = await h.call('GET /projects', { query: { project, showAll: 'true' } });
+		expect(answer.body['projectQuery']).toBe(`project=${project}&showAll=true`);
 	});
 
-	it('an unregistered project (slug or directory) is named in unknownProjectText with the next step, without a global query', async () => {
-		h.world.createProject('beta');
+	it('an unregistered project is named in unknownProjectText with the next step, without a global query', async () => {
+		await h.world.createProject('beta');
 		const answer = await h.call('GET /projects', { query: { project: '/nowhere/ghost' } });
 		expect(answer.body['globalQuery']).toBe('');
 		expect(answer.body['unknownProjectText']).toContain('/nowhere/ghost');
 		expect(answer.body['unknownProjectText']).toContain('not registered');
 		expect(answer.body['unknownProjectText']).toContain('Projects page');
+	});
+
+	it('an old slug and the folder of a registered project are unknown projects on the page: the unknown-project text, nothing selected', async () => {
+		await h.world.createProject('beta');
+		for (const ref of ['alpha~0a1b2c', projectDir]) {
+			const answer = await h.call('GET /projects', { query: { project: ref } });
+			expect(answer.body['unknownProjectText'], ref).toContain(
+				`Project "${ref}" is not registered with the task app-module`
+			);
+			expect(answer.body['unknownProjectText'], ref).toContain('Projects page');
+			expect(answer.body['selectedText'], ref).toBeNull();
+			expect(answer.body['globalQuery'], ref).toBe('');
+			expect(answer.body['scopeQuery'], ref).toBe('blank=true');
+			expect(answer.body['forms'], ref).toMatchObject({ create: expect.anything() as unknown });
+		}
 	});
 
 	it('has no unknownProjectText for a registered or absent ?project', async () => {
@@ -763,8 +810,8 @@ describe('GET /projects global view data (the Tasks page without ?project)', () 
 	});
 
 	it('says only that nothing is registered (not also that the project is unknown) when the registry is empty', async () => {
-		fs.rmSync(projectsRegistryPath(h.world.configDir));
-		const answer = await h.call('GET /projects', { query: { project: projectSlug(project) } });
+		await h.world.unregister(project);
+		const answer = await h.call('GET /projects', { query: { project: 'alpha~0a1b2c' } });
 		expect(answer.body['noProjects']).toBe(true);
 		expect(answer.body['unknownProjectText']).toBeNull();
 	});
@@ -778,7 +825,12 @@ describe('POST /tasks', () => {
 		expect(h.sink.events).toHaveLength(1);
 		expect(h.sink.events[0]).toMatchObject({
 			name: 'onTaskCreated',
-			payload: { taskId: answer.body['task'].id, taskProjectName: 'alpha', taskProjectPath: project },
+			payload: {
+				taskId: answer.body['task'].id,
+				taskProjectId: project,
+				taskProjectName: 'alpha',
+				taskProjectPath: projectDir,
+			},
 		});
 	});
 
@@ -1073,8 +1125,9 @@ describe('events of the field and hierarchy routes', () => {
 					taskId: id,
 					oldType: 'bug',
 					newType: 'feature',
+					taskProjectId: project,
 					taskProjectName: 'alpha',
-					taskProjectPath: project,
+					taskProjectPath: projectDir,
 				},
 			},
 		]);
@@ -1096,7 +1149,7 @@ describe('events of the field and hierarchy routes', () => {
 		const unreachable: EventSink = { deliver: () => Promise.resolve({ delivered: false, reason: 'exit 3' }) };
 		const failing = setup(unreachable);
 		try {
-			const dir = failing.world.createProject('beta');
+			const dir = await failing.world.createProject('beta');
 			const created = await failing.call('POST /tasks', { query: { project: dir }, body: { description: 'a' } });
 
 			const answer = await failing.call('POST /tasks/:id/type', {
@@ -1129,7 +1182,13 @@ describe('events of the label routes', () => {
 		expect(h.sink.events).toEqual([
 			{
 				name: 'onTaskLabelAdded',
-				payload: { taskId: id, label: 'urgent', taskProjectName: 'alpha', taskProjectPath: project },
+				payload: {
+					taskId: id,
+					label: 'urgent',
+					taskProjectId: project,
+					taskProjectName: 'alpha',
+					taskProjectPath: projectDir,
+				},
 			},
 		]);
 	});
@@ -1150,7 +1209,13 @@ describe('events of the label routes', () => {
 		expect(h.sink.events).toEqual([
 			{
 				name: 'onTaskLabelRemoved',
-				payload: { taskId: id, label: 'urgent', taskProjectName: 'alpha', taskProjectPath: project },
+				payload: {
+					taskId: id,
+					label: 'urgent',
+					taskProjectId: project,
+					taskProjectName: 'alpha',
+					taskProjectPath: projectDir,
+				},
 			},
 		]);
 	});
@@ -1159,7 +1224,7 @@ describe('events of the label routes', () => {
 		const unreachable: EventSink = { deliver: () => Promise.resolve({ delivered: false, reason: 'exit 3' }) };
 		const failing = setup(unreachable);
 		try {
-			const dir = failing.world.createProject('beta');
+			const dir = await failing.world.createProject('beta');
 			const created = await failing.call('POST /tasks', { query: { project: dir }, body: { description: 'a' } });
 
 			const answer = await failing.call('POST /tasks/:id/labels', {
@@ -1218,7 +1283,7 @@ describe('event delivery', () => {
 			].sort()
 		);
 		for (const event of h.sink.events) {
-			expect(event.payload.taskProjectPath, event.name).toBe(project);
+			expect(event.payload.taskProjectPath, event.name).toBe(projectDir);
 		}
 	});
 
@@ -1226,7 +1291,7 @@ describe('event delivery', () => {
 		const failing: EventSink = { deliver: () => Promise.reject(new Error('queue exploded')) };
 		const failingHarness = setup(failing);
 		try {
-			const dir = failingHarness.world.createProject('alpha');
+			const dir = await failingHarness.world.createProject('alpha');
 			const answer = await failingHarness.call('POST /tasks', {
 				query: { project: dir },
 				body: { description: 'kept' },
@@ -1246,7 +1311,7 @@ describe('event delivery', () => {
 		const unreachable: EventSink = { deliver: () => Promise.resolve({ delivered: false, reason: 'exit 3' }) };
 		const failingHarness = setup(unreachable);
 		try {
-			const dir = failingHarness.world.createProject('alpha', { configYml: STATUSES_YML });
+			const dir = await failingHarness.world.createProject('alpha', { configYml: STATUSES_YML });
 
 			const created = await failingHarness.call('POST /tasks', {
 				query: { project: dir },
@@ -1330,8 +1395,8 @@ describe('event delivery', () => {
 				},
 			});
 			try {
-				const alpha = sdk.world.createProject('alpha');
-				const beta = sdk.world.createProject('beta');
+				const alpha = await sdk.world.createProject('alpha');
+				const beta = await sdk.world.createProject('beta');
 				await sdk.call('GET /tasks', { query: { project: alpha } });
 				expect(created).toBe(1);
 
@@ -1341,9 +1406,9 @@ describe('event delivery', () => {
 
 				expect(created).toBe(1);
 				expect(fake.calls).toEqual([
-					{ event: 'onTaskCreated', cwd: alpha },
-					{ event: 'onTaskCreated', cwd: beta },
-					{ event: 'onTaskCreated', cwd: alpha },
+					{ event: 'onTaskCreated', cwd: sdk.world.dirOf(alpha) },
+					{ event: 'onTaskCreated', cwd: sdk.world.dirOf(beta) },
+					{ event: 'onTaskCreated', cwd: sdk.world.dirOf(alpha) },
 				]);
 			} finally {
 				sdk.world.cleanup();
@@ -1354,7 +1419,7 @@ describe('event delivery', () => {
 			const fake = publisherFake(() => ({ status: 'dropped', reason: 'queue is not installed' }));
 			const sdk = setup('default', { createPublisher: () => fake.publisher });
 			try {
-				const dir = sdk.world.createProject('alpha');
+				const dir = await sdk.world.createProject('alpha');
 
 				const created = await sdk.call('POST /tasks', {
 					query: { project: dir },
@@ -1380,7 +1445,7 @@ describe('event delivery', () => {
 			const fake = publisherFake(() => ({ status: 'unknown', reason: 'timed out' }));
 			const sdk = setup('default', { createPublisher: () => fake.publisher });
 			try {
-				const dir = sdk.world.createProject('alpha');
+				const dir = await sdk.world.createProject('alpha');
 
 				const created = await sdk.call('POST /tasks', {
 					query: { project: dir },
@@ -1405,7 +1470,7 @@ describe('event delivery', () => {
 			const fake = publisherFake(() => ({ status: 'queued' }));
 			const sdk = setup('default', { createPublisher: () => fake.publisher });
 			try {
-				const dir = sdk.world.createProject('alpha');
+				const dir = await sdk.world.createProject('alpha');
 				await sdk.call('POST /tasks', { query: { project: dir }, body: { description: 'a' } });
 
 				await teardown({
@@ -1507,7 +1572,7 @@ describe('event delivery', () => {
 				expect(fake.declared[0]!.source).toBe('task');
 				expect(fake.declared[0]!.events).toEqual(queueEventDeclarations);
 				// Mutations and reads declare nothing more.
-				const dir = sdk.world.createProject('alpha');
+				const dir = await sdk.world.createProject('alpha');
 				await sdk.call('POST /tasks', { query: { project: dir }, body: { description: 'a' } });
 				await sdk.call('GET /tasks', { query: { project: dir } });
 				expect(fake.declared).toHaveLength(1);
@@ -1522,7 +1587,7 @@ describe('event delivery', () => {
 			const sdk = setup('default', { createPublisher: () => fake.publisher });
 			try {
 				expect(sdk.routes.size).toBe(EXPECTED_ROUTES.length);
-				const dir = sdk.world.createProject('alpha');
+				const dir = await sdk.world.createProject('alpha');
 				const answer = await sdk.call('GET /tasks', { query: { project: dir } });
 				expect(answer.status).toBe(200);
 
@@ -1654,7 +1719,7 @@ describe('server-side logging of unexpected errors (5xx)', () => {
 	afterEach(() => failing.world.cleanup());
 
 	it('records a 5xx in the task log (same line format as undelivered events) and on stderr, with route, method, message and stack', async () => {
-		const dir = failing.world.createProject('alpha');
+		const dir = await failing.world.createProject('alpha');
 
 		const answer = await failing.call('POST /tasks', { query: { project: dir }, body: { description: 'kept' } });
 
@@ -1671,9 +1736,10 @@ describe('server-side logging of unexpected errors (5xx)', () => {
 	});
 
 	it('records an unexpected (non-HTTP) error thrown by an operation, with its stack', async () => {
-		const dir = failing.world.createProject('alpha');
+		const dir = await failing.world.createProject('alpha');
 		// A corrupt index makes the store throw a plain Error.
-		fs.writeFileSync(`${dir}/.task/task-index.json`, '{not json');
+		fs.mkdirSync(failing.world.dataDirOf(dir), { recursive: true });
+		fs.writeFileSync(path.join(failing.world.dataDirOf(dir), 'task-index.json'), '{not json');
 
 		const answer = await failing.call('GET /tasks', { query: { project: dir } });
 
@@ -1685,7 +1751,7 @@ describe('server-side logging of unexpected errors (5xx)', () => {
 	});
 
 	it('does not log expected 4xx answers', async () => {
-		const dir = failing.world.createProject('alpha');
+		const dir = await failing.world.createProject('alpha');
 
 		const notFound = await failing.call('GET /tasks/:id', { params: { id: 'nope' }, query: { project: dir } });
 		const invalid = await failing.call('POST /tasks', { query: { project: dir }, body: {} });
@@ -1696,8 +1762,9 @@ describe('server-side logging of unexpected errors (5xx)', () => {
 	});
 
 	it('still answers the 500 when the log directory cannot be written, and says so on stderr', async () => {
-		const dir = failing.world.createProject('alpha');
+		const dir = await failing.world.createProject('alpha');
 		// A file where the logs directory should be.
+		fs.mkdirSync(failing.world.configDir, { recursive: true });
 		fs.writeFileSync(`${failing.world.configDir}/logs`, 'x');
 
 		const answer = await failing.call('POST /tasks', { query: { project: dir }, body: { description: 'kept' } });
@@ -1707,7 +1774,7 @@ describe('server-side logging of unexpected errors (5xx)', () => {
 	});
 });
 
-const hrefOf = (id: string): string => `/modules/task/tasks/p/${projectSlug(project)}/${id}`;
+const hrefOf = (id: string): string => `/modules/task/tasks/p/${project}/${id}`;
 
 describe('GET /tree rows (flat, navigable view of the forest)', () => {
 	it('flattens the forest depth-first with depth, an indented label and the encoded detail link', async () => {
@@ -1797,7 +1864,7 @@ describe('GET /tree nested forest (same structure as the service forest the CLI 
 
 	it('shows the closed tasks with showAll, and gives the same ids, depths and order as the service forest', async () => {
 		await seedForest();
-		const ctx = openTaskContext({ projectDir: project });
+		const ctx = openProject(project);
 		const flat = (nodes: TaskTreeNode[], depth = 0): Array<[string, number]> =>
 			nodes.flatMap(node => [[node.id, depth] as [string, number], ...flat(node.children, depth + 1)]);
 		for (const showAll of [false, true]) {
@@ -1836,7 +1903,8 @@ describe('GET /tree nested forest (same structure as the service forest the CLI 
 			createdAt: now,
 			...(i === 0 ? {} : { parentId: `c${i - 1}` }),
 		}));
-		fs.writeFileSync(path.join(project, '.task', 'task-index.json'), JSON.stringify({ tasks }));
+		fs.mkdirSync(h.world.dataDirOf(project), { recursive: true });
+		fs.writeFileSync(path.join(h.world.dataDirOf(project), 'task-index.json'), JSON.stringify({ tasks }));
 		const answer = await h.call('GET /tree', { query: { project } });
 		expect(answer.status).toBe(200);
 		const rows = answer.body['rows'] as Row[];
@@ -1864,8 +1932,9 @@ describe('hierarchy routes', () => {
 					taskId: child,
 					oldParentId: undefined,
 					newParentId: parent,
+					taskProjectId: project,
 					taskProjectName: 'alpha',
-					taskProjectPath: project,
+					taskProjectPath: projectDir,
 				},
 			},
 		]);
@@ -1922,8 +1991,9 @@ describe('hierarchy routes', () => {
 					taskId: child,
 					oldParentId: parent,
 					newParentId: undefined,
+					taskProjectId: project,
 					taskProjectName: 'alpha',
-					taskProjectPath: project,
+					taskProjectPath: projectDir,
 				},
 			},
 		]);
@@ -2064,7 +2134,7 @@ describe('types', () => {
 		const answer = await h.call('GET /types', { query: { project } });
 		expect(answer.status).toBe(200);
 		expect(answer.body).toMatchObject({
-			project: { name: 'alpha', path: project },
+			project: { name: 'alpha', path: projectDir },
 			types: [],
 			rows: [],
 			removeOptions: [],
@@ -2169,8 +2239,9 @@ describe('POST /tasks/:id/meta', () => {
 					key: 'owner',
 					oldValue: undefined,
 					newValue: 'ann',
+					taskProjectId: project,
 					taskProjectName: 'alpha',
-					taskProjectPath: project,
+					taskProjectPath: projectDir,
 				},
 			},
 		]);
@@ -2191,8 +2262,9 @@ describe('POST /tasks/:id/meta', () => {
 					key: 'owner',
 					oldValue: 'ann',
 					newValue: 'bob',
+					taskProjectId: project,
 					taskProjectName: 'alpha',
-					taskProjectPath: project,
+					taskProjectPath: projectDir,
 				},
 			},
 		]);
@@ -2347,8 +2419,9 @@ describe('delete', () => {
 				parentId: undefined,
 				orphanedChildIds: [],
 				removedLinkCount: 0,
+				taskProjectId: project,
 				taskProjectName: 'alpha',
-				taskProjectPath: project,
+				taskProjectPath: projectDir,
 			},
 		});
 	});
@@ -2389,7 +2462,7 @@ describe('delete', () => {
 		const unreachable: EventSink = { deliver: () => Promise.resolve({ delivered: false, reason: 'exit 3' }) };
 		const failing = setup(unreachable);
 		try {
-			const dir = failing.world.createProject('beta');
+			const dir = await failing.world.createProject('beta');
 			const created = await failing.call('POST /tasks', { query: { project: dir }, body: { description: 'a' } });
 
 			const answer = await failing.call('POST /tasks/delete', {
@@ -2441,7 +2514,7 @@ describe('delete', () => {
 			const stderr: string[] = [];
 			const failing = setup(unreachable, { writeStderr: text => void stderr.push(text) });
 			try {
-				const dir = failing.world.createProject('beta');
+				const dir = await failing.world.createProject('beta');
 				for (const title of ['a', 'b', 'c']) {
 					await failing.call('POST /tasks', { query: { project: dir }, body: { description: title } });
 				}
@@ -2552,7 +2625,7 @@ describe('undeliveredText (ready-to-display line for the views)', () => {
 		const unreachable: EventSink = { deliver: () => Promise.resolve({ delivered: false, reason: 'exit 3' }) };
 		const failingHarness = setup(unreachable);
 		try {
-			const dir = failingHarness.world.createProject('alpha', { configYml: STATUSES_YML });
+			const dir = await failingHarness.world.createProject('alpha', { configYml: STATUSES_YML });
 			const created = await failingHarness.call('POST /tasks', {
 				query: { project: dir },
 				body: { description: 'kept' },
@@ -2574,7 +2647,7 @@ describe('view data: page links, filters and form defaults', () => {
 	const page = (name: 'tasks' | 'tree' | 'types' | 'new' | 'delete', query = ''): string => {
 		const section = name === 'new' || name === 'delete' ? 'tasks' : name;
 		const tail = name === 'new' || name === 'delete' ? `/${name}` : '';
-		return `/modules/task/${section}/p/${projectSlug(project)}${tail}${query}`;
+		return `/modules/task/${section}/p/${project}${tail}${query}`;
 	};
 
 	it('GET /tasks, /tree, /types and /tasks/:id link the pages that act on the project, by path (no ?project=)', async () => {
@@ -2686,8 +2759,8 @@ describe('view data: page links, filters and form defaults', () => {
 			const id = await createTask('t');
 			const answer = await h.call('GET /tasks/:id', { params: { id }, query: { project } });
 			expect(answer.body['taskHrefs']).toEqual({
-				detail: `/modules/task/tasks/p/${projectSlug(project)}/${id}`,
-				history: `/modules/task/tasks/p/${projectSlug(project)}/${id}/history`,
+				detail: `/modules/task/tasks/p/${project}/${id}`,
+				history: `/modules/task/tasks/p/${project}/${id}/history`,
 				childrenList: page('tasks', `?parent=${id}&showAll=true`),
 			});
 		});
@@ -2707,7 +2780,7 @@ describe('view data: page links, filters and form defaults', () => {
 
 	describe('GET /projects selection data', () => {
 		it('with several projects and none selected, asks for a selection and offers the projects as encoded options', async () => {
-			const beta = h.world.createProject('beta');
+			const beta = await h.world.createProject('beta');
 			const answer = await h.call('GET /projects');
 			expect(answer.body['multiple']).toBe(true);
 			expect(answer.body['needsSelection']).toBe(true);
@@ -2721,7 +2794,7 @@ describe('view data: page links, filters and form defaults', () => {
 		});
 
 		it('with ?project given, nothing is left to select and the forms carry the encoded project', async () => {
-			h.world.createProject('beta');
+			await h.world.createProject('beta');
 			const answer = await h.call('GET /projects', { query: { project } });
 			expect(answer.body['needsSelection']).toBe(false);
 			expect(answer.body['selectedParam']).toBe(encodeURIComponent(project));
@@ -2744,7 +2817,7 @@ describe('view data: page links, filters and form defaults', () => {
 
 	describe('GET /projects projectQuery (query string the views append to their sources)', () => {
 		it('is the encoded project plus the pass-through filters given, and the blank request while no project is selected', async () => {
-			h.world.createProject('beta');
+			await h.world.createProject('beta');
 			const none = await h.call('GET /projects', { query: { showAll: 'true' } });
 			expect(none.body['projectQuery']).toBe('blank=true');
 			const withFilters = await h.call('GET /projects', {
@@ -2763,7 +2836,7 @@ describe('view data: page links, filters and form defaults', () => {
 			const answer = await h.call('POST /tasks', { query: { project }, body: { description: 'new one' } });
 			const id = answer.body['task'].id as string;
 			expect(answer.body['message']).toBe(`Created task ${id}: new one`);
-			expect(answer.body['href']).toBe(`/modules/task/tasks/p/${projectSlug(project)}/${id}`);
+			expect(answer.body['href']).toBe(`/modules/task/tasks/p/${project}/${id}`);
 		});
 	});
 
@@ -2904,7 +2977,7 @@ describe('inline errors (?inlineErrors=true): the views cannot read a failed req
 			{ writeStderr: text => lines.push(text) }
 		);
 		try {
-			const dir = broken.world.createProject('gamma', { configYml: STATUSES_YML });
+			const dir = await broken.world.createProject('gamma', { configYml: STATUSES_YML });
 			const answer = await broken.call('POST /tasks', {
 				query: { project: dir, inlineErrors: 'true' },
 				body: { description: 'x' },
@@ -2939,12 +3012,11 @@ describe('POST /tasks: blank descriptions', () => {
 
 describe('selected project that cannot be read', () => {
 	it('GET /projects names the problem and asks for the blank answer (projectQuery), so the views show the reason instead of failing', async () => {
-		const broken = h.world.createProject('broken');
-		fs.rmSync(`${broken}/.task`, { recursive: true });
+		const broken = await h.world.createProject('broken');
+		h.world.breakConfig(broken);
 		const answer = await h.call('GET /projects', { query: { project: broken } });
 		expect(answer.body['projectQuery']).toBe('blank=true');
-		expect(answer.body['selectedProblem']).toContain('no .task directory');
-		expect(answer.body['selectedProblem']).toContain('project add');
+		expect(answer.body['selectedProblem']).toContain('config.yml');
 		expect(answer.body['selectedProblem']).not.toContain('task init');
 	});
 
@@ -2995,7 +3067,7 @@ describe('detail page flags', () => {
 		const child = await createTask('child', { parent });
 		const root = await h.call('GET /tasks/:id', { params: { id: parent }, query: { project } });
 		expect(root.body['canDetach']).toBe(false);
-		const indexPath = `${project}/.task/task-index.json`;
+		const indexPath = path.join(h.world.dataDirOf(project), 'task-index.json');
 		const index = JSON.parse(fs.readFileSync(indexPath, 'utf8')) as { tasks: Array<{ id: string }> };
 		index.tasks = index.tasks.filter(x => x.id !== parent);
 		fs.writeFileSync(indexPath, JSON.stringify(index));
@@ -3046,8 +3118,8 @@ describe('GET /summary display rows', () => {
 	it('marks the closed statuses and gives a short skipped text for the narrow widget', async () => {
 		const c = await createTask('c');
 		await h.call('POST /tasks/:id/status', { params: { id: c }, query: { project }, body: { status: 'done' } });
-		const broken = h.world.createProject('broken');
-		fs.rmSync(`${broken}/.task`, { recursive: true });
+		const broken = await h.world.createProject('broken');
+		h.world.breakConfig(broken);
 		const answer = await h.call('GET /summary');
 		expect(answer.body['rows']).toEqual([
 			{ statusText: 'backlog', count: 0 },
@@ -3060,15 +3132,15 @@ describe('GET /summary display rows', () => {
 
 describe('GET /projects tasks link', () => {
 	it('is gone: the views have no link to the tasks page, the breadcrumb leads there', async () => {
-		h.world.createProject('beta');
+		await h.world.createProject('beta');
 		const selected = await h.call('GET /projects', { query: { project } });
 		expect(selected.body).not.toHaveProperty('tasksHref');
 	});
 });
 
 describe('nothing registered yet (the views must say what to do)', () => {
-	beforeEach(() => {
-		fs.rmSync(projectsRegistryPath(h.world.configDir));
+	beforeEach(async () => {
+		await h.world.unregister(project);
 	});
 
 	it('GET /projects flags noProjects with the way to register a project (project CLI) and to bring old tasks along', async () => {
@@ -3082,7 +3154,7 @@ describe('nothing registered yet (the views must say what to do)', () => {
 	});
 
 	it('GET /projects has no noProjects flag nor text once a project is registered', async () => {
-		h.world.createProject('beta');
+		await h.world.createProject('beta');
 		const answer = await h.call('GET /projects');
 		expect(answer.body['noProjects']).toBe(false);
 		expect(answer.body['noProjectsText']).toBeNull();
@@ -3098,32 +3170,36 @@ describe('nothing registered yet (the views must say what to do)', () => {
 });
 
 describe('registered project whose directory vanished', () => {
-	it('GET /projects names the missing directory and what to do (edit the legacy list or register the new folder), not `task init`', async () => {
-		fs.rmSync(project, { recursive: true });
+	it('stays a readable project: its data and config are in the registry, the page loads its tasks, nothing is reported as a problem', async () => {
+		const id = await createTask('kept in the registry');
+		fs.rmSync(projectDir, { recursive: true });
 		const answer = await h.call('GET /projects', { query: { project } });
-		expect(answer.body['projectQuery']).toBe('blank=true');
-		expect(answer.body['selectedProblem']).toContain('no longer exists');
-		expect(answer.body['selectedProblem']).toContain('delete the entry by hand');
-		expect(answer.body['selectedProblem']).toContain('project add');
-		expect(answer.body['selectedProblem']).not.toContain('recreate');
+		expect(answer.body['projectQuery']).toBe(`project=${project}`);
+		expect(answer.body['selectedProblem']).toBeNull();
+		expect(answer.body['forms']).not.toBeNull();
+		expect(answer.body['projects']).toEqual([
+			expect.objectContaining({ id: project, exists: false, openCount: 1, error: null }),
+		]);
+		const tasks = await h.call('GET /tasks', { query: { project } });
+		expect(tasks.body['tasks'].map((t: { id: string }) => t.id)).toEqual([id]);
 	});
 });
 
 describe('registered projects that cannot be used', () => {
 	it('selectedProblem is two sentences (the cause ends with a period before the fix)', async () => {
-		fs.rmSync(`${project}/.task`, { recursive: true });
+		h.world.breakConfig(project);
 		const answer = await h.call('GET /projects', { query: { project } });
 		expect(answer.body['selectedProblem']).toMatch(/\.\s+Fix the cause above/);
 	});
 
 	it('GET /projects offers no form for the selected project when it cannot be read (its submit could only fail)', async () => {
-		fs.rmSync(`${project}/.task`, { recursive: true });
+		h.world.breakConfig(project);
 		const answer = await h.call('GET /projects', { query: { project } });
 		expect(answer.body['forms']).toBeNull();
 	});
 
-	it('the all-projects summary failure hint covers a vanished directory too', async () => {
-		fs.rmSync(project, { recursive: true });
+	it('the all-projects summary failure hint names the project CLI, not task init', async () => {
+		h.world.breakConfig(project);
 		const answer = await h.call('GET /summary');
 		expect(answer.status).toBe(500);
 		expect(answer.body['hint']).toContain('project CLI');
@@ -3144,8 +3220,8 @@ describe('GET /tree?allProjects=true (the global forest, grouped by project)', (
 	const global = (extra: Record<string, string> = {}): Promise<Answer> =>
 		h.call('GET /tree', { query: { allProjects: 'true', ...extra } });
 
-	beforeEach(() => {
-		beta = h.world.createProject('beta', { configYml: STATUSES_YML });
+	beforeEach(async () => {
+		beta = await h.world.createProject('beta', { configYml: STATUSES_YML });
 	});
 
 	// The DataTable of the installed shell has no row styling or grouping: the global forest is a list of sections, one
@@ -3167,7 +3243,7 @@ describe('GET /tree?allProjects=true (the global forest, grouped by project)', (
 		expect(link).toMatchObject({
 			$type: 'ButtonLink',
 			label: 'Open the tree of alpha',
-			to: `/modules/task/tree/p/${projectSlug(project)}`,
+			to: `/modules/task/tree/p/${project}`,
 		});
 		expect(table).toMatchObject({ $type: 'DataTable', navigateTo: '{href}' });
 		const rows = table['rows'] as Array<Record<string, any>>;
@@ -3177,7 +3253,7 @@ describe('GET /tree?allProjects=true (the global forest, grouped by project)', (
 		]);
 		expect(rows[0]).toMatchObject({
 			label: 'parent',
-			href: `/modules/task/tasks/p/${projectSlug(project)}/${parent}`,
+			href: `/modules/task/tasks/p/${project}/${parent}`,
 		});
 		expect(rows[1]!['label']).toMatch(/child$/);
 		expect(rows[1]!['label']).not.toBe('child');
@@ -3256,29 +3332,15 @@ describe('GET /tree?allProjects=true (the global forest, grouped by project)', (
 		);
 	});
 
-	// Strings of a node prop starting with "$" are read by the renderer as an expression on the page context.
-	it('shows a project whose name starts with "$" as text, not as an expression of the page', async () => {
-		const dollar = h.world.createProject('$ctx.secret');
-		await createIn(dollar, 'x');
-		const groups = (await global()).body['groups'] as Array<Record<string, any>>;
-		const title = groups.map(g => g['title'] as string).find(text => text.includes('$ctx.secret'))!;
-		expect(title.startsWith('$')).toBe(false);
-		expect(title.replace(String.fromCodePoint(0x200b), '')).toBe('$ctx.secret (1 task)');
-		const link = groups
-			.flatMap(g => g['items'] as Array<Record<string, any>>)
-			.find(n => n['label']?.includes('$ctx.secret'))!;
-		expect(link['label'].startsWith('$')).toBe(false);
-	});
-
 	it('reports an unreadable project in a warning besides the forests of the others, never dropped silently', async () => {
 		await createIn(project, 'in alpha');
-		const broken = h.world.createProject('broken');
-		fs.rmSync(`${broken}/.task`, { recursive: true });
+		const broken = await h.world.createProject('broken');
+		h.world.breakConfig(broken);
 		const answer = await global();
 		expect(answer.status).toBe(200);
 		expect(answer.body['skippedCount']).toBe(1);
 		expect(answer.body['warning']).toContain('1 project not listed');
-		expect(answer.body['warning']).toContain(broken);
+		expect(answer.body['warning']).toContain(h.world.dirOf(broken));
 		expect(JSON.stringify(answer.body['groups'])).not.toContain('broken');
 		expect(answer.body['scopeText']).toBe('All projects: 2 projects, 1 open task.');
 	});
@@ -3290,8 +3352,8 @@ describe('GET /tree?allProjects=true (the global forest, grouped by project)', (
 	});
 
 	it('answers 500 with reasons when every registered project is unreadable, inline for the views', async () => {
-		fs.rmSync(`${project}/.task`, { recursive: true });
-		fs.rmSync(`${beta}/.task`, { recursive: true });
+		h.world.breakConfig(project);
+		h.world.breakConfig(beta);
 		const answer = await global();
 		expect(answer.status).toBe(500);
 		expect(answer.body['error']).toContain('none of the 2 registered projects');
@@ -3317,8 +3379,8 @@ describe('GET /types?allProjects=true (every project types, read-only list)', ()
 	let beta: string;
 	const enc = encodeURIComponent;
 
-	beforeEach(() => {
-		beta = h.world.createProject('beta', { configYml: STATUSES_YML });
+	beforeEach(async () => {
+		beta = await h.world.createProject('beta', { configYml: STATUSES_YML });
 	});
 
 	const global = (extra: Record<string, string> = {}): Promise<Answer> =>
@@ -3333,7 +3395,7 @@ describe('GET /types?allProjects=true (every project types, read-only list)', ()
 		expect(answer.body['rows']).toEqual([
 			{
 				projectName: 'alpha',
-				projectPath: project,
+				projectPath: projectDir,
 				typeText: 'bug',
 				projectParam: enc(project),
 				name: 'bug',
@@ -3343,7 +3405,7 @@ describe('GET /types?allProjects=true (every project types, read-only list)', ()
 			},
 			{
 				projectName: 'alpha',
-				projectPath: project,
+				projectPath: projectDir,
 				typeText: 'feature',
 				projectParam: enc(project),
 				name: 'feature',
@@ -3353,7 +3415,7 @@ describe('GET /types?allProjects=true (every project types, read-only list)', ()
 			},
 			{
 				projectName: 'beta',
-				projectPath: beta,
+				projectPath: h.world.dirOf(beta),
 				typeText: '(none configured: any text is accepted)',
 				projectParam: enc(beta),
 				name: '',
@@ -3388,8 +3450,8 @@ describe('GET /types?allProjects=true (every project types, read-only list)', ()
 	});
 
 	it('offers adding to a chosen project only: no default project, unreadable ones are not selectable', async () => {
-		const broken = h.world.createProject('broken');
-		fs.rmSync(`${broken}/.task`, { recursive: true });
+		const broken = await h.world.createProject('broken');
+		h.world.breakConfig(broken);
 		const answer = await global();
 		expect(answer.body['projectOptions']).toEqual([
 			{ value: enc(project), label: 'alpha' },
@@ -3397,14 +3459,14 @@ describe('GET /types?allProjects=true (every project types, read-only list)', ()
 		]);
 		expect(answer.body['forms']).toEqual({ add: { projectParam: '', name: '' } });
 		expect(answer.body['warning']).toContain('1 project not listed');
-		expect(answer.body['warning']).toContain(broken);
+		expect(answer.body['warning']).toContain(h.world.dirOf(broken));
 		// No remove form in the global scope: the type options depend on the project.
 		expect(answer.body).not.toHaveProperty('restricted');
 	});
 
 	it('answers 500 with reasons when no project is readable, inline for the views', async () => {
-		fs.rmSync(`${project}/.task`, { recursive: true });
-		fs.rmSync(`${beta}/.task`, { recursive: true });
+		h.world.breakConfig(project);
+		h.world.breakConfig(beta);
 		expect((await global()).status).toBe(500);
 		const inline = await global({ inlineErrors: 'true' });
 		expect(inline.body['errorText']).toContain('none of the 2 registered projects');
@@ -3431,8 +3493,8 @@ describe('scope data of GET /projects (one source per page for the global and th
 	let beta: string;
 	const enc = encodeURIComponent;
 
-	beforeEach(() => {
-		beta = h.world.createProject('beta', { configYml: STATUSES_YML });
+	beforeEach(async () => {
+		beta = await h.world.createProject('beta', { configYml: STATUSES_YML });
 	});
 
 	it('scopeQuery: the project, else the global scope (showAll kept) while several are registered', async () => {
@@ -3446,7 +3508,7 @@ describe('scope data of GET /projects (one source per page for the global and th
 		const unknown = await h.call('GET /projects', { query: { project: '/nowhere/ghost' } });
 		expect(unknown.body['scopeQuery']).toBe('blank=true');
 		expect(unknown.body['projectQuery']).toBe('blank=true');
-		fs.rmSync(`${beta}/.task`, { recursive: true });
+		h.world.breakConfig(beta);
 		const unreadable = await h.call('GET /projects', { query: { project: beta } });
 		expect(unreadable.body['scopeQuery']).toBe('blank=true');
 		expect(unreadable.body['projectQuery']).toBe('blank=true');
@@ -3462,17 +3524,18 @@ describe('scope data of GET /projects (one source per page for the global and th
 	});
 
 	it('with nothing registered there is no scope to ask for; a single project is its own scope', async () => {
-		fs.rmSync(projectsRegistryPath(h.world.configDir));
+		await h.world.unregister(project);
+		await h.world.unregister(beta);
 		const none = await h.call('GET /projects');
 		expect(none.body['scopeQuery']).toBe('blank=true');
-		const solo = h.world.createProject('solo');
+		const solo = await h.world.createProject('solo');
 		const single = await h.call('GET /projects');
 		expect(single.body['scopeQuery']).toBe(`project=${enc(solo)}`);
 	});
 
 	it('projectOptions leave out the projects that cannot be read (picking one could only fail)', async () => {
-		const broken = h.world.createProject('broken');
-		fs.rmSync(`${broken}/.task`, { recursive: true });
+		const broken = await h.world.createProject('broken');
+		h.world.breakConfig(broken);
 		const answer = await h.call('GET /projects');
 		expect(answer.body['projectOptions']).toEqual([
 			{ value: enc(project), label: 'alpha' },
@@ -3483,13 +3546,13 @@ describe('scope data of GET /projects (one source per page for the global and th
 	it('the create form defaults to the only readable project among several, else asks for a choice', async () => {
 		const several = await h.call('GET /projects');
 		expect(several.body['forms']['create']['projectParam']).toBe('');
-		fs.rmSync(`${beta}/.task`, { recursive: true });
+		h.world.breakConfig(beta);
 		const one = await h.call('GET /projects');
 		expect(one.body['forms']['create']['projectParam']).toBe(enc(project));
 	});
 
 	it('the delete form never has a default project (destructive: always an explicit choice)', async () => {
-		fs.rmSync(`${beta}/.task`, { recursive: true });
+		h.world.breakConfig(beta);
 		const answer = await h.call('GET /projects');
 		expect(answer.body['forms']['delete']['projectParam']).toBe('');
 	});
@@ -3503,8 +3566,7 @@ describe('scope data of GET /projects (one source per page for the global and th
 });
 
 describe('last used project (the New task page preselects it while several projects are registered)', () => {
-	// The project is remembered by its registry id: beta is a project of the shared registry (its tasks live there), alpha stays a
-	// legacy project (it has no id, so nothing can be remembered for it).
+	// The project is remembered by its registry id: alpha (made by the outer beforeEach) and beta are projects of the shared registry.
 	let beta: { id: string; dir: string };
 	const dataDir = (): string => path.join(h.world.root, 'module-data');
 
@@ -3565,17 +3627,17 @@ describe('last used project (the New task page preselects it while several proje
 		expect(answer.body['forms']['create']['projectParam']).toBe(encodeURIComponent(project));
 	});
 
-	it('a legacy project has no id to be remembered by: creating a task there changes nothing and warns of nothing', async () => {
+	it('creating a task in the other registered project remembers that one, without any warning', async () => {
 		await createIn('beta');
 		const created = await createIn(project);
 		expect(created.status).toBe(201);
 		expect(created.body['lastProjectWarning']).toBeNull();
-		expect((await h.call('GET /projects')).body['forms']['create']['projectParam']).toBe(beta.id);
+		expect((await h.call('GET /projects')).body['forms']['create']['projectParam']).toBe(project);
 	});
 
 	it('is dropped when that project is not readable any more, rather than preselecting one that can only fail', async () => {
 		// A third readable project: with only one left it would be preselected as the only choice, which is another rule.
-		h.world.createProject('gamma', { configYml: STATUSES_YML });
+		await h.world.createProject('gamma', { configYml: STATUSES_YML });
 		await createIn('beta');
 		// A key the schema does not know in the project config: the project is listed, unreadable, with the file named.
 		fs.writeFileSync(
@@ -3587,7 +3649,7 @@ describe('last used project (the New task page preselects it while several proje
 	});
 
 	it('is dropped when that project was removed from the registry', async () => {
-		h.world.createProject('gamma', { configYml: STATUSES_YML });
+		await h.world.createProject('gamma', { configYml: STATUSES_YML });
 		await createIn('beta');
 		await removeProject(h.world.registryDir, 'beta', { recursive: false });
 		const answer = await h.call('GET /projects');
@@ -3628,7 +3690,7 @@ describe('blank=true (a view asks it to replace the data of its previous scope)'
 	it.each(['GET /tasks', 'GET /tree', 'GET /types'])(
 		'%s answers an empty body without opening any project',
 		async route => {
-			h.world.createProject('beta');
+			await h.world.createProject('beta');
 			const answer = await h.call(route, { query: { blank: 'true', inlineErrors: 'true' } });
 			expect(answer).toEqual({ status: 200, body: { blank: true } });
 		}
@@ -3668,8 +3730,8 @@ describe('blank=true (a view asks it to replace the data of its previous scope)'
 describe('delete stays explicit per project', () => {
 	let beta: string;
 
-	beforeEach(() => {
-		beta = h.world.createProject('beta', { configYml: STATUSES_YML });
+	beforeEach(async () => {
+		beta = await h.world.createProject('beta', { configYml: STATUSES_YML });
 	});
 
 	it('the preview and the confirm request name the project, with the path', async () => {
@@ -3677,10 +3739,10 @@ describe('delete stays explicit per project', () => {
 		const preview = await h.call('POST /tasks/delete/plan', { query: { project }, body: { all: true } });
 		expect(preview.body['previewText']).toBe('Project alpha: Would delete 1 task(s).');
 		expect(preview.body['projectText']).toBe(
-			`Project alpha (${project}): only its tasks listed above will be deleted.`
+			`Project alpha (${projectDir}): only its tasks listed above will be deleted.`
 		);
 		expect(preview.body['confirmLabel']).toBe('Delete these tasks from alpha');
-		expect(preview.body['project']).toEqual({ name: 'alpha', path: project });
+		expect(preview.body['project']).toEqual({ id: project, name: 'alpha', path: projectDir });
 	});
 
 	it('the executed delete names the project too', async () => {

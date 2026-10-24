@@ -1,8 +1,10 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { addProject, defaultRegistryDir, LabelTakenError, type Project } from '@wadeck-app/project-sdk';
+import { ownConfigFile, resolveProject, type TaskStorage } from '@wadeck-app/task-service';
 
-/** What `task init` used to write as `.task/config.yml` (statuses with `done` terminal): fixtures of LEGACY projects keep it. */
-const LEGACY_CONFIG_TEMPLATE = `# Task configuration for this project
+/** The config `task init` used to write (statuses with `done` terminal): fixtures keep it so status/terminal assertions hold. */
+export const TEMPLATE_CONFIG = `# Task configuration for this project
 
 statuses:
   - backlog
@@ -11,32 +13,53 @@ statuses:
     terminal: true
 `;
 
-/**
- * Fixture of a LEGACY project (a folder holding a `.task`, in no shared registry): `task init` no longer exists, so tests create
- * the folder structure by hand. Creates `dir`, `.task/tasks` and the config template. Does NOT touch projects.json.
- */
-export function initLegacyProject(dir: string): string {
-	fs.mkdirSync(path.join(dir, '.task', 'tasks'), { recursive: true });
-	fs.writeFileSync(path.join(dir, '.task', 'config.yml'), LEGACY_CONFIG_TEMPLATE);
-	return dir;
+export interface RegisteredTestProject {
+	/** The folder that was registered (as given). */
+	dir: string;
+	/** The (unique, lowercase) registry name. */
+	name: string;
+	/** The registry id. */
+	id: string;
+	/** Where the project's tasks and index live (the registry data dir). */
+	storage: TaskStorage;
+	/** `<dataDir>/tasks`. */
+	tasksDir: string;
+}
+
+export interface RegisterTestProjectOptions {
+	/** Registry name; default: the lowercased basename of `dir`, made unique when already taken. */
+	name?: string;
+	/** Write the template config (default true). false: the project has no own config layer. */
+	config?: boolean;
 }
 
 /**
- * Fixture of the legacy list: appends `dir` to `<task config dir>/projects.json` (the file `task init` used to write and that task
- * now only reads). `configDir` is `ConfigDir.get('task')`, i.e. `$XDG_CONFIG_HOME/task` in tests.
+ * Fixture of a project: creates `dir`, registers it in the (sandbox) shared registry with a unique name and writes the template
+ * config into the project's own registry config layer. Tasks then live in the registry data dir (`result.tasksDir`), not in `dir`.
  */
-export function addLegacyListEntry(configDir: string, dir: string): void {
-	const file = path.join(configDir, 'projects.json');
-	const entries: string[] = fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, 'utf8')) as string[]) : [];
-	const resolved = path.resolve(dir);
-	if (!entries.some(entry => path.resolve(entry).toLowerCase() === resolved.toLowerCase())) entries.push(resolved);
-	fs.mkdirSync(configDir, { recursive: true });
-	fs.writeFileSync(file, JSON.stringify(entries, null, 2) + '\n');
-}
-
-/** A legacy project that is also in the legacy list, like a project initialised by `task init` before stage 2a. */
-export function initListedLegacyProject(dir: string, configDir: string): string {
-	initLegacyProject(dir);
-	addLegacyListEntry(configDir, dir);
-	return dir;
+export async function registerTestProject(
+	dir: string,
+	options: RegisterTestProjectOptions = {}
+): Promise<RegisteredTestProject> {
+	fs.mkdirSync(dir, { recursive: true });
+	const registryDir = defaultRegistryDir(process.env);
+	const base = (options.name ?? path.basename(dir)).toLowerCase();
+	// The registry persists across the tests of one file: a taken name gets a numeric suffix (unless the name was asked for).
+	let name = base;
+	let added: Project | undefined;
+	for (let attempt = 1; added === undefined; attempt++) {
+		try {
+			added = await addProject(registryDir, { name, path: dir });
+		} catch (error) {
+			if (!(error instanceof LabelTakenError) || options.name !== undefined || attempt > 50) throw error;
+			name = `${base}-${attempt}`;
+		}
+	}
+	const { storage } = resolveProject({ cwd: dir, projectRef: added.id });
+	if (options.config !== false) {
+		const file = ownConfigFile(storage);
+		fs.mkdirSync(path.dirname(file), { recursive: true });
+		fs.writeFileSync(file, TEMPLATE_CONFIG);
+	}
+	return { dir, name, id: added.id, storage, tasksDir: path.join(storage.dataDir, 'tasks') };
 }

@@ -1,30 +1,24 @@
-// Where the data and the config of a task project live: the shared project registry (stage 2a), or the legacy `<dir>/.task`.
+// Where the data and the config of a task project live: the shared project registry, or (an unmigrated project, stage 2b-2 removes it)
+// the old data folder of its main path.
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { getConfigLayers, mainPath, projectToolDir } from '@wadeck-app/project-sdk';
 import type { Project, Registry } from '@wadeck-app/project-sdk';
 
+import { CONFIG_FILE, INDEX_FILE, jsonFilesIn, taskIdsIn } from './dataFiles.js';
 import { ProjectDataSplitError } from './errors.js';
+import { describeLegacyData, legacyDirOf, legacyStorage } from './legacyData.js';
 
 export interface TaskStorage {
-	/** `registry`: the data folder of the shared project registry. `legacy`: `<dir>/.task` of a folder the registry does not know (removed in stage 2b). */
+	/** `registry`: the data folder of the shared project registry. `legacy`: the old data folder of the main path of a project not migrated yet. */
 	kind: 'registry' | 'legacy';
 	/** The folder holding `tasks/` and `task-index.json`. */
 	dataDir: string;
-	/** Config files, root ancestor first, the project's own last (the one `task type add` writes). Legacy: only `.task/config.yml`. */
+	/** Config files, root ancestor first, the project's own last (the one `task type add` writes). Legacy: only the old folder's `config.yml`. */
 	configFiles: string[];
-	/** Registry projects with a path: the `.task` of the main path, where the data lived before the registry (used to refuse a split). */
+	/** Registry projects with a path: the old data folder of the main path, where the data lived before the registry (used to refuse a split). */
 	legacyDir?: string;
-}
-
-const CONFIG_FILE = 'config.yml';
-const INDEX_FILE = 'task-index.json';
-
-/** The storage of a folder found by the pre-registry rule: everything in `<dir>/.task`. */
-export function legacyStorage(projectDir: string): TaskStorage {
-	const dataDir = path.join(projectDir, '.task');
-	return { kind: 'legacy', dataDir, configFiles: [path.join(dataDir, CONFIG_FILE)] };
 }
 
 /**
@@ -40,7 +34,7 @@ export function registryStorage(registry: Registry, registryDir: string, project
 		configFiles: getConfigLayers(registry, registryDir, project, 'task').map(layer =>
 			path.join(layer.dir, CONFIG_FILE)
 		),
-		...(main === undefined ? {} : { legacyDir: path.join(path.resolve(main), '.task') }),
+		...(main === undefined ? {} : { legacyDir: legacyDirOf(path.resolve(main)) }),
 	};
 }
 
@@ -54,45 +48,14 @@ export function ownConfigFile(storage: TaskStorage): string {
 	return storage.configFiles[storage.configFiles.length - 1]!;
 }
 
-function jsonFilesIn(dir: string): string[] {
-	try {
-		return fs.readdirSync(dir).filter(name => name.endsWith('.json'));
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
-		throw error;
-	}
-}
-
 /** True when the folder holds task data: a task file in `tasks/`, or `task-index.json`. An absent folder holds none. */
 export function hasTaskData(dataDir: string): boolean {
 	return jsonFilesIn(path.join(dataDir, 'tasks')).length > 0 || fs.existsSync(path.join(dataDir, INDEX_FILE));
 }
 
-export interface LegacyData {
-	/** Task files in `tasks/`. */
-	tasks: number;
-	index: boolean;
-	config: boolean;
-}
-
-/** What a `.task` folder holds (what `task cli migrate-data` copies). */
-export function describeLegacyData(taskDir: string): LegacyData {
-	return {
-		tasks: jsonFilesIn(path.join(taskDir, 'tasks')).length,
-		index: fs.existsSync(path.join(taskDir, INDEX_FILE)),
-		config: fs.existsSync(path.join(taskDir, CONFIG_FILE)),
-	};
-}
-
-/** The command that copies the `.task` of a project into the shared registry. */
+/** The command that copies the old data folder of a project into the shared registry. */
 export function migrateCommand(projectName: string): string {
 	return `task cli migrate-data -p ${projectName}`;
-}
-
-function taskIdsIn(dataDir: string): string[] {
-	return jsonFilesIn(path.join(dataDir, 'tasks'))
-		.map(name => name.slice(0, -'.json'.length))
-		.sort();
 }
 
 export interface ChosenStorage {

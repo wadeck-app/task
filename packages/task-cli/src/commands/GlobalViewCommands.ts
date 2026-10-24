@@ -19,53 +19,27 @@ const INCOMPATIBLE_FLAGS: ReadonlyMap<string, string> = new Map([
 	['--parent', 'a task id belongs to one project'],
 ]);
 
-/** What chose a single project for this run: an explicit choice contradicts `--all-projects`, the ambient `PROJECT_DIR` does not. */
+/** What chose a single project for this run: an explicit choice contradicts `--all-projects`. */
 export interface ProjectSelection {
-	explicit?: { name: '--project' | '--project-dir' | 'TASK_PROJECT' | 'TASK_PROJECT_DIR'; description: string };
-	ignoredProjectDir?: string;
+	explicit?: { name: '--project' | 'TASK_PROJECT'; description: string };
 }
 
-/**
- * Reads the project sources: the flags (`--project`, `--project-dir`), then TASK_PROJECT, TASK_PROJECT_DIR and the generic
- * PROJECT_DIR; empty values count as unset.
- */
-export function describeProjectSelection(
-	projectDirFlag: string | undefined,
-	projectRefFlag?: string
-): ProjectSelection {
+/** Reads the project sources that contradict `--all-projects`: `-p` / `--project`, then TASK_PROJECT (an empty value counts as unset). */
+export function describeProjectSelection(projectRefFlag?: string): ProjectSelection {
 	if (projectRefFlag !== undefined) {
 		return { explicit: { name: '--project', description: '--project' } };
-	}
-	if (projectDirFlag !== undefined) {
-		return { explicit: { name: '--project-dir', description: '--project-dir' } };
 	}
 	if (process.env['TASK_PROJECT']) {
 		return { explicit: { name: 'TASK_PROJECT', description: 'the TASK_PROJECT environment variable' } };
 	}
-	if (process.env['TASK_PROJECT_DIR']) {
-		return {
-			explicit: { name: 'TASK_PROJECT_DIR', description: 'the TASK_PROJECT_DIR environment variable' },
-		};
-	}
-	const generic = process.env['PROJECT_DIR'];
-	return generic ? { ignoredProjectDir: generic } : {};
+	return {};
 }
 
-/**
- * Text mode only (the JSON answer carries `registered` and `registryProblem`): the shared registry that could not be read, and
- * the projects found only through the legacy projects.json, with the command that registers each. One line each, on stderr.
- */
-function registryNotes(unregisteredPaths: readonly string[], registryProblem: string | undefined): void {
+/** Text mode only (the JSON answer carries `registryProblem`): the shared registry that could not be read, so no project is listed. One line, on stderr. */
+function registryNote(registryProblem: string | undefined): void {
 	if (registryProblem !== undefined) {
 		process.stderr.write(
-			`Warning: the shared project registry was not read, only the legacy projects are listed: ${registryProblem}\n`
-		);
-	}
-	const paths = [...new Set(unregisteredPaths)];
-	if (paths.length > 0) {
-		const commands = paths.map(dir => `project add "${dir}"`).join('; ');
-		process.stderr.write(
-			`Deprecated: ${paths.length} listed project(s) are not in the shared project registry (the legacy list is removed in a later version): ${commands}\n`
+			`Warning: the shared project registry was not read, so no project is listed: ${registryProblem}\n`
 		);
 	}
 }
@@ -85,12 +59,7 @@ function table(header: string[], rows: string[][]): string {
  * stderr (the others are still listed); `--json`: the service answer as it is (tasks tagged with their project,
  * `readableCount`, `unreadable`). Exit 1 only when projects are registered and none can be read.
  */
-export function runListAllProjects(
-	rest: string[],
-	jsonMode: boolean,
-	configDir: string,
-	selection: ProjectSelection = {}
-): CommandResult {
+export function runListAllProjects(rest: string[], jsonMode: boolean, selection: ProjectSelection = {}): CommandResult {
 	let showAll = false;
 	for (const arg of rest) {
 		if (arg === '--all-projects') continue;
@@ -114,15 +83,9 @@ export function runListAllProjects(
 			`${name.startsWith('--') ? 'Drop' : 'Unset'} ${name}, or drop --all-projects to list that one project.`
 		);
 	}
-	// Ambient and generic (a parent tool may set it): not a contradiction, but never silent. Stderr in both modes keeps stdout the pure answer.
-	if (selection.ignoredProjectDir !== undefined) {
-		process.stderr.write(
-			`Note: the PROJECT_DIR environment variable (${selection.ignoredProjectDir}) is ignored: --all-projects lists every registered project.\n`
-		);
-	}
 	let answer: TasksAcrossProjects;
 	try {
-		answer = listTasksAcrossProjects(configDir, { showAll });
+		answer = listTasksAcrossProjects({ showAll });
 	} catch (error) {
 		return failure(jsonMode, error);
 	}
@@ -131,13 +94,7 @@ export function runListAllProjects(
 	for (const project of answer.unreadable) {
 		process.stderr.write(`Warning: project ${project.path} not listed: ${project.error}\n`);
 	}
-	registryNotes(
-		[
-			...answer.tasks.filter(task => task.project.id === undefined).map(task => task.project.path),
-			...answer.unreadable.filter(project => !project.registered).map(project => project.path),
-		],
-		answer.registryProblem
-	);
+	registryNote(answer.registryProblem);
 	if (answer.readableCount === 0) {
 		return { exitCode: 0, output: NO_PROJECT_TEXT };
 	}
@@ -175,17 +132,14 @@ function summaryText(summary: ProjectsSummary): string {
  * `task projects summary`: totals, then one line per registered project (an unreadable one with its reason). Exit 1
  * only when projects are registered and none can be read.
  */
-export function runProjectsSummary(rest: string[], jsonMode: boolean, configDir: string): CommandResult {
+export function runProjectsSummary(rest: string[], jsonMode: boolean): CommandResult {
 	if (rest.length > 0) {
 		return errorOutput(jsonMode, `unexpected argument: ${rest[0]}`, SUMMARY_USAGE);
 	}
 	try {
-		const summary = summarizeProjects(configDir);
+		const summary = summarizeProjects();
 		if (jsonMode) return jsonResult(summary);
-		registryNotes(
-			summary.projects.filter(project => !project.registered).map(project => project.path),
-			summary.registryProblem
-		);
+		registryNote(summary.registryProblem);
 		return { exitCode: 0, output: summaryText(summary) };
 	} catch (error) {
 		return failure(jsonMode, error);

@@ -39,7 +39,7 @@ export function registerTaskRoutes(ctx: ModuleContext, options: TaskRoutesOption
 	// queue that is slow or absent, and the module must load whatever happens (declareEvents never throws and reports
 	// its outcome in the task log; the teardown's flush() waits for it).
 	void queueSink?.declareEvents();
-	const kit = createRouteKit(ctx, { configDir, logDir, writeStderr, eventSink });
+	const kit = createRouteKit(ctx, { logDir, writeStderr, eventSink });
 	registerProjectRoutes(kit);
 	registerTaskReadRoutes(kit);
 	registerTaskWriteRoutes(kit);

@@ -5,7 +5,6 @@ import {
 	InvalidLinkTypeError,
 	InvalidStatusError,
 	InvalidTaskTypeError,
-	ProjectsRegistryError,
 	TaskServiceError,
 } from '@wadeck-app/task-service';
 import { AmbiguousTaskPrefixError, TaskConflictError, TaskNotFoundError } from '@wadeck-app/task-core';
@@ -73,11 +72,6 @@ describe('toHttpError', () => {
 	it('InvalidTaskTypeError and InvalidDeleteFilterError => 400', () => {
 		expect(toHttpError(new InvalidTaskTypeError('x', 'bad type')).status).toBe(400);
 		expect(toHttpError(new InvalidDeleteFilterError('bad', ['id'])).status).toBe(400);
-	});
-
-	it('ProjectsRegistryError => 500 keeping the fix hint', () => {
-		const result = toHttpError(new ProjectsRegistryError('corrupt', 'delete the file'));
-		expect(result).toEqual({ status: 500, body: { error: 'corrupt', hint: 'delete the file' } });
 	});
 
 	it('any other TaskServiceError => 500 with its hint', () => {

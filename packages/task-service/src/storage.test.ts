@@ -4,15 +4,8 @@ import * as path from 'node:path';
 import { loadRegistry, projectToolDir, setParent } from '@wadeck-app/project-sdk';
 
 import { ProjectDataSplitError } from './errors.js';
-import {
-	chooseDataLocation,
-	describeLegacyData,
-	hasTaskData,
-	legacyStorage,
-	ownConfigFile,
-	registryStorage,
-	tasksDirOf,
-} from './storage.js';
+import { describeLegacyData, legacyStorage } from './legacyData.js';
+import { chooseDataLocation, hasTaskData, ownConfigFile, registryStorage, tasksDirOf } from './storage.js';
 import { createSharedRegistrySandbox } from './testHelpers.js';
 import type { SharedRegistrySandbox } from './testHelpers.js';
 

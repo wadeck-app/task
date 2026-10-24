@@ -1,4 +1,3 @@
-import type { NoProjectInScopeError } from '@wadeck-app/project-sdk';
 import type { TaskEvent } from './events.js';
 
 /**
@@ -105,9 +104,6 @@ export class NoReadableProjectsError extends TaskServiceError {
 	}
 }
 
-/** The legacy `<configDir>/projects.json` is unreadable or corrupt. Never auto-repaired. */
-export class ProjectsRegistryError extends TaskServiceError {}
-
 /**
  * A delete failed partway through its plan: the tasks deleted before the failure ARE deleted and cannot be restored.
  * Carries their `onTaskDeleted` events so the caller still delivers them before reporting the failure.
@@ -127,23 +123,6 @@ export class PartialDeleteError extends TaskServiceError {
 			`The ${deletedCount} deleted task(s) cannot be restored; the others are still there. Fix the cause, then run \`task delete\` again for the remaining tasks.`
 		);
 		this.cause = cause;
-	}
-}
-
-/** Two ways to name the project contradict each other (`-p` and `--project-dir`). Nothing was read. */
-export class ConflictingProjectSelectionError extends TaskServiceError {}
-
-/**
- * The project has no `.task` to read: either the directory resolved from the registry holds none, or nothing resolved at all
- * (`scopeError` is then the registry's "no project in scope" answer, with the registered names).
- */
-export class ProjectNotInitializedError extends TaskServiceError {
-	constructor(
-		message: string,
-		hint: string,
-		readonly scopeError?: NoProjectInScopeError
-	) {
-		super(message, hint);
 	}
 }
 

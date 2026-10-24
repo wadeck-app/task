@@ -12,10 +12,7 @@ export {
 	AmbiguousDeletePrefixError,
 	PartialDeleteError,
 	DanglingParentError,
-	ProjectsRegistryError,
 	NoReadableProjectsError,
-	ConflictingProjectSelectionError,
-	ProjectNotInitializedError,
 	ProjectDataSplitError,
 	DataMigrationError,
 } from './errors.js';
@@ -80,11 +77,12 @@ export type {
 export { parseDeleteFilter, planDelete, executeDelete } from './deleteTasks.js';
 export type { DeleteSelection, DeleteSelectionProblem } from './deleteSelection.js';
 export { selectDeleteTargets, describeDeleteEffects } from './deleteSelection.js';
+export type { StatusInfo } from './listStatuses.js';
+export { listStatuses } from './listStatuses.js';
 export type { StatusCount } from './taskStats.js';
 export { countTasksByStatus } from './taskStats.js';
 export { listTypes, addType, removeType } from './taskTypes.js';
 export { getTaskConfigDir, getTaskLogDir } from './configDir.js';
-export { isSameProjectDir, listRegisteredProjects, projectsRegistryPath } from './projectsRegistry.js';
 export type { ProjectHealth } from './projectsHealth.js';
 export type { InspectedProject } from './projectsHealth.js';
 export { inspectKnownProjects, inspectProject, inspectRegisteredProjects } from './projectsHealth.js';
@@ -100,12 +98,10 @@ export type { ProjectSource, ResolveProjectInput, ResolvedProject } from './reso
 export { resolveProject, resolveProjectReference } from './resolveProject.js';
 export type { KnownProject, KnownProjects, ListKnownProjectsOptions } from './knownProjects.js';
 export { listKnownProjects } from './knownProjects.js';
-export type { TaskStorage, LegacyData, ChosenStorage } from './storage.js';
+export type { TaskStorage, ChosenStorage } from './storage.js';
 export {
 	chooseDataLocation,
-	describeLegacyData,
 	hasTaskData,
-	legacyStorage,
 	migrateCommand,
 	ownConfigFile,
 	registryStorage,

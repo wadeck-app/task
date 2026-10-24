@@ -4,8 +4,9 @@ import type { TaskLinks, TaskSummary, TaskTreeNode } from '@wadeck-app/task-core
 
 import { shortTitle, shortUtcTime } from './display.js';
 import { detailHref } from './hrefs.js';
+import type { ProjectIdentity } from './projectRef.js';
 
-type ProjectRef = { path: string };
+type ProjectRef = ProjectIdentity & { path: string };
 
 /**
  * Tasks with the project, the link to their detail page, and the texts a table shows: a truncated title and the

@@ -185,6 +185,73 @@ describe('the rules detect what they forbid', () => {
 		expect(violationsIn('task-service', write)).not.toEqual([]);
 	});
 
+	// Stage 2b: the legacy `projects.json` is no longer read; the `.task` folder is known by ONE module (task-service legacyData.ts).
+	it.each(PACKAGES)('%s must not mention the legacy projects.json in its sources', pkg => {
+		expect(violationsIn(pkg, "const file = path.join(configDir, 'projects.json');")).not.toEqual([]);
+		expect(
+			violationsIn(pkg, "const file = 'projects.json';", { isTest: true, resolveRelative: noRelative })
+		).toEqual([]);
+		expect(violationsIn(pkg, '// the old projects.json is gone')).toEqual([]);
+	});
+
+	describe('no `.task` path construction outside the legacy-data module', () => {
+		const construction = [
+			"path.join(dir, '.task', 'tasks')",
+			'path.join(dir, ".task")',
+			"path.join(projectDir, '.task/config.yml')",
+			'`${dir}/.task`',
+			"dir + '/.task'",
+			"fs.existsSync(path.join(dir, '.task'))",
+		];
+
+		it.each(PACKAGES)('%s: any construction is reported', pkg => {
+			for (const source of construction) {
+				expect(violationsIn(pkg, `const p = ${source};`), `${pkg}: ${source}`).not.toEqual([]);
+			}
+		});
+
+		it('tests, comments and prose are not reported', () => {
+			for (const pkg of PACKAGES) {
+				expect(
+					violationsIn(pkg, `const p = ${construction[0]!};`, { isTest: true, resolveRelative: noRelative }),
+					pkg
+				).toEqual([]);
+				expect(violationsIn(pkg, '// the data used to live in <dir>/.task'), pkg).toEqual([]);
+				expect(violationsIn(pkg, "const m = 'tasks kept in the .task folder';"), pkg).toEqual([]);
+			}
+		});
+
+		it('the global config dir default (~/.task) is not project data', () => {
+			expect(violationsIn('task-core', "const raw = path.join(os.homedir(), '.task');")).toEqual([]);
+			// Documentation text of the same directory.
+			expect(violationsIn('task-cli', "const help = 'Global config directory (default: ~/.task)';")).toEqual([]);
+		});
+
+		it('the legacy-data module itself may construct it, no other file of task-service', () => {
+			const source = "const dir = path.join(projectDir, '.task');";
+			const inModule = checkSource(
+				'packages/task-service/src/legacyData.ts',
+				source,
+				PACKAGE_RULES['task-service'],
+				{
+					isTest: false,
+					resolveRelative: noRelative,
+				}
+			);
+			const elsewhere = checkSource(
+				'packages/task-service/src/storage.ts',
+				source,
+				PACKAGE_RULES['task-service'],
+				{
+					isTest: false,
+					resolveRelative: noRelative,
+				}
+			);
+			expect(inModule).toEqual([]);
+			expect(elsewhere).toHaveLength(1);
+		});
+	});
+
 	it('a forbidden package.json dependency is reported', () => {
 		const found = checkManifest('p.json', { dependencies: { 'task-cli': '*' } }, PACKAGE_RULES['app-module-task']);
 		expect(found).toHaveLength(1);

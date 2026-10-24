@@ -69,7 +69,7 @@ describe('deleteInput', () => {
 });
 
 describe('delete bodies', () => {
-	const project = { name: 'proj', path: '/p/proj' };
+	const project = { id: 'a1b2c3d4', name: 'proj', path: '/p/proj' };
 	const plan = { tasks: [], notFound: ['zz'], orphanCount: 1, danglingLinkCount: 2 };
 
 	it('the preview summary names the side effects and the unknown ids', () => {
@@ -83,7 +83,7 @@ describe('delete bodies', () => {
 		);
 		expect(body['canConfirm']).toBe(true);
 		expect(body['confirmRequest']).toEqual({
-			projectParam: '%2Fp%2Fproj',
+			projectParam: 'a1b2c3d4',
 			ids: 'a,zz',
 			cascade: false,
 			confirm: true,

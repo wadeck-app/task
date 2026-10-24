@@ -4,7 +4,8 @@ import * as path from 'node:path';
 import { ConfigSchemaError, loadRegistry, setParent } from '@wadeck-app/project-sdk';
 
 import { loadTaskConfig, TASK_CONFIG_SCHEMA } from './projectConfig.js';
-import { legacyStorage, ownConfigFile, registryStorage } from './storage.js';
+import { legacyStorage } from './legacyData.js';
+import { ownConfigFile, registryStorage } from './storage.js';
 import type { TaskStorage } from './storage.js';
 import { createSharedRegistrySandbox } from './testHelpers.js';
 import type { SharedRegistrySandbox } from './testHelpers.js';

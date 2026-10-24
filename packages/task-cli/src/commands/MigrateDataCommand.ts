@@ -33,7 +33,7 @@ function describe(result: MigrateDataResult): string {
 
 /**
  * `resolve` returns the project of the run (the same resolution as every command: -p, TASK_PROJECT, the cwd) and may throw its
- * typed errors. The copy is refused with the reason and the next step when the project is not registered, is virtual, has nothing
+ * typed errors. The copy is refused with the reason and the next step when the project is virtual, has nothing
  * to copy, or already has data in the registry; the `.task` is never modified.
  */
 export function runMigrateData(args: string[], jsonMode: boolean, resolve: () => ResolvedProject): CommandResult {

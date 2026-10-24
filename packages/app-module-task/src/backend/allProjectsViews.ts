@@ -13,7 +13,6 @@ import {
 	tasksPageHref,
 } from './hrefs.js';
 import { projectTasksSection } from './dslNodes.js';
-import { registryHintFor } from './projects.js';
 import { flattenTree } from './rowViews.js';
 
 const NO_TYPE_TEXT = '(none configured: any text is accepted)';
@@ -44,7 +43,6 @@ export function skippedOf(projects: readonly ProjectOverview[]): SkippedProject[
 function shortProblem(project: ProjectOverview): string {
 	if (project.error?.includes('task cli migrate-data') === true) return 'not migrated';
 	if (!project.exists) return 'missing';
-	if (!project.initialized) return 'not initialized';
 	return 'invalid config';
 }
 
@@ -52,9 +50,6 @@ function shortProblem(project: ProjectOverview): string {
 export function projectRows(projects: readonly ProjectOverview[]): Record<string, unknown>[] {
 	return projects.map(p => ({
 		name: p.name,
-		registered: p.registered,
-		// Not in the shared registry: what to run to register it (the widget shows the notice of the route; the label stays about the data).
-		registryHint: p.registered ? null : registryHintFor(p.path),
 		// The widget table has no room for a Problem column: the reason's gist sits next to the name, the full one is in `problem`.
 		label: p.error === null ? p.name : `${p.name} (${shortProblem(p)})`,
 		path: p.path,

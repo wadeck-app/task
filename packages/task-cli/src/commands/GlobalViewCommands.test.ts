@@ -1,10 +1,11 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { ownConfigFile } from '@wadeck-app/task-service';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { runTaskCommand } from '../TaskIndex.js';
-import { initListedLegacyProject } from '../testHelpers.js';
+import { type RegisteredTestProject, registerTestProject } from '../testHelpers.js';
 
 interface JsonTask {
 	id: string;
@@ -47,6 +48,7 @@ describe('global view commands (task list --all-projects, task projects summary)
 		previousXdg = process.env['XDG_CONFIG_HOME'];
 		process.env['XDG_CONFIG_HOME'] = path.join(root, 'xdg');
 		stderr = [];
+		registered.clear();
 		vi.spyOn(process.stderr, 'write').mockImplementation(chunk => {
 			stderr.push(String(chunk));
 			return true;
@@ -61,12 +63,21 @@ describe('global view commands (task list --all-projects, task projects summary)
 		fs.rmSync(root, { recursive: true, force: true });
 	});
 
+	// The registered projects of the test, by folder.
+	const registered = new Map<string, RegisteredTestProject>();
+
 	async function initProject(name: string): Promise<string> {
 		const dir = path.join(root, name);
 		fs.mkdirSync(dir);
-		// Like a project initialised by the old `task init`: a `.task` folder, also listed in the legacy projects.json.
-		initListedLegacyProject(dir, path.join(process.env['XDG_CONFIG_HOME']!, 'task'));
+		registered.set(dir, await registerTestProject(dir, { name }));
 		return dir;
+	}
+
+	// Makes a registered project unreadable: its own config.yml is not valid YAML (the reason names that file).
+	function breakProject(dir: string): string {
+		const file = ownConfigFile(registered.get(dir)!.storage);
+		fs.writeFileSync(file, 'statuses: [unclosed\n');
+		return file;
 	}
 
 	async function addTask(dir: string, title: string, status?: string): Promise<string> {
@@ -85,8 +96,7 @@ describe('global view commands (task list --all-projects, task projects summary)
 		await addTask(alpha, 'alpha open task');
 		await addTask(alpha, 'alpha done task', 'done');
 		await addTask(beta, 'beta open task');
-		// The setup runs commands in projects that are not in the shared registry (deprecation line on stderr): the tests below
-		// assert on the stderr of the command under test only.
+		// The tests below assert on the stderr of the command under test only.
 		stderr.length = 0;
 		return { alpha, beta };
 	}
@@ -131,17 +141,17 @@ describe('global view commands (task list --all-projects, task projects summary)
 
 		it('reports an unreadable project on stderr with its reason and still lists the others (exit 0)', async () => {
 			const { beta } = await twoProjects();
-			fs.rmSync(beta, { recursive: true });
+			const configFile = breakProject(beta);
 			const result = await runTaskCommand(['list', '--all-projects'], root);
 			expect(result.exitCode).toBe(0);
 			expect(result.output).toContain('alpha open task');
 			expect(stderr.join('')).toContain(beta);
-			expect(stderr.join('')).toContain('does not exist');
+			expect(stderr.join('')).toContain(configFile);
 		});
 
 		it('--json carries the unreadable projects in the answer and writes nothing to stderr', async () => {
 			const { beta } = await twoProjects();
-			fs.rmSync(beta, { recursive: true });
+			breakProject(beta);
 			const result = await runTaskCommand(['--json', 'list', '--all-projects'], root);
 			const parsed = JSON.parse(result.output) as JsonList;
 			expect(parsed.readableCount).toBe(1);
@@ -152,8 +162,8 @@ describe('global view commands (task list --all-projects, task projects summary)
 
 		it('fails (exit 1) with every reason and the fix when no registered project can be read', async () => {
 			const { alpha, beta } = await twoProjects();
-			fs.rmSync(alpha, { recursive: true });
-			fs.rmSync(beta, { recursive: true });
+			breakProject(alpha);
+			breakProject(beta);
 			const result = await runTaskCommand(['list', '--all-projects'], root);
 			expect(result.exitCode).toBe(1);
 			expect(result.output).toContain(alpha);
@@ -163,8 +173,8 @@ describe('global view commands (task list --all-projects, task projects summary)
 
 		it('--json: that failure is {"error", "hint"}', async () => {
 			const { alpha, beta } = await twoProjects();
-			fs.rmSync(alpha, { recursive: true });
-			fs.rmSync(beta, { recursive: true });
+			breakProject(alpha);
+			breakProject(beta);
 			const result = await runTaskCommand(['--json', 'list', '--all-projects'], root);
 			expect(result.exitCode).toBe(1);
 			const parsed = JSON.parse(result.output) as { error: string; hint: string };
@@ -221,96 +231,6 @@ describe('global view commands (task list --all-projects, task projects summary)
 			expect(result.output).toContain('Usage: task list --all-projects');
 		});
 
-		it('fails when --project-dir is given (one project and all projects contradict)', async () => {
-			const { alpha } = await twoProjects();
-			const result = await runTaskCommand(['list', '--all-projects', '--project-dir', alpha], root);
-			expect(result.exitCode).toBe(1);
-			expect(result.output).toContain('--project-dir');
-			expect(result.output).toContain('--all-projects');
-		});
-
-		it('--project-dir: the message names the flag and the hint says how to get out', async () => {
-			const { alpha } = await twoProjects();
-			const result = await runTaskCommand(['list', '--all-projects', '--project-dir', alpha], root);
-			expect(result.exitCode).toBe(1);
-			expect(result.output).toBe(
-				'Error: --all-projects cannot be combined with --project-dir: one project and all projects contradict\n' +
-					'Drop --project-dir, or drop --all-projects to list that one project.'
-			);
-		});
-
-		it('TASK_PROJECT_DIR is rejected the same way, naming the variable', async () => {
-			const { alpha } = await twoProjects();
-			process.env['TASK_PROJECT_DIR'] = alpha;
-			const result = await runTaskCommand(['list', '--all-projects'], root);
-			expect(result.exitCode).toBe(1);
-			expect(result.output).toBe(
-				'Error: --all-projects cannot be combined with the TASK_PROJECT_DIR environment variable: one project and all projects contradict\n' +
-					'Unset TASK_PROJECT_DIR, or drop --all-projects to list that one project.'
-			);
-		});
-
-		it('--json: --project-dir and TASK_PROJECT_DIR give the same {"error", "hint"} shape', async () => {
-			const { alpha } = await twoProjects();
-			const viaFlag = await runTaskCommand(['--json', 'list', '--all-projects', '--project-dir', alpha], root);
-			process.env['TASK_PROJECT_DIR'] = alpha;
-			const viaEnv = await runTaskCommand(['--json', 'list', '--all-projects'], root);
-			expect(viaFlag.exitCode).toBe(1);
-			expect(viaEnv.exitCode).toBe(1);
-			const flag = JSON.parse(viaFlag.output) as { error: string; hint: string };
-			const env = JSON.parse(viaEnv.output) as { error: string; hint: string };
-			expect(Object.keys(env)).toEqual(Object.keys(flag));
-			expect(flag.error).toContain('--project-dir');
-			expect(env.error).toContain('TASK_PROJECT_DIR');
-			expect(env.hint).toContain('Unset TASK_PROJECT_DIR');
-		});
-
-		it('the flag wins over TASK_PROJECT_DIR in the message', async () => {
-			const { alpha } = await twoProjects();
-			process.env['TASK_PROJECT_DIR'] = alpha;
-			const result = await runTaskCommand(['list', '--all-projects', '--project-dir', alpha], root);
-			expect(result.exitCode).toBe(1);
-			expect(result.output).toContain('combined with --project-dir');
-		});
-
-		it('an empty TASK_PROJECT_DIR counts as unset', async () => {
-			await twoProjects();
-			process.env['TASK_PROJECT_DIR'] = '';
-			const result = await runTaskCommand(['list', '--all-projects'], root);
-			expect(result.exitCode).toBe(0);
-		});
-
-		it('PROJECT_DIR (generic, may be set by a parent tool) is not an error: listed anyway, said ignored once on stderr', async () => {
-			const { alpha } = await twoProjects();
-			process.env['PROJECT_DIR'] = alpha;
-			const result = await runTaskCommand(['list', '--all-projects'], root);
-			expect(result.exitCode).toBe(0);
-			expect(result.output).toContain('beta open task');
-			const notes = stderr.filter(line => line.includes('PROJECT_DIR'));
-			expect(notes).toEqual([
-				`Note: the PROJECT_DIR environment variable (${alpha}) is ignored: --all-projects lists every registered project.\n`,
-			]);
-		});
-
-		it('--json with PROJECT_DIR: stdout stays the pure JSON answer, the note goes to stderr', async () => {
-			const { alpha } = await twoProjects();
-			process.env['PROJECT_DIR'] = alpha;
-			const result = await runTaskCommand(['--json', 'list', '--all-projects'], root);
-			expect(result.exitCode).toBe(0);
-			expect(Object.keys(JSON.parse(result.output) as object).sort()).toEqual([
-				'readableCount',
-				'tasks',
-				'unreadable',
-			]);
-			expect(stderr.filter(line => line.includes('PROJECT_DIR'))).toHaveLength(1);
-		});
-
-		it('no note when PROJECT_DIR is not set', async () => {
-			await twoProjects();
-			await runTaskCommand(['list', '--all-projects'], root);
-			expect(stderr.join('')).not.toContain('PROJECT_DIR');
-		});
-
 		it('is not shadowed by a per-project list: plain `task list` still prints the JSON array of the project', async () => {
 			const { alpha } = await twoProjects();
 			const result = await runTaskCommand(['list'], alpha);
@@ -319,16 +239,16 @@ describe('global view commands (task list --all-projects, task projects summary)
 	});
 
 	describe('project selection on `task projects summary` (it uses no project)', () => {
-		it('summary ignores project selection (nothing contradicts): it works with TASK_PROJECT_DIR and PROJECT_DIR set', async () => {
-			const { alpha } = await twoProjects();
-			process.env['TASK_PROJECT_DIR'] = alpha;
-			process.env['PROJECT_DIR'] = alpha;
-			const result = await runTaskCommand(['projects', 'summary'], root);
-			expect(result.exitCode).toBe(0);
-			// The only stderr line allowed is the stage-1 deprecation of unregistered projects: nothing about the selection variables.
-			expect(stderr.join('')).not.toContain('ignored');
-			expect(stderr.join('')).not.toContain('PROJECT_DIR');
-			expect(stderr.join('').split('\n').filter(Boolean)).toHaveLength(1);
+		it('summary ignores project selection (nothing contradicts): it works with TASK_PROJECT set, and says nothing on stderr', async () => {
+			await twoProjects();
+			process.env['TASK_PROJECT'] = 'alpha';
+			try {
+				const result = await runTaskCommand(['projects', 'summary'], root);
+				expect(result.exitCode).toBe(0);
+				expect(stderr.join('')).toBe('');
+			} finally {
+				delete process.env['TASK_PROJECT'];
+			}
 		});
 
 		it('--config does not change the all-projects behaviour (not a project selection)', async () => {
@@ -343,17 +263,14 @@ describe('global view commands (task list --all-projects, task projects summary)
 	});
 
 	describe('help text', () => {
-		it('task --help documents that --project-dir and TASK_PROJECT_DIR are refused, and PROJECT_DIR ignored, with --all-projects', async () => {
+		it('task --help documents that --all-projects cannot be combined with -p or TASK_PROJECT', async () => {
 			const help = (await runTaskCommand(['--help'], root)).output;
-			expect(help).toContain(
-				'cannot be combined with --follow, --tree, --parent, --project-dir or TASK_PROJECT_DIR'
-			);
-			expect(help).toContain('PROJECT_DIR is ignored (stderr note)');
+			expect(help).toContain('cannot be combined with --follow, --tree, --parent, -p or TASK_PROJECT');
 		});
 
 		it('task projects --help says no project is used and where the removed subcommands went', async () => {
 			const help = (await runTaskCommand(['projects', '--help'], root)).output;
-			expect(help).toContain('--project-dir, TASK_PROJECT_DIR and PROJECT_DIR select no project here');
+			expect(help).toContain('-p and TASK_PROJECT are not used here');
 			expect(help).toContain('project add');
 			expect(help).toContain('moved to the project CLI');
 		});
@@ -371,17 +288,18 @@ describe('global view commands (task list --all-projects, task projects summary)
 
 		it('shows an unreadable project with its reason and exits 0 while another can be read', async () => {
 			const { beta } = await twoProjects();
-			fs.rmSync(beta, { recursive: true });
+			const configFile = breakProject(beta);
 			const result = await runTaskCommand(['projects', 'summary'], root);
 			expect(result.exitCode).toBe(0);
 			expect(result.output).toContain('1 open / 2 total in 1 project');
-			expect(result.output).toMatch(/beta\s+\[unreadable: .*does not exist/);
+			expect(result.output).toMatch(/beta\s+\[unreadable: .*config\.yml/);
+			expect(result.output).toContain(configFile);
 		});
 
 		it('exits 1 with every reason and the fix when all projects fail', async () => {
 			const { alpha, beta } = await twoProjects();
-			fs.rmSync(alpha, { recursive: true });
-			fs.rmSync(beta, { recursive: true });
+			breakProject(alpha);
+			breakProject(beta);
 			const result = await runTaskCommand(['projects', 'summary'], root);
 			expect(result.exitCode).toBe(1);
 			expect(result.output).toContain(alpha);
@@ -397,20 +315,20 @@ describe('global view commands (task list --all-projects, task projects summary)
 		it('--json prints the summary of the service as it is', async () => {
 			const { beta } = await twoProjects();
 			await initProject('gamma');
-			fs.rmSync(beta, { recursive: true });
+			const configFile = breakProject(beta);
 			const result = await runTaskCommand(['projects', 'summary', '--json'], root);
 			expect(result.exitCode).toBe(0);
 			const parsed = JSON.parse(result.output) as JsonSummary;
 			expect(parsed).toMatchObject({ readableCount: 2, open: 1, total: 2 });
 			expect(parsed.projects.map(p => p.name)).toEqual(['alpha', 'beta', 'gamma']);
 			expect(parsed.projects[1]!.open).toBeNull();
-			expect(parsed.projects[1]!.error).toContain('does not exist');
+			expect(parsed.projects[1]!.error).toContain(configFile);
 		});
 
 		it('--json: all failing is {"error", "hint"} with exit 1', async () => {
 			const { alpha, beta } = await twoProjects();
-			fs.rmSync(alpha, { recursive: true });
-			fs.rmSync(beta, { recursive: true });
+			breakProject(alpha);
+			breakProject(beta);
 			const result = await runTaskCommand(['--json', 'projects', 'summary'], root);
 			expect(result.exitCode).toBe(1);
 			expect(JSON.parse(result.output)).toMatchObject({ error: expect.stringContaining('none of the 2') });

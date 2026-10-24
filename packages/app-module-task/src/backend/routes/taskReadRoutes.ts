@@ -37,7 +37,7 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 		if (isBlankRequest(req.query)) return BLANK_ANSWER;
 		const showAll = showAllFlag(req.query);
 		if (allProjectsFlag(req.query, 'the tasks')) {
-			return { status: 200, body: allTasksBody(listTasksAcrossProjects(kit.configDir, { showAll }), showAll) };
+			return { status: 200, body: allTasksBody(listTasksAcrossProjects({ showAll }), showAll) };
 		}
 		const ctx = open(req);
 		const parent = optionalQueryValue(req.query, 'parent');
@@ -108,12 +108,12 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 					throw new RequestError(
 						400,
 						`allProjects and ${name} cannot be combined`,
-						`A task ${name} belongs to one project: use ?project=<absolute dir>&${name}=<id>.`
+						`A task ${name} belongs to one project: use ?project=<id|name|alias>&${name}=<task id>.`
 					);
 				}
 			}
 			const showAll = showAllFlag(req.query);
-			const found = readAcrossProjects(kit.configDir, ctx => ({
+			const found = readAcrossProjects(ctx => ({
 				forest: listForest(ctx, { showAll }),
 				terminalStatuses: ctx.config.terminalStatuses,
 			}));

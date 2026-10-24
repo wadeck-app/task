@@ -11,7 +11,7 @@ vi.mock('@wadeck-app/queue-sdk', () => ({ createQueuePublisher: createPublisherM
 vi.unmock('@wadeck-app/task-service');
 
 import { runTaskCommand } from './TaskIndex.js';
-import { initLegacyProject } from './testHelpers.js';
+import { TEMPLATE_CONFIG } from './testHelpers.js';
 
 // Stage 2a: the data and the config of a REGISTERED project live in the shared registry (projects/<id>/task/{data,config}),
 // never in <main path>/.task. Every test gets its own registry (XDG_CONFIG_HOME -> temp dir, restored afterwards).
@@ -183,7 +183,8 @@ describe('a registered project keeps its data in the shared registry', () => {
 describe('a registered project whose data is still in <main path>/.task keeps working on it (stage 1 behaviour) with ONE deprecation line; only a real split is refused', () => {
 	async function unmigrated(): Promise<{ dir: string; id: string }> {
 		const dir = workDir('shop');
-		initLegacyProject(dir);
+		fs.mkdirSync(path.join(dir, '.task', 'tasks'), { recursive: true });
+		fs.writeFileSync(path.join(dir, '.task', 'config.yml'), TEMPLATE_CONFIG);
 		fs.writeFileSync(
 			path.join(dir, '.task', 'tasks', 'abc12345.json'),
 			JSON.stringify({
@@ -335,7 +336,8 @@ describe('a registered project whose data is still in <main path>/.task keeps wo
 	});
 
 	it('migrate-data on a folder that is not registered says to run project add first', async () => {
-		const dir = initLegacyProject(workDir('old'));
+		const dir = workDir('old');
+		fs.mkdirSync(path.join(dir, '.task', 'tasks'), { recursive: true });
 
 		const result = await runTaskCommand(['cli', 'migrate-data'], dir);
 
@@ -385,18 +387,6 @@ describe('task init and task projects add|remove|move|prune|list point to the pr
 		expect(result.output).toContain('task init');
 		expect(result.output).toContain(`project add "${dir}"`);
 		expect(fs.existsSync(path.join(dir, '.task'))).toBe(false);
-	});
-
-	it('task init honours --project-dir in the command it suggests, and answers {error, hint} in JSON', async () => {
-		const target = workDir('target');
-
-		const result = await runTaskCommand(['--json', 'init', '--project-dir', target], root);
-
-		expect(result.exitCode).toBe(1);
-		expect(JSON.parse(result.output)).toEqual({
-			error: expect.stringContaining('task init'),
-			hint: expect.stringContaining(`project add "${target}"`),
-		});
 	});
 
 	it.each([
@@ -458,7 +448,7 @@ describe('discoverability', () => {
 		expect(output).toContain('task cli migrate-data');
 		expect(output).toContain('<registry>/projects/<id>/task/data');
 		// A registered project that still has its tasks in .task keeps working on them, with one stderr line.
-		expect(output).toContain('keeps working on that .task');
+		expect(output).toContain('keeps working on that folder');
 		expect(output).toContain('old copy still in');
 		expect(output).toContain('real split');
 	});

@@ -3,11 +3,9 @@ export interface ParsedArgs {
 	configDir: string | undefined;
 	/** `-p` / `--project <ref>`: a project of the shared registry (name, alias or id; never a path). */
 	projectRef: string | undefined;
-	/** `--project-dir <dir>`: project directory override (deprecated, see the shared registry). */
-	projectDir: string | undefined;
 	jsonMode: boolean;
 	command: string | undefined;
-	/** Arguments after the command, without `-p <ref>`, `--project-dir <dir>` and `--json`. */
+	/** Arguments after the command, without `-p <ref>` and `--json`. */
 	rest: string[];
 }
 
@@ -15,7 +13,6 @@ export interface ParsedArgs {
 export function parseArgs(args: string[]): ParsedArgs {
 	let i = 0;
 	let configDir: string | undefined;
-	let projectDir: string | undefined;
 	let projectRef: string | undefined;
 	let jsonMode = false;
 
@@ -37,13 +34,10 @@ export function parseArgs(args: string[]): ParsedArgs {
 	const command = args[i];
 	const trailing = args.slice(i + 1);
 
-	// Filter -p <ref>, --project-dir <path> and --json from rest args
+	// Filter -p <ref> and --json from rest args
 	const rest: string[] = [];
 	for (let j = 0; j < trailing.length; j++) {
-		if (trailing[j] === '--project-dir' && trailing[j + 1] !== undefined) {
-			projectDir = trailing[j + 1]!;
-			j++;
-		} else if ((trailing[j] === '-p' || trailing[j] === '--project') && trailing[j + 1] !== undefined) {
+		if ((trailing[j] === '-p' || trailing[j] === '--project') && trailing[j + 1] !== undefined) {
 			projectRef = trailing[j + 1]!;
 			j++;
 		} else if (trailing[j] === '--json') {
@@ -53,5 +47,14 @@ export function parseArgs(args: string[]): ParsedArgs {
 		}
 	}
 
-	return { configDir, projectDir, projectRef, jsonMode, command, rest };
+	return { configDir, projectRef, jsonMode, command, rest };
+}
+
+/**
+ * `--project-dir <dir>` was removed (stage 2b): a project is named with `-p <id|name|alias>` or found from a registered cwd.
+ * True when it is typed anywhere (`--project-dir x`, `--project-dir=x`, a bare `--project-dir`): the caller refuses loudly
+ * instead of letting it be taken for an argument of the command.
+ */
+export function usesRemovedProjectDir(args: readonly string[]): boolean {
+	return args.some(arg => arg === '--project-dir' || arg.startsWith('--project-dir='));
 }

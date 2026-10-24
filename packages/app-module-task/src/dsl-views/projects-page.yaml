@@ -1,7 +1,7 @@
-# Projects (nav /projects): a READ-ONLY list of the projects task knows, with their open task count.
+# Projects (nav /projects): a READ-ONLY list of the projects of the shared project registry, with their open task count.
 # Projects are added, moved and removed with the project CLI (project add | paths | remove), never from here: the page has no
-# form and no action. Each row says whether the project is in the shared registry (its id) or only in the legacy list (the exact
-# `project add "<dir>"` command that registers it), and, when the project cannot be read, why, with the command that fixes it.
+# form and no action. Each row gives the registry id, the name, the main folder and the open tasks, and, when the project cannot
+# be read, why, with the command that fixes it. A shared registry that cannot be read is said in a badge (no project is listed then).
 # - The table has no row click: the readable projects are linked by the buttons below it (`openLinks`, built by the route).
 $sources:
     projects:
@@ -11,7 +11,7 @@ $type: PageContent
 sections:
     - $type: PageHeader
       title: Projects
-      subtitle: Projects of the shared project registry (and the legacy list). Read only - manage them with the project CLI.
+      subtitle: Projects of the shared project registry. Read only - manage them with the project CLI.
     # Nothing registered yet: the welcome text of the route (the exact next step) instead of a blank page.
     - $type: Badge
       $if: $sources.projects.noProjects
@@ -21,20 +21,19 @@ sections:
       $if: $sources.projects.attentionText
       label: $sources.projects.attentionText
       variant: warning
-    # The projects found only through the legacy list (with the command that registers each), or a shared registry that could
-    # not be read.
+    # The shared registry could not be read: no project is listed, this says why (the file and the fix).
     - $type: Badge
-      $if: $sources.projects.registryNotice
-      label: $sources.projects.registryNotice
-      variant: warning
+      $if: $sources.projects.registryProblem
+      label: $sources.projects.registryProblem
+      variant: danger
     - $type: DataTable
       rows: $sources.projects.projectRows
       emptyMessage: No project is registered (project add <dir>)
       columns:
+          - { key: 'id', label: 'Id', mono: true, nowrap: true }
           - { key: 'name', label: 'Project' }
           - { key: 'path', label: 'Directory', mono: true }
           - { key: 'openText', label: 'Open tasks', nowrap: true }
-          - { key: 'registryText', label: 'Registry' }
           - { key: 'problemText', label: 'Problem' }
     # The tasks of each readable project: one link per project, built by the route.
     - $type: ExtensionSlot

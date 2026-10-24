@@ -93,7 +93,7 @@ export function allProjectsFlag(query: RouteRequest['query'], what: string): boo
 		throw new RequestError(
 			400,
 			'allProjects and project cannot be combined',
-			'Use ?allProjects=true for every registered project, or ?project=<absolute dir> for one.'
+			'Use ?allProjects=true for every registered project, or ?project=<id|name|alias> for one.'
 		);
 	}
 	return true;

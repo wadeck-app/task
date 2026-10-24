@@ -821,16 +821,19 @@ describe('projects page: a read-only list (src/dsl-views/projects-page.yaml)', (
 		expect(page).toContain('project CLI');
 	});
 
-	it('shows the name, directory, open tasks, the registry column (id or the project add command) and the problem of each row', () => {
+	it('shows the id, name, directory, open tasks and the problem of each row: no registry column, no registered marker', () => {
 		expect(page).toContain('rows: $sources.projects.projectRows');
-		for (const key of ['name', 'path', 'openText', 'registryText', 'problemText']) {
+		for (const key of ['id', 'name', 'path', 'openText', 'problemText']) {
 			expect(page, key).toContain(`key: '${key}'`);
+		}
+		for (const gone of ['registryText', 'registryHint', 'registryNotice', 'legacy']) {
+			expect(page, gone).not.toContain(gone);
 		}
 		expect(page).not.toContain('type: actions');
 	});
 
-	it('shows the welcome text of a registry with no project, the attention banner and the registry notice', () => {
-		for (const field of ['noProjectsText', 'attentionText', 'registryNotice']) {
+	it('shows the welcome text of a registry with no project, the attention banner and the registry problem', () => {
+		for (const field of ['noProjectsText', 'attentionText', 'registryProblem']) {
 			expect(page, field).toContain(`label: $sources.projects.${field}`);
 		}
 	});
@@ -998,19 +1001,27 @@ describe('views: every mutating action that produces queue events shows what the
 	);
 });
 
-describe('shared project registry (stage 1): the views say which projects are not in it', () => {
-	it('the Projects page has a Registry column and a warning badge bound to registryNotice', () => {
+describe('shared project registry: the views say when it cannot be read', () => {
+	it('the Projects page shows registryProblem in a danger badge, and has no registry column', () => {
 		const page = readFileSync(join(packageDir, 'src/dsl-views/projects-page.yaml'), 'utf8');
-		expect(page).toContain("{ key: 'registryText', label: 'Registry' }");
+		expect(page).not.toContain("label: 'Registry'");
 		expect(page).toMatch(
-			/\$if: \$sources\.projects\.registryNotice\n\s+label: \$sources\.projects\.registryNotice\n\s+variant: warning/
+			/\$if: \$sources\.projects\.registryProblem\n\s+label: \$sources\.projects\.registryProblem\n\s+variant: danger/
 		);
 	});
 
-	it('the dashboard widget shows the same notice in a warning badge', () => {
+	it('the dashboard widget shows the same problem in a danger badge', () => {
 		const widget = readFileSync(join(packageDir, 'src/dsl-views/tasks-widget.yaml'), 'utf8');
 		expect(widget).toMatch(
-			/\$if: \$sources\.summary\.registryNotice\n\s+label: \$sources\.summary\.registryNotice\n\s+variant: warning/
+			/\$if: \$sources\.summary\.registryProblem\n\s+label: \$sources\.summary\.registryProblem\n\s+variant: danger/
 		);
+	});
+
+	it('no view still binds the retired legacy fields', () => {
+		for (const name of viewNames) {
+			for (const gone of ['registryNotice', 'registryText', 'registryHint', '.registered']) {
+				expect(view(name), `${name}: ${gone}`).not.toContain(gone);
+			}
+		}
 	});
 });

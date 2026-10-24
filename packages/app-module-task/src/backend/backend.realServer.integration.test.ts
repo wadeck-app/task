@@ -5,9 +5,8 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
+import { addProject, defaultRegistryDir, projectToolDir } from '@wadeck-app/project-sdk';
 import { TaskStore } from '@wadeck-app/task-core';
-
-import { projectSlug } from './projectRef.js';
 
 /**
  * Builds the module with `app-core-cli package` and serves the result through a REAL app-core server
@@ -31,6 +30,8 @@ const cliEntry = join(dirname(cliPackageJson), 'dist/cli.bundle.js');
 let child: ChildProcess | undefined;
 let workDir: string;
 let projectDir: string;
+let projectId: string;
+let dataDir: string;
 let baseUrl: string;
 let taskId: string;
 
@@ -64,7 +65,7 @@ function startServer(builtModule: string, xdgConfigHome: string): Promise<string
 		child = spawn(process.execPath, [cliEntry, 'dev', builtModule], {
 			windowsHide: true,
 			// Port 0: a free port, never the developer's real app-core on 4850.
-			// XDG_CONFIG_HOME: the module reads <xdg>/task/projects.json, so the fixture registry, not the real one.
+			// XDG_CONFIG_HOME: the module reads the shared project registry in <xdg>/project, so the fixture registry, not the real one.
 			env: { ...process.env, APP_CORE_PORT: '0', XDG_CONFIG_HOME: xdgConfigHome },
 		});
 		const onData = (chunk: Buffer): void => {
@@ -94,15 +95,15 @@ describe('the packaged module through a real app-core server', () => {
 			workDir = mkdtempSync(join(tmpdir(), 'app-module-task-real-server-'));
 			const xdg = join(workDir, 'xdg');
 			projectDir = join(workDir, 'proj');
-			mkdirSync(join(projectDir, '.task', 'tasks'), { recursive: true });
-			writeFileSync(join(projectDir, '.task', 'config.yml'), 'statuses:\n  - backlog\n  - done\n');
-			taskId = new TaskStore(join(projectDir, '.task', 'tasks')).create(
-				'seeded over the filesystem',
-				'backlog'
-			).id;
-			// The legacy list (read only for task): written by hand, as `task init` used to.
-			mkdirSync(join(xdg, 'task'), { recursive: true });
-			writeFileSync(join(xdg, 'task', 'projects.json'), JSON.stringify([projectDir]));
+			mkdirSync(projectDir, { recursive: true });
+			// The fixture registry: one project, registered with the SDK as `project add` does; its data and config live in the registry.
+			const registryDir = defaultRegistryDir({ XDG_CONFIG_HOME: xdg });
+			projectId = (await addProject(registryDir, { name: 'proj', aliases: [], path: projectDir })).id;
+			const configDir = projectToolDir(registryDir, projectId, 'task', 'config');
+			mkdirSync(configDir, { recursive: true });
+			writeFileSync(join(configDir, 'config.yml'), 'statuses:\n  - backlog\n  - done\n');
+			dataDir = projectToolDir(registryDir, projectId, 'task', 'data');
+			taskId = new TaskStore(join(dataDir, 'tasks')).create('seeded over the filesystem', 'backlog').id;
 			const builtModule = join(workDir, 'module');
 			packageModule(builtModule);
 			baseUrl = await startServer(builtModule, xdg);
@@ -129,22 +130,20 @@ describe('the packaged module through a real app-core server', () => {
 		return { status: response.status, body: (await response.json()) as Record<string, any> };
 	}
 
-	const q = (): string => `project=${encodeURIComponent(projectDir)}`;
+	const q = (): string => `project=${projectId}`;
 
-	it('GET /projects lists the fixture project', async () => {
+	it('GET /projects lists the registry project', async () => {
 		const { status, body } = await call('GET', '/projects');
 		expect(status).toBe(200);
 		expect(body['projects']).toEqual([
 			{
+				id: projectId,
 				name: 'proj',
 				path: projectDir,
-				registered: false,
-				registryHint: `Not in the shared project registry: project add "${projectDir}"`,
 				exists: true,
-				initialized: true,
 				openCount: 1,
 				error: null,
-				href: `/modules/task/tasks/p/${projectSlug(projectDir)}`,
+				href: `/modules/task/tasks/p/${projectId}`,
 			},
 		]);
 	});
@@ -158,7 +157,7 @@ describe('the packaged module through a real app-core server', () => {
 	it('GET /tasks without ?project uses the only registered project', async () => {
 		const { status, body } = await call('GET', '/tasks');
 		expect(status).toBe(200);
-		expect(body['project']).toEqual({ name: 'proj', path: projectDir });
+		expect(body['project']).toEqual({ id: projectId, name: 'proj', path: projectDir });
 	});
 
 	it('GET /tasks/:id hands the real id param (by prefix) to the handler', async () => {
@@ -179,10 +178,11 @@ describe('the packaged module through a real app-core server', () => {
 		expect(body).toMatchObject({ scope: 'all', open: 1, total: 1, skipped: [] });
 	});
 
-	it('an unregistered project is a 404 with the project add fix', async () => {
-		const { status, body } = await call('GET', `/tasks?project=${encodeURIComponent(join(workDir, 'elsewhere'))}`);
+	it('a folder is no project reference: 404 no project matches, with the hint to use the id, name or alias', async () => {
+		const { status, body } = await call('GET', `/tasks?project=${encodeURIComponent(projectDir)}`);
 		expect(status).toBe(404);
-		expect(body['hint']).toContain('project add');
+		expect(body['error']).toBe(`no project matches "${projectDir}"`);
+		expect(body['hint']).toContain('id, name or alias');
 	});
 
 	it('POST /tasks with an invalid body is a 400 (the JSON body reaches the handler), creating nothing', async () => {
@@ -217,7 +217,7 @@ describe('the packaged module through a real app-core server', () => {
 		let childId: string;
 
 		beforeAll(() => {
-			childId = new TaskStore(join(projectDir, '.task', 'tasks')).create('child seeded', 'backlog').id;
+			childId = new TaskStore(join(dataDir, 'tasks')).create('child seeded', 'backlog').id;
 		});
 
 		it('POST /tasks/:id/parent reads the id param and the JSON body, then GET /tree, /children and /ancestors show it', async () => {

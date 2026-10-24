@@ -4,7 +4,8 @@ import * as path from 'node:path';
 
 import { DataMigrationError } from './errors.js';
 import type { ResolvedProject } from './resolveProject.js';
-import { describeLegacyData, hasTaskData, ownConfigFile, tasksDirOf } from './storage.js';
+import { describeLegacyData } from './legacyData.js';
+import { hasTaskData, ownConfigFile, tasksDirOf } from './storage.js';
 
 export interface MigrateDataOptions {
 	/** Report what would be copied; write nothing (not even the destination folders). */
@@ -40,21 +41,14 @@ function sizeOf(file: string): number {
 
 /**
  * Copies `<main path>/.task/{tasks/*.json, task-index.json, config.yml}` into the data folder and the own config layer of a
- * REGISTERED project. COPY ONLY: the source is never modified, moved or deleted. Refuses (nothing written) when the project is not
- * registered, is virtual, has nothing to copy, or when the destination already holds task data (or a config, if there is one to
+ * project of the shared registry. COPY ONLY: the source is never modified, moved or deleted. Refuses (nothing written) when the project
+ * is virtual, has nothing to copy, or when the destination already holds task data (or a config, if there is one to
  * copy). Verifies the file count and every byte size after the copy; any failure removes what this call created
  * (`DataMigrationError`). Nothing is rebuilt: a missing index stays missing and is reported in `warnings`.
  */
 export function migrateData(resolved: ResolvedProject, options: MigrateDataOptions = {}): MigrateDataResult {
 	const dryRun = options.dryRun === true;
 	const { storage } = resolved;
-	if (resolved.id === undefined || storage.kind !== 'registry') {
-		const dir = resolved.path ?? '<dir>';
-		return fail(
-			`${dir} is not in the shared project registry, so there is no registry folder to copy its .task into`,
-			`Register it first: project add "${dir}" [--name <name>], then run: task cli migrate-data -p <name>`
-		);
-	}
 	const project = { id: resolved.id, name: resolved.name };
 	if (storage.legacyDir === undefined) {
 		return fail(

@@ -2,6 +2,7 @@
 import type { ProjectCommand } from '../cli/env.js';
 import { runDelete } from './DeleteCommand.js';
 import { runChildren, runHistory, runLinks, runList, runParents, runShow, runTree } from './ReadCommands.js';
+import { runStatus } from './StatusCommand.js';
 import { runType } from './TypeCommand.js';
 import {
 	runAddLabel,
@@ -35,8 +36,9 @@ export const PROJECT_COMMANDS: ReadonlyMap<string, ProjectCommand> = new Map<str
 	['set-meta', runSetMeta],
 	['delete', runDelete],
 	['type', runType],
+	['status', runStatus],
 ]);
 
 /** Shown for an unknown command: every command word, including the ones that need no project. */
 export const VALID_COMMANDS_HINT =
-	'Valid commands: new, list, show, history, set-status, set-type, set-parent, remove-parent, children, parents, tree, link, unlink, links, add-label, remove-label, set-meta, delete, type, plugins, projects';
+	'Valid commands: new, list, show, history, set-status, set-type, set-parent, remove-parent, children, parents, tree, link, unlink, links, add-label, remove-label, set-meta, delete, type, status, plugins, projects';

@@ -9,7 +9,7 @@ import { withRowLinks } from './rowViews.js';
 export const DELETE_USAGE =
 	'Send a JSON body with exactly one selector: { "ids": string[] | "id1,id2" }, { "all": true } or { "filter": "<id|title|status|parentId>=<glob>[,<glob>]" }, plus an optional "cascade": true. POST /tasks/delete also needs "confirm": true.';
 
-type ProjectRef = { name: string; path: string };
+type ProjectRef = { id: string; name: string; path: string };
 
 /**
  * The ids of a request: an array, or a comma-separated string (blank entries dropped, spaces around an id ignored: a

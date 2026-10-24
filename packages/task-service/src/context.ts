@@ -7,13 +7,13 @@ import type { TaskStorage } from './storage.js';
 export interface TaskServiceContext {
 	store: TaskStore;
 	config: TaskResolvedConfig;
-	/** Where the data and the config live (the shared registry, or the legacy `.task`): `type add|remove` writes the own config file from it. */
+	/** Where the data and the config live (the shared registry, or the old folder of an unmigrated project): `type add|remove` writes the own config file from it. */
 	storage: TaskStorage;
-	/** Lines worth showing once per process (CLI: stderr; module: task log), e.g. the data of a registered project still in its `.task`. */
+	/** Lines worth showing once per process (CLI: stderr; module: task log), e.g. the data of a registered project still in its old folder. */
 	notices?: string[];
 	/**
-	 * `id` is the id in the shared project registry; absent for a project found by the legacy rule (a directory holding a `.task`).
-	 * `path` is the main path of a registered project, or the legacy directory; absent for a virtual project (no folder).
+	 * `id` is the id in the shared project registry (always set by the resolution; tests may leave it out).
+	 * `path` is the main path of the project; absent for a virtual project (no folder).
 	 */
 	project: { id?: string; name: string; path?: string };
 }
