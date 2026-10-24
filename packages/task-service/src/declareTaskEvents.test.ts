@@ -118,6 +118,28 @@ describe('declareTaskEvents with the real queue SDK and the SDK fake daemon', ()
 		expect(lines[0]!.msg).toMatch(/queue-cli/);
 	}, 20_000);
 
+	it('maps unknown (connection reset twice: the declaration may be stored) to a warn line, quiet on stderr', async () => {
+		daemon.resetNextRegistration(2);
+
+		const outcome = await declareTaskEvents(publisher(), options());
+
+		expect(outcome.status).toBe('unknown');
+		expect(stderr).toEqual([]);
+		const lines = logLines(logDir());
+		expect(lines).toHaveLength(1);
+		expect(lines[0]!.level).toBe('warn');
+	}, 20_000);
+
+	it('still registers after one connection reset: the SDK retries a registration once because it is idempotent', async () => {
+		daemon.resetNextRegistration(1);
+
+		const outcome = await declareTaskEvents(publisher(), options());
+
+		expect(outcome).toEqual({ status: 'registered', count: queueEventDeclarations.length });
+		expect(stderr).toEqual([]);
+		expect(logLines(logDir())).toEqual([]);
+	}, 20_000);
+
 	it('reports a missing daemon (no queue to start) as dropped: logged as warn, nothing on stderr', async () => {
 		const queue = publisher();
 		await daemon.close();
@@ -150,7 +172,7 @@ describe('declareTaskEvents with the real queue SDK and the SDK fake daemon', ()
 	}, 20_000);
 });
 
-/** A scripted publisher: for the answers the SDK fake cannot produce (a reset during a registration) and for a publisher that breaks its promise. */
+/** A scripted publisher: for what the SDK fake cannot produce: a `dropped` answer without reason and a publisher that breaks its promise. */
 describe('declareTaskEvents with a scripted publisher', () => {
 	let logRoot: string;
 	let stderr: string[];
@@ -172,20 +194,6 @@ describe('declareTaskEvents with a scripted publisher', () => {
 			registerEvents: answer,
 		};
 	}
-
-	it('maps unknown (reset or timeout twice: it may be stored) to a warn line, quiet on stderr', async () => {
-		const outcome = await declareTaskEvents(
-			scripted(() => Promise.resolve({ status: 'unknown', reason: 'the connection broke' })),
-			options()
-		);
-
-		expect(outcome).toEqual({ status: 'unknown', reason: 'the connection broke' });
-		expect(stderr).toEqual([]);
-		const lines = logLines(path.join(logRoot, 'logs'));
-		expect(lines).toHaveLength(1);
-		expect(lines[0]!.level).toBe('warn');
-		expect(lines[0]!.msg).toContain('the connection broke');
-	});
 
 	it('says what the SDK did not when a non-registered answer has no reason', async () => {
 		const outcome = await declareTaskEvents(
