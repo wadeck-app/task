@@ -67,11 +67,21 @@ Global flags:
                        Refused by 'task list --all-projects' (as is TASK_PROJECT_DIR) and by 'task projects add' (task projects add cannot use --project-dir)
 
 Events (pushed to queue through @wadeck-app/queue-sdk after the change is saved, with the project directory as cwd so its .queue/subscribers.yml is used):
-  onTaskCreated    new                              taskId, status, description, parentId, type, labels
-  onStatusChange   set-status                       taskId, oldStatus, newStatus, type, labels
-  onTaskLinked     link                             taskId, linkType, targetId
-  onTaskUnlinked   unlink                           taskId, linkType, targetId
-  onTaskUnblocked  set-status, last blocker closed  taskId (the unblocked task), blockerId, status, type, labels
+  onTaskCreated        new                              taskId, status, description, parentId, type, labels
+  onStatusChange       set-status                       taskId, oldStatus, newStatus, status (= newStatus), type, labels
+  onTaskLinked         link                             taskId, linkType, targetId
+  onTaskUnlinked       unlink                           taskId, linkType, targetId
+  onTaskUnblocked      set-status, last blocker closed  taskId (the unblocked task), blockerId, status, type, labels
+  onTaskTypeChanged    set-type                         taskId, oldType, newType
+  onTaskLabelAdded     add-label                        taskId, label
+  onTaskLabelRemoved   remove-label                     taskId, label
+  onTaskMetaChanged    set-meta                         taskId, key, oldValue, newValue
+  onTaskParentChanged  set-parent, remove-parent        taskId, oldParentId, newParentId
+  onTaskDeleted        delete                           taskId, description, status, parentId, orphanedChildIds, removedLinkCount
+  Absent fields are omitted (no oldType for a first type, no oldValue for a new key, no oldParentId / newParentId for a root task).
+  Nothing fires when nothing changed (same type, label already there or absent, same meta value, same parent) or when the command fails.
+  delete fires one onTaskDeleted per deleted task, after the deletion; never for --dry-run. With --cascade-delete the order is
+  leaves before parents (deepest first).
   Every payload also has taskProjectName and taskProjectPath. Subscriber filter example: when: payload.newStatus=done
   The events are declared to the queue (name, when it fires, payload schema, example; 'queue events list' shows them, source: task):
   once per declaration, just before the first event after an install or update, never at every command, recorded in

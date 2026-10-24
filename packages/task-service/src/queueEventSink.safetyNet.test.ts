@@ -48,6 +48,7 @@ describe('default queue sink under the test setup', () => {
 						taskId: 'abc',
 						oldStatus: 'backlog',
 						newStatus: 'done',
+						status: 'done',
 						type: undefined,
 						labels: [],
 						taskProjectName: 'p',

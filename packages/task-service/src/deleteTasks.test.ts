@@ -130,8 +130,146 @@ describe('planDelete / executeDelete', () => {
 		const plan = planDelete(t.ctx, { selector: { kind: 'ids', ids: [a.id] } });
 		expect(t.ctx.store.list()).toHaveLength(2);
 
-		expect(executeDelete(t.ctx, plan)).toEqual({ deletedCount: 1 });
+		expect(executeDelete(t.ctx, plan).deletedCount).toBe(1);
 		expect(t.ctx.store.list().map(x => x.id)).not.toContain(a.id);
 		expect(t.ctx.store.list()).toHaveLength(1);
+	});
+});
+
+describe('executeDelete events (onTaskDeleted)', () => {
+	let t: TestContext;
+	beforeEach(() => {
+		t = createTestContext();
+	});
+	afterEach(() => t.cleanup());
+
+	const ids = (...selected: string[]) => ({ kind: 'ids' as const, ids: selected });
+
+	it('produces one onTaskDeleted per deleted task with what the task was, and nothing for the plan', () => {
+		const a = t.ctx.store.create('write docs', 'in-progress');
+		t.ctx.store.create('b', 'backlog');
+
+		const plan = planDelete(t.ctx, { selector: ids(a.id) });
+		expect(plan).not.toHaveProperty('events');
+
+		const result = executeDelete(t.ctx, plan);
+
+		expect(result.deletedCount).toBe(1);
+		expect(result.events).toEqual([
+			{
+				name: 'onTaskDeleted',
+				payload: {
+					taskId: a.id,
+					description: 'write docs',
+					status: 'in-progress',
+					parentId: undefined,
+					orphanedChildIds: [],
+					removedLinkCount: 0,
+					taskProjectName: 'proj',
+					taskProjectPath: t.rootDir,
+				},
+			},
+		]);
+		expect(JSON.parse(JSON.stringify(result.events[0]!.payload))).not.toHaveProperty('parentId');
+	});
+
+	it('carries the parent of the deleted task', () => {
+		const parent = t.ctx.store.create('parent', 'backlog');
+		const child = t.ctx.store.create('child', 'backlog', parent.id);
+
+		const result = executeDelete(t.ctx, planDelete(t.ctx, { selector: ids(child.id) }));
+
+		expect(result.events[0]!.payload).toMatchObject({ taskId: child.id, parentId: parent.id });
+	});
+
+	it('reports the children that became root tasks and the links that were removed with the task', () => {
+		const parent = t.ctx.store.create('parent', 'backlog');
+		const c1 = t.ctx.store.create('c1', 'backlog', parent.id);
+		const c2 = t.ctx.store.create('c2', 'backlog', parent.id);
+		const x = t.ctx.store.create('x', 'backlog');
+		const y = t.ctx.store.create('y', 'backlog');
+		t.ctx.store.addLink(x.id, 'blockedBy', parent.id);
+		t.ctx.store.addLink(y.id, 'causedBy', parent.id);
+
+		const result = executeDelete(t.ctx, planDelete(t.ctx, { selector: ids(parent.id) }));
+
+		expect(result.events).toHaveLength(1);
+		const payload = result.events[0]!.payload as { orphanedChildIds: string[]; removedLinkCount: number };
+		expect([...payload.orphanedChildIds].sort()).toEqual([c1.id, c2.id].sort());
+		expect(payload.removedLinkCount).toBe(2);
+		// The real effects match what the plan announced.
+		expect(t.ctx.store.get(c1.id).parentId).toBeUndefined();
+	});
+
+	it('cascade: one event per descendant, leaves before parents, each with its parent intact and no orphan', () => {
+		const root = t.ctx.store.create('root', 'backlog');
+		const child = t.ctx.store.create('child', 'backlog', root.id);
+		const grandchild = t.ctx.store.create('grandchild', 'backlog', child.id);
+
+		const result = executeDelete(t.ctx, planDelete(t.ctx, { selector: ids(root.id), cascade: true }));
+
+		expect(result.deletedCount).toBe(3);
+		expect(result.events.map(event => event.payload.taskId)).toEqual([grandchild.id, child.id, root.id]);
+		expect(result.events.map(event => (event.payload as { parentId?: string }).parentId)).toEqual([
+			child.id,
+			root.id,
+			undefined,
+		]);
+		for (const event of result.events) {
+			expect(event.payload).toMatchObject({ orphanedChildIds: [], removedLinkCount: 0 });
+		}
+	});
+
+	it('keeps the order of the plan between tasks of the same depth, deepest first overall', () => {
+		const a = t.ctx.store.create('a', 'backlog');
+		const b = t.ctx.store.create('b', 'backlog');
+		const childOfB = t.ctx.store.create('child of b', 'backlog', b.id);
+
+		const result = executeDelete(t.ctx, planDelete(t.ctx, { selector: ids(a.id, b.id, childOfB.id) }));
+
+		expect(result.events.map(event => event.payload.taskId)).toEqual([childOfB.id, a.id, b.id]);
+	});
+
+	it('deleting a parent and its child together reports no orphan (the child is gone with it)', () => {
+		const parent = t.ctx.store.create('parent', 'backlog');
+		const child = t.ctx.store.create('child', 'backlog', parent.id);
+
+		const result = executeDelete(t.ctx, planDelete(t.ctx, { selector: { kind: 'all' } }));
+
+		expect(result.events.map(event => event.payload.taskId)).toEqual([child.id, parent.id]);
+		for (const event of result.events) {
+			expect(event.payload).toMatchObject({ orphanedChildIds: [] });
+		}
+	});
+
+	it('counts the links of the tasks still present when the task is deleted (a holder deleted later counts)', () => {
+		const a = t.ctx.store.create('a', 'backlog');
+		const b = t.ctx.store.create('b', 'backlog');
+		t.ctx.store.addLink(b.id, 'blockedBy', a.id);
+
+		const result = executeDelete(t.ctx, planDelete(t.ctx, { selector: ids(a.id, b.id) }));
+
+		expect(result.events.map(event => (event.payload as { removedLinkCount: number }).removedLinkCount)).toEqual([
+			1, 0,
+		]);
+	});
+
+	it('produces no event for a task that vanished between the plan and the execution', () => {
+		const a = t.ctx.store.create('a', 'backlog');
+		const b = t.ctx.store.create('b', 'backlog');
+		const plan = planDelete(t.ctx, { selector: ids(a.id, b.id) });
+		t.ctx.store.deleteTask(a.id);
+
+		const result = executeDelete(t.ctx, plan);
+
+		expect(result.deletedCount).toBe(1);
+		expect(result.events.map(event => event.payload.taskId)).toEqual([b.id]);
+	});
+
+	it('an empty plan produces no event', () => {
+		expect(executeDelete(t.ctx, { tasks: [], notFound: [], orphanCount: 0, danglingLinkCount: 0 })).toEqual({
+			deletedCount: 0,
+			events: [],
+		});
 	});
 });

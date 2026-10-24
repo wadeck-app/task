@@ -24,7 +24,10 @@ export interface QueueEventDeclaration {
 	example: Record<string, unknown>;
 	/** What `queue wait --when` filters on. */
 	correlationKey: string;
+	/** True when the event ends the entity it is about (nothing more will happen to that taskId). */
 	terminal?: boolean;
+	/** How a terminal event ended: `info` when it is neither a success nor a failure. */
+	outcome?: 'success' | 'failure' | 'info';
 }
 
 /** Typed so that adding an event to the TaskEvent union breaks the build until it is listed here (and declared below). */
@@ -34,6 +37,12 @@ export const TASK_EVENT_NAMES: Record<TaskEvent['name'], true> = {
 	onTaskLinked: true,
 	onTaskUnlinked: true,
 	onTaskUnblocked: true,
+	onTaskTypeChanged: true,
+	onTaskLabelAdded: true,
+	onTaskLabelRemoved: true,
+	onTaskMetaChanged: true,
+	onTaskParentChanged: true,
+	onTaskDeleted: true,
 };
 
 /** The limits the queue daemon enforces on a declaration (queue-core `EventCatalog`); a test holds ours to them. */
@@ -61,6 +70,15 @@ const linkProperties = {
 	targetId: { type: 'string', description: 'The task the link points to.' },
 	...projectProperties,
 } as const;
+
+function labelSchema(): Record<string, unknown> {
+	return {
+		type: 'object',
+		properties: { taskId: string, label: string, ...projectProperties },
+		required: ['taskId', 'label', ...projectRequired],
+		additionalProperties: false,
+	};
+}
 
 function linkSchema(): Record<string, unknown> {
 	return {
@@ -105,7 +123,7 @@ export const queueEventDeclarations: readonly QueueEventDeclaration[] = [
 		name: 'onStatusChange',
 		description:
 			'The status of a task changed (task set-status, or the Task page of the app-core UI). Fires once per change, after ' +
-			'it is saved, with oldStatus and newStatus. Never fires for an unchanged status (that request is refused). ' +
+			'it is saved, with oldStatus and newStatus (status equals newStatus). Never fires for an unchanged status (refused). ' +
 			'Reaching a terminal status such as done does not end anything by itself: onTaskUnblocked may follow. Not fired by creation.',
 		schema: {
 			type: 'object',
@@ -113,17 +131,19 @@ export const queueEventDeclarations: readonly QueueEventDeclaration[] = [
 				taskId: string,
 				oldStatus: string,
 				newStatus: string,
+				status: { type: 'string', description: 'Same value as newStatus (for filters on payload.status).' },
 				type: { type: 'string', description: 'Absent when the task has no type.' },
 				labels,
 				...projectProperties,
 			},
-			required: ['taskId', 'oldStatus', 'newStatus', 'labels', ...projectRequired],
+			required: ['taskId', 'oldStatus', 'newStatus', 'status', 'labels', ...projectRequired],
 			additionalProperties: false,
 		},
 		example: {
 			taskId: '3f2a9c1e-0000-4000-8000-000000000001',
 			oldStatus: 'in-progress',
 			newStatus: 'done',
+			status: 'done',
 			labels: ['urgent'],
 			...projectExample,
 		},
@@ -187,6 +207,142 @@ export const queueEventDeclarations: readonly QueueEventDeclaration[] = [
 			...projectExample,
 		},
 		correlationKey: 'payload.taskId',
+	},
+	{
+		name: 'onTaskTypeChanged',
+		description:
+			'The type of a task changed (task set-type, or the app-core UI). Fires once per change, after it is saved, with ' +
+			'oldType (absent when the task had no type) and newType. Does NOT fire when the type is set to its current value, ' +
+			'when the request is refused (unknown type), at creation, or when the list of project types is edited.',
+		schema: {
+			type: 'object',
+			properties: {
+				taskId: string,
+				oldType: { type: 'string', description: 'Absent when the task had no type.' },
+				newType: string,
+				...projectProperties,
+			},
+			required: ['taskId', 'newType', ...projectRequired],
+			additionalProperties: false,
+		},
+		example: {
+			taskId: '3f2a9c1e-0000-4000-8000-000000000001',
+			oldType: 'bug',
+			newType: 'feature',
+			...projectExample,
+		},
+		correlationKey: 'payload.taskId',
+	},
+	{
+		name: 'onTaskLabelAdded',
+		description:
+			'A label was added to a task (task add-label, or the app-core UI). Fires once per label really added, after it is ' +
+			'saved; label is the added one, not the full list. Does NOT fire when the task already has the label, at creation, ' +
+			'or for a removal (onTaskLabelRemoved).',
+		schema: labelSchema(),
+		example: { taskId: '3f2a9c1e-0000-4000-8000-000000000001', label: 'urgent', ...projectExample },
+		correlationKey: 'payload.taskId',
+	},
+	{
+		name: 'onTaskLabelRemoved',
+		description:
+			'A label was removed from a task (task remove-label, or the app-core UI). Fires once per label really removed, after ' +
+			'it is saved. Does NOT fire when the task does not have the label, when the task is deleted, or for an addition ' +
+			'(onTaskLabelAdded).',
+		schema: labelSchema(),
+		example: { taskId: '3f2a9c1e-0000-4000-8000-000000000001', label: 'urgent', ...projectExample },
+		correlationKey: 'payload.taskId',
+	},
+	{
+		name: 'onTaskMetaChanged',
+		description:
+			'A metadata key of a task was set (task set-meta, or the app-core UI). Fires once per change, after it is saved, ' +
+			'with key, newValue and oldValue (absent when the key is new; an existing empty value is ""). Does NOT fire when ' +
+			'the key already holds that value, when the request is refused, or at creation.',
+		schema: {
+			type: 'object',
+			properties: {
+				taskId: string,
+				key: string,
+				oldValue: { type: 'string', description: 'Absent when the key did not exist before.' },
+				newValue: { type: 'string', description: 'May be empty.' },
+				...projectProperties,
+			},
+			required: ['taskId', 'key', 'newValue', ...projectRequired],
+			additionalProperties: false,
+		},
+		example: {
+			taskId: '3f2a9c1e-0000-4000-8000-000000000001',
+			key: 'owner',
+			oldValue: 'ann',
+			newValue: 'bob',
+			...projectExample,
+		},
+		correlationKey: 'payload.taskId',
+	},
+	{
+		name: 'onTaskParentChanged',
+		description:
+			'A task was attached under a parent, moved to another, or detached (task set-parent / remove-parent, or the app-core ' +
+			'UI). Fires once per change, after it is saved. oldParentId is absent for a root task, newParentId when detached. ' +
+			'Does NOT fire when the parent is unchanged, at creation under a parent (onTaskCreated), or when a parent is deleted.',
+		schema: {
+			type: 'object',
+			properties: {
+				taskId: string,
+				oldParentId: { type: 'string', description: 'Absent when the task was a root task.' },
+				newParentId: { type: 'string', description: 'Absent when the task was detached (now a root task).' },
+				...projectProperties,
+			},
+			required: ['taskId', ...projectRequired],
+			additionalProperties: false,
+		},
+		example: {
+			taskId: '3f2a9c1e-0000-4000-8000-000000000002',
+			oldParentId: '3f2a9c1e-0000-4000-8000-000000000001',
+			...projectExample,
+		},
+		correlationKey: 'payload.taskId',
+	},
+	{
+		name: 'onTaskDeleted',
+		description:
+			'A task was deleted (task delete, or the Delete page of the app-core UI). Fires once per deleted task, after the ' +
+			'deletion is done; a cascade fires one per descendant, leaves before parents. It ends the task. Does NOT fire for a ' +
+			'preview (--dry-run), an unconfirmed or refused delete, or a selection that matches nothing. Removed links fire no ' +
+			'onTaskUnlinked: see removedLinkCount.',
+		schema: {
+			type: 'object',
+			properties: {
+				taskId: { type: 'string', description: 'The deleted task (it no longer exists).' },
+				description: { type: 'string', description: 'The description (title) the task had.' },
+				status: { type: 'string', description: 'The status the task had.' },
+				parentId: { type: 'string', description: 'Absent when the task was a root task.' },
+				orphanedChildIds: {
+					type: 'array',
+					items: string,
+					description: 'Children that lost their parent and became root tasks; empty in a cascade.',
+				},
+				removedLinkCount: {
+					type: 'integer',
+					description: 'Links held by the tasks still present that pointed to this task, removed with it.',
+				},
+				...projectProperties,
+			},
+			required: ['taskId', 'description', 'status', 'orphanedChildIds', 'removedLinkCount', ...projectRequired],
+			additionalProperties: false,
+		},
+		example: {
+			taskId: '3f2a9c1e-0000-4000-8000-000000000001',
+			description: 'Write the release notes',
+			status: 'backlog',
+			orphanedChildIds: [],
+			removedLinkCount: 0,
+			...projectExample,
+		},
+		correlationKey: 'payload.taskId',
+		terminal: true,
+		outcome: 'info',
 	},
 ];
 

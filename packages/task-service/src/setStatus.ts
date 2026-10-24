@@ -43,6 +43,7 @@ export function setStatus(ctx: TaskServiceContext, input: SetStatusInput): SetSt
 				taskId: updated.id,
 				oldStatus,
 				newStatus: updated.status,
+				status: updated.status,
 				type: updated.type,
 				labels: updated.labels ?? [],
 				...projectEnv(ctx),

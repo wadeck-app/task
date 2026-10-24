@@ -106,7 +106,14 @@ describe('createQueueEventSink', () => {
 			},
 			{
 				name: 'onStatusChange',
-				payload: { ...base, oldStatus: 'backlog', newStatus: 'done', type: undefined, labels: [] },
+				payload: {
+					...base,
+					oldStatus: 'backlog',
+					newStatus: 'done',
+					status: 'done',
+					type: undefined,
+					labels: [],
+				},
 			},
 			{ name: 'onTaskLinked', payload: { ...base, linkType: 'blockedBy', targetId: 'def' } },
 			{ name: 'onTaskUnlinked', payload: { ...base, linkType: 'blockedBy', targetId: 'def' } },
@@ -357,7 +364,7 @@ describe('createQueueEventSink', () => {
 
 			const outcome = await makeSink(publisher).declareEvents();
 
-			expect(outcome).toEqual({ status: 'registered', count: 5 });
+			expect(outcome).toEqual({ status: 'registered', count: queueEventDeclarations.length });
 			expect(calls).toEqual([{ source: 'task', events: queueEventDeclarations }]);
 		});
 

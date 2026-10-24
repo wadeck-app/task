@@ -45,9 +45,48 @@ describe('runTaskCommand — version and help', () => {
 		const events = output.slice(output.indexOf('Events ('));
 
 		expect(output).toContain('Events (');
-		for (const name of ['onTaskCreated', 'onStatusChange', 'onTaskLinked', 'onTaskUnlinked', 'onTaskUnblocked']) {
+		for (const name of [
+			'onTaskCreated',
+			'onStatusChange',
+			'onTaskLinked',
+			'onTaskUnlinked',
+			'onTaskUnblocked',
+			'onTaskTypeChanged',
+			'onTaskLabelAdded',
+			'onTaskLabelRemoved',
+			'onTaskMetaChanged',
+			'onTaskParentChanged',
+			'onTaskDeleted',
+		]) {
 			expect(events, name).toContain(name);
 		}
+		// The payload fields of the new events and the copy of newStatus are listed.
+		for (const field of [
+			'oldType',
+			'newType',
+			'oldValue',
+			'newValue',
+			'oldParentId',
+			'newParentId',
+			'orphanedChildIds',
+			'removedLinkCount',
+		]) {
+			expect(events, field).toContain(field);
+		}
+		expect(events).toContain('status (= newStatus)');
+		// Which commands fire what, and the deletion order.
+		for (const command of [
+			'set-type',
+			'add-label',
+			'remove-label',
+			'set-meta',
+			'set-parent',
+			'remove-parent',
+			'delete',
+		]) {
+			expect(events, command).toContain(command);
+		}
+		expect(events).toContain('leaves before parents');
 		expect(events).toContain('taskProjectPath');
 		expect(events).toContain('.queue/subscribers.yml');
 		expect(events).toContain('task cli logs');

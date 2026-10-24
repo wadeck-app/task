@@ -821,6 +821,8 @@ describe('POST /tasks/:id/status', () => {
 			unblocked: [],
 		});
 		expect(h.sink.events.map(e => e.name)).toEqual(['onStatusChange']);
+		// status is a copy of newStatus (subscribers filter on payload.status too).
+		expect(h.sink.events[0]!.payload).toMatchObject({ newStatus: 'in-progress', status: 'in-progress' });
 	});
 
 	it('delivers onTaskUnblocked after onStatusChange when the last blocker closes', async () => {
@@ -882,7 +884,7 @@ describe('POST /tasks/:id/status', () => {
 });
 
 describe('labels', () => {
-	it('POST adds a label, DELETE removes it; neither delivers an event', async () => {
+	it('POST adds a label, DELETE removes it; each delivers its event', async () => {
 		const id = await createTask('t');
 		const added = await h.call('POST /tasks/:id/labels', {
 			params: { id },
@@ -897,7 +899,7 @@ describe('labels', () => {
 		});
 		expect(removed.status).toBe(200);
 		expect(removed.body['task']['labels'] ?? []).toEqual([]);
-		expect(h.sink.events).toEqual([]);
+		expect(h.sink.events.map(e => e.name)).toEqual(['onTaskLabelAdded', 'onTaskLabelRemoved']);
 	});
 
 	it.each([
@@ -1041,6 +1043,129 @@ describe('links', () => {
 	});
 });
 
+describe('events of the field and hierarchy routes', () => {
+	const typeCall = (id: string, type: string) =>
+		h.call('POST /tasks/:id/type', { params: { id }, query: { project }, body: { type } });
+
+	it('POST /tasks/:id/type delivers onTaskTypeChanged and answers undelivered: []', async () => {
+		const id = await createTask('a');
+		await typeCall(id, 'bug');
+		h.sink.events.length = 0;
+
+		const answer = await typeCall(id, 'feature');
+
+		expect(answer.status).toBe(200);
+		expect(answer.body['task']).toMatchObject({ id, type: 'feature' });
+		expect(answer.body['undelivered']).toEqual([]);
+		expect(h.sink.events).toEqual([
+			{
+				name: 'onTaskTypeChanged',
+				payload: {
+					taskId: id,
+					oldType: 'bug',
+					newType: 'feature',
+					taskProjectName: 'alpha',
+					taskProjectPath: project,
+				},
+			},
+		]);
+	});
+
+	it('POST /tasks/:id/type delivers nothing for an unchanged type or a refused request', async () => {
+		const id = await createTask('a');
+		await typeCall(id, 'bug');
+		h.sink.events.length = 0;
+
+		await typeCall(id, 'bug');
+		const missing = await h.call('POST /tasks/:id/type', { params: { id }, query: { project }, body: {} });
+
+		expect(missing.status).toBe(400);
+		expect(h.sink.events).toEqual([]);
+	});
+
+	it('POST /tasks/:id/type lists the undelivered event when the sink reports it', async () => {
+		const unreachable: EventSink = { deliver: () => Promise.resolve({ delivered: false, reason: 'exit 3' }) };
+		const failing = setup(unreachable);
+		try {
+			const dir = failing.world.createProject('beta');
+			const created = await failing.call('POST /tasks', { query: { project: dir }, body: { description: 'a' } });
+
+			const answer = await failing.call('POST /tasks/:id/type', {
+				params: { id: created.body['task'].id },
+				query: { project: dir },
+				body: { type: 'bug' },
+			});
+
+			expect(answer.status).toBe(200);
+			expect(answer.body['undelivered']).toMatchObject([{ event: 'onTaskTypeChanged', reason: 'exit 3' }]);
+			expect(answer.body['undeliveredText']).toContain('onTaskTypeChanged');
+		} finally {
+			failing.world.cleanup();
+		}
+	});
+});
+
+describe('events of the label routes', () => {
+	it('POST /tasks/:id/labels delivers onTaskLabelAdded once, and nothing for a label already there', async () => {
+		const id = await createTask('a');
+		const add = () =>
+			h.call('POST /tasks/:id/labels', { params: { id }, query: { project }, body: { label: 'urgent' } });
+
+		const first = await add();
+		await add();
+
+		expect(first.status).toBe(200);
+		expect(first.body['task']).toMatchObject({ id, labels: ['urgent'] });
+		expect(first.body['undelivered']).toEqual([]);
+		expect(h.sink.events).toEqual([
+			{
+				name: 'onTaskLabelAdded',
+				payload: { taskId: id, label: 'urgent', taskProjectName: 'alpha', taskProjectPath: project },
+			},
+		]);
+	});
+
+	it('DELETE /tasks/:id/labels/:label delivers onTaskLabelRemoved once, and nothing for an absent label', async () => {
+		const id = await createTask('a');
+		await h.call('POST /tasks/:id/labels', { params: { id }, query: { project }, body: { label: 'urgent' } });
+		h.sink.events.length = 0;
+		const remove = (label: string) =>
+			h.call('DELETE /tasks/:id/labels/:label', { params: { id, label }, query: { project } });
+
+		const first = await remove('urgent');
+		await remove('urgent');
+		await remove('never-there');
+
+		expect(first.status).toBe(200);
+		expect(first.body['undelivered']).toEqual([]);
+		expect(h.sink.events).toEqual([
+			{
+				name: 'onTaskLabelRemoved',
+				payload: { taskId: id, label: 'urgent', taskProjectName: 'alpha', taskProjectPath: project },
+			},
+		]);
+	});
+
+	it('lists the undelivered label event when the sink reports it', async () => {
+		const unreachable: EventSink = { deliver: () => Promise.resolve({ delivered: false, reason: 'exit 3' }) };
+		const failing = setup(unreachable);
+		try {
+			const dir = failing.world.createProject('beta');
+			const created = await failing.call('POST /tasks', { query: { project: dir }, body: { description: 'a' } });
+
+			const answer = await failing.call('POST /tasks/:id/labels', {
+				params: { id: created.body['task'].id },
+				query: { project: dir },
+				body: { label: 'urgent' },
+			});
+
+			expect(answer.body['undelivered']).toMatchObject([{ event: 'onTaskLabelAdded', reason: 'exit 3' }]);
+		} finally {
+			failing.world.cleanup();
+		}
+	});
+});
+
 describe('event delivery', () => {
 	// The queue sink publishes with cwd = taskProjectPath: every event of every route must carry the project of the request.
 	it('every event produced by the routes carries the project directory of the request', async () => {
@@ -1058,10 +1183,30 @@ describe('event delivery', () => {
 			body: { status: 'done' },
 		});
 		await h.call('POST /tasks/:id/status', { params: { id: other }, query: { project }, body: { status: 'done' } });
+		const on = { params: { id: other }, query: { project } };
+		await h.call('POST /tasks/:id/type', { ...on, body: { type: 'bug' } });
+		await h.call('POST /tasks/:id/labels', { ...on, body: { label: 'urgent' } });
+		await h.call('DELETE /tasks/:id/labels/:label', { params: { id: other, label: 'urgent' }, query: { project } });
+		await h.call('POST /tasks/:id/meta', { ...on, body: { key: 'k', value: 'v' } });
+		await h.call('POST /tasks/:id/parent', { ...on, body: { parent: blocker } });
+		await h.call('DELETE /tasks/:id/parent', on);
+		await h.call('POST /tasks/delete', { query: { project }, body: { ids: [other], confirm: true } });
 
 		const names = new Set(h.sink.events.map(e => e.name));
 		expect([...names].sort()).toEqual(
-			['onStatusChange', 'onTaskCreated', 'onTaskLinked', 'onTaskUnblocked', 'onTaskUnlinked'].sort()
+			[
+				'onStatusChange',
+				'onTaskCreated',
+				'onTaskDeleted',
+				'onTaskLabelAdded',
+				'onTaskLabelRemoved',
+				'onTaskLinked',
+				'onTaskMetaChanged',
+				'onTaskParentChanged',
+				'onTaskTypeChanged',
+				'onTaskUnblocked',
+				'onTaskUnlinked',
+			].sort()
 		);
 		for (const event of h.sink.events) {
 			expect(event.payload.taskProjectPath, event.name).toBe(project);
@@ -1702,6 +1847,23 @@ describe('hierarchy routes', () => {
 		});
 		expect(answer.status).toBe(200);
 		expect(answer.body['task']).toMatchObject({ id: child, parentId: parent });
+		expect(answer.body['undelivered']).toEqual([]);
+		expect(h.sink.events).toEqual([
+			{
+				name: 'onTaskParentChanged',
+				payload: {
+					taskId: child,
+					oldParentId: undefined,
+					newParentId: parent,
+					taskProjectName: 'alpha',
+					taskProjectPath: project,
+				},
+			},
+		]);
+
+		// The same parent again: nothing changes, nothing is delivered.
+		h.sink.events.length = 0;
+		await h.call('POST /tasks/:id/parent', { params: { id: child }, query: { project }, body: { parent } });
 		expect(h.sink.events).toEqual([]);
 	});
 
@@ -1743,6 +1905,26 @@ describe('hierarchy routes', () => {
 		const answer = await h.call('DELETE /tasks/:id/parent', { params: { id: child }, query: { project } });
 		expect(answer.status).toBe(200);
 		expect(answer.body['task']['parentId']).toBeUndefined();
+		expect(answer.body['undelivered']).toEqual([]);
+		expect(h.sink.events).toEqual([
+			{
+				name: 'onTaskParentChanged',
+				payload: {
+					taskId: child,
+					oldParentId: parent,
+					newParentId: undefined,
+					taskProjectName: 'alpha',
+					taskProjectPath: project,
+				},
+			},
+		]);
+	});
+
+	it('DELETE /tasks/:id/parent of a root task is refused (409) and delivers nothing', async () => {
+		const root = await createTask('root');
+		const answer = await h.call('DELETE /tasks/:id/parent', { params: { id: root }, query: { project } });
+		expect(answer.status).toBe(409);
+		expect(h.sink.events).toEqual([]);
 	});
 
 	it('GET /tasks/:id/children lists the direct children with their links', async () => {
@@ -1969,6 +2151,21 @@ describe('POST /tasks/:id/meta', () => {
 			query: { project },
 			body: { key: 'owner', value: 'ann' },
 		});
+		// A new key: oldValue is absent.
+		expect(h.sink.events).toEqual([
+			{
+				name: 'onTaskMetaChanged',
+				payload: {
+					taskId: id,
+					key: 'owner',
+					oldValue: undefined,
+					newValue: 'ann',
+					taskProjectName: 'alpha',
+					taskProjectPath: project,
+				},
+			},
+		]);
+		h.sink.events.length = 0;
 		const answer = await h.call('POST /tasks/:id/meta', {
 			params: { id: id.slice(0, 8) },
 			query: { project },
@@ -1976,6 +2173,32 @@ describe('POST /tasks/:id/meta', () => {
 		});
 		expect(answer.status).toBe(200);
 		expect(answer.body['task']['meta']).toEqual({ owner: 'bob' });
+		expect(answer.body['undelivered']).toEqual([]);
+		expect(h.sink.events).toEqual([
+			{
+				name: 'onTaskMetaChanged',
+				payload: {
+					taskId: id,
+					key: 'owner',
+					oldValue: 'ann',
+					newValue: 'bob',
+					taskProjectName: 'alpha',
+					taskProjectPath: project,
+				},
+			},
+		]);
+	});
+
+	it('delivers nothing when the value is unchanged or the request is refused', async () => {
+		const id = await createTask('t');
+		const call = (body: unknown): Promise<Answer> =>
+			h.call('POST /tasks/:id/meta', { params: { id }, query: { project }, body });
+		await call({ key: 'k', value: 'v' });
+		h.sink.events.length = 0;
+
+		await call({ key: 'k', value: 'v' });
+		await call({ key: 'k', value: 3 });
+
 		expect(h.sink.events).toEqual([]);
 	});
 
@@ -2102,7 +2325,78 @@ describe('delete', () => {
 		expect(answer.body).toMatchObject({ deletedCount: 2, orphanCount: 0, danglingLinkCount: 0, notFound: [] });
 		expect(answer.body['summary']).toContain('Deleted 2 task');
 		expect(await ids()).toEqual([keep]);
+		expect(answer.body['undelivered']).toEqual([]);
+		// One event per deleted task, leaves before parents.
+		expect(h.sink.events.map(e => e.name)).toEqual(['onTaskDeleted', 'onTaskDeleted']);
+		expect(h.sink.events.map(e => e.payload.taskId)).toEqual([expect.any(String), parent]);
+		expect(h.sink.events[1]).toEqual({
+			name: 'onTaskDeleted',
+			payload: {
+				taskId: parent,
+				description: 'parent',
+				status: 'backlog',
+				parentId: undefined,
+				orphanedChildIds: [],
+				removedLinkCount: 0,
+				taskProjectName: 'alpha',
+				taskProjectPath: project,
+			},
+		});
+	});
+
+	it('POST /tasks/delete reports the orphaned children and removed links of the deleted task', async () => {
+		const parent = await createTask('parent');
+		const child = await createTask('child', { parent });
+		const holder = await createTask('holder');
+		await h.call('POST /tasks/:id/links', {
+			params: { id: holder },
+			query: { project },
+			body: { type: 'blockedBy', target: parent },
+		});
+		h.sink.events.length = 0;
+
+		await remove({ ids: [parent], confirm: true });
+
+		expect(h.sink.events).toHaveLength(1);
+		expect(h.sink.events[0]!.payload).toMatchObject({
+			taskId: parent,
+			orphanedChildIds: [child],
+			removedLinkCount: 1,
+		});
+	});
+
+	it('delivers nothing for a preview, a refused (unconfirmed) delete or a selection that matches nothing', async () => {
+		const a = await createTask('a');
+
+		await plan({ ids: [a] });
+		await remove({ ids: [a] });
+		await remove({ ids: ['zzzz'], confirm: true });
+
+		expect(await ids()).toEqual([a]);
 		expect(h.sink.events).toEqual([]);
+	});
+
+	it('POST /tasks/delete lists the undelivered events when the sink reports them, the tasks are deleted anyway', async () => {
+		const unreachable: EventSink = { deliver: () => Promise.resolve({ delivered: false, reason: 'exit 3' }) };
+		const failing = setup(unreachable);
+		try {
+			const dir = failing.world.createProject('beta');
+			const created = await failing.call('POST /tasks', { query: { project: dir }, body: { description: 'a' } });
+
+			const answer = await failing.call('POST /tasks/delete', {
+				query: { project: dir },
+				body: { all: true, confirm: true },
+			});
+
+			expect(answer.status).toBe(200);
+			expect(answer.body['deletedCount']).toBe(1);
+			expect(answer.body['undelivered']).toMatchObject([
+				{ event: 'onTaskDeleted', taskId: created.body['task'].id, reason: 'exit 3' },
+			]);
+			expect(answer.body['undeliveredText']).toContain('onTaskDeleted');
+		} finally {
+			failing.world.cleanup();
+		}
 	});
 
 	it('POST /tasks/delete with confirm:true and nothing matching is a 200 deleting nothing', async () => {

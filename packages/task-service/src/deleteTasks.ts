@@ -1,7 +1,8 @@
 import type { TaskSummary } from '@wadeck-app/task-core';
 
-import type { TaskServiceContext } from './context.js';
+import { projectEnv, type TaskServiceContext } from './context.js';
 import { AmbiguousDeletePrefixError, InvalidDeleteFilterError } from './errors.js';
+import type { TaskEvent } from './events.js';
 import { matchGlob } from './text.js';
 
 export const DELETE_FILTER_FIELDS = ['id', 'title', 'status', 'parentId'] as const;
@@ -104,13 +105,61 @@ export function planDelete(ctx: TaskServiceContext, input: PlanDeleteInput): Del
 	return { tasks, notFound, orphanCount, danglingLinkCount };
 }
 
-/** Deletes the planned tasks. */
-export function executeDelete(ctx: TaskServiceContext, plan: DeletePlan): { deletedCount: number } {
+export interface ExecuteDeleteResult {
+	deletedCount: number;
+	/** One `onTaskDeleted` per task really deleted, in deletion order: deepest tasks first (leaves before parents). */
+	events: TaskEvent[];
+}
+
+/** Number of ancestors of a task; stops on a cycle of a corrupted index instead of looping. */
+function depthOf(id: string, parentOf: ReadonlyMap<string, string | undefined>): number {
+	const seen = new Set([id]);
+	let depth = 0;
+	for (let parent = parentOf.get(id); parent !== undefined && !seen.has(parent); parent = parentOf.get(parent)) {
+		seen.add(parent);
+		depth++;
+	}
+	return depth;
+}
+
+/**
+ * Deletes the planned tasks, deepest first (a cascade removes leaves before their parents; tasks of the same depth keep
+ * the plan order). Each deleted task yields an `onTaskDeleted` carrying what it was and what its deletion did: the
+ * children that became root tasks, and the links held by the tasks still present that pointed to it (a holder deleted
+ * later in the same plan is still counted). Called with a plan only: a preview never produces events.
+ */
+export function executeDelete(ctx: TaskServiceContext, plan: DeletePlan): ExecuteDeleteResult {
+	const parentOf = new Map(ctx.store.list().map(t => [t.id, t.parentId]));
+	const ordered = plan.tasks
+		.map((task, index) => ({ task, index, depth: depthOf(task.id, parentOf) }))
+		.sort((a, b) => b.depth - a.depth || a.index - b.index);
+
 	let deletedCount = 0;
-	for (const t of plan.tasks) {
-		if (ctx.store.deleteTask(t.id)) {
+	const events: TaskEvent[] = [];
+	for (const { task: planned } of ordered) {
+		// Read just before the deletion: earlier deletions of the plan may have changed the surroundings.
+		const present = ctx.store.list();
+		const task = present.find(t => t.id === planned.id) ?? planned;
+		const orphanedChildIds = present.filter(t => t.parentId === task.id).map(t => t.id);
+		const removedLinkCount = present
+			.filter(t => t.id !== task.id)
+			.flatMap(t => t.links ?? [])
+			.filter(link => link.target === task.id).length;
+		if (ctx.store.deleteTask(task.id)) {
 			deletedCount++;
+			events.push({
+				name: 'onTaskDeleted',
+				payload: {
+					taskId: task.id,
+					description: task.title,
+					status: task.status,
+					parentId: task.parentId,
+					orphanedChildIds,
+					removedLinkCount,
+					...projectEnv(ctx),
+				},
+			});
 		}
 	}
-	return { deletedCount };
+	return { deletedCount, events };
 }

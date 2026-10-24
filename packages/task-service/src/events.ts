@@ -24,6 +24,8 @@ export interface TaskStatusChangeEvent {
 		taskId: string;
 		oldStatus: string;
 		newStatus: string;
+		/** Always equal to `newStatus`: lets a subscriber filter on `payload.status` like on onTaskCreated / onTaskUnblocked. */
+		status: string;
 		type: string | undefined;
 		labels: string[];
 	} & TaskProjectEnv;
@@ -50,9 +52,68 @@ export interface TaskUnblockedEvent {
 	} & TaskProjectEnv;
 }
 
+export interface TaskTypeChangedEvent {
+	name: 'onTaskTypeChanged';
+	payload: { taskId: string; oldType: string | undefined; newType: string } & TaskProjectEnv;
+}
+
+export interface TaskLabelAddedEvent {
+	name: 'onTaskLabelAdded';
+	payload: { taskId: string; label: string } & TaskProjectEnv;
+}
+
+export interface TaskLabelRemovedEvent {
+	name: 'onTaskLabelRemoved';
+	payload: { taskId: string; label: string } & TaskProjectEnv;
+}
+
+export interface TaskMetaChangedEvent {
+	name: 'onTaskMetaChanged';
+	payload: {
+		taskId: string;
+		key: string;
+		oldValue: string | undefined;
+		newValue: string;
+	} & TaskProjectEnv;
+}
+
+export interface TaskParentChangedEvent {
+	name: 'onTaskParentChanged';
+	payload: {
+		taskId: string;
+		oldParentId: string | undefined;
+		newParentId: string | undefined;
+	} & TaskProjectEnv;
+}
+
+export interface TaskDeletedEvent {
+	name: 'onTaskDeleted';
+	payload: {
+		taskId: string;
+		/** The task's description (its title), as in onTaskCreated. */
+		description: string;
+		status: string;
+		parentId: string | undefined;
+		/** Children that lost their parent and became root tasks (empty in a cascade: they are deleted before it). */
+		orphanedChildIds: string[];
+		/** Links held by the tasks still present that pointed to this one and were removed with it. */
+		removedLinkCount: number;
+	} & TaskProjectEnv;
+}
+
 /** Event produced by an operation. Operations never deliver events: the caller hands them to an EventSink. */
 export type TaskEvent =
-	TaskCreatedEvent | TaskStatusChangeEvent | TaskLinkedEvent | TaskUnlinkedEvent | TaskUnblockedEvent;
+	| TaskCreatedEvent
+	| TaskStatusChangeEvent
+	| TaskLinkedEvent
+	| TaskUnlinkedEvent
+	| TaskUnblockedEvent
+	| TaskTypeChangedEvent
+	| TaskLabelAddedEvent
+	| TaskLabelRemovedEvent
+	| TaskMetaChangedEvent
+	| TaskParentChangedEvent
+	| TaskDeletedEvent;
 
 /**
  * What is known about an event that did not arrive: `dropped` = the queue did NOT record it (replaying is safe),

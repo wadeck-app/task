@@ -51,10 +51,10 @@ describe('declareTaskEvents with the real queue SDK and the SDK fake daemon', ()
 	const options = () => ({ getLogDir: logDir, writeStderr: (text: string) => stderr.push(text) });
 	const publisher = () => createQueuePublisher({ configDir: daemon.configDir, silent: true });
 
-	it('registers the five events under the source "task", quietly', async () => {
+	it('registers the task events under the source "task", quietly', async () => {
 		const outcome = await declareTaskEvents(publisher(), options());
 
-		expect(outcome).toEqual({ status: 'registered', count: 5 });
+		expect(outcome).toEqual({ status: 'registered', count: queueEventDeclarations.length });
 		const registrations = daemon.registrations();
 		expect(registrations).toHaveLength(1);
 		expect(registrations[0]!.source).toBe('task');
@@ -69,7 +69,7 @@ describe('declareTaskEvents with the real queue SDK and the SDK fake daemon', ()
 		await declareTaskEvents(queue, options());
 		const second = await declareTaskEvents(queue, options());
 
-		expect(second).toEqual({ status: 'registered', count: 5 });
+		expect(second).toEqual({ status: 'registered', count: queueEventDeclarations.length });
 		const registrations = daemon.registrations();
 		expect(registrations).toHaveLength(2);
 		expect(registrations[1]!.events).toEqual(registrations[0]!.events);

@@ -21,6 +21,8 @@ const queuedOutcome: Outcome = { status: 'queued', eventId: 'e1' };
 // The setup file swaps the queue sink for an instant fake: this file tests the real one (with a faked SDK).
 vi.unmock('@wadeck-app/task-service');
 
+import { queueEventDeclarations, queueEventDeclarationsHash } from '@wadeck-app/task-service';
+
 import { runTaskCommand } from './TaskIndex.js';
 
 interface PushedEvent {
@@ -223,7 +225,19 @@ describe('queue events — onStatusChange', () => {
 			taskId: task.id,
 			oldStatus: 'backlog',
 			newStatus: 'in-progress',
+			status: 'in-progress',
 		});
+	});
+
+	it('carries status with the same value as newStatus (so $.payload.status and payload.status work)', async () => {
+		const task = await newTask('task');
+		publishMock.mockClear();
+
+		await runTaskCommand(['set-status', task.id, 'done'], tmpDir);
+
+		const payload = pushedEvents()[0]!.payload;
+		expect(payload['status']).toBe('done');
+		expect(payload['status']).toBe(payload['newStatus']);
 	});
 });
 
@@ -360,6 +374,256 @@ describe('queue events — onTaskUnblocked', () => {
 	});
 });
 
+describe('queue events — onTaskTypeChanged', () => {
+	it('set-type pushes oldType and newType, in the project', async () => {
+		const task = await newTask('task');
+		await runTaskCommand(['set-type', task.id, 'bug'], tmpDir);
+		publishMock.mockClear();
+
+		const result = await runTaskCommand(['set-type', task.id.slice(0, 4), 'feature'], tmpDir);
+
+		expect(result.exitCode).toBe(0);
+		expect((JSON.parse(result.output) as { type: string }).type).toBe('feature');
+		const events = pushedEvents();
+		expect(events.map(e => e.event)).toEqual(['onTaskTypeChanged']);
+		expect(events[0]!.payload).toMatchObject({
+			taskId: task.id,
+			oldType: 'bug',
+			newType: 'feature',
+			taskProjectPath: tmpDir,
+		});
+	});
+
+	it('omits oldType for a task without type, and pushes nothing for an unchanged type', async () => {
+		const task = await newTask('task');
+		publishMock.mockClear();
+
+		await runTaskCommand(['set-type', task.id, 'bug'], tmpDir);
+		expect('oldType' in pushedEvents()[0]!.payload).toBe(false);
+		publishMock.mockClear();
+		await runTaskCommand(['set-type', task.id, 'bug'], tmpDir);
+
+		expect(pushedEvents()).toEqual([]);
+	});
+
+	it('logs the undelivered event like the others (stderr, replay command)', async () => {
+		const task = await newTask('task');
+		publishMock.mockImplementation(() => Promise.resolve({ status: 'dropped', reason: 'no queue' }));
+		const stderr: string[] = [];
+		vi.spyOn(process.stderr, 'write').mockImplementation(chunk => {
+			stderr.push(String(chunk));
+			return true;
+		});
+
+		const result = await runTaskCommand(['set-type', task.id, 'bug'], tmpDir);
+
+		expect(result.exitCode).toBe(0);
+		expect(stderr.join('')).toContain(`'onTaskTypeChanged' for task ${task.id} not delivered: no queue`);
+	});
+});
+
+describe('queue events — onTaskLabelAdded / onTaskLabelRemoved', () => {
+	it('add-label pushes onTaskLabelAdded, and nothing when the label is already there', async () => {
+		const task = await newTask('task');
+		publishMock.mockClear();
+
+		const result = await runTaskCommand(['add-label', task.id.slice(0, 4), 'urgent'], tmpDir);
+		await runTaskCommand(['add-label', task.id, 'urgent'], tmpDir);
+
+		expect(result.exitCode).toBe(0);
+		expect((JSON.parse(result.output) as { labels: string[] }).labels).toEqual(['urgent']);
+		const events = pushedEvents();
+		expect(events.map(e => e.event)).toEqual(['onTaskLabelAdded']);
+		expect(events[0]!.payload).toMatchObject({ taskId: task.id, label: 'urgent', taskProjectPath: tmpDir });
+	});
+
+	it('remove-label pushes onTaskLabelRemoved, and nothing when the label is absent', async () => {
+		const task = await newTask('task');
+		await runTaskCommand(['add-label', task.id, 'urgent'], tmpDir);
+		publishMock.mockClear();
+
+		await runTaskCommand(['remove-label', task.id, 'urgent'], tmpDir);
+		await runTaskCommand(['remove-label', task.id, 'urgent'], tmpDir);
+		await runTaskCommand(['remove-label', task.id, 'never-there'], tmpDir);
+
+		const events = pushedEvents();
+		expect(events.map(e => e.event)).toEqual(['onTaskLabelRemoved']);
+		expect(events[0]!.payload).toMatchObject({ taskId: task.id, label: 'urgent', taskProjectPath: tmpDir });
+	});
+
+	it('pushes nothing for an unknown task', async () => {
+		const result = await runTaskCommand(['add-label', 'zzzzzz', 'urgent'], tmpDir);
+
+		expect(result.exitCode).toBe(1);
+		expect(pushedEvents()).toEqual([]);
+	});
+});
+
+describe('queue events — onTaskMetaChanged', () => {
+	it('set-meta pushes key, oldValue (absent for a new key) and newValue', async () => {
+		const task = await newTask('task');
+		publishMock.mockClear();
+
+		const first = await runTaskCommand(['set-meta', task.id.slice(0, 4), 'owner', 'ann'], tmpDir);
+		await runTaskCommand(['set-meta', task.id, 'owner', 'bob'], tmpDir);
+
+		expect(first.exitCode).toBe(0);
+		expect((JSON.parse(first.output) as { meta: object }).meta).toEqual({ owner: 'ann' });
+		const events = pushedEvents();
+		expect(events.map(e => e.event)).toEqual(['onTaskMetaChanged', 'onTaskMetaChanged']);
+		expect('oldValue' in events[0]!.payload).toBe(false);
+		expect(events[0]!.payload).toMatchObject({
+			taskId: task.id,
+			key: 'owner',
+			newValue: 'ann',
+			taskProjectPath: tmpDir,
+		});
+		expect(events[1]!.payload).toMatchObject({ key: 'owner', oldValue: 'ann', newValue: 'bob' });
+	});
+
+	it('pushes nothing for an unchanged value, and an empty value for a new key is a change', async () => {
+		const task = await newTask('task');
+		await runTaskCommand(['set-meta', task.id, 'owner', 'ann'], tmpDir);
+		publishMock.mockClear();
+
+		await runTaskCommand(['set-meta', task.id, 'owner', 'ann'], tmpDir);
+		expect(pushedEvents()).toEqual([]);
+
+		await runTaskCommand(['set-meta', task.id, 'blank', ''], tmpDir);
+		expect(pushedEvents().map(e => e.payload['newValue'])).toEqual(['']);
+	});
+});
+
+describe('queue events — onTaskParentChanged', () => {
+	it('set-parent pushes oldParentId (absent for a root task) and newParentId; remove-parent pushes the reverse', async () => {
+		const parent = await newTask('parent');
+		const other = await newTask('other');
+		const child = await newTask('child');
+		publishMock.mockClear();
+
+		const attach = await runTaskCommand(['set-parent', child.id.slice(0, 4), parent.id.slice(0, 4)], tmpDir);
+		await runTaskCommand(['set-parent', child.id, other.id], tmpDir);
+		const detach = await runTaskCommand(['remove-parent', child.id], tmpDir);
+
+		expect(attach.exitCode).toBe(0);
+		expect((JSON.parse(detach.output) as Record<string, unknown>)['parentId']).toBeUndefined();
+		const events = pushedEvents();
+		expect(events.map(e => e.event)).toEqual(['onTaskParentChanged', 'onTaskParentChanged', 'onTaskParentChanged']);
+		expect('oldParentId' in events[0]!.payload).toBe(false);
+		expect(events[0]!.payload).toMatchObject({ taskId: child.id, newParentId: parent.id, taskProjectPath: tmpDir });
+		expect(events[1]!.payload).toMatchObject({ oldParentId: parent.id, newParentId: other.id });
+		expect(events[2]!.payload).toMatchObject({ taskId: child.id, oldParentId: other.id });
+		expect('newParentId' in events[2]!.payload).toBe(false);
+	});
+
+	it('pushes nothing for the same parent, a cycle, or remove-parent of a root task', async () => {
+		const parent = await newTask('parent');
+		const child = await newTask('child');
+		await runTaskCommand(['set-parent', child.id, parent.id], tmpDir);
+		publishMock.mockClear();
+
+		const same = await runTaskCommand(['set-parent', child.id, parent.id], tmpDir);
+		const cycle = await runTaskCommand(['set-parent', parent.id, child.id], tmpDir);
+		const root = await runTaskCommand(['remove-parent', parent.id], tmpDir);
+
+		expect(same.exitCode).toBe(0);
+		expect(cycle.exitCode).toBe(1);
+		expect(root.exitCode).toBe(1);
+		expect(pushedEvents()).toEqual([]);
+	});
+});
+
+describe('queue events — onTaskDeleted', () => {
+	it('delete <id> pushes one event with what the task was, the orphaned children and the removed links', async () => {
+		const parent = await newTask('the parent');
+		const child = JSON.parse((await runTaskCommand(['new', 'child', '--parent', parent.id], tmpDir)).output) as {
+			id: string;
+		};
+		const holder = await newTask('holder');
+		await runTaskCommand(['link', holder.id, 'blockedBy', parent.id], tmpDir);
+		publishMock.mockClear();
+
+		const result = await runTaskCommand(['delete', parent.id.slice(0, 5)], tmpDir);
+
+		expect(result.exitCode, result.output).toBe(0);
+		expect(result.output).toContain('Deleted 1 task(s)');
+		const events = pushedEvents();
+		expect(events.map(e => e.event)).toEqual(['onTaskDeleted']);
+		expect(events[0]!.payload).toEqual({
+			taskId: parent.id,
+			description: 'the parent',
+			status: 'backlog',
+			orphanedChildIds: [child.id],
+			removedLinkCount: 1,
+			taskProjectName: path.basename(tmpDir),
+			taskProjectPath: tmpDir,
+		});
+	});
+
+	it('--cascade-delete pushes one event per descendant, leaves before parents', async () => {
+		const root = await newTask('root');
+		const mid = JSON.parse((await runTaskCommand(['new', 'mid', '--parent', root.id], tmpDir)).output) as {
+			id: string;
+		};
+		const leaf = JSON.parse((await runTaskCommand(['new', 'leaf', '--parent', mid.id], tmpDir)).output) as {
+			id: string;
+		};
+		publishMock.mockClear();
+
+		await runTaskCommand(['delete', root.id, '--cascade-delete'], tmpDir);
+
+		expect(pushedEvents().map(e => e.payload['taskId'])).toEqual([leaf.id, mid.id, root.id]);
+	});
+
+	it('--all and --filter push one event per deleted task', async () => {
+		const a = await newTask('fix a');
+		const b = await newTask('fix b');
+		const c = await newTask('other');
+		publishMock.mockClear();
+
+		await runTaskCommand(['delete', '--filter', 'title=fix*'], tmpDir);
+		expect(pushedEvents().map(e => e.payload['taskId'])).toEqual([a.id, b.id]);
+
+		publishMock.mockClear();
+		await runTaskCommand(['delete', '--all'], tmpDir);
+		expect(pushedEvents().map(e => e.payload['taskId'])).toEqual([c.id]);
+	});
+
+	it('pushes nothing for --dry-run, an unknown id, or an invalid selection', async () => {
+		const task = await newTask('task');
+		publishMock.mockClear();
+
+		const dry = await runTaskCommand(['delete', '--dry-run', task.id], tmpDir);
+		const unknown = await runTaskCommand(['delete', 'zzzzzz'], tmpDir);
+		const invalid = await runTaskCommand(['delete', '--all', '--filter', 'status=backlog'], tmpDir);
+
+		expect(dry.exitCode).toBe(0);
+		expect(unknown.output).toContain('Nothing to delete');
+		expect(invalid.exitCode).toBe(1);
+		expect(pushedEvents()).toEqual([]);
+		const shown = await runTaskCommand(['show', task.id], tmpDir);
+		expect(shown.exitCode).toBe(0);
+	});
+
+	it('keeps the deletion and the exit code 0 when the queue drops the event, and says so on stderr', async () => {
+		const task = await newTask('task');
+		publishMock.mockImplementation(() => Promise.resolve({ status: 'dropped', reason: 'no queue' }));
+		const stderr: string[] = [];
+		vi.spyOn(process.stderr, 'write').mockImplementation(chunk => {
+			stderr.push(String(chunk));
+			return true;
+		});
+
+		const result = await runTaskCommand(['delete', task.id], tmpDir);
+
+		expect(result.exitCode).toBe(0);
+		expect(result.output).toContain('Deleted 1 task(s)');
+		expect(stderr.join('')).toContain(`'onTaskDeleted' for task ${task.id} not delivered: no queue`);
+		// The replay command is in the task log, which stderr points to.
+		expect(stderr.join('')).toContain('task cli logs');
+	});
+});
+
 describe('set-status — closing a task that still has open blockers', () => {
 	let stderr: string[];
 
@@ -483,7 +747,7 @@ describe('queue events — the task events are declared to the queue (registerEv
 			.join('');
 	};
 
-	it('declares the five events under the source task before the first event, and records the marker', async () => {
+	it('declares the events under the source task before the first event, and records the marker', async () => {
 		const order: string[] = [];
 		registerMock.mockImplementation(() => {
 			order.push('register');
@@ -504,7 +768,13 @@ describe('queue events — the task events are declared to the queue (registerEv
 		expect(events.map(e => e.name).sort()).toEqual([
 			'onStatusChange',
 			'onTaskCreated',
+			'onTaskDeleted',
+			'onTaskLabelAdded',
+			'onTaskLabelRemoved',
 			'onTaskLinked',
+			'onTaskMetaChanged',
+			'onTaskParentChanged',
+			'onTaskTypeChanged',
 			'onTaskUnblocked',
 			'onTaskUnlinked',
 		]);
@@ -532,6 +802,25 @@ describe('queue events — the task events are declared to the queue (registerEv
 		await runTaskCommand(['new', 'b'], tmpDir);
 
 		expect(registerMock).toHaveBeenCalledTimes(2);
+	});
+
+	it('declares again when the declaration changed since the marker was written (an event added), then records the new hash', async () => {
+		await runTaskCommand(['new', 'a'], tmpDir);
+		const current = (JSON.parse(fs.readFileSync(markerFile(), 'utf8')) as { hash: string }).hash;
+		expect(current).toBe(queueEventDeclarationsHash());
+		// The marker of a CLI that knew one event less (what an update that adds an event finds on disk).
+		const previous = queueEventDeclarationsHash(queueEventDeclarations.slice(0, -1));
+		expect(previous).not.toBe(current);
+		fs.writeFileSync(
+			markerFile(),
+			JSON.stringify({ hash: previous, taskVersion: 'x', declaredAt: '2020-01-01T00:00:00.000Z' })
+		);
+		registerMock.mockClear();
+
+		await runTaskCommand(['new', 'b'], tmpDir);
+
+		expect(registerMock).toHaveBeenCalledTimes(1);
+		expect((JSON.parse(fs.readFileSync(markerFile(), 'utf8')) as { hash: string }).hash).toBe(current);
 	});
 
 	it('does not declare for a command that produces no event', async () => {

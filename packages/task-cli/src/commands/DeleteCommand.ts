@@ -1,6 +1,7 @@
 // task delete: argument parsing and output over planDelete / executeDelete.
 import {
 	TaskServiceError,
+	deliverEvents,
 	describeDeleteEffects,
 	executeDelete,
 	planDelete,
@@ -37,7 +38,7 @@ function previewText(plan: DeletePlan): string {
 	].join('\n');
 }
 
-export const runDelete: ProjectCommand = (rest, { jsonMode, ctx }) => {
+export const runDelete: ProjectCommand = async (rest, { jsonMode, ctx, eventSink }) => {
 	let dryRun = false;
 	let all = false;
 	// Like SQL ON DELETE CASCADE: also delete every descendant (default: children become root tasks).
@@ -97,7 +98,9 @@ export const runDelete: ProjectCommand = (rest, { jsonMode, ctx }) => {
 	if (dryRun) {
 		return { exitCode: 0, output: previewText(plan) };
 	}
-	const { deletedCount } = executeDelete(ctx, plan);
+	const { deletedCount, events } = executeDelete(ctx, plan);
+	// Delivered after the deletion is done (a failed push only warns, see the sink).
+	await deliverEvents(eventSink, events);
 	return {
 		exitCode: 0,
 		output: [`Deleted ${deletedCount} task(s).`, ...describeDeleteEffects(plan, 'did')].join('\n'),

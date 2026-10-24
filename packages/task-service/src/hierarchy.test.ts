@@ -19,7 +19,7 @@ describe('hierarchy operations', () => {
 	it('setParent attaches under a parent given by prefix and returns the updated task', () => {
 		const loose = t.ctx.store.create('loose', 'backlog').id;
 
-		const updated = setParent(t.ctx, { id: loose.slice(0, 4), parent: root.slice(0, 4) });
+		const updated = setParent(t.ctx, { id: loose.slice(0, 4), parent: root.slice(0, 4) }).task;
 
 		expect(updated.parentId).toBe(root);
 	});
@@ -31,8 +31,61 @@ describe('hierarchy operations', () => {
 	});
 
 	it('removeParent detaches the task', () => {
-		expect(removeParent(t.ctx, { id: child }).parentId).toBeUndefined();
+		expect(removeParent(t.ctx, { id: child }).task.parentId).toBeUndefined();
 		expect(() => removeParent(t.ctx, { id: 'zzzz' })).toThrow(TaskNotFoundError);
+	});
+
+	it('setParent produces onTaskParentChanged, oldParentId absent for a root task', () => {
+		const loose = t.ctx.store.create('loose', 'backlog').id;
+
+		const result = setParent(t.ctx, { id: loose.slice(0, 4), parent: root.slice(0, 4) });
+
+		expect(result.events).toEqual([
+			{
+				name: 'onTaskParentChanged',
+				payload: {
+					taskId: loose,
+					oldParentId: undefined,
+					newParentId: root,
+					taskProjectName: 'proj',
+					taskProjectPath: t.rootDir,
+				},
+			},
+		]);
+		expect(JSON.parse(JSON.stringify(result.events[0]!.payload))).not.toHaveProperty('oldParentId');
+	});
+
+	it('setParent moving a task carries both parents; the same parent again produces no event', () => {
+		const other = t.ctx.store.create('other', 'backlog').id;
+
+		const moved = setParent(t.ctx, { id: child, parent: other });
+		expect(moved.events[0]!.payload).toMatchObject({ taskId: child, oldParentId: root, newParentId: other });
+
+		const again = setParent(t.ctx, { id: child, parent: other.slice(0, 4) });
+		expect(again.events).toEqual([]);
+		expect(again.task.parentId).toBe(other);
+	});
+
+	it('a refused setParent (cycle, unknown id) produces no event', () => {
+		expect(() => setParent(t.ctx, { id: root, parent: grandchild })).toThrow(/cycle/i);
+	});
+
+	it('removeParent produces onTaskParentChanged with oldParentId and no newParentId', () => {
+		const result = removeParent(t.ctx, { id: child.slice(0, 4) });
+
+		expect(result.events).toEqual([
+			{
+				name: 'onTaskParentChanged',
+				payload: {
+					taskId: child,
+					oldParentId: root,
+					newParentId: undefined,
+					taskProjectName: 'proj',
+					taskProjectPath: t.rootDir,
+				},
+			},
+		]);
+		expect(JSON.parse(JSON.stringify(result.events[0]!.payload))).not.toHaveProperty('newParentId');
 	});
 
 	it('listChildren returns direct children by default and the nested subtree when recursive', () => {

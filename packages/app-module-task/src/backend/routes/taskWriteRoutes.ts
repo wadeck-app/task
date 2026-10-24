@@ -11,12 +11,13 @@ import {
 	setType,
 	unlinkTasks,
 } from '@wadeck-app/task-service';
+import type { TaskChangeResult } from '@wadeck-app/task-service';
 
 import { RequestError } from '../errors.js';
 import { detailHref } from '../hrefs.js';
 import { rememberLastProject } from '../lastProject.js';
 import { bodyObject, optionalString, queryValue, requiredString } from '../request.js';
-import type { RouteRequest } from '../request.js';
+import type { RouteAnswer, RouteRequest } from '../request.js';
 import { undeliveredFields } from '../undelivered.js';
 import { taskId } from './routeKit.js';
 import type { RouteKit } from './routeKit.js';
@@ -46,6 +47,12 @@ function linkInput(req: RouteRequest, allowQuery: boolean): { id: string; type: 
 
 export function registerTaskWriteRoutes(kit: RouteKit): void {
 	const { route, open, deliver } = kit;
+
+	/** Delivers the events of a change; the answer carries the task and what the queue did not get. */
+	const answerChange = async (result: TaskChangeResult): Promise<RouteAnswer> => {
+		const undelivered = await deliver(result.events);
+		return { status: 200, body: { task: result.task, ...undeliveredFields(undelivered) } };
+	};
 
 	route('POST', '/tasks', async req => {
 		const ctx = open(req);
@@ -88,31 +95,27 @@ export function registerTaskWriteRoutes(kit: RouteKit): void {
 	route('POST', '/tasks/:id/labels', req => {
 		const ctx = open(req);
 		const body = bodyObject(req.body, LABEL_USAGE);
-		const task = addLabel(ctx, { id: taskId(req), label: requiredString(body, 'label', LABEL_USAGE) });
-		return { status: 200, body: { task } };
+		return answerChange(addLabel(ctx, { id: taskId(req), label: requiredString(body, 'label', LABEL_USAGE) }));
 	});
 
 	route('DELETE', '/tasks/:id/labels/:label', req => {
-		const task = removeLabel(open(req), { id: taskId(req), label: req.params?.['label'] ?? '' });
-		return { status: 200, body: { task } };
+		return answerChange(removeLabel(open(req), { id: taskId(req), label: req.params?.['label'] ?? '' }));
 	});
 
 	route('POST', '/tasks/:id/parent', req => {
 		const ctx = open(req);
 		const body = bodyObject(req.body, PARENT_USAGE);
-		const task = setParent(ctx, { id: taskId(req), parent: requiredString(body, 'parent', PARENT_USAGE) });
-		return { status: 200, body: { task } };
+		return answerChange(setParent(ctx, { id: taskId(req), parent: requiredString(body, 'parent', PARENT_USAGE) }));
 	});
 
 	route('DELETE', '/tasks/:id/parent', req => {
-		return { status: 200, body: { task: removeParent(open(req), { id: taskId(req) }) } };
+		return answerChange(removeParent(open(req), { id: taskId(req) }));
 	});
 
 	route('POST', '/tasks/:id/type', req => {
 		const ctx = open(req);
 		const body = bodyObject(req.body, TYPE_USAGE);
-		const task = setType(ctx, { id: taskId(req), type: requiredString(body, 'type', TYPE_USAGE) });
-		return { status: 200, body: { task } };
+		return answerChange(setType(ctx, { id: taskId(req), type: requiredString(body, 'type', TYPE_USAGE) }));
 	});
 
 	route('POST', '/tasks/:id/meta', req => {
@@ -124,7 +127,7 @@ export function registerTaskWriteRoutes(kit: RouteKit): void {
 		if (typeof value !== 'string') {
 			throw new RequestError(400, 'value must be a string (it may be empty)', META_USAGE);
 		}
-		return { status: 200, body: { task: setMeta(ctx, { id: taskId(req), key, value }) } };
+		return answerChange(setMeta(ctx, { id: taskId(req), key, value }));
 	});
 
 	route('POST', '/tasks/:id/links', async req => {

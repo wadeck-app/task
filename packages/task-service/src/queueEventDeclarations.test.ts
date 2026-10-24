@@ -1,6 +1,8 @@
 import { checkAgainstSchema } from './jsonSchemaCheck.js';
 import { createTask } from './createTask.js';
 import type { TaskEvent } from './events.js';
+import { executeDelete, planDelete } from './deleteTasks.js';
+import { removeParent, setParent } from './hierarchy.js';
 import { linkTasks, unlinkTasks } from './links.js';
 import {
 	QUEUE_EVENT_LIMITS,
@@ -10,6 +12,7 @@ import {
 	queueEventDeclarationsHash,
 } from './queueEventDeclarations.js';
 import { setStatus } from './setStatus.js';
+import { addLabel, removeLabel, setMeta, setType } from './taskFields.js';
 import { createTestContext, type TestContext } from './testHelpers.js';
 
 function declaration(name: string) {
@@ -34,7 +37,13 @@ describe('queueEventDeclarations', () => {
 		expect(expected).toEqual([
 			'onStatusChange',
 			'onTaskCreated',
+			'onTaskDeleted',
+			'onTaskLabelAdded',
+			'onTaskLabelRemoved',
 			'onTaskLinked',
+			'onTaskMetaChanged',
+			'onTaskParentChanged',
+			'onTaskTypeChanged',
 			'onTaskUnblocked',
 			'onTaskUnlinked',
 		]);
@@ -73,6 +82,17 @@ describe('queueEventDeclarations', () => {
 			expect(entry.description).toMatch(/does not end/i);
 		});
 
+		it('onStatusChange declares status, says it equals newStatus, and requires it', () => {
+			const entry = declaration('onStatusChange');
+			expect(entry.description).toMatch(/status equals newStatus/);
+			expect(entry.description.length).toBeLessThanOrEqual(QUEUE_EVENT_LIMITS.descriptionLength);
+			expect(Object.keys(entry.schema['properties'] as object)).toContain('status');
+			expect(entry.schema['required']).toContain('status');
+			expect((entry.example as Record<string, unknown>)['status']).toBe(
+				(entry.example as Record<string, unknown>)['newStatus']
+			);
+		});
+
 		it('onTaskUnblocked names the unblocked task as taskId and the finished one as blockerId', () => {
 			const text = declaration('onTaskUnblocked').description;
 			expect(text).toMatch(/taskId/);
@@ -91,8 +111,20 @@ describe('queueEventDeclarations', () => {
 			expect(declaration('onTaskCreated').description).toMatch(/app-core/);
 		});
 
-		it('no event is terminal', () => {
-			for (const entry of queueEventDeclarations) expect(entry.terminal ?? false).toBe(false);
+		it('only onTaskDeleted is terminal (it ends the task), with the neutral outcome info', () => {
+			for (const entry of queueEventDeclarations) {
+				expect(entry.terminal ?? false, entry.name).toBe(entry.name === 'onTaskDeleted');
+			}
+			expect(declaration('onTaskDeleted').outcome).toBe('info');
+		});
+
+		it('onTaskDeleted says one event per task, after the deletion, and what does not fire it', () => {
+			const text = declaration('onTaskDeleted').description;
+			expect(text).toMatch(/once per deleted task/i);
+			expect(text).toMatch(/cascade/i);
+			expect(text).toMatch(/leaves before/i);
+			expect(text).toMatch(/dry-run|preview/i);
+			expect(text).toMatch(/Does NOT fire/);
 		});
 	});
 
@@ -150,7 +182,9 @@ describe('queueEventDeclarations', () => {
 			t.ctx.store.addLabel(blocked.id, 'urgent');
 			linkTasks(t.ctx, { id: blocked.id, type: 'blockedBy', target: blocker.id });
 
-			expectConform(setStatus(t.ctx, { id: blocker.id, status: 'in-progress' }).events);
+			const progress = setStatus(t.ctx, { id: blocker.id, status: 'in-progress' });
+			expect(progress.events[0]!.payload).toMatchObject({ newStatus: 'in-progress', status: 'in-progress' });
+			expectConform(progress.events);
 			const done = setStatus(t.ctx, { id: blocker.id, status: 'done' });
 			expect(done.events.map(event => event.name)).toEqual(['onStatusChange', 'onTaskUnblocked']);
 			expect(done.events[1]!.payload).toMatchObject({ taskId: blocked.id, blockerId: blocker.id });
@@ -173,6 +207,79 @@ describe('queueEventDeclarations', () => {
 				const other = createTask(t.ctx, { description: type }).task;
 				expectConform(linkTasks(t.ctx, { id: a.id, type, target: other.id }).events);
 			}
+		});
+	});
+
+	describe('the schemas follow the payloads of the field and hierarchy operations', () => {
+		let t: TestContext;
+		beforeEach(() => {
+			t = createTestContext();
+		});
+		afterEach(() => t.cleanup());
+
+		function expectConform(events: readonly TaskEvent[]): void {
+			expect(events.length).toBeGreaterThan(0);
+			for (const event of events) {
+				const payload = throughJson(event.payload);
+				expect(
+					checkAgainstSchema(declaration(event.name).schema, payload),
+					`${event.name} ${JSON.stringify(payload)}`
+				).toEqual([]);
+			}
+		}
+
+		it('onTaskTypeChanged, from no type and from a type', () => {
+			const task = createTask(t.ctx, { description: 'a' }).task;
+			const first = setType(t.ctx, { id: task.id, type: 'bug' });
+			expect(first.events.map(event => event.name)).toEqual(['onTaskTypeChanged']);
+			expectConform(first.events);
+			expectConform(setType(t.ctx, { id: task.id, type: 'feature' }).events);
+		});
+
+		it('onTaskDeleted, for a root task, a child with orphans and links, and a cascade', () => {
+			const parent = createTask(t.ctx, { description: 'parent' }).task;
+			createTask(t.ctx, { description: 'child', parent: parent.id });
+			const holder = createTask(t.ctx, { description: 'holder' }).task;
+			linkTasks(t.ctx, { id: holder.id, type: 'blockedBy', target: parent.id });
+			const loose = createTask(t.ctx, { description: 'loose' }).task;
+
+			const deleted = executeDelete(t.ctx, planDelete(t.ctx, { selector: { kind: 'ids', ids: [parent.id] } }));
+			expect(deleted.events.map(event => event.name)).toEqual(['onTaskDeleted']);
+			expect(deleted.events[0]!.payload).toMatchObject({ removedLinkCount: 1 });
+			expectConform(deleted.events);
+			expectConform(
+				executeDelete(t.ctx, planDelete(t.ctx, { selector: { kind: 'ids', ids: [loose.id] } })).events
+			);
+
+			const root = createTask(t.ctx, { description: 'root' }).task;
+			createTask(t.ctx, { description: 'kid', parent: root.id });
+			const cascade = executeDelete(
+				t.ctx,
+				planDelete(t.ctx, { selector: { kind: 'ids', ids: [root.id] }, cascade: true })
+			);
+			expect(cascade.events).toHaveLength(2);
+			expectConform(cascade.events);
+		});
+
+		it('onTaskParentChanged, attached, moved and detached', () => {
+			const a = createTask(t.ctx, { description: 'a' }).task;
+			const b = createTask(t.ctx, { description: 'b' }).task;
+			const c = createTask(t.ctx, { description: 'c' }).task;
+			expectConform(setParent(t.ctx, { id: c.id, parent: a.id }).events);
+			expectConform(setParent(t.ctx, { id: c.id, parent: b.id }).events);
+			expectConform(removeParent(t.ctx, { id: c.id }).events);
+		});
+
+		it('onTaskMetaChanged, for a new key and for a changed value', () => {
+			const task = createTask(t.ctx, { description: 'a' }).task;
+			expectConform(setMeta(t.ctx, { id: task.id, key: 'owner', value: 'ann' }).events);
+			expectConform(setMeta(t.ctx, { id: task.id, key: 'owner', value: '' }).events);
+		});
+
+		it('onTaskLabelAdded and onTaskLabelRemoved', () => {
+			const task = createTask(t.ctx, { description: 'a' }).task;
+			expectConform(addLabel(t.ctx, { id: task.id, label: 'urgent' }).events);
+			expectConform(removeLabel(t.ctx, { id: task.id, label: 'urgent' }).events);
 		});
 	});
 

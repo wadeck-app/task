@@ -27,6 +27,7 @@ describe('setStatus', () => {
 					taskId: task.id,
 					oldStatus: 'backlog',
 					newStatus: 'in-progress',
+					status: 'in-progress',
 					type: undefined,
 					labels: ['x'],
 					taskProjectName: 'proj',

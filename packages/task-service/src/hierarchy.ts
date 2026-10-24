@@ -1,15 +1,35 @@
-import type { TaskRecord, TaskSummary, TaskTreeNode } from '@wadeck-app/task-core';
+import type { TaskSummary, TaskTreeNode } from '@wadeck-app/task-core';
 
-import type { TaskServiceContext } from './context.js';
+import { projectEnv, type TaskServiceContext } from './context.js';
+import type { TaskEvent } from './events.js';
+import type { TaskChangeResult } from './taskFields.js';
 
-/** Attaches a task under a parent (cycles are rejected by the store). */
-export function setParent(ctx: TaskServiceContext, input: { id: string; parent: string }): TaskRecord {
-	return ctx.store.setParent(ctx.store.findByPrefix(input.id).id, ctx.store.findByPrefix(input.parent).id);
+function parentChanged(
+	ctx: TaskServiceContext,
+	taskId: string,
+	oldParentId: string | undefined,
+	newParentId: string | undefined
+): TaskEvent[] {
+	return oldParentId === newParentId
+		? []
+		: [{ name: 'onTaskParentChanged', payload: { taskId, oldParentId, newParentId, ...projectEnv(ctx) } }];
 }
 
-/** Detaches a task from its parent: it becomes a root task. */
-export function removeParent(ctx: TaskServiceContext, input: { id: string }): TaskRecord {
-	return ctx.store.removeParent(ctx.store.findByPrefix(input.id).id);
+/**
+ * Attaches a task under a parent (cycles are rejected by the store). `onTaskParentChanged` only when the parent
+ * differs from the current one; `oldParentId` is undefined for a root task.
+ */
+export function setParent(ctx: TaskServiceContext, input: { id: string; parent: string }): TaskChangeResult {
+	const before = ctx.store.findByPrefix(input.id);
+	const task = ctx.store.setParent(before.id, ctx.store.findByPrefix(input.parent).id);
+	return { task, events: parentChanged(ctx, task.id, before.parentId, task.parentId) };
+}
+
+/** Detaches a task from its parent: it becomes a root task (a root task is refused by the store, so the event always fires). */
+export function removeParent(ctx: TaskServiceContext, input: { id: string }): TaskChangeResult {
+	const before = ctx.store.findByPrefix(input.id);
+	const task = ctx.store.removeParent(before.id);
+	return { task, events: parentChanged(ctx, task.id, before.parentId, task.parentId) };
 }
 
 /** Direct children, or the nested subtree (any depth) when `recursive`. */

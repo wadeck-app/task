@@ -27,6 +27,12 @@ export type {
 	TaskLinkedEvent,
 	TaskUnlinkedEvent,
 	TaskUnblockedEvent,
+	TaskTypeChangedEvent,
+	TaskLabelAddedEvent,
+	TaskLabelRemovedEvent,
+	TaskMetaChangedEvent,
+	TaskParentChangedEvent,
+	TaskDeletedEvent,
 	TaskEvent,
 	EventSink,
 	EventDelivery,
@@ -59,9 +65,16 @@ export type { SetStatusInput, SetStatusResult } from './setStatus.js';
 export { setStatus } from './setStatus.js';
 export type { LinkTasksInput, LinkTasksResult } from './links.js';
 export { ALL_LINK_NAMES, linkTasks, unlinkTasks, getTaskLinks } from './links.js';
+export type { TaskChangeResult } from './taskFields.js';
 export { setType, addLabel, removeLabel, setMeta } from './taskFields.js';
 export { setParent, removeParent, listChildren, listAncestors, getFullTree } from './hierarchy.js';
-export type { DeleteFilterField, DeleteSelector, PlanDeleteInput, DeletePlan } from './deleteTasks.js';
+export type {
+	DeleteFilterField,
+	DeleteSelector,
+	PlanDeleteInput,
+	DeletePlan,
+	ExecuteDeleteResult,
+} from './deleteTasks.js';
 export { parseDeleteFilter, planDelete, executeDelete } from './deleteTasks.js';
 export type { DeleteSelection, DeleteSelectionProblem } from './deleteSelection.js';
 export { selectDeleteTargets, describeDeleteEffects } from './deleteSelection.js';
