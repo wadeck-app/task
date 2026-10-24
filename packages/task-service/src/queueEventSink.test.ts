@@ -160,6 +160,33 @@ describe('createQueueEventSink', () => {
 		);
 	});
 
+	describe('an event of a virtual project (registered, no folder)', () => {
+		const virtual = (): TaskEvent => {
+			const payload: Record<string, unknown> = {
+				...EVENT.payload,
+				taskProjectId: 'a1b2c3d4',
+				taskProjectName: 'notes',
+			};
+			delete payload['taskProjectPath'];
+			return { name: 'onTaskLinked', payload } as unknown as TaskEvent;
+		};
+
+		it('is undelivered with a reason naming the virtual project and how to fix it, never published from the current cwd', async () => {
+			const fake = fakePublisher(() => ({ status: 'queued' }));
+
+			const outcome = await makeSink(fake.publisher).deliver(virtual());
+
+			expect(fake.calls).toEqual([]);
+			expect(outcome).toMatchObject({ delivered: false, status: 'dropped' });
+			const reason = (outcome as { reason: string }).reason;
+			expect(reason).toContain('virtual project notes (a1b2c3d4)');
+			expect(reason).toContain('project paths add');
+			expect(reason).not.toContain('bug in the code');
+			expect(stderr.join('')).toContain('virtual project notes');
+			expect(logLines()[0]!.msg).toContain('virtual project notes');
+		});
+	});
+
 	describe('dropped (the queue did NOT record the event)', () => {
 		const dropped = (): PublishOutcome => ({
 			status: 'dropped',

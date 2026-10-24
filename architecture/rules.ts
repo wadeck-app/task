@@ -50,6 +50,24 @@ const NO_PROJECT_SDK_OUTSIDE_SERVICE = {
 	why: 'the shared project registry is read through task-service (resolveProject, listKnownProjects, describeError), not directly',
 };
 
+/**
+ * Task never writes the project registry (Decision #20, stage 2a): the shared registry belongs to the project CLI, and the legacy
+ * `projects.json` is read only (its writers, `task init` and their lock are gone). Source rules (non-test files; tests build registry
+ * fixtures with the SDK's own mutations): no import of an SDK mutation, no function of the deleted legacy writers.
+ */
+const NO_REGISTRY_WRITE = [
+	{
+		pattern:
+			/import\s*(?:type\s*)?\{[^}]*\b(?:addProject|removeProject|renameProject|addAlias|removeAlias|setParent|setGit|addPath|removePath|movePath|setMain|withRegistryLock)\b[^}]*\}\s*from\s*['"]@wadeck-app\/project-sdk['"]/,
+		why: 'task reads the shared project registry, it never writes it (project add / paths / remove belong to the project CLI)',
+	},
+	{
+		pattern:
+			/\b(?:registerProject|unregisterProject|registerInitializedProject|removeRegisteredProject|relocateProject|pruneMissingProjects|initProject)\b/,
+		why: 'the legacy projects.json is read only: its writers (task init, task projects add|remove|move|prune) were removed in stage 2a',
+	},
+];
+
 export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 	'task-core': {
 		forbiddenImports: [
@@ -57,7 +75,7 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 			{ pattern: TASK_CLI, why: 'storage must not depend on an adapter' },
 			{ pattern: APP_MODULE, why: 'storage must not depend on an adapter' },
 		],
-		forbiddenSource: [...NO_CONSOLE_NO_EXIT, NO_PROJECT_SDK_OUTSIDE_SERVICE],
+		forbiddenSource: [...NO_CONSOLE_NO_EXIT, NO_PROJECT_SDK_OUTSIDE_SERVICE, ...NO_REGISTRY_WRITE],
 	},
 	'task-service': {
 		forbiddenImports: [
@@ -67,20 +85,20 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 			{ pattern: APP_CORE, why: 'app-core belongs to app-module-task and the registration in task-cli' },
 			{ pattern: HTTP_AND_CLI_LIBS, why: 'HTTP and CLI frameworks belong to the adapters' },
 		],
-		forbiddenSource: NO_CONSOLE_NO_EXIT,
+		forbiddenSource: [...NO_CONSOLE_NO_EXIT, ...NO_REGISTRY_WRITE],
 	},
 	'task-cli': {
 		forbiddenImports: [
 			{ pattern: APP_MODULE, why: 'the adapters must not know each other: share through task-service' },
 		],
-		forbiddenSource: [NO_PROJECT_SDK_OUTSIDE_SERVICE],
+		forbiddenSource: [NO_PROJECT_SDK_OUTSIDE_SERVICE, ...NO_REGISTRY_WRITE],
 	},
 	'app-module-task': {
 		forbiddenImports: [
 			{ pattern: TASK_CLI, why: 'the adapters must not know each other: share through task-service' },
 			{ pattern: SHARED_CLI, why: 'CLI libraries belong to task-cli; share through task-service' },
 		],
-		forbiddenSource: [NO_PROJECT_SDK_OUTSIDE_SERVICE],
+		forbiddenSource: [NO_PROJECT_SDK_OUTSIDE_SERVICE, ...NO_REGISTRY_WRITE],
 	},
 };
 

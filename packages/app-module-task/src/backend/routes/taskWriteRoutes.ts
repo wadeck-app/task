@@ -69,7 +69,7 @@ export function registerTaskWriteRoutes(kit: RouteKit): void {
 		};
 		const created = createTask(ctx, input);
 		// The New task page preselects it next time; the task exists, so a failure to remember it is a warning only.
-		const lastProjectWarning = rememberLastProject(kit.dataDir, ctx.project.path);
+		const lastProjectWarning = rememberLastProject(kit.dataDir, ctx.project.id);
 		const undelivered = await deliver(created.events);
 		return {
 			status: 201,

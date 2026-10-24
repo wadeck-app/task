@@ -1,5 +1,6 @@
 import { projectEnv } from './context.js';
 import { createTask } from './createTask.js';
+import { deliverEvents } from './events.js';
 import { checkAgainstSchema } from './jsonSchemaCheck.js';
 import { queueEventDeclarations } from './queueEventDeclarations.js';
 import { createTestContext } from './testHelpers.js';
@@ -54,4 +55,30 @@ describe('taskProjectId in the event payloads', () => {
 			expect(checkAgainstSchema(declaration.schema, declaration.example)).toEqual([]);
 		}
 	);
+});
+
+describe('a virtual project (registered, no folder)', () => {
+	it('has taskProjectId and taskProjectName and NO taskProjectPath key (never the current directory)', () => {
+		test.ctx.project = { id: 'a1b2c3d4', name: 'notes' };
+
+		const env = projectEnv(test.ctx);
+
+		expect(env).toEqual({ taskProjectId: 'a1b2c3d4', taskProjectName: 'notes' });
+		expect(Object.keys(env)).not.toContain('taskProjectPath');
+	});
+
+	it('the operation succeeds and its event carries no path, so the sink answers it undelivered with the virtual-project reason', async () => {
+		test.ctx.project = { id: 'a1b2c3d4', name: 'notes' };
+
+		const { task, events } = createTask(test.ctx, { description: 'in a virtual project' });
+
+		expect(task.id).toBeTruthy();
+		expect(events).toHaveLength(1);
+		expect(Object.keys(events[0]!.payload)).not.toContain('taskProjectPath');
+		const outcome = await deliverEvents(
+			{ deliver: () => Promise.resolve({ delivered: false, reason: 'unused' }) },
+			events
+		);
+		expect(outcome.delivered).toBe(0);
+	});
 });

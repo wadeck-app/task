@@ -160,7 +160,7 @@ export function listTasksAcrossProjects(
 			continue;
 		}
 		for (const task of listTasks(context, { showAll: input.showAll })) {
-			tasks.push({ ...task, project: context.project });
+			tasks.push({ ...task, project: { ...context.project, path: known.path } });
 		}
 	}
 	throwIfNoneReadable(registered.length, registered.length - unreadable.length, unreadable);

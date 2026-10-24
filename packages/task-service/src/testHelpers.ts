@@ -8,6 +8,7 @@ import { TaskStore } from '@wadeck-app/task-core';
 import type { TaskResolvedConfig } from '@wadeck-app/task-core';
 
 import type { TaskServiceContext } from './context.js';
+import { legacyStorage } from './storage.js';
 
 export interface TestContext {
 	ctx: TaskServiceContext;
@@ -34,6 +35,7 @@ export function createTestContext(configOverrides: Partial<TaskResolvedConfig> =
 		ctx: {
 			store: new TaskStore(tasksDir),
 			config: { ...DEFAULT_TEST_CONFIG, ...configOverrides },
+			storage: legacyStorage(rootDir),
 			project: { name: 'proj', path: rootDir },
 		},
 		rootDir,
@@ -77,4 +79,17 @@ export function createSharedRegistrySandbox(): SharedRegistrySandbox {
 			}),
 		cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
 	};
+}
+
+/**
+ * Fixture of the LEGACY list: appends a directory to `<configDir>/projects.json`, written by hand (task itself no longer writes
+ * it, it only reads it). Creates the config dir; keeps the entries already there; same directory twice is one entry.
+ */
+export function addLegacyEntry(configDir: string, dir: string): void {
+	const file = path.join(configDir, 'projects.json');
+	const entries: string[] = fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, 'utf8')) as string[]) : [];
+	const resolved = path.resolve(dir);
+	if (!entries.some(entry => path.resolve(entry).toLowerCase() === resolved.toLowerCase())) entries.push(resolved);
+	fs.mkdirSync(configDir, { recursive: true });
+	fs.writeFileSync(file, JSON.stringify(entries, null, 2) + '\n');
 }

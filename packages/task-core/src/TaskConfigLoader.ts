@@ -48,10 +48,25 @@ export interface TaskResolvedConfig {
 const DEFAULT_STATUSES: TaskStatusEntry[] = ['backlog', 'in-progress', 'done'];
 const DEFAULT_PRIORITY = 'medium';
 
+/** Parses a config file: absent or empty is undefined; invalid YAML and a top level that is not a mapping throw, naming the file. */
 function loadYamlFile<T>(filePath: string): T | undefined {
 	if (!fs.existsSync(filePath)) return undefined;
 	const raw = fs.readFileSync(filePath, 'utf8');
-	return yaml.load(raw) as T;
+	let parsed: unknown;
+	try {
+		parsed = yaml.load(raw);
+	} catch (error) {
+		throw new Error(
+			`config file ${filePath} is not valid YAML: ${error instanceof Error ? error.message : String(error)}`
+		);
+	}
+	if (parsed === undefined || parsed === null) return undefined;
+	if (typeof parsed !== 'object' || Array.isArray(parsed)) {
+		throw new Error(
+			`config file ${filePath} must hold a mapping of keys (statuses, types, ...), found ${Array.isArray(parsed) ? 'a list' : typeof parsed}`
+		);
+	}
+	return parsed as T;
 }
 
 /**
@@ -59,13 +74,16 @@ function loadYamlFile<T>(filePath: string): T | undefined {
  * derived default/terminal statuses. At most one entry may be marked `default: true`;
  * when none is, the first entry in the list is the implicit default.
  */
-function resolveStatuses(entries: TaskStatusEntry[]): {
+function resolveStatuses(
+	entries: TaskStatusEntry[],
+	source: string
+): {
 	statuses: string[];
 	defaultStatus: string;
 	terminalStatuses: string[];
 } {
 	if (entries.length === 0) {
-		throw new Error('"statuses" in .task/config.yml must list at least one status.');
+		throw new Error(`"statuses" in ${source} must list at least one status.`);
 	}
 
 	const normalized = entries.map(entry =>
@@ -77,7 +95,7 @@ function resolveStatuses(entries: TaskStatusEntry[]): {
 	const defaultEntries = normalized.filter(e => e.default);
 	if (defaultEntries.length > 1) {
 		throw new Error(
-			`Multiple statuses marked "default: true" in .task/config.yml: ${defaultEntries.map(e => e.name).join(', ')}. Only one status can be the default.`
+			`Multiple statuses marked "default: true" in ${source}: ${defaultEntries.map(e => e.name).join(', ')}. Only one status can be the default.`
 		);
 	}
 
@@ -108,14 +126,32 @@ export class TaskConfigLoader {
 		return fs.existsSync(path.join(dir, '.task'));
 	}
 
-	static load(options?: { configDir?: string; projectDir?: string }): TaskResolvedConfig {
-		const globalConfigDir = TaskConfigLoader.resolveGlobalConfigDir(options?.configDir);
-		const projectDir = options?.projectDir ?? process.cwd();
+	/** Parses one config file (absent or empty: undefined). Invalid YAML or a top level that is not a mapping throws, naming the file. */
+	static readConfigFile<T = Record<string, unknown>>(filePath: string): T | undefined {
+		return loadYamlFile<T>(filePath);
+	}
 
-		const globalConfig = loadYamlFile<TaskGlobalConfig>(path.join(globalConfigDir, 'config.yml')) ?? {};
-		const projectConfig = loadYamlFile<TaskProjectConfig>(path.join(projectDir, '.task', 'config.yml')) ?? {};
+	/** The global config (`config.yml` of the global config dir): defaults and hooks; empty when absent. */
+	static loadGlobal(configDirOverride?: string): TaskGlobalConfig {
+		const dir = TaskConfigLoader.resolveGlobalConfigDir(configDirOverride);
+		return loadYamlFile<TaskGlobalConfig>(path.join(dir, 'config.yml')) ?? {};
+	}
 
-		const { statuses, defaultStatus, terminalStatuses } = resolveStatuses(projectConfig.statuses ?? DEFAULT_STATUSES);
+	/**
+	 * Builds the resolved config from the global config and the project config, both already read (and, for a project of the
+	 * shared registry, already merged along its parent chain by task-service). `source` names the file of the project config
+	 * in the status errors.
+	 */
+	static resolve(input: {
+		global: TaskGlobalConfig;
+		project: TaskProjectConfig;
+		source: string;
+	}): TaskResolvedConfig {
+		const { global: globalConfig, project: projectConfig } = input;
+		const { statuses, defaultStatus, terminalStatuses } = resolveStatuses(
+			projectConfig.statuses ?? DEFAULT_STATUSES,
+			input.source
+		);
 
 		return {
 			statuses,
@@ -130,22 +166,42 @@ export class TaskConfigLoader {
 		};
 	}
 
-	static addType(projectDir: string, typeName: string): void {
-		const configPath = path.join(projectDir, '.task', 'config.yml');
+	/** Legacy layout: the project config is `<projectDir>/.task/config.yml`. */
+	static load(options?: { configDir?: string; projectDir?: string }): TaskResolvedConfig {
+		const projectDir = options?.projectDir ?? process.cwd();
+		return TaskConfigLoader.resolve({
+			global: TaskConfigLoader.loadGlobal(options?.configDir),
+			project: loadYamlFile<TaskProjectConfig>(path.join(projectDir, '.task', 'config.yml')) ?? {},
+			source: '.task/config.yml',
+		});
+	}
+
+	/**
+	 * Rewrites the `types` list of one config file (created when missing); the other keys are kept. The directory is created only
+	 * with `createDirectory` (a config layer of the shared registry may not exist yet; a vanished `.task` must stay an error).
+	 * `writeFile` defaults to a plain write; task-service injects an atomic one.
+	 */
+	static updateTypes(
+		configPath: string,
+		change: (types: string[]) => string[],
+		writeFile: (file: string, content: string) => void = (file, content) => fs.writeFileSync(file, content, 'utf8'),
+		options: { createDirectory?: boolean } = {}
+	): void {
 		const projectConfig = loadYamlFile<TaskProjectConfig>(configPath) ?? {};
-		const types = projectConfig.types ?? [];
-		if (!types.includes(typeName)) {
-			types.push(typeName);
-		}
-		projectConfig.types = types;
-		fs.writeFileSync(configPath, yaml.dump(projectConfig), 'utf8');
+		projectConfig.types = change(projectConfig.types ?? []);
+		if (options.createDirectory === true) fs.mkdirSync(path.dirname(configPath), { recursive: true });
+		writeFile(configPath, yaml.dump(projectConfig));
+	}
+
+	static addType(projectDir: string, typeName: string): void {
+		TaskConfigLoader.updateTypes(path.join(projectDir, '.task', 'config.yml'), types =>
+			types.includes(typeName) ? types : [...types, typeName]
+		);
 	}
 
 	static removeType(projectDir: string, typeName: string): void {
-		const configPath = path.join(projectDir, '.task', 'config.yml');
-		const projectConfig = loadYamlFile<TaskProjectConfig>(configPath) ?? {};
-		const types = projectConfig.types ?? [];
-		projectConfig.types = types.filter(t => t !== typeName);
-		fs.writeFileSync(configPath, yaml.dump(projectConfig), 'utf8');
+		TaskConfigLoader.updateTypes(path.join(projectDir, '.task', 'config.yml'), types =>
+			types.filter(t => t !== typeName)
+		);
 	}
 }

@@ -18,6 +18,7 @@ export type {
 	TaskLink,
 	TaskLinks,
 } from './TaskStore.js';
+export type { TaskStoreOptions } from './TaskStore.js';
 export { TaskStore, LINK_TYPES, INVERSE_LINK_NAMES } from './TaskStore.js';
 export type {
 	TypeValidationResult,

@@ -588,4 +588,45 @@ describe('TaskStore', () => {
 			});
 		});
 	});
+
+	describe('data layout and write strategy', () => {
+		it('keeps tasks in <data>/tasks and the index in <data>/task-index.json (the layout of the shared registry data dir)', () => {
+			const dataDir = path.join(rootDir, 'registry-data');
+			const registryStore = new TaskStore(path.join(dataDir, 'tasks'));
+
+			const record = registryStore.create('Layout probe', 'backlog');
+
+			expect(fs.existsSync(path.join(dataDir, 'tasks', `${record.id}.json`))).toBe(true);
+			expect(fs.existsSync(path.join(dataDir, 'task-index.json'))).toBe(true);
+			expect(fs.readdirSync(dataDir).sort()).toEqual(['task-index.json', 'tasks']);
+		});
+
+		it('hands every file write (task file and index) to the injected writer, and never writes by itself', () => {
+			const written: string[] = [];
+			const writeFile = (file: string, content: string): void => {
+				written.push(path.basename(file));
+				fs.writeFileSync(file, content, 'utf8');
+			};
+			const custom = new TaskStore(path.join(rootDir, 'custom', 'tasks'), { writeFile });
+
+			const record = custom.create('Via the writer', 'backlog');
+			custom.updateStatus(record.id, 'done');
+			custom.addLabel(record.id, 'x');
+
+			expect(written).toContain(`${record.id}.json`);
+			expect(written).toContain('task-index.json');
+			// create: task + index; updateStatus: task + index; addLabel: task only.
+			expect(written).toHaveLength(5);
+		});
+
+		it('propagates a failure of the writer instead of swallowing it', () => {
+			const custom = new TaskStore(path.join(rootDir, 'failing', 'tasks'), {
+				writeFile: () => {
+					throw new Error('disk full');
+				},
+			});
+
+			expect(() => custom.create('Doomed', 'backlog')).toThrow('disk full');
+		});
+	});
 });

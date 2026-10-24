@@ -9,7 +9,7 @@ import {
 	appendTaskLog,
 	createQueueEventSink,
 	getTaskLogDir,
-	openTaskContext,
+	openResolvedProject,
 	resolveProject,
 } from '@wadeck-app/task-service';
 import type { ResolvedProject } from '@wadeck-app/task-service';
@@ -23,9 +23,10 @@ import type { CommandResult } from './cli/output.js';
 import { printUpdateNotice } from './cli/updateNotice.js';
 import { runCliSubcommand } from './commands/CliSubcommands.js';
 import { describeProjectSelection, runListAllProjects } from './commands/GlobalViewCommands.js';
-import { runInit } from './commands/InitCommand.js';
+import { runMigrateData } from './commands/MigrateDataCommand.js';
 import { runPluginsCommand } from './commands/PluginsCommand.js';
 import { runProjectsCommand } from './commands/ProjectsCommand.js';
+import { runRemovedInit } from './commands/RemovedCommands.js';
 import { PROJECT_COMMANDS, VALID_COMMANDS_HINT } from './commands/projectCommands.js';
 import { VERSION } from './version.js';
 
@@ -33,7 +34,7 @@ export type { CommandResult } from './cli/output.js';
 
 export async function runTaskCommand(args: string[], cwd: string): Promise<CommandResult> {
 	const { configDir, projectDir, projectRef, jsonMode, command, rest } = parseArgs(args);
-	// `task init` keeps the pre-registry rule in stage 1: it creates a .task in --project-dir / TASK_PROJECT_DIR / PROJECT_DIR / cwd.
+	// `task init` is gone: the directory it answers with is the one it used to initialise (--project-dir / TASK_PROJECT_DIR / PROJECT_DIR / cwd).
 	const legacyProjectDir = projectDir ?? process.env['TASK_PROJECT_DIR'] ?? process.env['PROJECT_DIR'];
 	const effectiveCwd = legacyProjectDir ? path.resolve(cwd, legacyProjectDir) : cwd;
 
@@ -53,7 +54,14 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 		return { exitCode: 0, output: VERSION };
 	}
 	if (command === 'init') {
-		return runInit(effectiveCwd);
+		return runRemovedInit(effectiveCwd, jsonMode);
+	}
+	if (command === 'cli' && rest[0] === 'migrate-data') {
+		return runMigrateData(rest.slice(1), jsonMode, () => {
+			const resolved = resolveProject({ cwd, projectRef, projectDir });
+			announceResolution(resolved);
+			return resolved;
+		});
 	}
 	if (command === 'cli') {
 		return runCliSubcommand(rest, jsonMode);
@@ -62,7 +70,7 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 		return runPluginsCommand(rest, jsonMode);
 	}
 	if (command === 'projects') {
-		return runProjectsCommand(rest, jsonMode, cwd, { projectDir, projectRef });
+		return runProjectsCommand(rest, jsonMode, cwd);
 	}
 
 	// Across every registered project: needs no project here (the registry is in the global config dir).
@@ -82,17 +90,19 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 		env = {
 			command,
 			jsonMode,
-			ctx: openTaskContext({
-				projectDir: resolved.path,
-				globalConfigDir: configDir,
-				project: { id: resolved.id, name: resolved.name },
-			}),
+			// A registered project whose data is still in its .task keeps working on it (notice below); a real split is refused.
+			ctx: openResolvedProject(resolved, configDir),
 			// The first event of the process declares the task events to the queue, unless the marker says it was done.
 			eventSink: declareBeforeFirstDelivery(
 				createQueueEventSink({ getLogDir: () => getTaskLogDir(ConfigDir.get('task')) }),
 				{ configDir: ConfigDir.get('task'), taskVersion: VERSION }
 			),
 		};
+		// One line per notice, on stderr whatever the output mode (stdout stays the answer), and in the task log.
+		for (const notice of env.ctx.notices ?? []) {
+			appendTaskLog(getTaskLogDir(ConfigDir.get('task')), 'info', notice);
+			process.stderr.write(notice + '\n');
+		}
 	} catch (error) {
 		return failure(jsonMode, error);
 	}

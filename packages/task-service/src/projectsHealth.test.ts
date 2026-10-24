@@ -3,7 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { inspectRegisteredProjects } from './projectsHealth.js';
-import { registerProject } from './projectsRegistry.js';
+import { addLegacyEntry } from './testHelpers.js';
 
 describe('inspectRegisteredProjects', () => {
 	let root: string;
@@ -32,14 +32,14 @@ describe('inspectRegisteredProjects', () => {
 		const broken = path.join(root, 'broken');
 		fs.mkdirSync(path.join(broken, '.task', 'tasks'), { recursive: true });
 		fs.writeFileSync(path.join(broken, '.task', 'config.yml'), 'statuses: [unclosed');
-		for (const dir of [ok, gone, bare, broken]) registerProject(configDir, dir);
+		for (const dir of [ok, gone, bare, broken]) addLegacyEntry(configDir, dir);
 
 		const [a, b, c, d] = inspectRegisteredProjects(configDir);
 		expect(a).toEqual({ path: ok, exists: true, initialized: true, error: null });
 		expect(b).toMatchObject({ path: gone, exists: false, initialized: false });
 		expect(b!.error).toContain('does not exist');
 		expect(c).toMatchObject({ path: bare, exists: true, initialized: false });
-		expect(c!.error).toContain('task init');
+		expect(c!.error).toContain('project add');
 		expect(d).toMatchObject({ path: broken, exists: true, initialized: true });
 		expect(d!.error).toEqual(expect.any(String));
 	});

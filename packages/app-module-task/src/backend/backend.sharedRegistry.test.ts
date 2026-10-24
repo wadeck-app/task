@@ -132,25 +132,25 @@ describe('?project=<id|name|alias> (the legacy absolute directory still works)',
 		]);
 	});
 
-	it('a virtual project is refused naming it (it has no .task to read)', async () => {
+	it('a virtual project is refused naming it (the module addresses projects by folder; the CLI works on it with -p)', async () => {
 		await world.registerShared('config-only');
 
 		const answer = await call('GET /tasks', { query: { project: 'config-only' } });
 
-		expect(answer.status).toBe(400);
+		expect(answer.status).toBe(409);
 		expect(answer.body['error']).toContain('config-only');
+		expect(answer.body['hint']).toContain('task -p config-only');
 	});
 
-	it('a registered project whose main path has no .task is a 404 saying what to run', async () => {
+	it('a registered project whose main path has no .task is a fresh project (its data is in the registry): empty, not an error', async () => {
 		const dir = path.join(world.root, 'bare');
 		fs.mkdirSync(dir);
 		await world.registerShared('bare', dir);
 
 		const answer = await call('GET /tasks', { query: { project: 'bare' } });
 
-		expect(answer.status).toBe(404);
-		expect(answer.body['error']).toContain('bare');
-		expect(answer.body['hint']).toContain('task init');
+		expect(answer.status).toBe(200);
+		expect(answer.body['tasks']).toEqual([]);
 	});
 
 	it('the only project is used without ?project, wherever it is registered', async () => {
@@ -192,27 +192,16 @@ describe('GET /projects: registered projects first, the others marked', () => {
 		expect(body['registryNotice']).not.toContain('shared-dir');
 	});
 
-	it('the Projects table carries the registry column and refuses Edit/Remove on a registry project with the fix', async () => {
+	it('the Projects table carries the registry column: the id of a registry project, the exact project add command of a legacy one', async () => {
 		const shared = world.createProject('shared-dir', { register: false });
 		const project = await world.registerShared('shop', shared);
 		const legacy = world.createProject('legacy-dir');
 
 		const { body } = await call('GET /projects');
 
-		const rows = body['manageRows'] as Array<Record<string, any>>;
+		const rows = body['projectRows'] as Array<Record<string, any>>;
 		expect(rows[0]!['registryText']).toContain(project.id);
 		expect(rows[1]!['registryText']).toContain(`project add "${legacy}"`);
-
-		const removal = await call('POST /projects/remove', { body: { path: path.resolve(shared), confirm: true } });
-		const relocation = await call('POST /projects/relocate', { body: { from: path.resolve(shared), to: legacy } });
-
-		for (const answer of [removal, relocation]) {
-			expect(answer.status).toBe(409);
-			expect(answer.body['error']).toContain('shared project registry');
-			expect(answer.body['hint']).toContain('project');
-		}
-		expect(removal.body['hint']).toContain('project remove');
-		expect(relocation.body['hint']).toContain('project paths');
 	});
 
 	it('page references: the id (and the slug of an older link) select the project, the name too', async () => {
@@ -262,7 +251,7 @@ describe('GET /projects: registered projects first, the others marked', () => {
 		expect(body['registryNotice']).toContain('could not be read');
 	});
 
-	it('the module never writes the shared registry', async () => {
+	it('the module never writes registry.json: only the data folder of the project it works on appears (tool data, not the registry)', async () => {
 		const shared = world.createProject('shared-dir', { register: false });
 		await world.registerShared('shop', shared);
 		const file = path.join(world.registryDir, 'registry.json');
@@ -276,7 +265,8 @@ describe('GET /projects: registered projects first, the others marked', () => {
 
 		expect(fs.readFileSync(file, 'utf8')).toBe(before);
 		expect(fs.statSync(file).mtimeMs).toBe(mtime);
-		expect(fs.readdirSync(world.registryDir).sort()).toEqual(['registry.json']);
+		expect(fs.readdirSync(world.registryDir).sort()).toEqual(['projects', 'registry.json']);
+		expect(fs.existsSync(path.join(world.registryDir, 'registry.lock'))).toBe(false);
 	});
 });
 

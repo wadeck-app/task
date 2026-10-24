@@ -1,49 +1,17 @@
-# Registered projects (nav /projects): add, edit and remove them, with their open task count.
-# Everything here acts on the registry (<config dir>/projects.json) only; no project is selected, so the actions carry no
-# ?project (the generic rule of the other pages does not apply to the three registry routes).
-# - Add: a directory and a mode (register an existing task project, or initialise a new one there). Not gated by `forms`
-#   (null with no project): the zero-project page offers it directly.
-# - Edit (relocation) and Remove: row buttons without a URL (`pickEdit`, `pickRemove`) make the shell store the clicked
-#   row under their resultKey; the Edit form and the Remove confirmation are given that row as initialData (see
-#   types-page.yaml for the technique). The answer of the action shares the key and replaces the row: a success hides
-#   the form and shows `messageText`; a refusal of the Edit keeps its fields (the route repeats them) so the form stays.
-# - The table has no row click (a button inside a row also fires the row click, which would navigate away before the
-#   action): the readable projects are linked by the buttons below it (`openLinks`, built by the route).
-# - A project that cannot be read (directory gone, no .task) is the main case: its Edit and Remove are the primary buttons.
-# - Removing only unregisters: the tasks and the .task folder of the project stay on disk, and the texts say so.
+# Projects (nav /projects): a READ-ONLY list of the projects task knows, with their open task count.
+# Projects are added, moved and removed with the project CLI (project add | paths | remove), never from here: the page has no
+# form and no action. Each row says whether the project is in the shared registry (its id) or only in the legacy list (the exact
+# `project add "<dir>"` command that registers it), and, when the project cannot be read, why, with the command that fixes it.
+# - The table has no row click: the readable projects are linked by the buttons below it (`openLinks`, built by the route).
 $sources:
-    # page=projects: the welcome text of a registry with no project points at the form below, not at this page.
     projects:
-        url: GET /api/modules/task/projects?page=projects
-    # The same route, for the defaults of the add form only (never reloaded by an action, see addProject).
-    addDefaults:
-        url: GET /api/modules/task/projects?page=projects&inlineErrors=true
-
-$actions:
-    pickEdit:
-        resultKey: editResult
-    pickRemove:
-        resultKey: removeResult
-    # Reloads the table source only: the add form is fed by `addDefaults`, which stays put, so a refused add keeps
-    # what was typed (a reloaded initialData resets the form).
-    addProject:
-        url: POST /api/modules/task/projects?inlineErrors=true
-        resultKey: addResult
-        reloadSources: [projects]
-    relocateProject:
-        url: POST /api/modules/task/projects/relocate?inlineErrors=true
-        resultKey: editResult
-        reloadSources: true
-    removeProject:
-        url: POST /api/modules/task/projects/remove?inlineErrors=true
-        resultKey: removeResult
-        reloadSources: true
+        url: GET /api/modules/task/projects
 
 $type: PageContent
 sections:
     - $type: PageHeader
       title: Projects
-      subtitle: Registered with the task app-module. Removing a project only unregisters it, its tasks stay on disk.
+      subtitle: Projects of the shared project registry (and the legacy list). Read only - manage them with the project CLI.
     # Nothing registered yet: the welcome text of the route (the exact next step) instead of a blank page.
     - $type: Badge
       $if: $sources.projects.noProjects
@@ -53,106 +21,22 @@ sections:
       $if: $sources.projects.attentionText
       label: $sources.projects.attentionText
       variant: warning
-    # Stage 1 of the shared project registry: the projects found only through the legacy list (with the command that registers
-    # each), or a shared registry that could not be read. Rows of the shared registry are managed with the project CLI.
+    # The projects found only through the legacy list (with the command that registers each), or a shared registry that could
+    # not be read.
     - $type: Badge
       $if: $sources.projects.registryNotice
       label: $sources.projects.registryNotice
       variant: warning
-    - $type: Badge
-      $if: $ctx.addResult.messageText
-      label: $ctx.addResult.messageText
-      variant: success
-    - $type: Badge
-      $if: $ctx.addResult.errorText
-      label: $ctx.addResult.errorText
-      variant: danger
-    - $type: Badge
-      $if: $ctx.editResult.messageText
-      label: $ctx.editResult.messageText
-      variant: success
-    - $type: Badge
-      $if: $ctx.editResult.errorText
-      label: $ctx.editResult.errorText
-      variant: danger
-    - $type: Badge
-      $if: $ctx.removeResult.messageText
-      label: $ctx.removeResult.messageText
-      variant: success
-    - $type: Badge
-      $if: $ctx.removeResult.errorText
-      label: $ctx.removeResult.errorText
-      variant: danger
     - $type: DataTable
-      rows: $sources.projects.manageRows
-      onAction: $ctx.onAction
-      emptyMessage: No project is registered (add one below)
+      rows: $sources.projects.projectRows
+      emptyMessage: No project is registered (project add <dir>)
       columns:
           - { key: 'name', label: 'Project' }
           - { key: 'path', label: 'Directory', mono: true }
           - { key: 'openText', label: 'Open tasks', nowrap: true }
           - { key: 'registryText', label: 'Registry' }
           - { key: 'problemText', label: 'Problem' }
-          - type: actions
-            items:
-                - { label: 'Edit', action: pickEdit, variant: default, condition: needsRepair }
-                - { label: 'Edit', action: pickEdit, variant: outline, condition: '!needsRepair' }
-                - { label: 'Remove', action: pickRemove, variant: danger, condition: needsRepair }
-                - { label: 'Remove', action: pickRemove, variant: danger-outline, condition: '!needsRepair' }
     # The tasks of each readable project: one link per project, built by the route.
     - $type: ExtensionSlot
       $if: $sources.projects.hasOpenLinks
       items: $sources.projects.openLinks
-    # Edit: the row picked with its button. The directory is the only thing that changes.
-    - $type: Badge
-      $if: $ctx.editResult.editPrompt
-      label: $ctx.editResult.editPrompt
-      variant: info
-    - $type: Form
-      $if: $ctx.editResult.editPrompt
-      onSubmit: $ctx.relocateProject
-      initialData: $ctx.editResult
-      fields:
-          - $type: FieldText
-            label: New directory (absolute path, it must hold the .task folder)
-            bind: to
-      actions:
-          - $type: ButtonSave
-            label: Save the new directory
-    # Remove: the row picked with its button, then an explicit confirmation naming what it does.
-    - $type: Badge
-      $if: $ctx.removeResult.confirmText
-      label: $ctx.removeResult.confirmText
-      variant: warning
-    - $type: Form
-      $if: $ctx.removeResult.confirmText
-      onSubmit: $ctx.removeProject
-      initialData: $ctx.removeResult
-      fields: []
-      actions:
-          - $type: ButtonAction
-            label: $ctx.removeResult.confirmLabel
-            variant: danger
-            type: submit
-    # Add: always available, also with no project registered.
-    - $type: Section
-      title: Add a project
-      items:
-          - $type: Form
-            onSubmit: $ctx.addProject
-            initialData: $sources.addDefaults.projectForm
-            fields:
-                - $type: FieldText
-                  label: Directory (absolute path)
-                  bind: path
-                - $type: FieldSelect
-                  $if: $sources.addDefaults.modeOptions
-                  label: What to do there
-                  bind: mode
-                  options: $sources.addDefaults.modeOptions
-                - $type: Switch
-                  label: Create the directory if it does not exist (initialise only; its parent must exist)
-                  bind: createDirectory
-            actions:
-                - $type: ButtonSave
-                  label: Add project

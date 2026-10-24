@@ -1,8 +1,10 @@
 import type { ModuleContext } from '@wadeck-app/app-core-sdk';
-import type { EventSink, QueueEventSinkOptions, TaskEvent, TaskServiceContext } from '@wadeck-app/task-service';
+import { appendTaskLog } from '@wadeck-app/task-service';
+import type { EventSink, QueueEventSinkOptions, TaskEvent } from '@wadeck-app/task-service';
 
 import { toHttpError, toInlineError } from '../errors.js';
 import { openProject } from '../projects.js';
+import type { OpenedProject } from '../projects.js';
 import { queryValue } from '../request.js';
 import type { RouteAnswer, RouteRequest } from '../request.js';
 import { recordServerError } from '../serverErrorLog.js';
@@ -10,7 +12,7 @@ import { deliverForRequest } from '../undelivered.js';
 import type { UndeliveredAnswer } from '../undelivered.js';
 
 export interface TaskRoutesOptions {
-	/** Directory holding projects.json and logs/. Default: {@link getTaskConfigDir}. */
+	/** Directory holding logs/ and the legacy projects.json (read only). Default: {@link getTaskConfigDir}. */
 	configDir?: string;
 	/** Destination of the events produced by mutating routes. Default: the queue sink, logging under `<configDir>/logs`. */
 	eventSink?: EventSink;
@@ -28,7 +30,9 @@ export interface RouteKit {
 	/** Registers a route; every error thrown by `run` becomes its HTTP answer (see errors.ts). */
 	route(method: string, subPath: string, run: (req: RouteRequest) => RouteAnswer | Promise<RouteAnswer>): void;
 	/** The service context of the project the request targets (`?project=`). */
-	open(req: RouteRequest): TaskServiceContext;
+	open(req: RouteRequest): OpenedProject;
+	/** Writes one info line to the task log, once per module lifetime for a given `key` (a state read at every request must not flood it). */
+	logOnce(key: string, message: string): void;
 	/** Delivers the events; those the queue did not get are returned for the body, the change is not failed. */
 	deliver(events: readonly TaskEvent[]): Promise<UndeliveredAnswer[]>;
 }
@@ -45,6 +49,12 @@ export function createRouteKit(
 	deps: { configDir: string; eventSink: EventSink; logDir: string; writeStderr: (text: string) => void }
 ): RouteKit {
 	const { configDir, eventSink, logDir, writeStderr } = deps;
+	const logged = new Set<string>();
+	const logOnce = (key: string, message: string): void => {
+		if (logged.has(key)) return;
+		logged.add(key);
+		appendTaskLog(logDir, 'info', message);
+	};
 	return {
 		configDir,
 		dataDir: ctx.dataDir,
@@ -69,7 +79,13 @@ export function createRouteKit(
 				}
 			});
 		},
-		open: req => openProject(configDir, queryValue(req.query, 'project')),
+		open(req) {
+			const opened = openProject(configDir, queryValue(req.query, 'project'));
+			// A registered project still on its .task, or an old copy left after migration: said once in the task log (no terminal here).
+			for (const notice of opened.notices ?? []) logOnce(notice, notice);
+			return opened;
+		},
+		logOnce,
 		deliver: events => deliverForRequest(eventSink, events),
 	};
 }

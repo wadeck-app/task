@@ -5,6 +5,7 @@ import { addProject, defaultRegistryDir } from '@wadeck-app/project-sdk';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { runTaskCommand } from '../TaskIndex.js';
+import { addLegacyListEntry, initListedLegacyProject } from '../testHelpers.js';
 
 // Stage 1 of the shared project registry in the cross-project views: registered projects first, legacy ones marked.
 
@@ -29,20 +30,29 @@ afterEach(() => {
 	fs.rmSync(root, { recursive: true, force: true });
 });
 
-async function initProject(name: string, title: string): Promise<string> {
+const taskConfigDir = (): string => path.join(process.env['XDG_CONFIG_HOME']!, 'task');
+
+/** A LEGACY project (a .task, listed in projects.json, in no shared registry) holding one task. */
+async function legacyProject(name: string, title: string): Promise<string> {
 	const dir = path.join(root, name);
 	fs.mkdirSync(dir);
-	await runTaskCommand(['init'], dir);
+	initListedLegacyProject(dir, taskConfigDir());
 	await runTaskCommand(['new', title], dir);
 	return dir;
 }
 
-/** A shared project (registry) and a legacy-only one, each with one task. */
+/**
+ * A REGISTERED project (its task is in the shared registry, not in a .task) that the old projects.json also names, and a
+ * legacy-only one, each with one task.
+ */
 async function sharedAndLegacy(): Promise<{ shared: string; legacy: string; id: string }> {
-	const shared = await initProject('shared-dir', 'shared task');
-	const legacy = await initProject('legacy-dir', 'legacy task');
-	// `task init` registered both in the legacy projects.json: the shared one is also in the shared registry, under another name.
+	const shared = path.join(root, 'shared-dir');
+	fs.mkdirSync(shared);
 	const project = await addProject(defaultRegistryDir(process.env), { name: 'shop', path: shared });
+	await runTaskCommand(['new', 'shared task', '-p', 'shop'], root);
+	// The shared project is also in the legacy list, under its folder name: it must not be listed twice.
+	addLegacyListEntry(taskConfigDir(), shared);
+	const legacy = await legacyProject('legacy-dir', 'legacy task');
 	stderr.length = 0;
 	return { shared, legacy, id: project.id };
 }

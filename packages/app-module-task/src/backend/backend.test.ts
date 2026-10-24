@@ -3,7 +3,8 @@ import * as path from 'node:path';
 
 import { TaskStore } from '@wadeck-app/task-core';
 import type { TaskTreeNode } from '@wadeck-app/task-core';
-import { listForest, openTaskContext, projectsRegistryPath, unregisterProject } from '@wadeck-app/task-service';
+import { projectToolDir, removeProject } from '@wadeck-app/project-sdk';
+import { listForest, openTaskContext, projectsRegistryPath } from '@wadeck-app/task-service';
 import {
 	queueEventDeclarations,
 	type EventPublisher,
@@ -45,9 +46,6 @@ const EXPECTED_ROUTES = [
 	'DELETE /types/:name',
 	'POST /tasks/delete/plan',
 	'POST /tasks/delete',
-	'POST /projects',
-	'POST /projects/relocate',
-	'POST /projects/remove',
 ];
 
 interface Answer {
@@ -461,7 +459,9 @@ describe('GET /summary', () => {
 		expect(answer.body['skippedCount']).toBe(1);
 		expect(answer.body['warning']).toContain('1 project');
 		expect(answer.body['warning']).toContain('not counted');
-		expect(answer.body['warning']).toContain('task init');
+		// Each reason carries its own fix (the project CLI command that registers the folder).
+		expect(answer.body['warning']).toContain('project add');
+		expect(answer.body['warning']).not.toContain('task init');
 		expect(answer.body['warning']).toContain(gone);
 	});
 
@@ -479,7 +479,7 @@ describe('GET /summary', () => {
 		const answer = await h.call('GET /summary');
 		expect(answer.status).toBe(500);
 		expect(answer.body['error']).toContain('none of the 2 registered projects');
-		expect(answer.body['hint']).toContain('task init');
+		expect(answer.body['hint']).toContain('project CLI');
 		expect(answer.body['skipped']).toHaveLength(2);
 		expect(answer.body['skipped'][0]).toMatchObject({
 			path: project,
@@ -492,8 +492,9 @@ describe('GET /summary', () => {
 		const answer = await h.call('GET /summary');
 		expect(answer.status).toBe(200);
 		expect(answer.body).toMatchObject({ scope: 'all', noProjects: true, projectCount: 0, open: 0, total: 0 });
-		expect(answer.body['noProjectsText']).toContain('task init');
-		expect(answer.body['noProjectsText']).toContain('task projects add');
+		expect(answer.body['noProjectsText']).toContain('project add');
+		expect(answer.body['noProjectsText']).toContain('task cli migrate-data');
+		expect(answer.body['noProjectsText']).not.toContain('task init');
 		expect(answer.body['projectRows']).toEqual([]);
 		expect(answer.body).not.toHaveProperty('errorText');
 	});
@@ -661,7 +662,7 @@ describe('GET /tasks?allProjects=true (the global task list)', () => {
 		const answer = await h.call('GET /tasks', { query: { allProjects: 'true' } });
 		expect(answer.status).toBe(500);
 		expect(answer.body['error']).toContain('none of the 2 registered projects');
-		expect(answer.body['hint']).toContain('task init');
+		expect(answer.body['hint']).toContain('project CLI');
 	});
 
 	it('is a 400 together with ?project (one scope at a time)', async () => {
@@ -2942,8 +2943,9 @@ describe('selected project that cannot be read', () => {
 		fs.rmSync(`${broken}/.task`, { recursive: true });
 		const answer = await h.call('GET /projects', { query: { project: broken } });
 		expect(answer.body['projectQuery']).toBe('blank=true');
-		expect(answer.body['selectedProblem']).toContain('not initialized');
-		expect(answer.body['selectedProblem']).toContain('task init');
+		expect(answer.body['selectedProblem']).toContain('no .task directory');
+		expect(answer.body['selectedProblem']).toContain('project add');
+		expect(answer.body['selectedProblem']).not.toContain('task init');
 	});
 
 	it('has no selectedProblem for a readable project', async () => {
@@ -3069,13 +3071,14 @@ describe('nothing registered yet (the views must say what to do)', () => {
 		fs.rmSync(projectsRegistryPath(h.world.configDir));
 	});
 
-	it('GET /projects flags noProjects with the two ways to register a project', async () => {
+	it('GET /projects flags noProjects with the way to register a project (project CLI) and to bring old tasks along', async () => {
 		const answer = await h.call('GET /projects');
 		expect(answer.status).toBe(200);
 		expect(answer.body['noProjects']).toBe(true);
 		expect(answer.body['noProjectsText']).toContain('No project is registered');
-		expect(answer.body['noProjectsText']).toContain('task init');
-		expect(answer.body['noProjectsText']).toContain('task projects add');
+		expect(answer.body['noProjectsText']).toContain('project add');
+		expect(answer.body['noProjectsText']).toContain('task cli migrate-data');
+		expect(answer.body['noProjectsText']).not.toContain('task init');
 	});
 
 	it('GET /projects has no noProjects flag nor text once a project is registered', async () => {
@@ -3085,21 +3088,23 @@ describe('nothing registered yet (the views must say what to do)', () => {
 		expect(answer.body['noProjectsText']).toBeNull();
 	});
 
-	it('the routes that need a project name both commands in their hint', async () => {
+	it('the routes that need a project name the commands in their hint', async () => {
 		const answer = await h.call('GET /tasks');
 		expect(answer.status).toBe(404);
-		expect(answer.body['hint']).toContain('task init');
-		expect(answer.body['hint']).toContain('task projects add');
+		expect(answer.body['hint']).toContain('project add');
+		expect(answer.body['hint']).toContain('task cli migrate-data');
+		expect(answer.body['hint']).not.toContain('task init');
 	});
 });
 
 describe('registered project whose directory vanished', () => {
-	it('GET /projects names the missing directory and the way to unregister it, not `task init`', async () => {
+	it('GET /projects names the missing directory and what to do (edit the legacy list or register the new folder), not `task init`', async () => {
 		fs.rmSync(project, { recursive: true });
 		const answer = await h.call('GET /projects', { query: { project } });
 		expect(answer.body['projectQuery']).toBe('blank=true');
 		expect(answer.body['selectedProblem']).toContain('no longer exists');
-		expect(answer.body['selectedProblem']).toContain('task projects remove');
+		expect(answer.body['selectedProblem']).toContain('delete the entry by hand');
+		expect(answer.body['selectedProblem']).toContain('project add');
 		expect(answer.body['selectedProblem']).not.toContain('recreate');
 	});
 });
@@ -3108,7 +3113,7 @@ describe('registered projects that cannot be used', () => {
 	it('selectedProblem is two sentences (the cause ends with a period before the fix)', async () => {
 		fs.rmSync(`${project}/.task`, { recursive: true });
 		const answer = await h.call('GET /projects', { query: { project } });
-		expect(answer.body['selectedProblem']).toMatch(/\.\s+Run `task init`/);
+		expect(answer.body['selectedProblem']).toMatch(/\.\s+Fix the cause above/);
 	});
 
 	it('GET /projects offers no form for the selected project when it cannot be read (its submit could only fail)', async () => {
@@ -3121,8 +3126,8 @@ describe('registered projects that cannot be used', () => {
 		fs.rmSync(project, { recursive: true });
 		const answer = await h.call('GET /summary');
 		expect(answer.status).toBe(500);
-		expect(answer.body['hint']).toContain('task projects remove');
-		expect(answer.body['hint']).toContain('task init');
+		expect(answer.body['hint']).toContain('project CLI');
+		expect(answer.body['hint']).not.toContain('task init');
 	});
 });
 
@@ -3498,16 +3503,23 @@ describe('scope data of GET /projects (one source per page for the global and th
 });
 
 describe('last used project (the New task page preselects it while several projects are registered)', () => {
-	let beta: string;
-	const enc = encodeURIComponent;
+	// The project is remembered by its registry id: beta is a project of the shared registry (its tasks live there), alpha stays a
+	// legacy project (it has no id, so nothing can be remembered for it).
+	let beta: { id: string; dir: string };
 	const dataDir = (): string => path.join(h.world.root, 'module-data');
 
-	beforeEach(() => {
-		beta = h.world.createProject('beta', { configYml: STATUSES_YML });
+	beforeEach(async () => {
+		const dir = path.join(h.world.root, 'beta-dir');
+		fs.mkdirSync(dir);
+		const registered = await h.world.registerShared('beta', dir);
+		const configDir = projectToolDir(h.world.registryDir, registered.id, 'task', 'config');
+		fs.mkdirSync(configDir, { recursive: true });
+		fs.writeFileSync(path.join(configDir, 'config.yml'), STATUSES_YML);
+		beta = { id: registered.id, dir };
 	});
 
-	const createIn = (dir: string): Promise<Answer> =>
-		h.call('POST /tasks', { query: { project: dir }, body: { description: 'a task' } });
+	const createIn = (ref: string): Promise<Answer> =>
+		h.call('POST /tasks', { query: { project: ref }, body: { description: 'a task' } });
 
 	it('is not preselected before any task was created: the choice stays explicit', async () => {
 		const answer = await h.call('GET /projects');
@@ -3515,10 +3527,11 @@ describe('last used project (the New task page preselects it while several proje
 		expect(answer.body['lastProjectProblem']).toBeNull();
 	});
 
-	it('is the project of the last created task, in the form of the New task page only', async () => {
-		await createIn(beta);
+	it('is the project (id) of the last created task, in the form of the New task page only', async () => {
+		await createIn('beta');
 		const answer = await h.call('GET /projects');
-		expect(answer.body['forms']['create']['projectParam']).toBe(enc(beta));
+		expect(answer.body['forms']['create']['projectParam']).toBe(beta.id);
+		expect(JSON.parse(fs.readFileSync(path.join(dataDir(), 'last-project.json'), 'utf8'))).toEqual({ id: beta.id });
 		// The choice stays free: the select still offers every readable project.
 		expect(answer.body['needsSelection']).toBe(true);
 		// A deletion never gets a default project.
@@ -3531,33 +3544,52 @@ describe('last used project (the New task page preselects it while several proje
 		});
 	});
 
-	it('follows the latest creation, and a failed creation does not change it', async () => {
-		await createIn(project);
-		await createIn(beta);
-		expect((await h.call('POST /tasks', { query: { project }, body: { description: '  ' } })).status).toBe(400);
+	it('follows the latest creation among registered projects, and a failed creation does not change it', async () => {
+		const gammaDir = path.join(h.world.root, 'gamma-dir');
+		fs.mkdirSync(gammaDir);
+		const gamma = await h.world.registerShared('gamma', gammaDir);
+		await createIn('gamma');
+		await createIn('beta');
+		expect((await h.call('POST /tasks', { query: { project: 'gamma' }, body: { description: '  ' } })).status).toBe(
+			400
+		);
 		const answer = await h.call('GET /projects');
-		expect(answer.body['forms']['create']['projectParam']).toBe(enc(beta));
+		expect(answer.body['forms']['create']['projectParam']).toBe(beta.id);
+		await createIn('gamma');
+		expect((await h.call('GET /projects')).body['forms']['create']['projectParam']).toBe(gamma.id);
 	});
 
 	it('an explicit project (URL) wins over the last used one', async () => {
-		await createIn(beta);
+		await createIn('beta');
 		const answer = await h.call('GET /projects', { query: { project } });
-		expect(answer.body['forms']['create']['projectParam']).toBe(enc(project));
+		expect(answer.body['forms']['create']['projectParam']).toBe(encodeURIComponent(project));
+	});
+
+	it('a legacy project has no id to be remembered by: creating a task there changes nothing and warns of nothing', async () => {
+		await createIn('beta');
+		const created = await createIn(project);
+		expect(created.status).toBe(201);
+		expect(created.body['lastProjectWarning']).toBeNull();
+		expect((await h.call('GET /projects')).body['forms']['create']['projectParam']).toBe(beta.id);
 	});
 
 	it('is dropped when that project is not readable any more, rather than preselecting one that can only fail', async () => {
 		// A third readable project: with only one left it would be preselected as the only choice, which is another rule.
 		h.world.createProject('gamma', { configYml: STATUSES_YML });
-		await createIn(beta);
-		fs.rmSync(`${beta}/.task`, { recursive: true });
+		await createIn('beta');
+		// A key the schema does not know in the project config: the project is listed, unreadable, with the file named.
+		fs.writeFileSync(
+			path.join(projectToolDir(h.world.registryDir, beta.id, 'task', 'config'), 'config.yml'),
+			'colour: red\n'
+		);
 		const answer = await h.call('GET /projects');
 		expect(answer.body['forms']['create']['projectParam']).toBe('');
 	});
 
-	it('is dropped when that project was unregistered', async () => {
+	it('is dropped when that project was removed from the registry', async () => {
 		h.world.createProject('gamma', { configYml: STATUSES_YML });
-		await createIn(beta);
-		unregisterProject(h.world.configDir, beta);
+		await createIn('beta');
+		await removeProject(h.world.registryDir, 'beta', { recursive: false });
 		const answer = await h.call('GET /projects');
 		expect(answer.body['forms']['create']['projectParam']).toBe('');
 	});
@@ -3571,23 +3603,23 @@ describe('last used project (the New task page preselects it while several proje
 		expect(answer.body['lastProjectProblem']).toContain('last-project.json');
 		expect(answer.body['lastProjectProblem']).toContain('Delete it');
 		// The next creation replaces the broken file: the problem goes away.
-		await createIn(beta);
+		await createIn('beta');
 		const fixed = await h.call('GET /projects');
 		expect(fixed.body['lastProjectProblem']).toBeNull();
-		expect(fixed.body['forms']['create']['projectParam']).toBe(enc(beta));
+		expect(fixed.body['forms']['create']['projectParam']).toBe(beta.id);
 	});
 
 	it('does not fail the creation when it cannot be remembered, and says so', async () => {
 		// A file where the folder should be: the module data dir cannot be created.
 		fs.writeFileSync(path.join(h.world.root, 'module-data'), 'not a directory');
-		const answer = await createIn(beta);
+		const answer = await createIn('beta');
 		expect(answer.status).toBe(201);
 		expect(answer.body['lastProjectWarning']).toContain('could not be remembered');
 		expect(answer.body['lastProjectWarning']).toContain('module-data');
 	});
 
 	it('is reported as no warning when it was remembered', async () => {
-		const answer = await createIn(beta);
+		const answer = await createIn('beta');
 		expect(answer.body['lastProjectWarning']).toBeNull();
 	});
 });

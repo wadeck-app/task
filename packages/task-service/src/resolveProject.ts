@@ -8,7 +8,6 @@ import {
 	describeResolution,
 	loadRegistry,
 	mainPath,
-	requirePath,
 	resolveScope,
 } from '@wadeck-app/project-sdk';
 import type { Registry, Scope } from '@wadeck-app/project-sdk';
@@ -16,11 +15,13 @@ import { TaskConfigLoader } from '@wadeck-app/task-core';
 
 import { ConflictingProjectSelectionError, ProjectNotInitializedError } from './errors.js';
 import { isSameProjectDir } from './projectsRegistry.js';
+import { legacyStorage, registryStorage } from './storage.js';
+import type { TaskStorage } from './storage.js';
 
 /**
  * How the project was found: `flag` (`-p`), `env` (`TASK_PROJECT`) or `cwd` (the registered folder that contains the cwd
  * or the directory given by `--project-dir` / `TASK_PROJECT_DIR` / `PROJECT_DIR`), all three through the shared registry;
- * `legacy` is the pre-registry rule (a directory holding a `.task`), kept in stage 1 and removed in stage 2.
+ * `legacy` is the pre-registry rule (a directory holding a `.task`), kept in stage 2a and removed in stage 2b.
  */
 export type ProjectSource = 'flag' | 'env' | 'cwd' | 'legacy';
 
@@ -39,8 +40,13 @@ export interface ResolvedProject {
 	id?: string;
 	/** Registry name, or the directory name for the legacy path. */
 	name: string;
-	/** The directory whose `.task` holds the data: the main path of a registered project. */
-	path: string;
+	/**
+	 * The main path of a registered project (the cwd of its events), or the legacy directory. Absent for a virtual project
+	 * (no folder): its data works, its events cannot be delivered.
+	 */
+	path?: string;
+	/** Where the data and the config are: the shared registry for a registered project, `<dir>/.task` on the legacy path. */
+	storage: TaskStorage;
 	source: ProjectSource;
 	/** What supplied the selection: `--project`, `TASK_PROJECT`, `--project-dir`, `TASK_PROJECT_DIR`, `PROJECT_DIR` or `cwd`. */
 	via: string;
@@ -66,26 +72,20 @@ function sameFolder(a: string, b: string): boolean {
 	}
 }
 
-/** Where the data of a registry-resolved project lives (its main path); a project without path cannot be used. */
-function registered(scope: Scope, via: string, registryDir: string): ResolvedProject {
-	// A virtual project has no folder to read from: VirtualProjectError naming it.
-	requirePath(scope);
-	const dataDir = path.resolve(mainPath(scope.project)!);
-	if (!TaskConfigLoader.isInitialized(dataDir)) {
-		throw new ProjectNotInitializedError(
-			`project ${scope.project.name} (${scope.project.id}) has no .task in its main path ${dataDir}`,
-			`In this version its tasks are stored in <main path>/.task: run \`task init\` in ${dataDir} (or copy the .task there).`
-		);
-	}
+/** A project found through the registry: its data and config live in the registry, its path (if any) is the main path. */
+function registered(scope: Scope, via: string, registryDir: string, registry: Registry): ResolvedProject {
+	const main = mainPath(scope.project);
+	const storage = registryStorage(registry, registryDir, scope.project);
 	const resolution = describeResolution({ ...scope, via }, { registryDir });
 	return {
 		id: scope.project.id,
 		name: scope.project.name,
-		path: dataDir,
+		...(main === undefined ? {} : { path: path.resolve(main) }),
+		storage,
 		source: scope.source,
 		via,
 		registryDir,
-		logLine: `${resolution}; data ${path.join(dataDir, '.task')}`,
+		logLine: `${resolution}; data ${storage.dataDir}`,
 	};
 }
 
@@ -93,13 +93,14 @@ function legacy(dir: string, via: string, registryDir: string, reason: string): 
 	return {
 		name: path.basename(dir),
 		path: dir,
+		storage: legacyStorage(dir),
 		source: 'legacy',
 		via,
 		registryDir,
 		logLine: `project: ${path.basename(dir)} via legacy (${via}), path ${dir}, not in the shared registry (${reason}); registry: ${registryDir}`,
 		legacyWarning:
 			`Deprecated: ${dir} is not in the shared project registry (${reason}). ` +
-			`Its ${path.join(dir, '.task')} is still used as before, but this fallback will be removed. Register it with: project add "${dir}"`,
+			`Its ${path.join(dir, '.task')} is still used as before, but this fallback will be removed. Register it with: project add "${dir}", then copy its data with: task cli migrate-data -p <name>`,
 	};
 }
 
@@ -126,13 +127,14 @@ export function resolveProject(input: ResolveProjectInput): ResolvedProject {
 		input.projectRef !== undefined ||
 		(input.projectDir === undefined && nonBlank(env['TASK_PROJECT']) !== undefined)
 	) {
-		const scope = resolveScope(loadRegistry(registryDir), {
+		const registry = loadRegistry(registryDir);
+		const scope = resolveScope(registry, {
 			...(input.projectRef === undefined ? {} : { flag: input.projectRef }),
 			env: env['TASK_PROJECT'],
 			envName: 'TASK_PROJECT',
 			cwd,
 		});
-		return registered(scope, scope.via, registryDir);
+		return registered(scope, scope.via, registryDir, registry);
 	}
 
 	const [raw, via] =
@@ -169,7 +171,7 @@ export function resolveProject(input: ResolveProjectInput): ResolvedProject {
 					`it lies inside project ${scope.project.name} (${scope.project.id}) but holds a .task of its own`
 				);
 			}
-			return registered(scope, viaName, registryDir);
+			return registered(scope, viaName, registryDir, registry);
 		} catch (error) {
 			if (!(error instanceof NoProjectInScopeError)) throw error;
 			noScope = error;
@@ -188,8 +190,8 @@ export function resolveProject(input: ResolveProjectInput): ResolvedProject {
 	}
 	if (problem !== undefined) throw problem;
 	throw new ProjectNotInitializedError(
-		`project not initialized: no .task in ${dir}, and ${noScope!.message}`,
-		`Run: task init\n${noScope!.hint}`,
+		`no task project for ${dir}: it holds no .task and is in no registered project (${noScope!.message})`,
+		noScope!.hint,
 		noScope
 	);
 }

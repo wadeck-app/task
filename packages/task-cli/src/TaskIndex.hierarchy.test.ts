@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { runTaskCommand } from './TaskIndex.js';
+import { initLegacyProject } from './testHelpers.js';
 
 interface Created {
 	id: string;
@@ -25,7 +26,7 @@ async function newTask(title: string, ...extra: string[]): Promise<Created> {
 
 beforeEach(async () => {
 	tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-hierarchy-test-'));
-	await runTaskCommand(['init'], tmpDir);
+	initLegacyProject(tmpDir);
 });
 
 afterEach(() => {

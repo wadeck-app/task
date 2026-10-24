@@ -1,5 +1,6 @@
 import {
 	AmbiguousReferenceError,
+	ConfigSchemaError,
 	NoProjectInScopeError,
 	ProjectError,
 	ProjectNotFoundError,
@@ -10,14 +11,13 @@ import { AmbiguousTaskPrefixError, TaskConflictError, TaskNotFoundError } from '
 import {
 	AmbiguousDeletePrefixError,
 	ConflictingProjectSelectionError,
+	DataMigrationError,
 	InvalidLinkTypeError,
+	ProjectDataSplitError,
 	ProjectNotInitializedError,
 	InvalidStatusError,
 	InvalidDeleteFilterError,
 	InvalidTaskTypeError,
-	InvalidProjectPathError,
-	ProjectAlreadyRegisteredError,
-	ProjectNotRegisteredError,
 	DanglingParentError,
 	NoReadableProjectsError,
 	TaskServiceError,
@@ -76,13 +76,18 @@ export function describeError(error: unknown): ErrorDescription {
 	if (error instanceof InvalidTaskTypeError || error instanceof InvalidDeleteFilterError) {
 		return describe('invalid', error, error.hint);
 	}
-	if (error instanceof InvalidProjectPathError) return describe('invalid', error, error.hint);
-	if (error instanceof ProjectNotRegisteredError) return describe('not-found', error, error.hint);
-	if (error instanceof ProjectAlreadyRegisteredError) return describe('conflict', error, error.hint);
 	if (error instanceof NoReadableProjectsError) {
 		return describe('internal', error, error.hint, { skipped: error.failures });
 	}
 	if (error instanceof ConflictingProjectSelectionError) return describe('invalid', error, error.hint);
+	if (error instanceof ProjectDataSplitError) {
+		return describe('conflict', error, error.hint, {
+			project: error.projectName,
+			legacyDir: error.legacyDir,
+			dataDir: error.dataDir,
+		});
+	}
+	if (error instanceof DataMigrationError) return describe('invalid', error, error.hint);
 	if (error instanceof ProjectNotInitializedError) {
 		return describe(
 			'not-found',
@@ -105,6 +110,13 @@ function describeProjectError(error: ProjectError): ErrorDescription {
 	}
 	if (error instanceof NoProjectInScopeError) {
 		return describe('not-found', error, error.hint, { cwd: error.cwd, registered: error.registered });
+	}
+	if (error instanceof ConfigSchemaError) {
+		return describe(
+			'invalid',
+			error,
+			'Fix the config.yml named in the message (remove or rename the key), then retry.'
+		);
 	}
 	if (error instanceof VirtualProjectError) {
 		return describe(

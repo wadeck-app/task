@@ -5,7 +5,8 @@ export interface TaskProjectEnv {
 	/** Id in the shared project registry; absent for a project that is not registered there. */
 	taskProjectId?: string;
 	taskProjectName: string;
-	taskProjectPath: string;
+	/** Main path of the project (the cwd of the queue push); absent for a virtual project, whose events cannot be delivered. */
+	taskProjectPath?: string;
 }
 
 export interface TaskCreatedEvent {

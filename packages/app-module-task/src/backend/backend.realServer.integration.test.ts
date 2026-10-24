@@ -6,7 +6,6 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 import { TaskStore } from '@wadeck-app/task-core';
-import { registerProject } from '@wadeck-app/task-service';
 
 import { projectSlug } from './projectRef.js';
 
@@ -101,7 +100,9 @@ describe('the packaged module through a real app-core server', () => {
 				'seeded over the filesystem',
 				'backlog'
 			).id;
-			registerProject(join(xdg, 'task'), projectDir);
+			// The legacy list (read only for task): written by hand, as `task init` used to.
+			mkdirSync(join(xdg, 'task'), { recursive: true });
+			writeFileSync(join(xdg, 'task', 'projects.json'), JSON.stringify([projectDir]));
 			const builtModule = join(workDir, 'module');
 			packageModule(builtModule);
 			baseUrl = await startServer(builtModule, xdg);
@@ -178,10 +179,10 @@ describe('the packaged module through a real app-core server', () => {
 		expect(body).toMatchObject({ scope: 'all', open: 1, total: 1, skipped: [] });
 	});
 
-	it('an unregistered project is a 404 with the task init fix', async () => {
+	it('an unregistered project is a 404 with the project add fix', async () => {
 		const { status, body } = await call('GET', `/tasks?project=${encodeURIComponent(join(workDir, 'elsewhere'))}`);
 		expect(status).toBe(404);
-		expect(body['hint']).toContain('task init');
+		expect(body['hint']).toContain('project add');
 	});
 
 	it('POST /tasks with an invalid body is a 400 (the JSON body reaches the handler), creating nothing', async () => {

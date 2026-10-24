@@ -9,7 +9,7 @@ import type { CommandResult } from '../cli/output.js';
 export const LIST_ALL_PROJECTS_USAGE = 'Usage: task list --all-projects [--all] [--json]';
 export const SUMMARY_USAGE = 'Usage: task projects summary [--json]';
 
-const NO_PROJECT_TEXT = '(no project registered -- run `task init` in a project directory to register it)';
+const NO_PROJECT_TEXT = '(no project registered -- register one with the project CLI: project add <dir>)';
 
 /** Flags of the per-project `task list` that make no sense across projects, with why. */
 const INCOMPATIBLE_FLAGS: ReadonlyMap<string, string> = new Map([

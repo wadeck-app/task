@@ -71,8 +71,24 @@ interface TaskIndex {
 	tasks: TaskSummary[];
 }
 
+export interface TaskStoreOptions {
+	/** Writes `content` to `file` (the directory exists). A failure must throw. */
+	writeFile?: (file: string, content: string) => void;
+}
+
 export class TaskStore {
-	constructor(private readonly tasksDir: string) {}
+	/**
+	 * @param tasksDir where the task files live; the index is `<tasksDir>/../task-index.json` (so a data dir holds `tasks/` and `task-index.json`).
+	 * @param options.writeFile how a file is written (default: plain `fs.writeFileSync`); task-service injects an atomic write.
+	 */
+	constructor(
+		private readonly tasksDir: string,
+		options: TaskStoreOptions = {}
+	) {
+		this.writeFile = options.writeFile ?? ((file, content) => fs.writeFileSync(file, content, 'utf8'));
+	}
+
+	private readonly writeFile: (file: string, content: string) => void;
 
 	create(title: string, initialStatus: TaskStatus, parentId?: string): TaskRecord {
 		if (parentId !== undefined) {
@@ -94,7 +110,7 @@ export class TaskStore {
 			history: [{ status: initialStatus, timestamp: now }],
 		};
 
-		fs.writeFileSync(this.taskFilePath(id), JSON.stringify(record, null, 2), 'utf8');
+		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
 		this.addToIndex({
 			id,
 			title,
@@ -404,7 +420,7 @@ export class TaskStore {
 		record.updatedAt = now;
 		record.history.push({ status, timestamp: now });
 
-		fs.writeFileSync(this.taskFilePath(id), JSON.stringify(record, null, 2), 'utf8');
+		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
 		this.updateIndexEntry(id, status);
 
 		return record;
@@ -419,7 +435,7 @@ export class TaskStore {
 		const record = this.get(id);
 		record.type = type;
 		record.updatedAt = new Date().toISOString();
-		fs.writeFileSync(this.taskFilePath(id), JSON.stringify(record, null, 2), 'utf8');
+		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
 		return record;
 	}
 
@@ -430,7 +446,7 @@ export class TaskStore {
 			record.labels.push(label);
 		}
 		record.updatedAt = new Date().toISOString();
-		fs.writeFileSync(this.taskFilePath(id), JSON.stringify(record, null, 2), 'utf8');
+		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
 		return record;
 	}
 
@@ -438,7 +454,7 @@ export class TaskStore {
 		const record = this.get(id);
 		record.labels = (record.labels ?? []).filter(l => l !== label);
 		record.updatedAt = new Date().toISOString();
-		fs.writeFileSync(this.taskFilePath(id), JSON.stringify(record, null, 2), 'utf8');
+		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
 		return record;
 	}
 
@@ -447,7 +463,7 @@ export class TaskStore {
 		record.meta = record.meta ?? {};
 		record.meta[key] = value;
 		record.updatedAt = new Date().toISOString();
-		fs.writeFileSync(this.taskFilePath(id), JSON.stringify(record, null, 2), 'utf8');
+		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
 		return record;
 	}
 
@@ -518,7 +534,7 @@ export class TaskStore {
 			record.links = links;
 		}
 		record.updatedAt = new Date().toISOString();
-		fs.writeFileSync(this.taskFilePath(record.id), JSON.stringify(record, null, 2), 'utf8');
+		this.writeFile(this.taskFilePath(record.id), JSON.stringify(record, null, 2));
 
 		const index = this.readIndex();
 		const entry = index.tasks.find(t => t.id === record.id);
@@ -571,7 +587,7 @@ export class TaskStore {
 			record.parentId = parentId;
 		}
 		record.updatedAt = new Date().toISOString();
-		fs.writeFileSync(this.taskFilePath(record.id), JSON.stringify(record, null, 2), 'utf8');
+		this.writeFile(this.taskFilePath(record.id), JSON.stringify(record, null, 2));
 
 		const index = this.readIndex();
 		const entry = index.tasks.find(t => t.id === record.id);
@@ -613,7 +629,7 @@ export class TaskStore {
 
 	private writeIndex(index: TaskIndex): void {
 		this.ensureDirectory();
-		fs.writeFileSync(this.indexFilePath(), JSON.stringify(index, null, 2), 'utf8');
+		this.writeFile(this.indexFilePath(), JSON.stringify(index, null, 2));
 	}
 
 	private addToIndex(summary: TaskSummary): void {

@@ -1,22 +1,21 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { TaskConfigLoader } from '@wadeck-app/task-core';
-
 import type { TaskServiceContext } from './context.js';
 import { describeError } from './describeError.js';
 import { openTaskContext } from './openContext.js';
 import { listKnownProjects } from './knownProjects.js';
 import type { KnownProject, ListKnownProjectsOptions } from './knownProjects.js';
+import { legacyStorage } from './storage.js';
 
-/** One registered project and whether it can be used. */
+/** One known project and whether it can be used. */
 export interface ProjectHealth {
 	path: string;
-	/** The directory exists. */
+	/** The directory exists (informational for a registered project: its data does not live there). */
 	exists: boolean;
-	/** The directory holds a `.task` project. */
+	/** Legacy projects: the directory holds a `.task`. A registered project needs no initialisation: always true. */
 	initialized: boolean;
-	/** Why the project cannot be used (directory gone, not initialized, config.yml invalid), with the fix when there is one; null when it can. */
+	/** Why the project cannot be used (directory gone, no `.task`, data split between registry and `.task`, config invalid), with the fix when there is one; null when it can. */
 	error: string | null;
 }
 
@@ -29,12 +28,39 @@ export interface InspectedProject {
 	context: TaskServiceContext | null;
 }
 
-/** Checks one project (exists, initialized, config.yml valid) and opens it when it can be used. A bare directory is an unregistered project. */
+/** The message of an error with its hint, on one text: what a list shows next to an unreadable project. */
+function describeProblem(error: unknown): string {
+	const { message, hint } = describeError(error);
+	return hint === undefined ? message : `${message}. ${hint}`;
+}
+
+function openChecked(known: KnownProject, exists: boolean): InspectedProject {
+	const health = { path: known.path, exists, initialized: true };
+	try {
+		const context = openTaskContext({
+			storage: known.storage,
+			project: { ...(known.registered ? { id: known.id } : {}), name: known.name, path: known.path },
+		});
+		return { known, health: { ...health, error: null }, context };
+	} catch (error) {
+		return { known, health: { ...health, error: describeProblem(error) }, context: null };
+	}
+}
+
+/** Checks one project (storage, config valid, data migrated) and opens it when it can be used. A bare directory is an unregistered project. */
 export function inspectProject(project: KnownProject | string): InspectedProject {
 	const known: KnownProject =
-		typeof project === 'string' ? { name: path.basename(project), path: project, registered: false } : project;
+		typeof project === 'string'
+			? { name: path.basename(project), path: project, registered: false, storage: legacyStorage(project) }
+			: project;
 	const dir = known.path;
 	const exists = fs.existsSync(dir);
+	if (known.registered) {
+		if (known.problem !== undefined) {
+			return { known, health: { path: dir, exists, initialized: true, error: known.problem }, context: null };
+		}
+		return openChecked(known, exists);
+	}
 	if (!exists) {
 		return {
 			known,
@@ -42,26 +68,19 @@ export function inspectProject(project: KnownProject | string): InspectedProject
 			context: null,
 		};
 	}
-	if (!TaskConfigLoader.isInitialized(dir)) {
+	if (!fs.existsSync(known.storage.dataDir)) {
 		return {
 			known,
-			health: { path: dir, exists, initialized: false, error: `not initialized: run \`task init\` in ${dir}` },
+			health: {
+				path: dir,
+				exists,
+				initialized: false,
+				error: `not initialized: no .task in ${dir}; register the folder with: project add "${dir}"`,
+			},
 			context: null,
 		};
 	}
-	try {
-		const context = openTaskContext({
-			projectDir: dir,
-			...(known.registered ? { project: { id: known.id, name: known.name } } : {}),
-		});
-		return { known, health: { path: dir, exists, initialized: true, error: null }, context };
-	} catch (error) {
-		return {
-			known,
-			health: { path: dir, exists, initialized: true, error: describeError(error).message },
-			context: null,
-		};
-	}
+	return openChecked(known, exists);
 }
 
 /** Every known project (see {@link listKnownProjects}) inspected, and why the shared registry could not be read, if it could not. */

@@ -4,14 +4,16 @@ import * as path from 'node:path';
 
 import { addProject as addSharedProject, defaultRegistryDir } from '@wadeck-app/project-sdk';
 import type { Project } from '@wadeck-app/project-sdk';
-import { registerProject } from '@wadeck-app/task-service';
 import type { EventSink, TaskEvent } from '@wadeck-app/task-service';
 
 export interface TestWorld {
 	root: string;
 	/** The task config dir holding projects.json. */
 	configDir: string;
-	/** Creates `<root>/<name>/.task/{tasks,config.yml}` and registers it unless `register` is false. */
+	/**
+	 * Creates `<root>/<name>/.task/{tasks,config.yml}` (a LEGACY project) and lists it in the legacy `projects.json` unless
+	 * `register` is false. Task no longer writes that list: the fixture writes it by hand.
+	 */
 	createProject(name: string, options?: { register?: boolean; configYml?: string }): string;
 	/** The shared project registry of this world (XDG_CONFIG_HOME points at it until cleanup): the module reads it at every request. */
 	registryDir: string;
@@ -40,7 +42,7 @@ export function createTestWorld(): TestWorld {
 			if (options.configYml !== undefined) {
 				fs.writeFileSync(path.join(dir, '.task', 'config.yml'), options.configYml);
 			}
-			if (options.register !== false) registerProject(configDir, dir);
+			if (options.register !== false) addLegacyListEntry(configDir, dir);
 			return dir;
 		},
 		cleanup: () => {
@@ -65,4 +67,14 @@ export function createRecordingSink(): RecordingSink {
 			return Promise.resolve({ delivered: true });
 		},
 	};
+}
+
+/** Appends a directory to `<configDir>/projects.json` (the legacy list, read only for task): created if needed, no duplicate. */
+export function addLegacyListEntry(configDir: string, dir: string): void {
+	const file = path.join(configDir, 'projects.json');
+	const entries: string[] = fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, 'utf8')) as string[]) : [];
+	const resolved = path.resolve(dir);
+	if (!entries.some(entry => path.resolve(entry).toLowerCase() === resolved.toLowerCase())) entries.push(resolved);
+	fs.mkdirSync(configDir, { recursive: true });
+	fs.writeFileSync(file, JSON.stringify(entries, null, 2) + '\n');
 }

@@ -1,27 +1,14 @@
 // GET /projects and GET /summary: which projects the module knows and how many tasks they hold.
 import * as path from 'node:path';
 
-import {
-	describeError,
-	isSameProjectDir,
-	resolveProjectReference,
-	summarizeProject,
-	summarizeProjects,
-} from '@wadeck-app/task-service';
+import { describeError, resolveProjectReference, summarizeProject, summarizeProjects } from '@wadeck-app/task-service';
 import type { ProjectOverview, ProjectsSummary } from '@wadeck-app/task-service';
 
 import { projectRows, skippedOf, skippedWarning } from '../allProjectsViews.js';
 import { projectText, selectedQuery } from '../hrefs.js';
 import { readLastProject } from '../lastProject.js';
-import {
-	ADD_FORM_DEFAULTS,
-	attentionText,
-	manageRows,
-	MODE_OPTIONS,
-	openLinks,
-	registryNotice,
-} from '../projectManagement.js';
-import { NO_PROJECT_HINT, NO_PROJECT_HINT_ON_PROJECTS_PAGE, openProject, readProjects } from '../projects.js';
+import { attentionText, listRows, openLinks, registryNotice } from '../projectManagement.js';
+import { NO_PROJECT_HINT, openProject, readProjects } from '../projects.js';
 import type { ProjectListing } from '../projects.js';
 import { apiRef, findProjectByRef } from '../projectRef.js';
 import { optionalQueryValue, queryValue } from '../request.js';
@@ -67,16 +54,10 @@ function summaryBody(scope: 'all' | 'project', summary: ProjectsSummary): Record
 	};
 }
 
-/** Why the selected project cannot be shown, with what to do about it. */
+/** Why the selected project cannot be shown: the reason already carries its fix (migration command, file to repair, project CLI command). */
 function problemText(project: ProjectListing): string {
-	let fix = 'Fix the cause above, then reload.';
-	if (!project.exists) {
-		fix = `Use Remove (or Edit, if the project moved) on the Projects page, or run \`task projects remove ${project.path}\` to unregister it, or \`task projects add <dir>\` if the project moved.`;
-	} else if (!project.initialized) {
-		fix = `Run \`task init\` in ${project.path} to recreate it.`;
-	}
 	const cause = project.error?.endsWith('.') ? project.error : `${project.error}.`;
-	return `${cause} ${fix}`;
+	return `${cause} Fix the cause above, then reload.`;
 }
 
 export function registerProjectRoutes(kit: RouteKit): void {
@@ -115,10 +96,8 @@ export function registerProjectRoutes(kit: RouteKit): void {
 		// Several projects, one of them readable: nothing to hesitate over for a creation. Never for a deletion.
 		const onlyReadable = projects.length > 1 && readableProjects.length === 1 ? readableProjects[0] : undefined;
 		// Otherwise the project a task was last created in, while it is still registered and readable.
-		const lastUsed = readLastProject(kit.dataDir);
-		const lastReadable = readableProjects.find(
-			entry => lastUsed.path !== null && isSameProjectDir(entry.path, lastUsed.path)
-		);
+		const lastUsed = readLastProject(kit.dataDir, message => kit.logOnce('last-project-old-format', message));
+		const lastReadable = readableProjects.find(entry => lastUsed.id !== null && entry.id === lastUsed.id);
 		const createProject = selected === undefined ? (onlyReadable ?? lastReadable) : selected;
 		const taskLinks = openLinks(projects);
 		const selectedProblem = selected === undefined || selected.error === null ? null : problemText(selected);
@@ -126,24 +105,17 @@ export function registerProjectRoutes(kit: RouteKit): void {
 			status: 200,
 			body: {
 				projects,
-				// The Projects page: its add form (also with no project), the table rows with what Edit and Remove send,
-				// links to the tasks of the readable projects (the table has row buttons, so no row click), the banner.
-				projectForm: ADD_FORM_DEFAULTS,
-				modeOptions: MODE_OPTIONS,
-				manageRows: manageRows(projects),
+				// The Projects page is a read-only list: the table rows (marker, registry column, problem with its fix),
+				// links to the tasks of the readable projects, the banner. Projects are managed with the project CLI.
+				projectRows: listRows(projects),
 				openLinks: taskLinks,
 				hasOpenLinks: taskLinks.length > 0,
 				attentionText: attentionText(projects),
 				// Nothing registered: the views show this text (with the exact next step) instead of staying blank.
 				noProjects: projects.length === 0,
-				// The Projects page asks with ?page=projects: its hint points at the form instead of at itself.
 				noProjectsText:
 					projects.length === 0
-						? `No project is registered with the task app-module. ${
-								optionalQueryValue(req.query, 'page') === 'projects'
-									? NO_PROJECT_HINT_ON_PROJECTS_PAGE
-									: NO_PROJECT_HINT
-							}`
+						? `No project is registered with the task app-module. ${NO_PROJECT_HINT}`
 						: null,
 				multiple: projects.length > 1,
 				// Several projects and none chosen: the views ask for a choice instead of showing nothing.

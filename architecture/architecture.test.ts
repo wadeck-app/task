@@ -127,6 +127,64 @@ describe('the rules detect what they forbid', () => {
 		expect(violationsIn('task-cli', '// see @wadeck-app/project-sdk in task-service')).toEqual([]);
 	});
 
+	// Stage 2a: the shared registry belongs to the project CLI. Task reads it (resolution, listing) and never writes it; the legacy
+	// projects.json is read only too (its writers and their lock are deleted).
+	it.each(['task-core', 'task-service', 'task-cli', 'app-module-task'] as const)(
+		'%s must not write the shared registry nor the legacy projects.json',
+		pkg => {
+			for (const mutation of [
+				'addProject',
+				'removeProject',
+				'renameProject',
+				'addAlias',
+				'removeAlias',
+				'setParent',
+				'setGit',
+				'addPath',
+				'removePath',
+				'movePath',
+				'setMain',
+				'withRegistryLock',
+			]) {
+				const source = `import { ${mutation} } from '@wadeck-app/project-sdk';`;
+				expect(violationsIn(pkg, source), `${pkg} imports ${mutation}`).not.toEqual([]);
+				// Tests build their registry fixtures with the SDK's own mutations.
+				expect(violationsIn(pkg, source, { isTest: true, resolveRelative: noRelative }), `${pkg} test`).toEqual(
+					[]
+				);
+			}
+			for (const legacy of [
+				'registerProject',
+				'unregisterProject',
+				'registerInitializedProject',
+				'removeRegisteredProject',
+				'relocateProject',
+				'pruneMissingProjects',
+				'initProject',
+			]) {
+				expect(
+					violationsIn(pkg, `export function ${legacy}(dir: string) {}`),
+					`${pkg} defines ${legacy}`
+				).not.toEqual([]);
+			}
+		}
+	);
+
+	it('reading the registry is allowed in task-service, a multi-line import of a read function passes', () => {
+		const read = `import {
+	loadRegistry,
+	resolveScope,
+	writeFileAtomic,
+	projectToolDir,
+} from '@wadeck-app/project-sdk';`;
+		expect(violationsIn('task-service', read)).toEqual([]);
+		const write = `import {
+	loadRegistry,
+	addPath,
+} from '@wadeck-app/project-sdk';`;
+		expect(violationsIn('task-service', write)).not.toEqual([]);
+	});
+
 	it('a forbidden package.json dependency is reported', () => {
 		const found = checkManifest('p.json', { dependencies: { 'task-cli': '*' } }, PACKAGE_RULES['app-module-task']);
 		expect(found).toHaveLength(1);

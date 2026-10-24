@@ -32,7 +32,7 @@ export interface SkippedProject {
 export function skippedWarning(skipped: readonly SkippedProject[], verb: 'counted' | 'listed'): string | null {
 	if (skipped.length === 0) return null;
 	const details = skipped.map(entry => `${entry.path} (${entry.error})`).join('; ');
-	return `${plural(skipped.length, 'project')} not ${verb}: ${details}. Run \`task init\` in the project directory or check that it still exists.`;
+	return `${plural(skipped.length, 'project')} not ${verb}: ${details}. Each reason names its fix.`;
 }
 
 /** The projects an overview could not read, as the `skipped` list of the answers. */
@@ -42,6 +42,7 @@ export function skippedOf(projects: readonly ProjectOverview[]): SkippedProject[
 
 /** Three or four words on why a project cannot be read: the narrow widget has no room for the full reason. */
 function shortProblem(project: ProjectOverview): string {
+	if (project.error?.includes('task cli migrate-data') === true) return 'not migrated';
 	if (!project.exists) return 'missing';
 	if (!project.initialized) return 'not initialized';
 	return 'invalid config';

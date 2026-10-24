@@ -56,10 +56,11 @@ describe('openProject', () => {
 		expect(error.hint).toContain('?project=');
 	});
 
-	it('404 when the param is missing and nothing is registered, telling to run task init', () => {
+	it('404 when the param is missing and nothing is registered, telling to use the project CLI', () => {
 		const error = failure(() => openProject(world.configDir, undefined));
 		expect(error.status).toBe(404);
-		expect(error.hint).toContain('task init');
+		expect(error.hint).toContain('project add');
+		expect(error.hint).not.toContain('task init');
 	});
 
 	it('404 for a project that is not registered, without listing the registered ones', () => {
@@ -67,7 +68,7 @@ describe('openProject', () => {
 		const other = world.createProject('other', { register: false });
 		const error = failure(() => openProject(world.configDir, other));
 		expect(error.status).toBe(404);
-		expect(error.hint).toContain('task init');
+		expect(error.hint).toContain('project add');
 		expect(JSON.stringify([error.message, error.hint, error.extra])).not.toContain(registered);
 	});
 
@@ -90,13 +91,13 @@ describe('openProject', () => {
 		expect(openProject(world.configDir, path.join(dir, 'x', '..') + path.sep).project.path).toBe(dir);
 	});
 
-	it('404 with a fix when the project is registered but its .task directory is gone', () => {
+	it('404 with a fix when a legacy-listed project has lost its .task directory', () => {
 		const dir = world.createProject('alpha');
 		fs.rmSync(path.join(dir, '.task'), { recursive: true });
 		const error = failure(() => openProject(world.configDir, dir));
 		expect(error.status).toBe(404);
-		expect(error.message).toContain('not initialized');
-		expect(error.hint).toContain('task init');
+		expect(error.message).toContain('no .task directory');
+		expect(error.hint).toContain('project add');
 	});
 
 	it('propagates a corrupt registry as the registry error (mapped to 500 with its fix), never as an empty list', () => {
@@ -131,7 +132,7 @@ describe('listProjects', () => {
 				exists: true,
 				initialized: false,
 				openCount: null,
-				error: expect.stringContaining('not initialized') as unknown,
+				error: expect.stringContaining('no .task directory') as unknown,
 				href: null,
 			},
 		]);

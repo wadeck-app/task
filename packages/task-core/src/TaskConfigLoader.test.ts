@@ -145,4 +145,106 @@ describe('TaskConfigLoader', () => {
 			expect(config.globalHooks['onStatusChange']).toBeUndefined();
 		});
 	});
+
+	describe('readConfigFile()', () => {
+		it('returns undefined for a missing file', () => {
+			expect(TaskConfigLoader.readConfigFile(path.join(tmpDir, 'nope.yml'))).toBeUndefined();
+		});
+
+		it('returns undefined for an empty file', () => {
+			const file = path.join(tmpDir, 'empty.yml');
+			fs.writeFileSync(file, '');
+			expect(TaskConfigLoader.readConfigFile(file)).toBeUndefined();
+		});
+
+		it('names the file when the YAML is invalid', () => {
+			const file = path.join(tmpDir, 'broken.yml');
+			fs.writeFileSync(file, 'statuses: [a, b');
+			expect(() => TaskConfigLoader.readConfigFile(file)).toThrow(file);
+		});
+
+		it('names the file when the top level is not a mapping', () => {
+			const file = path.join(tmpDir, 'list.yml');
+			fs.writeFileSync(file, '- a\n- b\n');
+			expect(() => TaskConfigLoader.readConfigFile(file)).toThrow(file);
+			expect(() => TaskConfigLoader.readConfigFile(file)).toThrow(/mapping/);
+		});
+	});
+
+	describe('resolve()', () => {
+		it('builds the resolved config from already merged parts, global hooks and project hooks apart', () => {
+			const config = TaskConfigLoader.resolve({
+				global: { defaults: { priority: 'low' }, hooks: { onTaskCreated: 'echo g' } },
+				project: {
+					statuses: ['todo', { name: 'done', terminal: true }],
+					types: ['bug'],
+					hooks: { onStatusChange: 'p' },
+				},
+				source: '/x/config.yml',
+			});
+			expect(config.statuses).toEqual(['todo', 'done']);
+			expect(config.terminalStatuses).toEqual(['done']);
+			expect(config.types).toEqual(['bug']);
+			expect(config.defaults.priority).toBe('low');
+			expect(config.globalHooks).toEqual({ onTaskCreated: 'echo g' });
+			expect(config.projectHooks).toEqual({ onStatusChange: 'p' });
+		});
+
+		it('names the source in the status errors', () => {
+			expect(() =>
+				TaskConfigLoader.resolve({ global: {}, project: { statuses: [] }, source: '/x/config.yml' })
+			).toThrow('/x/config.yml');
+			expect(() =>
+				TaskConfigLoader.resolve({
+					global: {},
+					project: {
+						statuses: [
+							{ name: 'a', default: true },
+							{ name: 'b', default: true },
+						],
+					},
+					source: '/x/config.yml',
+				})
+			).toThrow(/\/x\/config\.yml.*Only one status/s);
+		});
+	});
+
+	describe('loadGlobal()', () => {
+		it('reads the global config.yml of the given directory, empty when absent', () => {
+			expect(TaskConfigLoader.loadGlobal(tmpDir)).toEqual({});
+			fs.writeFileSync(path.join(tmpDir, 'config.yml'), 'defaults:\n  priority: high\n');
+			expect(TaskConfigLoader.loadGlobal(tmpDir)).toEqual({ defaults: { priority: 'high' } });
+		});
+	});
+
+	describe('updateTypes()', () => {
+		it('creates the file (and nothing else) when missing, through the injected writer', () => {
+			const file = path.join(tmpDir, 'layer', 'config.yml');
+			const writes: string[] = [];
+			TaskConfigLoader.updateTypes(
+				file,
+				types => [...types, 'bug'],
+				(target, content) => {
+					writes.push(target);
+					fs.writeFileSync(target, content, 'utf8');
+				},
+				{ createDirectory: true }
+			);
+			expect(writes).toEqual([file]);
+			expect(TaskConfigLoader.readConfigFile<{ types: string[] }>(file)?.types).toEqual(['bug']);
+		});
+
+		it('does not create the directory unless asked: a vanished folder is an error, not a silent recreation', () => {
+			const file = path.join(tmpDir, 'vanished', 'config.yml');
+			expect(() => TaskConfigLoader.updateTypes(file, types => [...types, 'bug'])).toThrow();
+			expect(fs.existsSync(path.dirname(file))).toBe(false);
+		});
+
+		it('keeps the other keys of the file', () => {
+			const file = path.join(tmpDir, 'config.yml');
+			fs.writeFileSync(file, 'statuses:\n  - a\n  - b\ntypes:\n  - bug\n');
+			TaskConfigLoader.updateTypes(file, types => types.filter(t => t !== 'bug'));
+			expect(TaskConfigLoader.readConfigFile(file)).toEqual({ statuses: ['a', 'b'], types: [] });
+		});
+	});
 });

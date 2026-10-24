@@ -153,6 +153,19 @@ export function createQueueEventSink(options: QueueEventSinkOptions): QueueEvent
 			// queue finds the project's .queue/subscribers.yml from the cwd the SDK sends: never fall back to our own cwd.
 			const projectDir = eventProjectDir(event);
 			if (projectDir === undefined) {
+				const { taskProjectId, taskProjectName } = event.payload as {
+					taskProjectId?: unknown;
+					taskProjectName?: unknown;
+				};
+				// A registered project without folder is expected, not a bug: queue looks for subscribers from a directory.
+				if (typeof taskProjectId === 'string' && taskProjectId !== '') {
+					return undelivered(
+						event,
+						'dropped',
+						`virtual project ${String(taskProjectName)} (${taskProjectId}) has no folder, and the queue finds the subscribers from a project directory: the change was saved, the event cannot be delivered. Give the project a folder (project paths add) to receive its events`,
+						replayCommand(event)
+					);
+				}
 				return undelivered(
 					event,
 					'dropped',

@@ -1,15 +1,15 @@
-// The project a task was last created in, remembered for the New task page. The DSL has no storage a view could use for
-// it (no persisted form field, no variable surviving a reload, nav links drop the query), so the module keeps it in its
-// own persistent folder (ModuleContext.dataDir), next to nothing else.
+// The project a task was last created in, remembered for the New task page by its registry ID. The DSL has no storage a view
+// could use for it (no persisted form field, no variable surviving a reload, nav links drop the query), so the module keeps it in
+// its own persistent folder (ModuleContext.dataDir), next to nothing else.
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 const FILE_NAME = 'last-project.json';
 
 export interface LastProject {
-	/** The remembered project directory; null when none was remembered yet, or the file cannot be used (see `problem`). */
-	path: string | null;
-	/** Why the file cannot be used, with what to do; null when it is absent or fine. */
+	/** The remembered project (registry id); null when none was remembered yet, the file is in the old format, or it cannot be used (see `problem`). */
+	id: string | null;
+	/** Why the file cannot be used, with what to do; null when it is absent or fine (an old-format file is not a problem, see `onOldFormat`). */
 	problem: string | null;
 }
 
@@ -21,25 +21,35 @@ function reasonOf(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
-/** Reads the remembered project. An absent file is the normal first state; any other failure is reported, never hidden. */
-export function readLastProject(dataDir: string): LastProject {
+/**
+ * Reads the remembered project. An absent file is the normal first state; any other failure is reported, never hidden. A file of
+ * the old format (`{ "path": ... }`, before the shared registry) names a project by directory: it is ignored, and `onOldFormat`
+ * is told (the next created task writes the new format).
+ */
+export function readLastProject(
+	dataDir: string,
+	onOldFormat: (message: string) => void = () => undefined
+): LastProject {
 	const file = fileOf(dataDir);
 	let raw: string;
 	try {
 		raw = fs.readFileSync(file, 'utf8');
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { path: null, problem: null };
-		return { path: null, problem: unusable(file, reasonOf(error)) };
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { id: null, problem: null };
+		return { id: null, problem: unusable(file, reasonOf(error)) };
 	}
 	try {
-		const parsed: unknown = JSON.parse(raw);
-		const remembered = (parsed as { path?: unknown } | null)?.path;
-		if (typeof remembered !== 'string' || remembered === '') {
-			return { path: null, problem: unusable(file, 'it has no "path" string') };
+		const parsed = JSON.parse(raw) as { id?: unknown; path?: unknown } | null;
+		if (typeof parsed?.id === 'string' && parsed.id !== '') return { id: parsed.id, problem: null };
+		if (typeof parsed?.path === 'string') {
+			onOldFormat(
+				`${file} is in the old format (it names a project by directory: ${parsed.path}): ignored, no project is preselected on the New task page until the next task is created`
+			);
+			return { id: null, problem: null };
 		}
-		return { path: remembered, problem: null };
+		return { id: null, problem: unusable(file, 'it has no "id" string') };
 	} catch (error) {
-		return { path: null, problem: unusable(file, reasonOf(error)) };
+		return { id: null, problem: unusable(file, reasonOf(error)) };
 	}
 }
 
@@ -49,15 +59,17 @@ function unusable(file: string, reason: string): string {
 
 /**
  * Remembers the project a task was just created in. The task exists by then, so a failure here must not fail the
- * request: it is returned as the warning text the view shows (null when remembered).
+ * request: it is returned as the warning text the view shows (null when remembered). A project without registry id (the legacy
+ * list) has nothing to remember it by: nothing is written.
  */
-export function rememberLastProject(dataDir: string, projectPath: string): string | null {
+export function rememberLastProject(dataDir: string, projectId: string | undefined): string | null {
+	if (projectId === undefined) return null;
 	const file = fileOf(dataDir);
 	// Written aside, then renamed: a crash leaves the previous file, never half of a new one.
 	const temp = `${file}.${process.pid}.tmp`;
 	try {
 		fs.mkdirSync(dataDir, { recursive: true });
-		fs.writeFileSync(temp, JSON.stringify({ path: projectPath }));
+		fs.writeFileSync(temp, JSON.stringify({ id: projectId }));
 		fs.renameSync(temp, file);
 		return null;
 	} catch (error) {

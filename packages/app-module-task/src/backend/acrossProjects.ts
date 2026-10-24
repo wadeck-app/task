@@ -30,12 +30,12 @@ export function readAcrossProjects<T>(configDir: string, read: (ctx: TaskService
 	const { entries: inspected, registryProblem } = inspectKnownProjects(configDir);
 	const entries: ProjectRead<T>[] = [];
 	const unreadable: SkippedProject[] = [];
-	for (const { health, context } of inspected) {
+	for (const { known, health, context } of inspected) {
 		if (context === null) {
 			unreadable.push({ path: health.path, error: health.error ?? 'unreadable' });
 			continue;
 		}
-		entries.push({ project: context.project, value: read(context) });
+		entries.push({ project: { ...context.project, path: known.path }, value: read(context) });
 	}
 	if (inspected.length > 0 && entries.length === 0) throw new NoReadableProjectsError(unreadable);
 	entries.sort((a, b) => compareText(a.project.name, b.project.name) || compareText(a.project.path, b.project.path));

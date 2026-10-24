@@ -2,7 +2,7 @@
 // Use-case layer shared by task-cli and the task app-module: no console, no process.exit, no argv.
 export type { TaskServiceContext } from './context.js';
 export type { OpenTaskContextInput } from './openContext.js';
-export { openTaskContext } from './openContext.js';
+export { openResolvedProject, openTaskContext } from './openContext.js';
 export {
 	TaskServiceError,
 	InvalidStatusError,
@@ -13,12 +13,11 @@ export {
 	PartialDeleteError,
 	DanglingParentError,
 	ProjectsRegistryError,
-	InvalidProjectPathError,
-	ProjectNotRegisteredError,
-	ProjectAlreadyRegisteredError,
 	NoReadableProjectsError,
 	ConflictingProjectSelectionError,
 	ProjectNotInitializedError,
+	ProjectDataSplitError,
+	DataMigrationError,
 } from './errors.js';
 export type { ProjectFailure } from './errors.js';
 export type { ErrorDescription, ErrorKind } from './describeError.js';
@@ -85,22 +84,7 @@ export type { StatusCount } from './taskStats.js';
 export { countTasksByStatus } from './taskStats.js';
 export { listTypes, addType, removeType } from './taskTypes.js';
 export { getTaskConfigDir, getTaskLogDir } from './configDir.js';
-export {
-	isSameProjectDir,
-	listRegisteredProjects,
-	projectsRegistryPath,
-	pruneMissingProjects,
-	registerProject,
-	relocateProject,
-	removeRegisteredProject,
-	unregisterProject,
-} from './projectsRegistry.js';
-export { registerInitializedProject } from './registerInitializedProject.js';
-export type { InitProjectResult, InitRegistration } from './initProject.js';
-export { initProject } from './initProject.js';
-export type { AddProjectInput, AddProjectMode, AddProjectResult } from './addProject.js';
-export { ADD_PROJECT_MODES, addProject } from './addProject.js';
-export { assertExistingDirectory, validateProjectPath } from './projectPaths.js';
+export { isSameProjectDir, listRegisteredProjects, projectsRegistryPath } from './projectsRegistry.js';
 export type { ProjectHealth } from './projectsHealth.js';
 export type { InspectedProject } from './projectsHealth.js';
 export { inspectKnownProjects, inspectProject, inspectRegisteredProjects } from './projectsHealth.js';
@@ -116,3 +100,17 @@ export type { ProjectSource, ResolveProjectInput, ResolvedProject } from './reso
 export { resolveProject, resolveProjectReference } from './resolveProject.js';
 export type { KnownProject, KnownProjects, ListKnownProjectsOptions } from './knownProjects.js';
 export { listKnownProjects } from './knownProjects.js';
+export type { TaskStorage, LegacyData, ChosenStorage } from './storage.js';
+export {
+	chooseDataLocation,
+	describeLegacyData,
+	hasTaskData,
+	legacyStorage,
+	migrateCommand,
+	ownConfigFile,
+	registryStorage,
+	tasksDirOf,
+} from './storage.js';
+export { TASK_CONFIG_SCHEMA, loadTaskConfig } from './projectConfig.js';
+export type { MigrateDataOptions, MigrateDataResult } from './migrateData.js';
+export { migrateData } from './migrateData.js';

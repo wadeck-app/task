@@ -9,13 +9,14 @@ import type { EventSink } from '@wadeck-app/task-service';
 import type { CommandEnv } from '../cli/env.js';
 import { runTaskCommand } from '../TaskIndex.js';
 import { runType } from './TypeCommand.js';
+import { initLegacyProject } from '../testHelpers.js';
 
 describe('task type', () => {
 	let tmpDir: string;
 
 	beforeEach(async () => {
 		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-type-cmd-'));
-		await runTaskCommand(['init'], tmpDir);
+		initLegacyProject(tmpDir);
 	});
 
 	afterEach(() => {

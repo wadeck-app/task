@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { runTaskCommand } from '../TaskIndex.js';
+import { initListedLegacyProject } from '../testHelpers.js';
 
 interface JsonTask {
 	id: string;
@@ -63,7 +64,8 @@ describe('global view commands (task list --all-projects, task projects summary)
 	async function initProject(name: string): Promise<string> {
 		const dir = path.join(root, name);
 		fs.mkdirSync(dir);
-		await runTaskCommand(['init'], dir);
+		// Like a project initialised by the old `task init`: a `.task` folder, also listed in the legacy projects.json.
+		initListedLegacyProject(dir, path.join(process.env['XDG_CONFIG_HOME']!, 'task'));
 		return dir;
 	}
 
@@ -156,7 +158,7 @@ describe('global view commands (task list --all-projects, task projects summary)
 			expect(result.exitCode).toBe(1);
 			expect(result.output).toContain(alpha);
 			expect(result.output).toContain(beta);
-			expect(result.output).toContain('task projects prune');
+			expect(result.output).toContain('project CLI');
 		});
 
 		it('--json: that failure is {"error", "hint"}', async () => {
@@ -167,14 +169,14 @@ describe('global view commands (task list --all-projects, task projects summary)
 			expect(result.exitCode).toBe(1);
 			const parsed = JSON.parse(result.output) as { error: string; hint: string };
 			expect(parsed.error).toContain('none of the 2 registered projects');
-			expect(parsed.hint).toContain('task projects prune');
+			expect(parsed.hint).toContain('project CLI');
 		});
 
 		it('says what to do, exit 0, when no project is registered', async () => {
 			const result = await runTaskCommand(['list', '--all-projects'], root);
 			expect(result.exitCode).toBe(0);
 			expect(result.output).toContain('no project registered');
-			expect(result.output).toContain('task init');
+			expect(result.output).toContain('project add');
 		});
 
 		it('--json: nothing registered is an empty answer, not an error', async () => {
@@ -316,30 +318,8 @@ describe('global view commands (task list --all-projects, task projects summary)
 		});
 	});
 
-	describe('project selection on `task projects ...` (registry commands use no project)', () => {
-		it('add rejects --project-dir instead of silently registering the cwd, and registers nothing', async () => {
-			const { alpha } = await twoProjects();
-			const elsewhere = path.join(root, 'elsewhere');
-			fs.mkdirSync(elsewhere);
-			const result = await runTaskCommand(['projects', 'add', '--project-dir', alpha], elsewhere);
-			expect(result.exitCode).toBe(1);
-			expect(result.output).toBe(
-				'Error: task projects add cannot use --project-dir: it registers the directory given as argument (default: the cwd)\n' +
-					'Run: task projects add <dir>'
-			);
-			const list = await runTaskCommand(['projects', 'list'], root);
-			expect(list.output).not.toContain('elsewhere');
-		});
-
-		it('--json: add with --project-dir is {"error", "hint"}', async () => {
-			const result = await runTaskCommand(['--json', 'projects', 'add', '--project-dir', root], root);
-			expect(result.exitCode).toBe(1);
-			const parsed = JSON.parse(result.output) as { error: string; hint: string };
-			expect(parsed.error).toContain('--project-dir');
-			expect(parsed.hint).toBe('Run: task projects add <dir>');
-		});
-
-		it('the other registry commands ignore project selection (nothing contradicts): list works with TASK_PROJECT_DIR and PROJECT_DIR set', async () => {
+	describe('project selection on `task projects summary` (it uses no project)', () => {
+		it('summary ignores project selection (nothing contradicts): it works with TASK_PROJECT_DIR and PROJECT_DIR set', async () => {
 			const { alpha } = await twoProjects();
 			process.env['TASK_PROJECT_DIR'] = alpha;
 			process.env['PROJECT_DIR'] = alpha;
@@ -369,13 +349,13 @@ describe('global view commands (task list --all-projects, task projects summary)
 				'cannot be combined with --follow, --tree, --parent, --project-dir or TASK_PROJECT_DIR'
 			);
 			expect(help).toContain('PROJECT_DIR is ignored (stderr note)');
-			expect(help).toContain('task projects add cannot use --project-dir');
 		});
 
-		it('task projects --help says no project is used and --project-dir is refused by add', async () => {
+		it('task projects --help says no project is used and where the removed subcommands went', async () => {
 			const help = (await runTaskCommand(['projects', '--help'], root)).output;
 			expect(help).toContain('--project-dir, TASK_PROJECT_DIR and PROJECT_DIR select no project here');
-			expect(help).toContain('add refuses --project-dir');
+			expect(help).toContain('project add');
+			expect(help).toContain('moved to the project CLI');
 		});
 	});
 
@@ -405,13 +385,13 @@ describe('global view commands (task list --all-projects, task projects summary)
 			const result = await runTaskCommand(['projects', 'summary'], root);
 			expect(result.exitCode).toBe(1);
 			expect(result.output).toContain(alpha);
-			expect(result.output).toContain('task projects prune');
+			expect(result.output).toContain('project CLI');
 		});
 
 		it('says what to do, exit 0, when no project is registered', async () => {
 			const result = await runTaskCommand(['projects', 'summary'], root);
 			expect(result.exitCode).toBe(0);
-			expect(result.output).toContain('task init');
+			expect(result.output).toContain('project add');
 		});
 
 		it('--json prints the summary of the service as it is', async () => {

@@ -100,35 +100,12 @@ export class NoReadableProjectsError extends TaskServiceError {
 	constructor(readonly failures: readonly ProjectFailure[]) {
 		super(
 			`none of the ${failures.length} registered projects could be read: ${failures.map(f => `${f.path} (${f.error})`).join('; ')}`,
-			'Fix the causes above: `task init` in a project directory recreates its .task, `task projects remove <dir>` unregisters a vanished one (`task projects prune` drops every missing one).'
+			'Fix the causes above (each names its fix). Projects are registered, moved and removed with the project CLI (project add, project paths move, project remove).'
 		);
 	}
 }
 
-/** A directory given for a project is unusable (not absolute, relative segments, NUL byte, missing, not a directory, not a task project). Nothing was changed. */
-export class InvalidProjectPathError extends TaskServiceError {}
-
-/** The project to remove or move is not in the registry. */
-export class ProjectNotRegisteredError extends TaskServiceError {
-	constructor(readonly path: string) {
-		super(
-			`project "${path}" is not registered`,
-			'Pick one of the registered projects (`task projects list` or the Projects page).'
-		);
-	}
-}
-
-/** The directory to register or move to is already in the registry. */
-export class ProjectAlreadyRegisteredError extends TaskServiceError {
-	constructor(readonly path: string) {
-		super(
-			`project "${path}" is already registered`,
-			'Remove the other entry first if it is the one you want to replace (the tasks stay on disk).'
-		);
-	}
-}
-
-/** `<configDir>/projects.json` is unreadable, corrupt, or the directory to register is invalid. Never auto-repaired. */
+/** The legacy `<configDir>/projects.json` is unreadable or corrupt. Never auto-repaired. */
 export class ProjectsRegistryError extends TaskServiceError {}
 
 /**
@@ -169,3 +146,24 @@ export class ProjectNotInitializedError extends TaskServiceError {
 		super(message, hint);
 	}
 }
+
+/**
+ * A project of the shared registry has task data in BOTH its registry data folder and the `.task` of its main path, and the task ids
+ * differ: a real split. Task cannot tell which set is right, so nothing was read. The hint gives the two ways out (keep one, remove the other by hand).
+ */
+export class ProjectDataSplitError extends TaskServiceError {
+	constructor(
+		readonly projectName: string,
+		readonly legacyDir: string,
+		readonly dataDir: string,
+		hint: string
+	) {
+		super(
+			`project ${projectName} has task data in both ${legacyDir} and ${dataDir}, and their tasks differ: task cannot tell which one is right`,
+			hint
+		);
+	}
+}
+
+/** `task cli migrate-data` cannot run for this project (virtual, not registered, nothing to copy, destination not empty, copy failed). Nothing is left half copied. */
+export class DataMigrationError extends TaskServiceError {}

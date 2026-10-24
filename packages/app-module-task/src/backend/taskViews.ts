@@ -1,12 +1,12 @@
 // View models of the task pages: what the dsl-views bind to (hrefs, options, flags, form data), built from service results.
 import type { TaskLinks, TaskRecord, TaskSummary, TaskTreeNode } from '@wadeck-app/task-core';
 import { ALL_LINK_NAMES } from '@wadeck-app/task-service';
-import type { TaskServiceContext } from '@wadeck-app/task-service';
 
 import { detailHref, encodedProject, historyHref, pageHrefs, pageLink, projectText, showAllToggle } from './hrefs.js';
+import type { OpenedProject } from './projects.js';
 import { flattenTree, withRowLinks, withTreeLinks } from './rowViews.js';
 
-type Project = TaskServiceContext['project'];
+type Project = OpenedProject['project'];
 
 /** The tasks page: the filtered list plus the links and options around it. */
 export function tasksListBody(
@@ -50,7 +50,7 @@ function detailForms(project: Project, task: TaskRecord): Record<string, Record<
 
 /** The detail page of a task. `detail` is the service's task detail with `parent` and `children`. */
 export function taskDetailBody(
-	ctx: TaskServiceContext,
+	ctx: OpenedProject,
 	data: { detail: Record<string, unknown>; warnings: string[]; links: TaskLinks; types: string[] }
 ): Record<string, unknown> {
 	const { project } = ctx;

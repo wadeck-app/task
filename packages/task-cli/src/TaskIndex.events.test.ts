@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { addProject as addSharedProject, defaultRegistryDir } from '@wadeck-app/project-sdk';
 import { TaskStore } from '@wadeck-app/task-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { initLegacyProject } from './testHelpers.js';
 
 // Queue delivery is observed at the SDK boundary: the CLI publishes through @wadeck-app/queue-sdk (publishAndWait, then flush).
 // The SDK is faked so no real queue is needed (or touched).
@@ -59,7 +60,7 @@ beforeEach(async () => {
 		registerEvents: registerMock,
 		flush: flushMock,
 	}));
-	await runTaskCommand(['init'], tmpDir);
+	initLegacyProject(tmpDir);
 });
 
 afterEach(() => {
@@ -966,7 +967,12 @@ describe('queue events — taskProjectId', () => {
 	});
 
 	it('is the registry id for a registered project, next to its registry name; the queue cwd stays the project path', async () => {
-		const project = await addSharedProject(defaultRegistryDir(process.env), { name: 'shared-name', path: tmpDir });
+		// A registered project keeps its data in the registry: its folder needs no .task (and must not hold unmigrated data).
+		const registeredDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-events-registered-'));
+		const project = await addSharedProject(defaultRegistryDir(process.env), {
+			name: 'shared-name',
+			path: registeredDir,
+		});
 		const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'task-events-elsewhere-'));
 		try {
 			await runTaskCommand(['new', 'shared task', '-p', 'shared-name'], elsewhere);
@@ -977,7 +983,8 @@ describe('queue events — taskProjectId', () => {
 		const payload = pushedEvents()[0]!.payload;
 		expect(payload['taskProjectId']).toBe(project.id);
 		expect(payload['taskProjectName']).toBe('shared-name');
-		expect(payload['taskProjectPath']).toBe(tmpDir);
-		expect((publishMock.mock.calls[0]![2] as { cwd?: string }).cwd).toBe(tmpDir);
+		expect(payload['taskProjectPath']).toBe(path.resolve(registeredDir));
+		expect((publishMock.mock.calls[0]![2] as { cwd?: string }).cwd).toBe(path.resolve(registeredDir));
+		fs.rmSync(registeredDir, { recursive: true, force: true });
 	});
 });

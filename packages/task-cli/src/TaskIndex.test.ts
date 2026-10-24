@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { runTaskCommand } from './TaskIndex.js';
+import { initLegacyProject } from './testHelpers.js';
 
 let tmpDir: string;
 
@@ -115,7 +116,7 @@ describe('runTaskCommand — project guard', () => {
 	it('fails with human-readable message when project not initialized', async () => {
 		const result = await runTaskCommand(['list'], tmpDir);
 		expect(result.exitCode).toBe(1);
-		expect(result.output).toContain('task init');
+		expect(result.output).toContain('project add');
 		expect(result.output).not.toMatch(/^\{/); // not JSON
 	});
 
@@ -123,106 +124,30 @@ describe('runTaskCommand — project guard', () => {
 		const result = await runTaskCommand(['--json', 'list'], tmpDir);
 		expect(result.exitCode).toBe(1);
 		const parsed = JSON.parse(result.output) as { error: string };
-		expect(parsed.error).toContain('project not initialized');
+		expect(parsed.error).toContain('no task project');
 	});
 
-	it('list, new, show, set-status all require init', async () => {
+	it('list, new, show, set-status all need a project (registered, or a legacy folder with a .task)', async () => {
 		const commands = [['list'], ['new', 'test task'], ['show', 'abc123'], ['set-status', 'abc123', 'done']];
 		for (const cmd of commands) {
 			const result = await runTaskCommand(cmd, tmpDir);
-			expect(result.exitCode, `command "${cmd[0]}" should require init`).toBe(1);
-			expect(result.output).toContain('task init');
+			expect(result.exitCode, `command "${cmd[0]}" should need a project`).toBe(1);
+			expect(result.output).toContain('project add');
+			expect(result.output).not.toContain('task init');
 		}
 	});
 
 	it('approve is no longer a valid command', async () => {
-		await runTaskCommand(['init'], tmpDir);
+		initLegacyProject(tmpDir);
 		const result = await runTaskCommand(['approve', 'abc123'], tmpDir);
 		expect(result.exitCode).toBe(1);
 		expect(result.output).toContain('unknown command');
 	});
 });
 
-describe('runTaskCommand — init', () => {
-	it('creates .task/tasks/ and config.yml', async () => {
-		const result = await runTaskCommand(['init'], tmpDir);
-		expect(result.exitCode).toBe(0);
-		expect(fs.existsSync(path.join(tmpDir, '.task', 'tasks'))).toBe(true);
-		expect(fs.existsSync(path.join(tmpDir, '.task', 'config.yml'))).toBe(true);
-	});
-
-	describe('project registration (projects.json read by the task app-module)', () => {
-		let stderr: string;
-
-		beforeEach(() => {
-			stderr = '';
-			vi.spyOn(process.stderr, 'write').mockImplementation(chunk => {
-				stderr += String(chunk);
-				return true;
-			});
-		});
-
-		afterEach(() => {
-			fs.rmSync(registryFile(), { force: true });
-		});
-
-		const registryFile = (): string => path.join(process.env['XDG_CONFIG_HOME']!, 'task', 'projects.json');
-
-		it('registers the project dir and keeps stdout and stderr unchanged', async () => {
-			const result = await runTaskCommand(['init'], tmpDir);
-			expect(result).toEqual({
-				exitCode: 0,
-				output: `Initialized task project in ${path.join(tmpDir, '.task')}`,
-			});
-			expect(JSON.parse(fs.readFileSync(registryFile(), 'utf8'))).toContain(tmpDir);
-			expect(stderr).not.toContain('projects registry');
-		});
-
-		it('registers an already initialized project too (re-running init is the way to register an old project)', async () => {
-			fs.mkdirSync(path.join(tmpDir, '.task', 'tasks'), { recursive: true });
-			const result = await runTaskCommand(['init'], tmpDir);
-			expect(result).toEqual({ exitCode: 0, output: 'Project already initialized.' });
-			expect(JSON.parse(fs.readFileSync(registryFile(), 'utf8'))).toContain(tmpDir);
-		});
-
-		it('registers once when init is run twice', async () => {
-			await runTaskCommand(['init'], tmpDir);
-			await runTaskCommand(['init'], tmpDir);
-			expect(
-				(JSON.parse(fs.readFileSync(registryFile(), 'utf8')) as string[]).filter(p => p === tmpDir)
-			).toHaveLength(1);
-		});
-
-		it('registers the --project-dir target, not the cwd', async () => {
-			const target = path.join(tmpDir, 'sub');
-			fs.mkdirSync(target);
-			await runTaskCommand(['init', '--project-dir', target], tmpDir);
-			expect(JSON.parse(fs.readFileSync(registryFile(), 'utf8'))).toContain(target);
-		});
-
-		it('warns on stderr when the registry is corrupt, never fails init, and leaves the file untouched', async () => {
-			fs.mkdirSync(path.dirname(registryFile()), { recursive: true });
-			fs.writeFileSync(registryFile(), '{not json');
-			const result = await runTaskCommand(['init'], tmpDir);
-			expect(result).toEqual({
-				exitCode: 0,
-				output: `Initialized task project in ${path.join(tmpDir, '.task')}`,
-			});
-			expect(fs.existsSync(path.join(tmpDir, '.task', 'config.yml'))).toBe(true);
-			expect(stderr).toContain('[task] warning: could not register this project');
-			expect(stderr).toContain(registryFile());
-			expect(fs.readFileSync(registryFile(), 'utf8')).toBe('{not json');
-		});
-	});
-
-	it('is idempotent — does not fail if already initialized', async () => {
-		await runTaskCommand(['init'], tmpDir);
-		const result = await runTaskCommand(['init'], tmpDir);
-		expect(result.exitCode).toBe(0);
-	});
-
-	it('after init, list succeeds', async () => {
-		await runTaskCommand(['init'], tmpDir);
+describe('runTaskCommand — a legacy project', () => {
+	it('after the folder holds a .task, list succeeds', async () => {
+		initLegacyProject(tmpDir);
 		const result = await runTaskCommand(['list'], tmpDir);
 		expect(result.exitCode).toBe(0);
 	});
@@ -230,7 +155,7 @@ describe('runTaskCommand — init', () => {
 
 describe('runTaskCommand — prefix match', () => {
 	beforeEach(async () => {
-		await runTaskCommand(['init'], tmpDir);
+		initLegacyProject(tmpDir);
 	});
 
 	it('show accepts a full id', async () => {
@@ -271,7 +196,7 @@ describe('runTaskCommand — prefix match', () => {
 
 describe('runTaskCommand — set-status error messages', () => {
 	beforeEach(async () => {
-		await runTaskCommand(['init'], tmpDir);
+		initLegacyProject(tmpDir);
 	});
 
 	it('shows human-readable error with Did you mean suggestion', async () => {
@@ -327,7 +252,7 @@ describe('runTaskCommand — --project-dir flag', () => {
 
 	beforeEach(async () => {
 		projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-project-dir-test-'));
-		await runTaskCommand(['init'], projectDir);
+		initLegacyProject(projectDir);
 	});
 
 	afterEach(() => {
@@ -380,7 +305,7 @@ describe('runTaskCommand — --project-dir flag', () => {
 
 describe('runTaskCommand — delete', () => {
 	beforeEach(async () => {
-		await runTaskCommand(['init'], tmpDir);
+		initLegacyProject(tmpDir);
 	});
 
 	it('deletes a task by full id', async () => {
@@ -555,7 +480,7 @@ describe('runTaskCommand — delete', () => {
 		try {
 			const result = await runTaskCommand(['delete', 'abc123'], uninitDir);
 			expect(result.exitCode).toBe(1);
-			expect(result.output).toContain('task init');
+			expect(result.output).toContain('project add');
 		} finally {
 			fs.rmSync(uninitDir, { recursive: true, force: true });
 		}
@@ -571,7 +496,7 @@ describe('runTaskCommand — delete', () => {
 
 describe('runTaskCommand — list hides terminal statuses by default', () => {
 	beforeEach(async () => {
-		await runTaskCommand(['init'], tmpDir);
+		initLegacyProject(tmpDir);
 	});
 
 	it('list omits tasks in a terminal status (done) unless --all is passed', async () => {
@@ -599,7 +524,7 @@ describe('runTaskCommand — TASK_PROJECT_DIR / PROJECT_DIR env vars', () => {
 
 	beforeEach(async () => {
 		projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-env-dir-test-'));
-		await runTaskCommand(['init'], projectDir);
+		initLegacyProject(projectDir);
 		process.env = { ...origEnv };
 	});
 

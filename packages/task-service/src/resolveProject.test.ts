@@ -5,9 +5,9 @@ import {
 	AmbiguousReferenceError,
 	NoProjectInScopeError,
 	ProjectNotFoundError,
-	VirtualProjectError,
 	addPath,
 	normalizePath,
+	projectToolDir,
 } from '@wadeck-app/project-sdk';
 
 import { describeError } from './describeError.js';
@@ -30,7 +30,7 @@ afterEach(() => {
 const native = (dir: string): string => path.resolve(dir);
 
 describe('resolveProject: the shared registry', () => {
-	it('-p <name> resolves the project and reads its data from <main path>/.task', async () => {
+	it('-p <name> resolves the project; its data is in the registry data folder, not in <main path>/.task', async () => {
 		const dir = sandbox.dir('shop', { task: true });
 		const project = await sandbox.register('shop', dir);
 
@@ -43,6 +43,11 @@ describe('resolveProject: the shared registry', () => {
 			source: 'flag',
 			via: '--project',
 			registryDir: sandbox.registryDir,
+		});
+		expect(resolved.storage).toMatchObject({
+			kind: 'registry',
+			dataDir: projectToolDir(sandbox.registryDir, project.id, 'task', 'data'),
+			legacyDir: path.join(native(dir), '.task'),
 		});
 		expect(resolved.legacyWarning).toBeUndefined();
 	});
@@ -89,7 +94,7 @@ describe('resolveProject: the shared registry', () => {
 		expect(resolved.legacyWarning).toBeUndefined();
 	});
 
-	it('the cwd in a secondary path of the project reads the data of the MAIN path', async () => {
+	it('the cwd in a secondary path of the project resolves to the MAIN path (events run there)', async () => {
 		const main = sandbox.dir('shop', { task: true });
 		const worktree = sandbox.dir('shop-feature');
 		const project = await sandbox.register('shop', main);
@@ -100,16 +105,22 @@ describe('resolveProject: the shared registry', () => {
 		expect(resolved).toMatchObject({ id: project.id, path: native(main), source: 'cwd' });
 	});
 
-	it('a project whose main path has no .task is refused naming the project and the folder', async () => {
+	it('a registered project whose main path has no .task is a fresh project, not an error (its data lives in the registry)', async () => {
 		const dir = sandbox.dir('shop');
+		const project = await sandbox.register('shop', dir);
+
+		const resolved = resolveProject({ cwd: sandbox.root, projectRef: 'shop', env: sandbox.env });
+
+		expect(resolved).toMatchObject({ id: project.id, path: native(dir), source: 'flag' });
+		expect(fs.existsSync(resolved.storage.dataDir)).toBe(false);
+	});
+
+	it('resolving never refuses an unmigrated project (migrate-data needs to resolve it); opening its context does', async () => {
+		const dir = sandbox.dir('shop', { task: true });
+		fs.writeFileSync(path.join(dir, '.task', 'tasks', 'one.json'), '{}');
 		await sandbox.register('shop', dir);
 
-		const failure = captureError(() => resolveProject({ cwd: sandbox.root, projectRef: 'shop', env: sandbox.env }));
-
-		expect(failure).toBeInstanceOf(ProjectNotInitializedError);
-		expect((failure as Error).message).toContain('shop');
-		expect((failure as Error).message).toContain(native(dir));
-		expect(describeError(failure).hint).toContain('task init');
+		expect(resolveProject({ cwd: dir, env: sandbox.env }).source).toBe('cwd');
 	});
 
 	it('a reference that does not resolve is an error with suggestions, never a fallback to the legacy rules', async () => {
@@ -152,16 +163,16 @@ describe('resolveProject: the shared registry', () => {
 		]);
 	});
 
-	it('a virtual project (no path) fails loudly naming the project', async () => {
-		await sandbox.register('config-only', undefined);
+	it('a virtual project (no path) resolves: its data is id-based, it has no path (and so no cwd for events)', async () => {
+		const project = await sandbox.register('config-only', undefined);
 
-		const failure = captureError(() =>
-			resolveProject({ cwd: sandbox.root, projectRef: 'config-only', env: sandbox.env })
-		);
+		const resolved = resolveProject({ cwd: sandbox.root, projectRef: 'config-only', env: sandbox.env });
 
-		expect(failure).toBeInstanceOf(VirtualProjectError);
-		expect((failure as Error).message).toContain('config-only');
-		expect(describeError(failure).kind).toBe('invalid');
+		expect(resolved.id).toBe(project.id);
+		expect(resolved.path).toBeUndefined();
+		expect(resolved.storage.dataDir).toBe(projectToolDir(sandbox.registryDir, project.id, 'task', 'data'));
+		expect(resolved.storage.legacyDir).toBeUndefined();
+		expect(resolved.logLine).toContain('virtual');
 	});
 
 	it('-p together with --project-dir is a contradiction', async () => {
@@ -202,7 +213,7 @@ describe('resolveProject: the shared registry', () => {
 		expect(logLine).toContain(`shop (${project.id})`);
 		expect(logLine).toContain('via cwd');
 		expect(logLine).toContain(sandbox.registryDir);
-		expect(logLine).toContain(path.join(native(dir), '.task'));
+		expect(logLine).toContain(projectToolDir(sandbox.registryDir, project.id, 'task', 'data'));
 	});
 });
 
@@ -213,6 +224,7 @@ describe('resolveProject: the legacy path (removed in stage 2)', () => {
 		const resolved = resolveProject({ cwd: dir, env: sandbox.env });
 
 		expect(resolved).toMatchObject({ name: 'old', path: native(dir), source: 'legacy', via: 'cwd' });
+		expect(resolved.storage).toMatchObject({ kind: 'legacy', dataDir: path.join(native(dir), '.task') });
 		expect(resolved.id).toBeUndefined();
 		expect(resolved.legacyWarning).toContain(native(dir));
 		expect(resolved.legacyWarning).toContain(`project add "${native(dir)}"`);
@@ -271,15 +283,15 @@ describe('resolveProject: the legacy path (removed in stage 2)', () => {
 		expect(resolved).toMatchObject({ source: 'cwd', path: native(main) });
 	});
 
-	it('nothing resolves and there is no .task: "project not initialized", the task init step and the project add hint', () => {
+	it('nothing resolves and there is no .task: says so and points to project add (task init no longer exists)', () => {
 		const dir = sandbox.dir('bare');
 
 		const failure = captureError(() => resolveProject({ cwd: dir, env: sandbox.env }));
 
 		expect(failure).toBeInstanceOf(ProjectNotInitializedError);
 		const described = describeError(failure);
-		expect(described.message).toContain('project not initialized');
-		expect(described.hint).toContain('task init');
+		expect(described.message).toContain('no task project');
+		expect(described.hint).not.toContain('task init');
 		// The hint is the SDK's own (its normalised form of the folder: forward slashes).
 		expect(described.hint).toContain(`project add "${normalizePath(dir)}"`);
 	});
