@@ -3,7 +3,14 @@ import * as path from 'node:path';
 
 import type { TaskTreeNode } from '@wadeck-app/task-core';
 import { listForest, openTaskContext, projectsRegistryPath, unregisterProject } from '@wadeck-app/task-service';
-import type { EventPublisher, EventSink, PublishOutcome } from '@wadeck-app/task-service';
+import {
+	queueEventDeclarations,
+	type EventPublisher,
+	type EventSink,
+	type PublishOutcome,
+	type QueueEventDeclaration,
+	type RegisterEventsOutcome,
+} from '@wadeck-app/task-service';
 import type { ModuleContext, ModuleRouteHandler } from '@wadeck-app/app-core-sdk';
 
 import backend from './index.js';
@@ -141,10 +148,21 @@ describe('route table', () => {
 		expect([...h.routes.keys()].sort()).toEqual([...EXPECTED_ROUTES].sort());
 	});
 
-	it('the default export of the backend entry registers the same routes', () => {
-		const { routes, ctx } = collectRoutes('/unused/data-dir');
-		backend(ctx);
-		expect([...routes.keys()].sort()).toEqual([...EXPECTED_ROUTES].sort());
+	it('the default export of the backend entry registers the same routes', async () => {
+		const world = createTestWorld();
+		const savedXdg = process.env['XDG_CONFIG_HOME'];
+		// The entry reads the real config dir: the declaration it starts logs there (the SDK is off in tests).
+		process.env['XDG_CONFIG_HOME'] = world.root;
+		try {
+			const { routes, ctx } = collectRoutes('/unused/data-dir');
+			const instance = backend(ctx);
+			expect([...routes.keys()].sort()).toEqual([...EXPECTED_ROUTES].sort());
+			await (instance as TaskModuleInstance).flush();
+		} finally {
+			if (savedXdg === undefined) delete process.env['XDG_CONFIG_HOME'];
+			else process.env['XDG_CONFIG_HOME'] = savedXdg;
+			world.cleanup();
+		}
 	});
 });
 
@@ -1114,20 +1132,31 @@ describe('event delivery', () => {
 			cwd: string;
 		}
 		// Plain functions, not vi.fn(): the config's mockReset would wipe an implementation set at creation.
-		function publisherFake(answer: () => PublishOutcome): {
+		function publisherFake(
+			answer: () => PublishOutcome,
+			register: (source: string) => Promise<RegisterEventsOutcome> = () =>
+				Promise.resolve({ status: 'registered', count: 5 })
+		): {
 			publisher: EventPublisher;
 			calls: Call[];
+			registrations: { source: string; events: QueueEventDeclaration[] }[];
 			flushes: () => number;
 		} {
 			const calls: Call[] = [];
+			const registrations: { source: string; events: QueueEventDeclaration[] }[] = [];
 			let flushes = 0;
 			return {
 				calls,
+				registrations,
 				flushes: () => flushes,
 				publisher: {
 					publishAndWait(event, _payload, options) {
 						calls.push({ event, cwd: options.cwd });
 						return Promise.resolve(answer());
+					},
+					registerEvents(source, events) {
+						registrations.push({ source, events });
+						return register(source);
 					},
 					flush() {
 						flushes++;
@@ -1137,7 +1166,7 @@ describe('event delivery', () => {
 			};
 		}
 
-		it('creates ONE publisher for the module, lazily at the first mutation, and sends each event with its project as cwd', async () => {
+		it('creates ONE publisher for the module (at start, to declare the events) and sends each event with its project as cwd', async () => {
 			const fake = publisherFake(() => ({ status: 'queued' }));
 			let created = 0;
 			const sdk = setup('default', {
@@ -1150,7 +1179,7 @@ describe('event delivery', () => {
 				const alpha = sdk.world.createProject('alpha');
 				const beta = sdk.world.createProject('beta');
 				await sdk.call('GET /tasks', { query: { project: alpha } });
-				expect(created).toBe(0);
+				expect(created).toBe(1);
 
 				await sdk.call('POST /tasks', { query: { project: alpha }, body: { description: 'a' } });
 				await sdk.call('POST /tasks', { query: { project: beta }, body: { description: 'b' } });
@@ -1253,27 +1282,199 @@ describe('event delivery', () => {
 			).resolves.toBeUndefined();
 		});
 
-		it('the backend entry returns the instance the teardown hook flushes', () => {
+		it('the backend entry returns the instance the teardown hook flushes', async () => {
 			const world = createTestWorld();
+			const savedXdg = process.env['XDG_CONFIG_HOME'];
+			// The entry reads the real config dir: the declaration it starts logs there (the SDK is off in tests).
+			process.env['XDG_CONFIG_HOME'] = world.root;
 			try {
 				const { ctx } = collectRoutes(path.join(world.root, 'module-data'));
 				const instance = backend(ctx);
 				expect(typeof (instance as TaskModuleInstance).flush).toBe('function');
+				await (instance as TaskModuleInstance).flush();
 			} finally {
+				if (savedXdg === undefined) delete process.env['XDG_CONFIG_HOME'];
+				else process.env['XDG_CONFIG_HOME'] = savedXdg;
 				world.cleanup();
 			}
 		});
 	});
 
-	it('builds without an injected sink (the queue sink is the default and is only used on delivery)', () => {
+	it('builds without an injected sink (the queue sink is the default; it declares the events at start and delivers on mutation)', async () => {
 		const world = createTestWorld();
 		try {
 			const { routes, ctx } = collectRoutes(path.join(world.root, 'module-data'));
-			registerTaskRoutes(ctx, { configDir: world.configDir });
+			const instance = registerTaskRoutes(ctx, { configDir: world.configDir, writeStderr: () => undefined });
 			expect(routes.size).toBe(EXPECTED_ROUTES.length);
+			await instance.flush();
 		} finally {
 			world.cleanup();
 		}
+	});
+
+	describe('declaring the events to the queue (once, at start)', () => {
+		interface Declared {
+			source: string;
+			events: QueueEventDeclaration[];
+		}
+		function fakePublisher(register: (declared: Declared) => Promise<RegisterEventsOutcome>): {
+			publisher: EventPublisher;
+			declared: Declared[];
+		} {
+			const declared: Declared[] = [];
+			return {
+				declared,
+				publisher: {
+					publishAndWait: () => Promise.resolve({ status: 'queued' }),
+					registerEvents(source, events) {
+						const entry = { source, events };
+						declared.push(entry);
+						return register(entry);
+					},
+				},
+			};
+		}
+		function logText(world: TestWorld): string {
+			const dir = path.join(world.configDir, 'logs');
+			if (!fs.existsSync(dir)) return '';
+			return fs
+				.readdirSync(dir)
+				.map(file => fs.readFileSync(path.join(dir, file), 'utf8'))
+				.join('');
+		}
+
+		it('declares the five task events under the source task, once, when the backend starts', async () => {
+			const fake = fakePublisher(() => Promise.resolve({ status: 'registered', count: 5 }));
+			const sdk = setup('default', { createPublisher: () => fake.publisher });
+			try {
+				await sdk.instance.flush();
+
+				expect(fake.declared).toHaveLength(1);
+				expect(fake.declared[0]!.source).toBe('task');
+				expect(fake.declared[0]!.events).toEqual(queueEventDeclarations);
+				// Mutations and reads declare nothing more.
+				const dir = sdk.world.createProject('alpha');
+				await sdk.call('POST /tasks', { query: { project: dir }, body: { description: 'a' } });
+				await sdk.call('GET /tasks', { query: { project: dir } });
+				expect(fake.declared).toHaveLength(1);
+			} finally {
+				sdk.world.cleanup();
+			}
+		});
+
+		it('does not block the routes: they are registered while the declaration is still pending', async () => {
+			let release: (outcome: RegisterEventsOutcome) => void = () => undefined;
+			const fake = fakePublisher(() => new Promise(resolve => (release = resolve)));
+			const sdk = setup('default', { createPublisher: () => fake.publisher });
+			try {
+				expect(sdk.routes.size).toBe(EXPECTED_ROUTES.length);
+				const dir = sdk.world.createProject('alpha');
+				const answer = await sdk.call('GET /tasks', { query: { project: dir } });
+				expect(answer.status).toBe(200);
+
+				// The teardown still waits for it.
+				let flushed = false;
+				const flushing = sdk.instance.flush().then(() => (flushed = true));
+				await Promise.resolve();
+				expect(flushed).toBe(false);
+				release({ status: 'registered', count: 5 });
+				await flushing;
+				expect(flushed).toBe(true);
+			} finally {
+				sdk.world.cleanup();
+			}
+		});
+
+		it('does not fail the module load when the publisher cannot be created: the routes work, the log says why', async () => {
+			const sdk = setup('default', {
+				createPublisher: () => {
+					throw new Error('no publisher today');
+				},
+				writeStderr: () => undefined,
+			});
+			try {
+				expect(sdk.routes.size).toBe(EXPECTED_ROUTES.length);
+				await sdk.instance.flush();
+				expect(logText(sdk.world)).toContain('no publisher today');
+			} finally {
+				sdk.world.cleanup();
+			}
+		});
+
+		it('does not fail the module load when the declaration rejects', async () => {
+			const fake = fakePublisher(() => Promise.reject(new Error('declaration exploded')));
+			const sdk = setup('default', { createPublisher: () => fake.publisher });
+			try {
+				await expect(sdk.instance.flush()).resolves.toBeUndefined();
+				expect(logText(sdk.world)).toContain('declaration exploded');
+			} finally {
+				sdk.world.cleanup();
+			}
+		});
+
+		it('reports a refused declaration (a bug of ours) on stderr and in the task log, with the problem paths', async () => {
+			const fake = fakePublisher(() =>
+				Promise.resolve({
+					status: 'rejected',
+					reason: 'r',
+					problems: [{ path: 'events[2].description', message: 'too long' }],
+				})
+			);
+			const stderr: string[] = [];
+			const sdk = setup('default', {
+				createPublisher: () => fake.publisher,
+				writeStderr: text => stderr.push(text),
+			});
+			try {
+				await sdk.instance.flush();
+
+				expect(stderr.join('')).toContain('events[2].description');
+				expect(logText(sdk.world)).toContain('events[2].description: too long');
+			} finally {
+				sdk.world.cleanup();
+			}
+		});
+
+		it('is quiet when the queue is old (unsupported) or unreachable (dropped)', async () => {
+			for (const status of ['unsupported', 'dropped'] as const) {
+				const fake = fakePublisher(() => Promise.resolve({ status, reason: `because ${status}` }));
+				const stderr: string[] = [];
+				const sdk = setup('default', {
+					createPublisher: () => fake.publisher,
+					writeStderr: text => stderr.push(text),
+				});
+				try {
+					await sdk.instance.flush();
+					expect(stderr, status).toEqual([]);
+					expect(logText(sdk.world), status).toContain(`because ${status}`);
+				} finally {
+					sdk.world.cleanup();
+				}
+			}
+		});
+
+		it('declares nothing when the caller injects its own sink (there is no publisher to declare through)', async () => {
+			const fake = fakePublisher(() => Promise.resolve({ status: 'registered', count: 5 }));
+			const sdk = setup(undefined, { createPublisher: () => fake.publisher });
+			try {
+				await sdk.instance.flush();
+				expect(fake.declared).toEqual([]);
+			} finally {
+				sdk.world.cleanup();
+			}
+		});
+
+		it('with the real SDK under the test setup (QUEUE_SDK_OFF=1) declares nothing and says the SDK is off', async () => {
+			const world = createTestWorld();
+			try {
+				const { ctx } = collectRoutes(path.join(world.root, 'module-data'));
+				const instance = registerTaskRoutes(ctx, { configDir: world.configDir, writeStderr: () => undefined });
+				await instance.flush();
+				expect(logText({ ...world } as TestWorld)).toContain('QUEUE_SDK_OFF');
+			} finally {
+				world.cleanup();
+			}
+		});
 	});
 });
 

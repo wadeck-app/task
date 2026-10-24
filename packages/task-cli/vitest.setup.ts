@@ -25,8 +25,11 @@ vi.mock('@wadeck-app/task-service', async importOriginal => {
 	const actual = await importOriginal<typeof import('@wadeck-app/task-service')>();
 	return {
 		...actual,
-		createQueueEventSink: (): import('@wadeck-app/task-service').EventSink => ({
+		createQueueEventSink: (): import('@wadeck-app/task-service').QueueEventSink => ({
 			deliver: () => Promise.resolve({ delivered: true }),
+			// Declares nothing and writes no marker: `dropped` is what the SDK answers when switched off.
+			declareEvents: () => Promise.resolve({ status: 'dropped', reason: 'queue sink faked by vitest.setup.ts' }),
+			flush: () => Promise.resolve(),
 		}),
 	};
 });

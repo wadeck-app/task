@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import { TaskConfigLoader } from '@wadeck-app/task-core';
 import { createQueueEventSink, getTaskLogDir, openTaskContext } from '@wadeck-app/task-service';
+import { declareBeforeFirstDelivery } from './QueueEventsDeclaration.js';
 import { TASK_BUNDLE_NAME } from './TaskBundleName.js';
 import { parseArgs } from './cli/args.js';
 import type { CommandEnv } from './cli/env.js';
@@ -71,7 +72,11 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 			command,
 			jsonMode,
 			ctx: openTaskContext({ projectDir: effectiveCwd, globalConfigDir: configDir }),
-			eventSink: createQueueEventSink({ getLogDir: () => getTaskLogDir(ConfigDir.get('task')) }),
+			// The first event of the process declares the task events to the queue, unless the marker says it was done.
+			eventSink: declareBeforeFirstDelivery(
+				createQueueEventSink({ getLogDir: () => getTaskLogDir(ConfigDir.get('task')) }),
+				{ configDir: ConfigDir.get('task'), taskVersion: VERSION }
+			),
 		};
 	} catch (error) {
 		return failure(jsonMode, error);

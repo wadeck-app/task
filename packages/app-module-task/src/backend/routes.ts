@@ -1,5 +1,6 @@
 import type { ModuleContext } from '@wadeck-app/app-core-sdk';
 import { createQueueEventSink, getTaskConfigDir, getTaskLogDir } from '@wadeck-app/task-service';
+import type { EventSink } from '@wadeck-app/task-service';
 
 import { registerProjectManageRoutes } from './routes/projectManageRoutes.js';
 import { registerProjectRoutes } from './routes/projectRoutes.js';
@@ -26,13 +27,19 @@ export function registerTaskRoutes(ctx: ModuleContext, options: TaskRoutesOption
 	const configDir = options.configDir ?? getTaskConfigDir();
 	const logDir = getTaskLogDir(configDir);
 	const writeStderr = options.writeStderr ?? ((text: string) => void process.stderr.write(text));
-	const eventSink =
-		options.eventSink ??
-		createQueueEventSink({
-			getLogDir: () => logDir,
-			writeStderr,
-			...(options.createPublisher === undefined ? {} : { createPublisher: options.createPublisher }),
-		});
+	const queueSink =
+		options.eventSink === undefined
+			? createQueueEventSink({
+					getLogDir: () => logDir,
+					writeStderr,
+					...(options.createPublisher === undefined ? {} : { createPublisher: options.createPublisher }),
+				})
+			: undefined;
+	const eventSink: EventSink = options.eventSink ?? queueSink!;
+	// Tell the queue which events this module pushes, once per start. Fire and forget: the routes must not wait for a
+	// queue that is slow or absent, and the module must load whatever happens (declareEvents never throws and reports
+	// its outcome in the task log; the teardown's flush() waits for it).
+	void queueSink?.declareEvents();
 	const kit = createRouteKit(ctx, { configDir, logDir, writeStderr, eventSink });
 	registerProjectRoutes(kit);
 	registerProjectManageRoutes(kit);

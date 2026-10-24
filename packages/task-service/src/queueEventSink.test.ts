@@ -3,6 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { deliverEvents, type TaskEvent } from './events.js';
+import { queueEventDeclarations } from './queueEventDeclarations.js';
 import { createQueueEventSink, type EventPublisher, type PublishOutcome } from './queueEventSink.js';
 
 const EVENT: TaskEvent = {
@@ -32,6 +33,9 @@ function fakePublisher(answer: (call: PublishCall) => Promise<PublishOutcome> | 
 				const call = { event, payload, options };
 				calls.push(call);
 				return answer(call);
+			},
+			registerEvents() {
+				return Promise.resolve({ status: 'registered', count: 5 });
 			},
 			flush() {
 				flushCount++;
@@ -339,6 +343,72 @@ describe('createQueueEventSink', () => {
 			expect(lines[0]!.msg).toContain('queue is not on PATH');
 			expect(lines[0]!.msg).toContain('onTaskLinked');
 			expect(stderr).toEqual([]);
+		});
+	});
+
+	describe('declareEvents', () => {
+		it('declares the task events through the publisher, under the source task', async () => {
+			const calls: { source: string; events: unknown }[] = [];
+			const { publisher } = fakePublisher(() => ({ status: 'queued' }));
+			publisher.registerEvents = (source, events) => {
+				calls.push({ source, events });
+				return Promise.resolve({ status: 'registered', count: events.length });
+			};
+
+			const outcome = await makeSink(publisher).declareEvents();
+
+			expect(outcome).toEqual({ status: 'registered', count: 5 });
+			expect(calls).toEqual([{ source: 'task', events: queueEventDeclarations }]);
+		});
+
+		it('reports a rejection on stderr and in the task log', async () => {
+			const { publisher } = fakePublisher(() => ({ status: 'queued' }));
+			publisher.registerEvents = () =>
+				Promise.resolve({
+					status: 'rejected',
+					reason: 'x',
+					problems: [{ path: 'events[0].name', message: 'bad' }],
+				});
+
+			const outcome = await makeSink(publisher).declareEvents();
+
+			expect(outcome.status).toBe('rejected');
+			expect(stderr.join('')).toContain('events[0].name');
+			expect(logLines()).toHaveLength(1);
+		});
+
+		it('answers dropped, without throwing, when the publisher cannot even be created', async () => {
+			const sink = createQueueEventSink({
+				getLogDir: () => path.join(logRoot, 'logs'),
+				writeStderr: text => stderr.push(text),
+				createPublisher: () => {
+					throw new Error('no publisher today');
+				},
+			});
+
+			const outcome = await sink.declareEvents();
+
+			expect(outcome.status).toBe('dropped');
+			if (outcome.status === 'registered') throw new Error('unreachable');
+			expect(outcome.reason).toContain('no publisher today');
+		});
+
+		it('is awaited by flush(): a declaration in flight is not lost at shutdown', async () => {
+			let release: () => void = () => undefined;
+			const gate = new Promise<void>(resolve => (release = resolve));
+			let finished = false;
+			const { publisher } = fakePublisher(() => ({ status: 'queued' }));
+			publisher.registerEvents = async () => {
+				await gate;
+				finished = true;
+				return { status: 'registered', count: 5 };
+			};
+			const sink = makeSink(publisher);
+
+			void sink.declareEvents();
+			const flushed = sink.flush().then(() => expect(finished).toBe(true));
+			release();
+			await flushed;
 		});
 	});
 });

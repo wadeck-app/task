@@ -236,6 +236,7 @@ export function printTaskCliHelp(): void {
 			"  logs [--follow]      Print today's log from ~/.config/task/logs/",
 			'  register [--json]    Tell app-core where the task app-module is (update does it too; app-core absent is not an error)',
 			'  unregister [--json]  Remove the task app-module from app-core',
+			'  declare-events [--json]  Tell the queue which events task pushes now (done automatically before the first event after an install or update)',
 		].join('\n') + '\n'
 	);
 }

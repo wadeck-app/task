@@ -58,6 +58,18 @@ describe('runTaskCommand — version and help', () => {
 		expect(events).toContain('queue history');
 		expect(events).toContain('queue replay');
 	});
+
+	it('--help explains that the events are declared to the queue, when, and how to force it', async () => {
+		const { output } = await runTaskCommand(['--help'], tmpDir);
+		const events = output.slice(output.indexOf('Events ('));
+
+		expect(events).toContain('declared to the queue');
+		expect(events).toContain('queue-events.json');
+		expect(events).toContain('task cli declare-events');
+		expect(events).toContain('queue events');
+		// The usage list names the command too.
+		expect(output.slice(0, output.indexOf('Events ('))).toContain('task cli declare-events');
+	});
 });
 
 describe('runTaskCommand — project guard', () => {

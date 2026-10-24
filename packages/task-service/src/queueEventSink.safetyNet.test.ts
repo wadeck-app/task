@@ -64,4 +64,26 @@ describe('default queue sink under the test setup', () => {
 			await daemon.close();
 		}
 	}, 20_000);
+
+	it('declares nothing to a reachable daemon either (registerEvents is switched off too) and names the switch', async () => {
+		const daemon = await startFakeQueueDaemon();
+		try {
+			process.env['QUEUE_CONFIG_DIR'] = daemon.configDir;
+			const stderr: string[] = [];
+			const sink = createQueueEventSink({
+				getLogDir: () => path.join(root, 'logs'),
+				writeStderr: text => stderr.push(text),
+			});
+
+			const outcome = await sink.declareEvents();
+
+			expect(daemon.registrations()).toEqual([]);
+			expect(outcome.status).toBe('dropped');
+			if (outcome.status === 'registered') throw new Error('unreachable');
+			expect(outcome.reason).toContain('QUEUE_SDK_OFF');
+			expect(stderr).toEqual([]);
+		} finally {
+			await daemon.close();
+		}
+	}, 20_000);
 });

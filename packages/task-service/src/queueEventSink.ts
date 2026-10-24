@@ -3,6 +3,8 @@ import * as path from 'node:path';
 
 import { createQueuePublisher } from '@wadeck-app/queue-sdk';
 
+import { declareTaskEvents, type DeclareEventsOutcome } from './declareTaskEvents.js';
+import type { QueueEventDeclaration } from './queueEventDeclarations.js';
 import {
 	eventProjectDir,
 	replayCommand,
@@ -20,12 +22,33 @@ export interface PublishOutcome {
 	reason?: string | undefined;
 }
 
+/** What `registerEvents` of `@wadeck-app/queue-sdk` answers (it never rejects). */
+export interface RegisterEventsOutcome {
+	/** `registered`: stored. `rejected`: the daemon refused it. `unsupported`: daemon older than protocol 1.1.0. `dropped`: nothing stored. `unknown`: may be stored. */
+	status: 'registered' | 'rejected' | 'unsupported' | 'dropped' | 'unknown';
+	count?: number | undefined;
+	problems?: { path: string; message: string }[] | undefined;
+	reason?: string | undefined;
+}
+
 /** The part of the SDK publisher the sink uses; tests inject a fake. */
 export interface EventPublisher {
 	publishAndWait(event: string, payload: unknown, options: { cwd: string }): Promise<PublishOutcome>;
+	/** Declares the events of a source to the queue (replaces its previous declaration). */
+	registerEvents(source: string, events: QueueEventDeclaration[]): Promise<RegisterEventsOutcome>;
 	/** Waits for the pushes in flight (`QueuePublisher.flush`). */
 	flush?(): Promise<void>;
 }
+
+/** The default sink: delivers events, and declares them to the queue. */
+export type QueueEventSink = EventSink & {
+	flush(): Promise<void>;
+	/**
+	 * Tells the queue which events task pushes (see {@link declareTaskEvents}), through the sink's publisher. Never throws;
+	 * `flush()` waits for it. The caller decides when (module: at start; CLI: before the first delivery after an install or update).
+	 */
+	declareEvents(): Promise<DeclareEventsOutcome>;
+};
 
 /** A failure the SDK reports through its `onError` (`{ kind, message, event, outcome }`; kinds: queue-sdk docs/troubleshooting.md). */
 interface SdkFailure {
@@ -60,7 +83,7 @@ const NO_REASON = 'the queue SDK gave no reason (run `queue status` and read `qu
  * inside a flow step, the log is not), and returned as `{ delivered: false, reason, status, replay }` so callers without a
  * terminal (the HTTP routes) can surface it. The log line carries the payload (inside the replay text).
  */
-export function createQueueEventSink(options: QueueEventSinkOptions): EventSink & { flush(): Promise<void> } {
+export function createQueueEventSink(options: QueueEventSinkOptions): QueueEventSink {
 	const writeStderr = options.writeStderr ?? ((text: string) => void process.stderr.write(text));
 	let publisher: EventPublisher | undefined = options.publisher;
 
@@ -103,7 +126,29 @@ export function createQueueEventSink(options: QueueEventSinkOptions): EventSink 
 		return { delivered: false, reason, status, replay };
 	}
 
+	// Declarations still in flight: flush() waits for them like for the pushes (a one-shot process must not exit before).
+	const declarations = new Set<Promise<unknown>>();
+
 	return {
+		declareEvents(): Promise<DeclareEventsOutcome> {
+			let started: Promise<DeclareEventsOutcome>;
+			try {
+				started = declareTaskEvents(getPublisher(), {
+					getLogDir: options.getLogDir,
+					writeStderr,
+				});
+			} catch (error) {
+				// Building the publisher failed: nothing was sent. Never throws, like the declaration itself.
+				const message = error instanceof Error ? error.message : String(error);
+				const reason = `the queue SDK publisher could not be created (${message})`;
+				appendLog('warn', `queue event declaration not stored: ${reason}`);
+				return Promise.resolve({ status: 'dropped', reason });
+			}
+			declarations.add(started);
+			void started.finally(() => declarations.delete(started));
+			return started;
+		},
+
 		async deliver(event: TaskEvent): Promise<EventDelivery> {
 			// queue finds the project's .queue/subscribers.yml from the cwd the SDK sends: never fall back to our own cwd.
 			const projectDir = eventProjectDir(event);
@@ -145,6 +190,7 @@ export function createQueueEventSink(options: QueueEventSinkOptions): EventSink 
 		},
 
 		async flush(): Promise<void> {
+			await Promise.all([...declarations]);
 			// Nothing was ever published: nothing to wait for, and no publisher is created just to flush it.
 			if (publisher?.flush === undefined) return;
 			try {

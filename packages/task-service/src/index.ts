@@ -35,8 +35,20 @@ export type {
 	DeliveryOutcome,
 } from './events.js';
 export { deliverEvents } from './events.js';
-export type { EventPublisher, PublishOutcome, PublisherHooks, QueueEventSinkOptions } from './queueEventSink.js';
+export type {
+	EventPublisher,
+	PublishOutcome,
+	PublisherHooks,
+	QueueEventSink,
+	QueueEventSinkOptions,
+	RegisterEventsOutcome,
+} from './queueEventSink.js';
 export { createQueueEventSink } from './queueEventSink.js';
+export type { QueueEventDeclaration } from './queueEventDeclarations.js';
+export { TASK_QUEUE_SOURCE, queueEventDeclarations, queueEventDeclarationsHash } from './queueEventDeclarations.js';
+export type { DeclareEventsOutcome, DeclareTaskEventsOptions } from './declareTaskEvents.js';
+export { declareTaskEvents } from './declareTaskEvents.js';
+export { appendTaskLog } from './taskLog.js';
 export type { CreateTaskInput, CreateTaskResult } from './createTask.js';
 export { createTask } from './createTask.js';
 export type { ListTasksInput } from './listTasks.js';

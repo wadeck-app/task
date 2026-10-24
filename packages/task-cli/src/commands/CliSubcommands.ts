@@ -1,5 +1,10 @@
 // task cli <subcommand>: the CLI's own maintenance commands (not about tasks).
+import { ConfigDir } from '@wadeck-app/shared-cli';
+import { createQueueEventSink, getTaskLogDir } from '@wadeck-app/task-service';
+
 import { errorOutput } from '../cli/output.js';
+import { runDeclareEvents } from '../QueueEventsDeclaration.js';
+import { VERSION } from '../version.js';
 import type { CommandResult } from '../cli/output.js';
 import { runAppCoreCommand } from './AppCoreCommand.js';
 import {
@@ -35,6 +40,16 @@ export async function runCliSubcommand(rest: string[], jsonMode: boolean): Promi
 		case 'logs':
 			await runTaskCliLogs({ follow: rest.includes('--follow') });
 			return DONE;
+		case 'declare-events': {
+			const configDir = ConfigDir.get('task');
+			const sink = createQueueEventSink({ getLogDir: () => getTaskLogDir(configDir) });
+			try {
+				return await runDeclareEvents(sink, jsonMode, { configDir, taskVersion: VERSION });
+			} finally {
+				// The process exits right after: let the SDK settle the declaration first.
+				await sink.flush();
+			}
+		}
 		case undefined:
 		case '--help':
 		case 'help':
@@ -45,7 +60,7 @@ export async function runCliSubcommand(rest: string[], jsonMode: boolean): Promi
 			return errorOutput(
 				jsonMode,
 				`unknown task cli subcommand: ${subCmd}`,
-				'Valid subcommands: version, update, rollback, self-check, logs, register, unregister'
+				'Valid subcommands: version, update, rollback, self-check, logs, register, unregister, declare-events'
 			);
 	}
 }

@@ -52,6 +52,7 @@ Usage:
   task cli logs [--follow]                   Print today's invocation log
   task cli register [--json]                 Tell app-core where the task app-module is (also done by task cli update)
   task cli unregister [--json]               Remove the task app-module from app-core
+  task cli declare-events [--json]           Tell the queue which events task pushes, now (normally automatic, see Events below)
   task projects list [--json]                List the projects registered with the app-module (flags missing/uninitialized/unreadable ones)
   task projects add [dir] [--json]           Register an initialized project (default: the cwd) with the app-module
   task projects remove <dir> [--json]        Unregister a project directory (its .task is left untouched)
@@ -72,6 +73,10 @@ Events (pushed to queue through @wadeck-app/queue-sdk after the change is saved,
   onTaskUnlinked   unlink                           taskId, linkType, targetId
   onTaskUnblocked  set-status, last blocker closed  taskId (the unblocked task), blockerId, status, type, labels
   Every payload also has taskProjectName and taskProjectPath. Subscriber filter example: when: payload.newStatus=done
+  The events are declared to the queue (name, when it fires, payload schema, example; 'queue events list' shows them, source: task):
+  once per declaration, just before the first event after an install or update, never at every command, recorded in
+  <config dir>/queue-events.json. A failed declaration never fails the command and is retried by the next event; see it in 'task cli logs'.
+  After updating queue-cli or losing the queue's catalog, force it: task cli declare-events
   A failed push never fails the command: it goes to stderr and to the log with how to replay it; read it with: task cli logs
     not recorded (dropped): cd '<project dir>' && queue push <event> '<json>'
     sent, then the connection broke or timed out: the event MAY be recorded and is never retried; check 'queue history'

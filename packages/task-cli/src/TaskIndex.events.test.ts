@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // The SDK is faked so no real queue is needed (or touched).
 const publishMock = vi.hoisted(() => vi.fn());
 const flushMock = vi.hoisted(() => vi.fn());
+const registerMock = vi.hoisted(() => vi.fn());
 const createPublisherMock = vi.hoisted(() => vi.fn());
 vi.mock('@wadeck-app/queue-sdk', () => ({ createQueuePublisher: createPublisherMock }));
 
@@ -48,7 +49,12 @@ beforeEach(async () => {
 	// mockReset (vitest config) clears implementations between tests: re-arm the fake publisher.
 	publishMock.mockImplementation(() => Promise.resolve(queuedOutcome));
 	flushMock.mockImplementation(() => Promise.resolve());
-	createPublisherMock.mockImplementation(() => ({ publishAndWait: publishMock, flush: flushMock }));
+	registerMock.mockImplementation(() => Promise.resolve({ status: 'registered', count: 5 }));
+	createPublisherMock.mockImplementation(() => ({
+		publishAndWait: publishMock,
+		registerEvents: registerMock,
+		flush: flushMock,
+	}));
 	await runTaskCommand(['init'], tmpDir);
 });
 
@@ -463,5 +469,153 @@ describe('queue events — published in the project directory', () => {
 		await runTaskCommand(['link', a.id, 'blockedBy', b.id, '--project-dir', tmpDir], elsewhere);
 
 		expect(publishCwds()).toEqual([tmpDir, tmpDir]);
+	});
+});
+
+describe('queue events — the task events are declared to the queue (registerEvents)', () => {
+	const markerFile = (): string => path.join(configHome, 'task', 'queue-events.json');
+	const logText = (): string => {
+		const logDir = path.join(configHome, 'task', 'logs');
+		if (!fs.existsSync(logDir)) return '';
+		return fs
+			.readdirSync(logDir)
+			.map(f => fs.readFileSync(path.join(logDir, f), 'utf8'))
+			.join('');
+	};
+
+	it('declares the five events under the source task before the first event, and records the marker', async () => {
+		const order: string[] = [];
+		registerMock.mockImplementation(() => {
+			order.push('register');
+			return Promise.resolve({ status: 'registered', count: 5 });
+		});
+		publishMock.mockImplementation(() => {
+			order.push('publish');
+			return Promise.resolve(queuedOutcome);
+		});
+
+		const result = await runTaskCommand(['new', 'x'], tmpDir);
+
+		expect(result.exitCode).toBe(0);
+		expect(order).toEqual(['register', 'publish']);
+		expect(registerMock).toHaveBeenCalledTimes(1);
+		const [source, events] = registerMock.mock.calls[0] as [string, { name: string }[]];
+		expect(source).toBe('task');
+		expect(events.map(e => e.name).sort()).toEqual([
+			'onStatusChange',
+			'onTaskCreated',
+			'onTaskLinked',
+			'onTaskUnblocked',
+			'onTaskUnlinked',
+		]);
+		const marker = JSON.parse(fs.readFileSync(markerFile(), 'utf8')) as Record<string, string>;
+		expect(marker['hash']).toMatch(/^[0-9a-f]{64}$/);
+		expect(marker['taskVersion']).toBeTruthy();
+	});
+
+	it('does not declare again at the next commands (the marker holds the hash)', async () => {
+		await runTaskCommand(['new', 'a'], tmpDir);
+		await runTaskCommand(['new', 'b'], tmpDir);
+		await runTaskCommand(['new', 'c'], tmpDir);
+
+		expect(registerMock).toHaveBeenCalledTimes(1);
+		expect(publishMock).toHaveBeenCalledTimes(3);
+	});
+
+	it('declares again once the marker holds another hash (the declaration changed)', async () => {
+		await runTaskCommand(['new', 'a'], tmpDir);
+		fs.writeFileSync(
+			markerFile(),
+			JSON.stringify({ hash: 'older', taskVersion: 'x', declaredAt: '2020-01-01T00:00:00.000Z' })
+		);
+
+		await runTaskCommand(['new', 'b'], tmpDir);
+
+		expect(registerMock).toHaveBeenCalledTimes(2);
+	});
+
+	it('does not declare for a command that produces no event', async () => {
+		await runTaskCommand(['list'], tmpDir);
+
+		expect(registerMock).not.toHaveBeenCalled();
+		expect(fs.existsSync(markerFile())).toBe(false);
+	});
+
+	it('never fails the command when the queue refuses or is too old, writes no marker, and retries at the next command', async () => {
+		registerMock.mockImplementation(() =>
+			Promise.resolve({ status: 'unsupported', reason: 'daemon speaks 1.0.0' })
+		);
+
+		const first = await runTaskCommand(['new', 'a'], tmpDir);
+		const second = await runTaskCommand(['new', 'b'], tmpDir);
+
+		expect(first.exitCode).toBe(0);
+		expect(second.exitCode).toBe(0);
+		expect(registerMock).toHaveBeenCalledTimes(2);
+		expect(publishMock).toHaveBeenCalledTimes(2);
+		expect(fs.existsSync(markerFile())).toBe(false);
+		expect(logText()).toContain('daemon speaks 1.0.0');
+	});
+
+	it('never fails the command when registerEvents breaks its promise and throws', async () => {
+		registerMock.mockImplementation(() => Promise.reject(new Error('register exploded')));
+
+		const result = await runTaskCommand(['new', 'a'], tmpDir);
+
+		expect(result.exitCode).toBe(0);
+		expect(publishMock).toHaveBeenCalledTimes(1);
+		expect(fs.existsSync(markerFile())).toBe(false);
+	});
+
+	describe('task cli declare-events', () => {
+		it('declares now even when the marker is up to date, and says how many events', async () => {
+			await runTaskCommand(['new', 'a'], tmpDir);
+			expect(registerMock).toHaveBeenCalledTimes(1);
+
+			const result = await runTaskCommand(['cli', 'declare-events'], tmpDir);
+
+			expect(result.exitCode).toBe(0);
+			expect(result.output).toContain('5 events');
+			expect(registerMock).toHaveBeenCalledTimes(2);
+		});
+
+		it('answers JSON with --json', async () => {
+			const result = await runTaskCommand(['cli', 'declare-events', '--json'], tmpDir);
+
+			expect(result.exitCode).toBe(0);
+			expect(JSON.parse(result.output)).toEqual({ status: 'registered', count: 5 });
+		});
+
+		it('works outside a task project (it is about the CLI, not a project)', async () => {
+			const result = await runTaskCommand(['cli', 'declare-events'], path.join(tmpDir, 'not-a-project'));
+
+			expect(result.exitCode).toBe(0);
+		});
+
+		it('exits 1 with what to do when the queue is too old, and records no marker', async () => {
+			registerMock.mockImplementation(() =>
+				Promise.resolve({ status: 'unsupported', reason: 'daemon speaks 1.0.0' })
+			);
+
+			const result = await runTaskCommand(['cli', 'declare-events'], tmpDir);
+
+			expect(result.exitCode).toBe(1);
+			expect(result.output).toContain('daemon speaks 1.0.0');
+			expect(result.output).toContain('queue-cli');
+			expect(fs.existsSync(markerFile())).toBe(false);
+		});
+
+		it('waits for the SDK flush before returning', async () => {
+			flushMock.mockClear();
+
+			await runTaskCommand(['cli', 'declare-events'], tmpDir);
+
+			expect(flushMock).toHaveBeenCalledTimes(1);
+		});
+
+		it('is listed in the hint of an unknown subcommand', async () => {
+			const unknown = await runTaskCommand(['cli', 'nope'], tmpDir);
+			expect(unknown.output).toContain('declare-events');
+		});
 	});
 });
