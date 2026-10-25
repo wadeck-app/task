@@ -31,9 +31,6 @@ declare const __TASK_CLI_VERSION__: string;
 
 const PKG_NAME = '@wadeck-app/task-cli';
 
-// Migrate legacy config dir on first load (runs once when this module is imported).
-ConfigDir.migrateIfNeeded('task');
-
 export function getCurrentTaskVersion(): string {
 	try {
 		return __TASK_CLI_VERSION__;

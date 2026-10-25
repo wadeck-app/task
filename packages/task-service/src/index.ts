@@ -19,17 +19,6 @@ export type { ErrorDescription, ErrorKind } from './describeError.js';
 export { describeError } from './describeError.js';
 export type {
 	TaskProjectEnv,
-	TaskCreatedEvent,
-	TaskStatusChangeEvent,
-	TaskLinkedEvent,
-	TaskUnlinkedEvent,
-	TaskUnblockedEvent,
-	TaskTypeChangedEvent,
-	TaskLabelAddedEvent,
-	TaskLabelRemovedEvent,
-	TaskMetaChangedEvent,
-	TaskParentChangedEvent,
-	TaskDeletedEvent,
 	TaskEvent,
 	EventSink,
 	EventDelivery,

@@ -133,7 +133,7 @@ const RELATION_LABELS: Record<string, string> = {
 };
 
 /** A relation as a reader says it (`blockedBy` -> `Blocked by`). */
-export function relationLabel(relation: string): string {
+function relationLabel(relation: string): string {
 	return RELATION_LABELS[relation] ?? relation;
 }
 

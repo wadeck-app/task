@@ -11,7 +11,7 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
-import { createIsolatedCliEnv, type IsolatedCliEnv, spawnIsolated } from './isolatedCliEnv.js';
+import { createIsolatedCliEnv, type IsolatedCliEnv, spawnIsolated, waitForProcessExit } from './isolatedCliEnv.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packageRoot = path.resolve(__dirname, '..');
@@ -104,11 +104,12 @@ describe('dev build guard (real bundles, version 0.0.0-local)', () => {
 		expect(r.combined).not.toContain('Running updater');
 	});
 
-	// A stand-in updater that only proves it was started: the real one would reach for npm.
-	function installMarkerUpdater(dir: string, marker: string): void {
+	// A stand-in updater that only proves it was started (the marker holds its pid): the real one would reach for npm.
+	// `lingerMs` keeps it alive after the write, like a real updater still running.
+	function installMarkerUpdater(dir: string, marker: string, lingerMs = 0): void {
 		fs.writeFileSync(
 			path.join(dir, 'task-updater.cjs'),
-			`require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'started');`
+			`require('node:fs').writeFileSync(${JSON.stringify(marker)}, String(process.pid)); setTimeout(() => {}, ${lingerMs});`
 		);
 	}
 
@@ -130,5 +131,19 @@ describe('dev build guard (real bundles, version 0.0.0-local)', () => {
 		const deadline = Date.now() + 10000;
 		while (!fs.existsSync(marker) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
 		expect(fs.existsSync(marker), 'the release bundle never started its updater').toBe(true);
+		// The detached updater inherited the temp root as its cwd: on Windows removing it while alive fails with EPERM.
+		await waitForProcessExit(Number(fs.readFileSync(marker, 'utf8')));
+	});
+
+	it('cleanup succeeds only after the detached updater is gone (EPERM on Windows while it holds its cwd)', async () => {
+		const marker = path.join(releaseBundleDir, 'updater-lingering.txt');
+		installMarkerUpdater(releaseBundleDir, marker, 1500);
+		const r = run('task.cjs', ['--version'], {}, releaseBundleDir);
+		expect(r.status, r.combined).toBe(0);
+		const deadline = Date.now() + 10000;
+		while (!fs.existsSync(marker) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
+		await waitForProcessExit(Number(fs.readFileSync(marker, 'utf8')));
+		expect(() => r.iso.cleanup()).not.toThrow();
+		expect(fs.existsSync(r.iso.root)).toBe(false);
 	});
 });

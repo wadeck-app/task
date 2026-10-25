@@ -90,7 +90,55 @@ export function createIsolatedCliEnv(opts: { registry?: string; extra?: NodeJS.P
 		opts.extra
 	);
 
-	return { root, configDir, npmPrefix, env, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
+	return {
+		root,
+		configDir,
+		npmPrefix,
+		env,
+		cleanup: () => removeTree(root),
+	};
+}
+
+/**
+ * Removes a throwaway tree, retrying EPERM / EBUSY / ENOTEMPTY for up to `timeoutMs`, then throws the last error.
+ * Windows can keep a directory locked for a moment after a child that had it as cwd is gone; Node 24's rmSync ignores
+ * its maxRetries option on Windows (measured: no retry, error returned at once), hence the explicit loop.
+ */
+export function removeTree(dir: string, timeoutMs = 5_000): void {
+	const deadline = Date.now() + timeoutMs;
+	for (;;) {
+		try {
+			fs.rmSync(dir, { recursive: true, force: true });
+			return;
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code;
+			if (!['EPERM', 'EBUSY', 'ENOTEMPTY'].includes(code ?? '') || Date.now() > deadline) throw error;
+			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+		}
+	}
+}
+
+/**
+ * Waits until process `pid` is gone. A detached child spawned by a CLI under test inherits the cwd (the throwaway
+ * root); on Windows a live process holding its cwd makes the removal of that tree fail with EPERM, so a test that
+ * lets a child outlive the CLI must call this before cleanup(). Throws (never gives up silently) after `timeoutMs`.
+ */
+export async function waitForProcessExit(pid: number, timeoutMs = 10_000): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	for (;;) {
+		try {
+			// Signal 0 only probes: ESRCH = gone, EPERM = alive but not ours.
+			process.kill(pid, 0);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === 'ESRCH') return;
+		}
+		if (Date.now() > deadline) {
+			throw new Error(
+				`process ${pid} still running after ${timeoutMs} ms: it may hold the test's temp dir as its cwd`
+			);
+		}
+		await new Promise(resolve => setTimeout(resolve, 50));
+	}
 }
 
 function isUnderTmp(value: string): boolean {
