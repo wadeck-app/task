@@ -1,5 +1,6 @@
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { connect } from 'node:net';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -23,6 +24,8 @@ import { TaskStore } from '@wadeck-app/task-core';
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const SERVER_START_TIMEOUT_MS = 30_000;
 const PACKAGE_TIMEOUT_MS = 60_000;
+// Windows keeps handles on a folder for a moment after its process is gone: the teardown waits this long at most.
+const TEARDOWN_BUDGET_MS = 10_000;
 
 const cliPackageJson = createRequire(import.meta.url).resolve('@wadeck-app/app-core-cli/package.json');
 const cliEntry = join(dirname(cliPackageJson), 'dist/cli.bundle.js');
@@ -66,7 +69,18 @@ function startServer(builtModule: string, xdgConfigHome: string): Promise<string
 			windowsHide: true,
 			// Port 0: a free port, never the developer's real app-core on 4850.
 			// XDG_CONFIG_HOME: the module reads the shared project registry in <xdg>/project, so the fixture registry, not the real one.
-			env: { ...process.env, APP_CORE_PORT: '0', XDG_CONFIG_HOME: xdgConfigHome },
+			// HOME/USERPROFILE/APPDATA follow so nothing the server resolves from the home folder is the developer's real one;
+			// QUEUE_SDK_OFF=1 keeps the queue SDK from ever reaching a real queue.
+			env: {
+				...process.env,
+				APP_CORE_PORT: '0',
+				XDG_CONFIG_HOME: xdgConfigHome,
+				HOME: dirname(xdgConfigHome),
+				USERPROFILE: dirname(xdgConfigHome),
+				APPDATA: join(dirname(xdgConfigHome), 'AppData', 'Roaming'),
+				LOCALAPPDATA: join(dirname(xdgConfigHome), 'AppData', 'Local'),
+				QUEUE_SDK_OFF: '1',
+			},
 		});
 		const onData = (chunk: Buffer): void => {
 			output += chunk.toString();
@@ -87,6 +101,53 @@ function startServer(builtModule: string, xdgConfigHome: string): Promise<string
 			reject(new Error(`app-core-cli dev exited early (code ${code}). Output:\n${output}`));
 		});
 	});
+}
+
+function sleep(ms: number): Promise<void> {
+	return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/** True once nothing accepts connections on the port (ECONNREFUSED), false if it still answers at the deadline. */
+async function waitPortFree(port: number, deadline: number): Promise<boolean> {
+	for (;;) {
+		const free = await new Promise<boolean>(resolve => {
+			const socket = connect({ port, host: '127.0.0.1' });
+			socket.once('connect', () => {
+				socket.destroy();
+				resolve(false);
+			});
+			socket.once('error', () => resolve(true));
+		});
+		if (free) return true;
+		if (Date.now() >= deadline) {
+			console.warn(`[realServer teardown] port ${port} still answers at the end of the teardown budget`);
+			return false;
+		}
+		await sleep(100);
+	}
+}
+
+/**
+ * rmSync with exponential backoff (50 ms doubling, capped at 1 s) until the deadline. A folder that cannot be removed
+ * is a warning naming it, never a failed suite: the test results are already in.
+ */
+async function removeWithBackoff(dir: string, deadline: number): Promise<void> {
+	let delay = 50;
+	for (;;) {
+		try {
+			rmSync(dir, { recursive: true, force: true });
+			return;
+		} catch (error) {
+			if (Date.now() + delay >= deadline) {
+				console.warn(
+					`[realServer teardown] could not remove the temp dir, delete it by hand: ${dir} (${error instanceof Error ? error.message : String(error)})`
+				);
+				return;
+			}
+			await sleep(delay);
+			delay = Math.min(delay * 2, 1_000);
+		}
+	}
 }
 
 describe('the packaged module through a real app-core server', () => {
@@ -111,29 +172,29 @@ describe('the packaged module through a real app-core server', () => {
 		SERVER_START_TIMEOUT_MS + PACKAGE_TIMEOUT_MS + 5_000
 	);
 
-	afterAll(async () => {
-		if (child && child.exitCode === null) {
-			const exited = new Promise<void>(resolveExit => child!.once('exit', () => resolveExit()));
-			child.kill();
-			// Windows: the folder stays locked until the server has really exited (EPERM with app-core-cli 2026.10.24), so wait for it.
-			await Promise.race([
-				exited,
-				new Promise<void>((_, rejectTimeout) =>
-					setTimeout(
-						() =>
-							rejectTimeout(
-								new Error(
-									'app-core-cli dev did not exit within 10 s after kill(): its folder cannot be removed'
-								)
-							),
-						10_000
-					)
-				),
-			]);
-		}
-		// The exit event can precede the release of the handles by a few ms on Windows.
-		rmSync(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
-	});
+	afterAll(
+		async () => {
+			const deadline = Date.now() + TEARDOWN_BUDGET_MS;
+			if (child && child.exitCode === null) {
+				const exited = new Promise<void>(resolveExit => child!.once('exit', () => resolveExit()));
+				child.kill();
+				// Windows: the folder stays locked until the server has really exited (EPERM with app-core-cli 2026.10.24).
+				const exitedInTime = await Promise.race([
+					exited.then(() => true),
+					sleep(TEARDOWN_BUDGET_MS).then(() => false),
+				]);
+				if (!exitedInTime) {
+					console.warn(
+						`[realServer teardown] app-core-cli dev (pid ${child.pid}) did not exit within ${TEARDOWN_BUDGET_MS} ms after kill(); its folder may stay: ${workDir}`
+					);
+				}
+			}
+			// The process can be gone while its port still answers (or the handles are not released) for a few ms.
+			if (baseUrl !== undefined) await waitPortFree(Number(new URL(baseUrl).port), deadline);
+			await removeWithBackoff(workDir, deadline);
+		},
+		TEARDOWN_BUDGET_MS * 2 + 5_000
+	);
 
 	async function call(
 		method: string,

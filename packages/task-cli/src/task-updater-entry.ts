@@ -2,8 +2,10 @@
 // Must NOT import any task runtime modules.
 import { ConfigDir } from '@wadeck-app/shared-cli/ConfigDir';
 import {
+	appendLog,
 	cacheFilePath,
 	execNpm,
+	isPidAlive,
 	readCache,
 	readState,
 	readUpdateConfig,
@@ -14,12 +16,30 @@ import { cpSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } 
 import * as os from 'node:os';
 import { join } from 'node:path';
 import { registerWithAppCore } from './AppCoreRegistration.js';
+import { devBuildRefusal, isCalVer } from './devBuildGuard.js';
 import { readAppModuleVersion, registerAfterUpdate } from './registerAfterUpdate.js';
+import { interruptedInstallMessage } from './updateStateWording.js';
 
 declare const __TASK_CLI_VERSION__: string;
 
 const PKG_NAME = '@wadeck-app/task-cli';
 const baseConfigDir = process.env['TASK_CONFIG_DIR'] ?? ConfigDir.get('task');
+const currentVersion = typeof __TASK_CLI_VERSION__ !== 'undefined' ? __TASK_CLI_VERSION__ : '0.0.0-dev';
+
+// DEV BUILD GUARD, first thing: a repo-built bundle (version not CalVer) must never touch the global install.
+// Background run: log one line, exit 0. Explicit `task cli update` (UPDATER_FORCE/UPDATER_MANUAL): print it, exit 1.
+// Incident 2026-10-24: a repo-built bundle ran `npm install -g`, it was killed halfway and the global CLI vanished.
+if (!isCalVer(currentVersion)) {
+	const refusal = devBuildRefusal(currentVersion);
+	const explicit = process.env['UPDATER_FORCE'] === '1' || Boolean(process.env['UPDATER_MANUAL']);
+	try {
+		appendLog(baseConfigDir, 'warn', refusal);
+	} catch (error) {
+		process.stderr.write(`[task-updater] could not log the dev build refusal: ${String(error)}\n`);
+	}
+	if (explicit) process.stderr.write(`${refusal}\n`);
+	process.exit(explicit ? 1 : 0);
+}
 
 // When UPDATER_MANUAL=1 (explicit `task cli update`), bypass autoUpdate:false by
 // running the updater against a temp config copy with the flag removed.
@@ -38,8 +58,6 @@ const configDir = (() => {
 		return baseConfigDir;
 	}
 })();
-
-const currentVersion = typeof __TASK_CLI_VERSION__ !== 'undefined' ? __TASK_CLI_VERSION__ : '0.0.0-dev';
 
 let npmRoot: string | undefined;
 try {
@@ -131,6 +149,13 @@ function reportOutcome(startedAt: number, logEntries: LogEntry[]): void {
 				status = `deferred -- a flow execution is active on the daemon; will retry automatically in ${retryInMinutes} minute${retryInMinutes === 1 ? '' : 's'}`;
 				break;
 			}
+			case 'applying':
+				// Only reachable when the repair could not finish (e.g. an orphan npm it could not stop): the journal is kept
+				// so the next run retries. A live pid is a concurrent install, not an interruption.
+				status = isPidAlive(state.pid)
+					? `another update is being installed right now (updater pid ${state.pid})`
+					: `${interruptedInstallMessage(state)} The repair did not finish, see the log lines above.`;
+				break;
 			case 'failed':
 				status = `update failed -- ${state.error}`;
 				break;

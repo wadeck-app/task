@@ -1,22 +1,30 @@
-// Integration tests for task CLI entry point.
+// Integration tests for the task updater entry point.
 // These tests build the bundle with a fixed test version and execute the updater directly.
 // They verify that `task cli update` (UPDATER_FORCE=1) produces output (not silent).
-import { execFileSync, spawnSync } from 'node:child_process';
+//
+// Isolation (incident 2026-10-24/25: a repo-built bundle ran a real `npm install -g` and the global CLI vanished):
+// the updater only ever sees the throwaway tree of createIsolatedCliEnv (config dir, HOME, npm prefix and cache,
+// npmrc) and an unreachable registry, so even a bug cannot install, uninstall or read anything real.
+import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+
+import { createIsolatedCliEnv, type IsolatedCliEnv, spawnIsolated } from './isolatedCliEnv.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // packages/task-cli package root (1 level up from src/)
 const packageRoot = path.resolve(__dirname, '..');
 const updaterBundlePath = path.resolve(packageRoot, 'dist-bundle/task-updater.cjs');
 
-const TEST_VERSION = '0.0.0-test-integration';
+// A CalVer shape on purpose: the dev-build guard (non-CalVer versions refuse to update) must not hide these runs.
+// The registry is unreachable, so no install can happen whatever the version.
+const TEST_VERSION = '2026.01.01-001-deadbeef';
 
 beforeAll(() => {
-	// Use shell: true so npm resolves correctly on Windows (npm.cmd)
+	// Use shell: true so npm resolves correctly on Windows (npm.cmd). The build itself is not isolated: it only
+	// writes into this package.
 	execFileSync('npm', ['run', 'bundle'], {
 		cwd: packageRoot,
 		encoding: 'utf-8',
@@ -34,114 +42,55 @@ afterAll(() => {
 	}
 });
 
+let iso: IsolatedCliEnv | undefined;
+afterEach(() => {
+	iso?.cleanup();
+	iso = undefined;
+});
+
+/** Runs the updater bundle as `task cli update` does (UPDATER_FORCE=1) inside the isolated tree. */
+function runUpdater(setup?: (configDir: string) => void): { combined: string; stdout: string; stderr: string } {
+	iso = createIsolatedCliEnv({ extra: { UPDATER_FORCE: '1', UPDATER_PKG_NAME: '@wadeck-app/task-cli' } });
+	setup?.(iso.configDir);
+	const result = spawnIsolated(updaterBundlePath, [], iso);
+	const stdout = result.stdout ?? '';
+	const stderr = result.stderr ?? '';
+	return { combined: stdout + stderr, stdout, stderr };
+}
+
 describe('task cli update -- produces output', () => {
 	it('writes at least one line to stdout when UPDATER_FORCE=1', () => {
-		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-update-test-'));
-		try {
-			// TASK_CONFIG_DIR is the only env var the updater honours for its config dir: ConfigDir.get
-			// reads XDG_CONFIG_HOME or os.homedir(), and os.homedir() ignores $HOME on Windows, so
-			// overriding HOME/APPDATA/XDG_DATA_HOME would leak into the developer's real ~/.config/task
-			// (which carries `autoUpdate: false` and makes shared-updater return early and silently).
-			//
-			// NPM_CONFIG_USERCONFIG replaces ~/.npmrc so the developer's `@wadeck-app:registry` and auth
-			// token cannot apply. Both the default and the scoped registry point at a closed port, so
-			// `npm view` fails fast: the run is offline, deterministic, and installs nothing globally.
-			const npmrcPath = path.join(tmpDir, 'npmrc');
-			const deadRegistry = 'http://127.0.0.1:1/';
-			fs.writeFileSync(
-				npmrcPath,
-				`registry=${deadRegistry}\n@wadeck-app:registry=${deadRegistry}\nfetch-retries=0\n`
-			);
-
-			// Running under npm/npx exports NPM_CONFIG_USERCONFIG pointing at the real ~/.npmrc.
-			// Windows env vars are case-insensitive while JS object keys are not, so adding a
-			// lowercase `npm_config_userconfig` would leave a duplicate that the real path wins.
-			// Drop every case variant first, then set exactly one canonical key.
-			const childEnv: Record<string, string | undefined> = {};
-			for (const [key, value] of Object.entries(process.env)) {
-				if (!/^npm_config_userconfig$/i.test(key)) childEnv[key] = value;
-			}
-
-			const result = spawnSync(process.execPath, [updaterBundlePath], {
-				env: {
-					...childEnv,
-					UPDATER_FORCE: '1',
-					UPDATER_PKG_NAME: '@wadeck-app/task-cli',
-					TASK_CONFIG_DIR: tmpDir,
-					NPM_CONFIG_USERCONFIG: npmrcPath,
-				},
-				timeout: 30000,
-				encoding: 'utf-8',
-			});
-			const combined = (result.stdout ?? '') + (result.stderr ?? '');
-			// Must produce at least one line of output
-			expect(
-				combined.trim().length,
-				`Expected output from updater but got none. stdout: "${result.stdout}" stderr: "${result.stderr}"`
-			).toBeGreaterThan(0);
-			// The outcome must be attributed to the updater and name the failure, not just be non-empty.
-			expect(combined).toContain('[task-updater]');
-			expect(combined).toContain('version fetch failed');
-			// The status block is always printed, and never the old vague "unexpected" message.
-			expect(combined).toContain('[task-updater] current:');
-			expect(combined).toContain('[task-updater] latest:');
-			expect(combined).toContain('[task-updater] status:  update check failed --');
-			expect(combined).not.toContain('unexpected');
-		} finally {
-			try {
-				fs.rmSync(tmpDir, { recursive: true, force: true });
-			} catch {
-				// ignore
-			}
-		}
+		const { combined, stdout, stderr } = runUpdater();
+		// Must produce at least one line of output
+		expect(
+			combined.trim().length,
+			`Expected output from updater but got none. stdout: "${stdout}" stderr: "${stderr}"`
+		).toBeGreaterThan(0);
+		// The outcome must be attributed to the updater and name the failure, not just be non-empty.
+		expect(combined).toContain('[task-updater]');
+		expect(combined).toContain('version fetch failed');
+		// The status block is always printed, and never the old vague "unexpected" message.
+		expect(combined).toContain('[task-updater] current:');
+		expect(combined).toContain('[task-updater] latest:');
+		expect(combined).toContain('[task-updater] status:  update check failed --');
+		expect(combined).not.toContain('unexpected');
 	});
 
 	it('reports autoUpdate disabled explicitly, not a silent/vague message', () => {
-		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-update-test-'));
-		try {
-			fs.writeFileSync(path.join(tmpDir, 'config.yml'), 'autoUpdate: false\n');
-			const npmrcPath = path.join(tmpDir, 'npmrc');
-			const deadRegistry = 'http://127.0.0.1:1/';
-			fs.writeFileSync(
-				npmrcPath,
-				`registry=${deadRegistry}\n@wadeck-app:registry=${deadRegistry}\nfetch-retries=0\n`
-			);
-			const childEnv: Record<string, string | undefined> = {};
-			for (const [key, value] of Object.entries(process.env)) {
-				if (!/^npm_config_userconfig$/i.test(key)) childEnv[key] = value;
-			}
-
-			// UPDATER_FORCE without UPDATER_MANUAL: force bypasses the check-interval, but the
-			// autoUpdate:false flag in config.yml is only bypassed by UPDATER_MANUAL.
-			const result = spawnSync(process.execPath, [updaterBundlePath], {
-				env: {
-					...childEnv,
-					UPDATER_FORCE: '1',
-					UPDATER_PKG_NAME: '@wadeck-app/task-cli',
-					TASK_CONFIG_DIR: tmpDir,
-					NPM_CONFIG_USERCONFIG: npmrcPath,
-				},
-				timeout: 30000,
-				encoding: 'utf-8',
-			});
-			const combined = (result.stdout ?? '') + (result.stderr ?? '');
-			expect(combined).toContain('[task-updater] status:  skipped -- autoUpdate is disabled in');
-			expect(combined).not.toContain('unexpected');
-		} finally {
-			try {
-				fs.rmSync(tmpDir, { recursive: true, force: true });
-			} catch {
-				// ignore
-			}
-		}
+		// UPDATER_FORCE without UPDATER_MANUAL: force bypasses the check-interval, but the
+		// autoUpdate:false flag in config.yml is only bypassed by UPDATER_MANUAL.
+		const { combined } = runUpdater(configDir => {
+			fs.writeFileSync(path.join(configDir, 'config.yml'), 'autoUpdate: false\n');
+		});
+		expect(combined).toContain('[task-updater] status:  skipped -- autoUpdate is disabled in');
+		expect(combined).not.toContain('unexpected');
 	});
 
 	it('ignores a stale state file left over from a previous run', () => {
-		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-update-test-'));
-		try {
+		const { combined } = runUpdater(configDir => {
 			// Simulate a prior run that successfully updated, long before this run starts.
 			fs.writeFileSync(
-				path.join(tmpDir, 'update-state.json'),
+				path.join(configDir, 'update-state.json'),
 				JSON.stringify({
 					status: 'success',
 					currentVersion: '0.0.0-ancient',
@@ -149,40 +98,16 @@ describe('task cli update -- produces output', () => {
 					timestamp: Date.now() - 60 * 60 * 1000,
 				})
 			);
-			const npmrcPath = path.join(tmpDir, 'npmrc');
-			const deadRegistry = 'http://127.0.0.1:1/';
-			fs.writeFileSync(
-				npmrcPath,
-				`registry=${deadRegistry}\n@wadeck-app:registry=${deadRegistry}\nfetch-retries=0\n`
-			);
-			const childEnv: Record<string, string | undefined> = {};
-			for (const [key, value] of Object.entries(process.env)) {
-				if (!/^npm_config_userconfig$/i.test(key)) childEnv[key] = value;
-			}
+		});
+		// This run's own outcome (fetch failed, since the registry is unreachable) must win
+		// over the stale leftover 'success' state -- never report a success that didn't happen.
+		expect(combined).toContain('[task-updater] status:  update check failed --');
+		expect(combined).not.toContain('status:  updated to');
+		expect(combined).not.toContain('unexpected');
+	});
 
-			const result = spawnSync(process.execPath, [updaterBundlePath], {
-				env: {
-					...childEnv,
-					UPDATER_FORCE: '1',
-					UPDATER_PKG_NAME: '@wadeck-app/task-cli',
-					TASK_CONFIG_DIR: tmpDir,
-					NPM_CONFIG_USERCONFIG: npmrcPath,
-				},
-				timeout: 30000,
-				encoding: 'utf-8',
-			});
-			const combined = (result.stdout ?? '') + (result.stderr ?? '');
-			// This run's own outcome (fetch failed, since the registry is unreachable) must win
-			// over the stale leftover 'success' state -- never report a success that didn't happen.
-			expect(combined).toContain('[task-updater] status:  update check failed --');
-			expect(combined).not.toContain('status:  updated to');
-			expect(combined).not.toContain('unexpected');
-		} finally {
-			try {
-				fs.rmSync(tmpDir, { recursive: true, force: true });
-			} catch {
-				// ignore
-			}
-		}
+	it('never touches an npm global prefix: the isolated prefix stays empty', () => {
+		runUpdater();
+		expect(fs.readdirSync(iso!.npmPrefix)).toEqual([]);
 	});
 });

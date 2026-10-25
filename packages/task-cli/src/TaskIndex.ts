@@ -2,6 +2,7 @@
 import { ConfigDir, UpdateManager } from '@wadeck-app/shared-cli';
 import { logCliInvocation } from '@wadeck-app/shared-cli/CliLogger';
 import { resolveOwnBundlePath } from '@wadeck-app/shared-cli/resolveOwnBundlePath';
+import { appendLog } from '@wadeck-app/shared-updater';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -14,6 +15,7 @@ import {
 import type { ResolvedProject } from '@wadeck-app/task-service';
 import { declareBeforeFirstDelivery } from './QueueEventsDeclaration.js';
 import { TASK_BUNDLE_NAME } from './TaskBundleName.js';
+import { scheduleUpdaterUnlessDevBuild } from './devBuildGuard.js';
 import { parseArgs, usesRemovedProjectDir } from './cli/args.js';
 import type { CommandEnv } from './cli/env.js';
 import { STATUS_HELP, taskHelp } from './cli/help.js';
@@ -133,9 +135,13 @@ async function main(): Promise<void> {
 		if (output.length > 0) process.stderr.write(output + '\n');
 	}
 
-	// Schedule background updater after command completes
+	// Schedule background updater after command completes (never from a repo-built dev bundle)
 	const bundlePath = resolveOwnBundlePath(TASK_BUNDLE_NAME, fileURLToPath(import.meta.url));
-	new UpdateManager('@wadeck-app/task-cli').scheduleBackgroundUpdate(bundlePath, 'task-updater.cjs');
+	scheduleUpdaterUnlessDevBuild(
+		VERSION,
+		() => new UpdateManager('@wadeck-app/task-cli').scheduleBackgroundUpdate(bundlePath, 'task-updater.cjs'),
+		line => appendLog(ConfigDir.get('task'), 'info', line)
+	);
 
 	process.exit(exitCode);
 }

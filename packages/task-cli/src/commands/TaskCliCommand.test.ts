@@ -3,7 +3,13 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { getCurrentTaskVersion, runTaskCliRollback, runTaskCliSelfCheck, runTaskCliVersion } from './TaskCliCommand.js';
+import {
+	getCurrentTaskVersion,
+	runTaskCliRollback,
+	runTaskCliSelfCheck,
+	runTaskCliUpdate,
+	runTaskCliVersion,
+} from './TaskCliCommand.js';
 
 vi.mock('node:fs', async () => {
 	const real = await vi.importActual<typeof import('node:fs')>('node:fs');
@@ -206,5 +212,115 @@ describe('getCurrentTaskVersion', () => {
 		const version = getCurrentTaskVersion();
 		expect(typeof version).toBe('string');
 		expect(version.length).toBeGreaterThan(0);
+	});
+});
+
+describe('runTaskCliUpdate on a dev build', () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it('refuses with the dev-build line, exits non-zero and never starts the updater', async () => {
+		const { cliUpdateCommand } = await import('@wadeck-app/shared-cli/CliMetaCommands');
+		// The vitest define version (2026.01.01-000000-0-TEST0000) is not a CalVer release stamp.
+		const written: string[] = [];
+		vi.spyOn(process.stderr, 'write').mockImplementation(chunk => {
+			written.push(String(chunk));
+			return true;
+		});
+		const exitSpy = vi.spyOn(process, 'exit').mockImplementation((code?: string | number | null) => {
+			throw new Error(`process.exit(${code})`);
+		}) as any;
+
+		await expect(runTaskCliUpdate({ rawArgs: [] })).rejects.toThrow('process.exit(1)');
+
+		expect(exitSpy).toHaveBeenCalledWith(1);
+		expect(written.join('')).toContain(': not updating the global task-cli');
+		expect(cliUpdateCommand).not.toHaveBeenCalled();
+	});
+
+	it('still allows --check (read-only) on a dev build', async () => {
+		const { cliVersionCommand } = await import('@wadeck-app/shared-cli/CliMetaCommands');
+		await runTaskCliUpdate({ check: true, rawArgs: ['--check'] });
+		expect(cliVersionCommand).toHaveBeenCalled();
+	});
+});
+
+describe('update state "applying"', () => {
+	let sandbox: string;
+	let savedXdg: string | undefined;
+	let written: string[];
+	let exitSpy: ReturnType<typeof vi.spyOn>;
+
+	function writeApplying(pid: number): void {
+		const dir = path.join(sandbox, 'task');
+		fs.mkdirSync(dir, { recursive: true });
+		fs.writeFileSync(
+			path.join(dir, 'update-state.json'),
+			JSON.stringify({
+				status: 'applying',
+				pid,
+				targetVersion: '2',
+				previousVersion: '1',
+				currentVersion: '1',
+				timestamp: Date.now(),
+			})
+		);
+	}
+
+	beforeEach(() => {
+		sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'task-applying-'));
+		savedXdg = process.env['XDG_CONFIG_HOME'];
+		process.env['XDG_CONFIG_HOME'] = sandbox;
+		written = [];
+		vi.spyOn(process.stdout, 'write').mockImplementation(chunk => {
+			written.push(String(chunk));
+			return true;
+		});
+		vi.spyOn(process.stderr, 'write').mockImplementation(chunk => {
+			written.push(String(chunk));
+			return true;
+		});
+		exitSpy = vi.spyOn(process, 'exit').mockImplementation((code?: string | number | null) => {
+			throw new Error(`process.exit(${code})`);
+		}) as any;
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+		if (savedXdg === undefined) delete process.env['XDG_CONFIG_HOME'];
+		else process.env['XDG_CONFIG_HOME'] = savedXdg;
+		fs.rmSync(sandbox, { recursive: true, force: true });
+	});
+
+	it('`cli version` tells that an install was interrupted when the installer pid is dead', async () => {
+		// Above any real pid range.
+		writeApplying(2147483646);
+		await runTaskCliVersion();
+		expect(written.join('')).toContain('interrupted');
+		expect(written.join('')).toContain('task cli update');
+	});
+
+	it('`cli version` stays silent about the state while the installer is alive', async () => {
+		writeApplying(process.pid);
+		await runTaskCliVersion();
+		expect(written.join('')).not.toContain('interrupted');
+	});
+
+	it('`cli rollback` refuses while an install is running: it would race the installer', async () => {
+		const { cliRollbackCommand } = await import('@wadeck-app/shared-cli/CliMetaCommands');
+		writeApplying(process.pid);
+		await expect(runTaskCliRollback({ resolveManifest: () => 'unused' })).rejects.toThrow('process.exit(1)');
+		expect(exitSpy).toHaveBeenCalledWith(1);
+		expect(written.join('')).toContain(`pid ${process.pid}`);
+		expect(cliRollbackCommand).not.toHaveBeenCalled();
+	});
+
+	it('`cli rollback` refuses on an interrupted install and points to the repair (`cli update`)', async () => {
+		const { cliRollbackCommand } = await import('@wadeck-app/shared-cli/CliMetaCommands');
+		writeApplying(2147483646);
+		await expect(runTaskCliRollback({ resolveManifest: () => 'unused' })).rejects.toThrow('process.exit(1)');
+		expect(written.join('')).toContain('task cli update');
+		expect(cliRollbackCommand).not.toHaveBeenCalled();
 	});
 });

@@ -5,11 +5,12 @@
  * as a child process with stdio: 'pipe'. This guards against regressions where
  * output is swallowed (e.g. when the Go launcher redirects node's stdio to NUL).
  */
-import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+
+import { createIsolatedCliEnv, type IsolatedCliEnv, spawnIsolated } from './isolatedCliEnv.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -26,16 +27,20 @@ function resolveTsx(): string {
 	throw new Error('tsx not found in node_modules — run npm install in the monorepo root');
 }
 
+// The spawned CLI runs from source (a dev version): it must see a throwaway config dir, HOME and npm, never the real ones.
+let iso: IsolatedCliEnv | undefined;
+afterEach(() => {
+	iso?.cleanup();
+	iso = undefined;
+});
+
 describe('task cli self-check (subprocess)', () => {
 	it('prints [ok] lines to stdout when spawned directly via node', () => {
 		const tsx = resolveTsx();
 		const taskIndex = join(__dirname, 'TaskIndex.ts');
 
-		const result = spawnSync(process.execPath, [tsx, taskIndex, 'cli', 'self-check'], {
-			encoding: 'utf8',
-			timeout: 30000,
-			env: { ...process.env, CLI_SELF_CHECK_QUIET: '0' },
-		});
+		iso = createIsolatedCliEnv({ extra: { CLI_SELF_CHECK_QUIET: '0' } });
+		const result = spawnIsolated(tsx, [taskIndex, 'cli', 'self-check'], iso);
 
 		const combined = result.stdout + result.stderr;
 
@@ -53,11 +58,8 @@ describe('task cli self-check (subprocess)', () => {
 		const tsx = resolveTsx();
 		const taskIndex = join(__dirname, 'TaskIndex.ts');
 
-		const result = spawnSync(process.execPath, [tsx, taskIndex, 'cli', 'self-check'], {
-			encoding: 'utf8',
-			timeout: 30000,
-			env: { ...process.env, CLI_SELF_CHECK_QUIET: '1' },
-		});
+		iso = createIsolatedCliEnv({ extra: { CLI_SELF_CHECK_QUIET: '1' } });
+		const result = spawnIsolated(tsx, [taskIndex, 'cli', 'self-check'], iso);
 
 		expect(
 			result.status,

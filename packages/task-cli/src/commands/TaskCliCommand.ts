@@ -9,6 +9,7 @@ import {
 	warnUnknownArgs,
 } from '@wadeck-app/shared-cli/CliMetaCommands';
 import { resolveOwnBundlePath } from '@wadeck-app/shared-cli/resolveOwnBundlePath';
+import { isPidAlive, readState, stateFilePath } from '@wadeck-app/shared-updater';
 import * as yaml from 'js-yaml';
 import * as fs from 'node:fs';
 import { createRequire } from 'node:module';
@@ -20,7 +21,9 @@ import { TaskConfigLoader, TaskStore } from '@wadeck-app/task-core';
 
 import { attemptStagedRegistration, type AppCoreAttempt } from '../AppCoreRegistration.js';
 import { resolveAppModuleManifest } from '../appModuleManifest.js';
+import { devBuildRefusal, isCalVer } from '../devBuildGuard.js';
 import { TASK_BUNDLE_NAME } from '../TaskBundleName.js';
+import { interruptedInstallMessage } from '../updateStateWording.js';
 
 // Injected by esbuild at bundle time via define; falls back to package.json in dev mode (tsx).
 declare const __TASK_CLI_VERSION__: string;
@@ -55,10 +58,29 @@ function getUpdaterPath(): string | null {
 
 // ---- Exported functions (called by TaskIndex.ts switch/case routing) ----
 
+/** The update journal when its install is not finished: 'live' = the installer pid is running, 'interrupted' = it is gone. */
+function readApplyingState(): { kind: 'live' | 'interrupted'; pid?: number; message: string } | undefined {
+	const state = readState(stateFilePath(ConfigDir.get('task')));
+	if (!state || state.status !== 'applying') return undefined;
+	if (isPidAlive(state.pid)) {
+		return {
+			kind: 'live',
+			pid: state.pid,
+			message: `An update to v${state.targetVersion ?? '?'} is being installed right now (updater pid ${state.pid}).`,
+		};
+	}
+	return { kind: 'interrupted', message: interruptedInstallMessage(state) };
+}
+
 export async function runTaskCliVersion(): Promise<void> {
 	const current = getCurrentTaskVersion();
 	const channel = readChannelFromConfig(ConfigDir.get('task'));
 	await cliVersionCommand(PKG_NAME, current, channel);
+	const applying = readApplyingState();
+	// A running install is normal; only an interrupted one needs the user's attention.
+	if (applying?.kind === 'interrupted')
+		process.stderr.write(`[task] ${applying.message}
+`);
 }
 
 export async function runTaskCliUpdate(opts: { check?: boolean; log?: boolean; rawArgs?: string[] }): Promise<void> {
@@ -80,6 +102,14 @@ export async function runTaskCliUpdate(opts: { check?: boolean; log?: boolean; r
 		const current = getCurrentTaskVersion();
 		const channel = readChannelFromConfig(ConfigDir.get('task'));
 		await cliVersionCommand(PKG_NAME, current, channel);
+		return;
+	}
+	const version = getCurrentTaskVersion();
+	// A repo-built bundle must never touch the global install (incident 2026-10-24).
+	if (!isCalVer(version)) {
+		process.stderr.write(`${devBuildRefusal(version)}
+`);
+		process.exit(1);
 		return;
 	}
 	const updaterPath = getUpdaterPath();
@@ -111,6 +141,19 @@ const defaultRollbackDeps: RollbackAppCoreDeps = {
  */
 export async function runTaskCliRollback(deps: Partial<RollbackAppCoreDeps> = {}): Promise<void> {
 	const { resolveManifest, register } = { ...defaultRollbackDeps, ...deps };
+	// The rollback target in update-state.json is only meaningful once the install has ended; an 'applying' journal
+	// is either racing a live installer or waiting for the updater's own repair, which knows better what to restore.
+	const applying = readApplyingState();
+	if (applying !== undefined) {
+		const how =
+			applying.kind === 'live'
+				? `Wait for it to end (pid ${applying.pid}), then retry.`
+				: 'Run: task cli update (it repairs the installation), then retry if you still need the rollback.';
+		process.stderr.write(`[task] Rollback refused: ${applying.message} ${how}
+`);
+		process.exit(1);
+		return;
+	}
 	await cliRollbackCommand(PKG_NAME, ConfigDir.get('task'));
 	let manifestPath: string;
 	try {
