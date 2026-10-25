@@ -235,7 +235,7 @@ describe('runTaskCliUpdate on a dev build', () => {
 		await expect(runTaskCliUpdate({ rawArgs: [] })).rejects.toThrow('process.exit(1)');
 
 		expect(exitSpy).toHaveBeenCalledWith(1);
-		expect(written.join('')).toContain(': not updating the global task-cli');
+		expect(written.join('')).toContain(': refusing to update the global install of task;');
 		expect(cliUpdateCommand).not.toHaveBeenCalled();
 	});
 

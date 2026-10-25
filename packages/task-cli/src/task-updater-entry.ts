@@ -1,6 +1,7 @@
 // task-updater entry point -- bundled separately as task-updater.cjs.
 // Must NOT import any task runtime modules.
 import { ConfigDir } from '@wadeck-app/shared-cli/ConfigDir';
+import { devBuildRefusalMessage, isReleaseVersion } from '@wadeck-app/shared-cli/ReleaseVersion';
 import {
 	appendLog,
 	cacheFilePath,
@@ -16,7 +17,6 @@ import { cpSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } 
 import * as os from 'node:os';
 import { join } from 'node:path';
 import { registerWithAppCore } from './AppCoreRegistration.js';
-import { devBuildRefusal, isCalVer } from './devBuildGuard.js';
 import { readAppModuleVersion, registerAfterUpdate } from './registerAfterUpdate.js';
 import { interruptedInstallMessage } from './updateStateWording.js';
 
@@ -29,8 +29,8 @@ const currentVersion = typeof __TASK_CLI_VERSION__ !== 'undefined' ? __TASK_CLI_
 // DEV BUILD GUARD, first thing: a repo-built bundle (version not CalVer) must never touch the global install.
 // Background run: log one line, exit 0. Explicit `task cli update` (UPDATER_FORCE/UPDATER_MANUAL): print it, exit 1.
 // Incident 2026-10-24: a repo-built bundle ran `npm install -g`, it was killed halfway and the global CLI vanished.
-if (!isCalVer(currentVersion)) {
-	const refusal = devBuildRefusal(currentVersion);
+if (!isReleaseVersion(currentVersion)) {
+	const refusal = devBuildRefusalMessage('task', currentVersion);
 	const explicit = process.env['UPDATER_FORCE'] === '1' || Boolean(process.env['UPDATER_MANUAL']);
 	try {
 		appendLog(baseConfigDir, 'warn', refusal);

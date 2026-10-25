@@ -8,6 +8,7 @@ import {
 	cliVersionCommand,
 	warnUnknownArgs,
 } from '@wadeck-app/shared-cli/CliMetaCommands';
+import { devBuildRefusalMessage, isReleaseVersion } from '@wadeck-app/shared-cli/ReleaseVersion';
 import { resolveOwnBundlePath } from '@wadeck-app/shared-cli/resolveOwnBundlePath';
 import { isPidAlive, readState, stateFilePath } from '@wadeck-app/shared-updater';
 import * as yaml from 'js-yaml';
@@ -21,7 +22,6 @@ import { TaskConfigLoader, TaskStore } from '@wadeck-app/task-core';
 
 import { attemptStagedRegistration, type AppCoreAttempt } from '../AppCoreRegistration.js';
 import { resolveAppModuleManifest } from '../appModuleManifest.js';
-import { devBuildRefusal, isCalVer } from '../devBuildGuard.js';
 import { TASK_BUNDLE_NAME } from '../TaskBundleName.js';
 import { interruptedInstallMessage } from '../updateStateWording.js';
 
@@ -106,8 +106,8 @@ export async function runTaskCliUpdate(opts: { check?: boolean; log?: boolean; r
 	}
 	const version = getCurrentTaskVersion();
 	// A repo-built bundle must never touch the global install (incident 2026-10-24).
-	if (!isCalVer(version)) {
-		process.stderr.write(`${devBuildRefusal(version)}
+	if (!isReleaseVersion(version)) {
+		process.stderr.write(`${devBuildRefusalMessage('task', version)}
 `);
 		process.exit(1);
 		return;

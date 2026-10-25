@@ -16,11 +16,14 @@ import { createIsolatedCliEnv, type IsolatedCliEnv, spawnIsolated } from './isol
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packageRoot = path.resolve(__dirname, '..');
 const DEV_VERSION = '0.0.0-local';
-const REFUSAL = `dev build ${DEV_VERSION}: not updating the global task-cli`;
+// Wording is the cross-CLI contract of @wadeck-app/shared-cli/ReleaseVersion (devBuildRefusalMessage('task', version)).
+const REFUSAL = `dev build ${DEV_VERSION}: refusing to update the global install of task;`;
+const RELEASE_VERSION = '2026.10.25-042-50a5bcb8';
 
 let bundleDir: string;
+let releaseBundleDir: string;
 
-async function bundle(entry: string, outfile: string): Promise<void> {
+async function bundle(entry: string, outfile: string, version = DEV_VERSION): Promise<void> {
 	await build({
 		entryPoints: [path.join(packageRoot, 'src', entry)],
 		bundle: true,
@@ -30,7 +33,7 @@ async function bundle(entry: string, outfile: string): Promise<void> {
 		outfile,
 		external: [],
 		supported: { 'top-level-await': false },
-		define: { 'import.meta.url': '__importMetaUrl', __TASK_CLI_VERSION__: JSON.stringify(DEV_VERSION) },
+		define: { 'import.meta.url': '__importMetaUrl', __TASK_CLI_VERSION__: JSON.stringify(version) },
 		banner: { js: `const __importMetaUrl = require('node:url').pathToFileURL(__filename).href;` },
 		logLevel: 'warning',
 	});
@@ -38,7 +41,9 @@ async function bundle(entry: string, outfile: string): Promise<void> {
 
 beforeAll(async () => {
 	bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-devbuild-bundle-'));
+	releaseBundleDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-release-bundle-'));
 	await Promise.all([
+		bundle('TaskIndex.ts', path.join(releaseBundleDir, 'task.cjs'), RELEASE_VERSION),
 		bundle('TaskIndex.ts', path.join(bundleDir, 'task.cjs')),
 		bundle('task-updater-entry.ts', path.join(bundleDir, 'task-updater.cjs')),
 	]);
@@ -46,6 +51,7 @@ beforeAll(async () => {
 
 afterAll(() => {
 	fs.rmSync(bundleDir, { recursive: true, force: true });
+	fs.rmSync(releaseBundleDir, { recursive: true, force: true });
 });
 
 let iso: IsolatedCliEnv | undefined;
@@ -54,9 +60,9 @@ afterEach(() => {
 	iso = undefined;
 });
 
-function run(script: string, args: string[], extra: NodeJS.ProcessEnv = {}) {
+function run(script: string, args: string[], extra: NodeJS.ProcessEnv = {}, dir = bundleDir) {
 	iso = createIsolatedCliEnv({ extra: { UPDATER_PKG_NAME: '@wadeck-app/task-cli', ...extra } });
-	const result = spawnIsolated(path.join(bundleDir, script), args, iso);
+	const result = spawnIsolated(path.join(dir, script), args, iso);
 	return { ...result, combined: (result.stdout ?? '') + (result.stderr ?? ''), iso };
 }
 
@@ -98,11 +104,31 @@ describe('dev build guard (real bundles, version 0.0.0-local)', () => {
 		expect(r.combined).not.toContain('Running updater');
 	});
 
-	it('a normal command from the dev task.cjs schedules no updater: it logs the refusal once instead', async () => {
+	// A stand-in updater that only proves it was started: the real one would reach for npm.
+	function installMarkerUpdater(dir: string, marker: string): void {
+		fs.writeFileSync(
+			path.join(dir, 'task-updater.cjs'),
+			`require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'started');`
+		);
+	}
+
+	it('a normal command from the dev task.cjs spawns no updater (scheduleBackgroundUpdate gets the version)', async () => {
+		const marker = path.join(bundleDir, 'updater-started.txt');
+		installMarkerUpdater(bundleDir, marker);
 		const r = run('task.cjs', ['--version']);
 		expect(r.status, r.combined).toBe(0);
-		// An updater spawned in the background would take a moment to log its own refusal line.
+		// A spawned updater would write the marker within a moment.
 		await new Promise(resolve => setTimeout(resolve, 2000));
-		expect(logText(r.iso.configDir).split(REFUSAL).length - 1).toBe(1);
+		expect(fs.existsSync(marker)).toBe(false);
+	});
+
+	it('a normal command from a CalVer task.cjs does spawn the updater (control for the test above)', async () => {
+		const marker = path.join(releaseBundleDir, 'updater-started.txt');
+		installMarkerUpdater(releaseBundleDir, marker);
+		const r = run('task.cjs', ['--version'], {}, releaseBundleDir);
+		expect(r.status, r.combined).toBe(0);
+		const deadline = Date.now() + 10000;
+		while (!fs.existsSync(marker) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
+		expect(fs.existsSync(marker), 'the release bundle never started its updater').toBe(true);
 	});
 });
