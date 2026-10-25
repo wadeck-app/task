@@ -5,7 +5,6 @@ import { loadRegistry } from '@wadeck-app/project-sdk';
 import * as sdk from '@wadeck-app/project-sdk';
 
 import { openTaskContext } from './openContext.js';
-import { legacyStorage } from './legacyData.js';
 import { ownConfigFile, registryStorage } from './storage.js';
 import { addType, removeType } from './taskTypes.js';
 import { createSharedRegistrySandbox } from './testHelpers.js';
@@ -49,14 +48,5 @@ describe('task data goes through the SDK writeFileAtomic', () => {
 		expect(fs.readdirSync(path.join(storage.dataDir, 'tasks')).every(name => name.endsWith('.json'))).toBe(true);
 		removeType(ctx, { name: 'bug' });
 		expect(writtenFiles()).toHaveLength(4);
-	});
-
-	it('a legacy project too (same writer, same files)', () => {
-		const dir = sandbox.dir('legacy', { task: true });
-		const ctx = openTaskContext({ storage: legacyStorage(dir), project: { name: 'legacy', path: dir } });
-
-		const task = ctx.store.create('atomic', 'backlog');
-
-		expect(writtenFiles()).toEqual([`${task.id}.json`, 'task-index.json']);
 	});
 });

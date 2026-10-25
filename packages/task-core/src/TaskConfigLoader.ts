@@ -7,7 +7,7 @@ import * as path from 'node:path';
 export type TaskHookValue = string | { command: string; debug?: boolean };
 
 /**
- * A status entry in .task/config.yml: either a bare name, or an object carrying
+ * A status entry in a project config.yml: either a bare name, or an object carrying
  * `terminal` (hidden from `task list` by default, e.g. "done") and/or `default`
  * (the status assigned to newly created tasks).
  */
@@ -161,22 +161,18 @@ export class TaskConfigLoader {
 		};
 	}
 
-	/**
-	 * The global config plus ONE project config file (unknown keys ignored); without `projectConfigFile`, the defaults of the global config only.
-	 * The caller says where the file is (this class knows no project layout).
-	 */
-	static load(options?: { configDir?: string; projectConfigFile?: string }): TaskResolvedConfig {
-		const file = options?.projectConfigFile;
+	/** The global config alone (the default statuses, the global defaults and hooks): the project part comes from {@link TaskConfigLoader.resolve}. */
+	static load(options?: { configDir?: string }): TaskResolvedConfig {
 		return TaskConfigLoader.resolve({
 			global: TaskConfigLoader.loadGlobal(options?.configDir),
-			project: file === undefined ? {} : (loadYamlFile<TaskProjectConfig>(file) ?? {}),
-			source: file ?? 'the default statuses',
+			project: {},
+			source: 'the default statuses',
 		});
 	}
 
 	/**
 	 * Rewrites the `types` list of one config file (created when missing); the other keys are kept. The directory is created only
-	 * with `createDirectory` (a config layer of the shared registry may not exist yet; a vanished `.task` must stay an error).
+	 * with `createDirectory` (a config layer of the shared registry may not exist yet; without it a vanished folder stays an error).
 	 * `writeFile` defaults to a plain write; task-service injects an atomic one.
 	 */
 	static updateTypes(

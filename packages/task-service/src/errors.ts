@@ -133,12 +133,30 @@ export class PartialDeleteError extends TaskServiceError {
 export class ProjectDataSplitError extends TaskServiceError {
 	constructor(
 		readonly projectName: string,
-		readonly legacyDir: string,
+		readonly oldDir: string,
 		readonly dataDir: string,
 		hint: string
 	) {
 		super(
-			`project ${projectName} has task data in both ${legacyDir} and ${dataDir}, and their tasks differ: task cannot tell which one is right`,
+			`project ${projectName} has task data in both ${oldDir} and ${dataDir}, and their tasks differ: task cannot tell which one is right`,
+			hint
+		);
+	}
+}
+
+/**
+ * A project of the shared registry still keeps its tasks (or its config) in the `.task` of its main path and has none in the registry:
+ * task reads the registry only, so nothing was read. The hint is the exact command that copies them.
+ */
+export class UnmigratedDataError extends TaskServiceError {
+	constructor(
+		readonly projectName: string,
+		readonly oldDir: string,
+		readonly dataDir: string,
+		hint: string
+	) {
+		super(
+			`project ${projectName} keeps its task data in ${oldDir}, which task no longer reads, and the registry (${dataDir}) holds none of it`,
 			hint
 		);
 	}

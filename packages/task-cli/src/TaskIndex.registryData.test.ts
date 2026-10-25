@@ -180,7 +180,7 @@ describe('a registered project keeps its data in the shared registry', () => {
 	});
 });
 
-describe('a registered project whose data is still in <main path>/.task keeps working on it (stage 1 behaviour) with ONE deprecation line; only a real split is refused', () => {
+describe('a registered project whose data is still in <main path>/.task is refused with the migrate command; task cli migrate-data brings it into the registry', () => {
 	async function unmigrated(): Promise<{ dir: string; id: string }> {
 		const dir = workDir('shop');
 		fs.mkdirSync(path.join(dir, '.task', 'tasks'), { recursive: true });
@@ -205,50 +205,51 @@ describe('a registered project whose data is still in <main path>/.task keeps wo
 		return { dir, id: project.id };
 	}
 
-	const deprecation = (dir: string): string =>
-		`Deprecated: project shop still keeps its task data in ${path.join(path.resolve(dir), '.task')}; copy it with: task cli migrate-data -p shop (then delete .task by hand)`;
+	const oldDirOf = (dir: string): string => path.join(path.resolve(dir), '.task');
 
-	it('list / new / type list work on the .task exactly like stage 1, the registry stays untouched, stderr has exactly the one line', async () => {
+	it('every command fails (exit 1) naming both folders and the exact command; nothing is read, written or printed on stderr', async () => {
 		const { dir, id } = await unmigrated();
+		const before = fs.readdirSync(path.join(dir, '.task', 'tasks'));
 
-		const listed = await runTaskCommand(['list', '--json', '-p', 'shop'], root);
-		const lines = stderr.join('').split('\n').filter(Boolean);
-		expect(listed.exitCode).toBe(0);
-		expect(titlesIn(listed.output)).toEqual(['old']);
-		expect(lines).toEqual([deprecation(dir)]);
+		for (const args of [
+			['list', '-p', 'shop'],
+			['new', 'added', '-p', 'shop'],
+			['type', 'list', '-p', 'shop'],
+		]) {
+			const result = await runTaskCommand(args, root);
 
-		stderr.length = 0;
-		const created = await runTaskCommand(['new', 'added', '-p', 'shop'], root);
-		const newId = (JSON.parse(created.output) as { id: string }).id;
-		expect(created.exitCode).toBe(0);
-		expect(fs.existsSync(path.join(dir, '.task', 'tasks', `${newId}.json`))).toBe(true);
-		expect(stderr.join('').split('\n').filter(Boolean)).toEqual([deprecation(dir)]);
-
-		stderr.length = 0;
-		const types = await runTaskCommand(['type', 'list', '-p', 'shop'], root);
-		expect(types.exitCode).toBe(0);
-		expect(stderr.join('').split('\n').filter(Boolean)).toEqual([deprecation(dir)]);
-		// Nothing was created in the registry.
+			expect(result.exitCode, args.join(' ')).toBe(1);
+			expect(result.output, args.join(' ')).toContain(oldDirOf(dir));
+			expect(result.output, args.join(' ')).toContain(dataDirOf(id));
+			expect(result.output, args.join(' ')).toContain('task cli migrate-data -p shop');
+		}
+		expect(stderr.join('')).toBe('');
+		// The registry stays untouched, the .task too.
 		expect(fs.existsSync(dataDirOf(id))).toBe(false);
+		expect(fs.readdirSync(path.join(dir, '.task', 'tasks'))).toEqual(before);
 	});
 
-	it('the line is on stderr only, also with --json: stdout stays the pure answer', async () => {
-		const { dir } = await unmigrated();
+	it('--json: stdout is {error, hint} (the hint is the exact command), nothing on stderr', async () => {
+		const { dir, id } = await unmigrated();
 
 		const result = await runTaskCommand(['--json', 'list', '-p', 'shop'], root);
 
-		expect(() => JSON.parse(result.output) as unknown).not.toThrow();
-		expect(result.output).not.toContain('Deprecated');
-		expect(stderr.join('').trim()).toBe(deprecation(dir));
+		expect(result.exitCode).toBe(1);
+		const parsed = JSON.parse(result.output) as { error: string; hint: string };
+		expect(parsed.error).toContain(oldDirOf(dir));
+		expect(parsed.error).toContain(dataDirOf(id));
+		expect(parsed.hint).toContain('task cli migrate-data -p shop');
+		expect(parsed.hint).toContain(`delete ${oldDirOf(dir)} by hand`);
+		expect(stderr.join('')).toBe('');
 	});
 
-	it('the cwd inside the registered folder behaves the same', async () => {
+	it('the cwd inside the registered folder fails the same way', async () => {
 		const { dir } = await unmigrated();
 
 		const result = await runTaskCommand(['list', '--json'], dir);
 
-		expect(titlesIn(result.output)).toEqual(['old']);
-		expect(stderr.join('').trim()).toBe(deprecation(dir));
+		expect(result.exitCode).toBe(1);
+		expect((JSON.parse(result.output) as { hint: string }).hint).toContain('task cli migrate-data -p shop');
 	});
 
 	it('a REAL split (tasks in both places, different ids) fails naming both folders and the two ways out, in text and in JSON', async () => {
@@ -296,15 +297,8 @@ describe('a registered project whose data is still in <main path>/.task keeps wo
 		expect(migrated.output).toContain('delete');
 		expect(titlesIn(listed.output)).toEqual(['old']);
 		expect(fs.readdirSync(path.join(dir, '.task', 'tasks'))).toEqual(before);
-		// Right after the copy both places hold the same tasks: the registry is used and the old copy is noted, once.
-		const noted = stderr
-			.join('')
-			.split('\n')
-			.filter(line => line.includes('old copy'));
-		expect(noted).toEqual([
-			`old copy still in ${path.join(path.resolve(dir), '.task')}: delete it by hand once checked`,
-		]);
-		expect(stderr.join('')).not.toContain('Deprecated');
+		// Right after the copy both places hold the same tasks: the registry is used and nothing is said on stderr.
+		expect(stderr.join('')).toBe('');
 	});
 
 	it('migrate-data --dry-run writes nothing, --json prints the structured result', async () => {
@@ -447,9 +441,11 @@ describe('discoverability', () => {
 		expect(output).not.toMatch(/^\s+task init\s/m);
 		expect(output).toContain('task cli migrate-data');
 		expect(output).toContain('<registry>/projects/<id>/task/data');
-		// A registered project that still has its tasks in .task keeps working on them, with one stderr line.
-		expect(output).toContain('keeps working on that folder');
-		expect(output).toContain('old copy still in');
+		// A registered project that still has its tasks in .task is refused with the migrate command (no fallback, no deprecation line).
+		expect(output).toContain('is refused');
+		expect(output).not.toContain('keeps working on that folder');
+		expect(output).not.toContain('old copy still in');
+		expect(output).not.toContain('Deprecated');
 		expect(output).toContain('real split');
 	});
 });

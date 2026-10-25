@@ -78,10 +78,7 @@ export function createRouteKit(
 			});
 		},
 		open(req) {
-			const opened = openProject(queryValue(req.query, 'project'));
-			// A registered project still on its .task, or an old copy left after migration: said once in the task log (no terminal here).
-			for (const notice of opened.notices ?? []) logOnce(notice, notice);
-			return opened;
+			return openProject(queryValue(req.query, 'project'));
 		},
 		logOnce,
 		deliver: events => deliverForRequest(eventSink, events),

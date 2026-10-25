@@ -37,7 +37,7 @@ export interface ResolvedProject {
 	 * events cannot be delivered.
 	 */
 	path?: string;
-	/** Where the data and the config are: the shared registry (`chooseDataLocation` may still point an unmigrated project at its `.task`). */
+	/** Where the data and the config are: the shared registry. */
 	storage: TaskStorage;
 	source: ProjectSource;
 	/** What supplied the selection: `--project`, `TASK_PROJECT` or `cwd`. */

@@ -26,7 +26,7 @@ export interface ProjectListing {
 	exists: boolean;
 	/** Tasks in a non-terminal status; null when the project cannot be read (see `error`). */
 	openCount: number | null;
-	/** Why the project cannot be read (data split between the registry and the old .task folder, invalid config.yml, broken parent chain...), with the fix; null when it can. */
+	/** Why the project cannot be read (data still in the old .task folder or split between it and the registry, invalid config.yml, broken parent chain...), with the fix; null when it can. */
 	error: string | null;
 	/** Link to the tasks page of the project; null when the project cannot be read. */
 	href: string | null;
@@ -91,7 +91,7 @@ export function listProjects(): ProjectListing[] {
  * nothing else (a folder or an old page slug is a 404 saying so). Without it, the only known project is used; several make the
  * choice ambiguous (400 listing them). An unreadable shared registry throws its error unchanged (never read as "no project");
  * an unknown reference is a 404 (suggestions of the registry), an ambiguous one a 409 with candidates; a registered project
- * whose data is still in its old `.task` folder keeps working on it (the notice goes to the task log), a real split is a 409.
+ * whose data is still in its old `.task` folder, or split between it and the registry, is a 409 naming both folders and the `migrate-data` command.
  */
 export function openProject(requested: string | undefined): OpenedProject {
 	// A form whose project select was left on its placeholder sends an empty project: say so, instead of "not found".

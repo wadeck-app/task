@@ -265,18 +265,23 @@ describe('projects overview (every project of the shared registry that has a fol
 			expect(() => listTasksAcrossProjects({ env: sandbox.env })).toThrow(NoReadableProjectsError);
 		});
 
-		it('still reads a registered project whose data is in its .task (unmigrated): listed with its id, nothing unreadable', async () => {
+		it('a registered project whose data is still in its .task (unmigrated) is listed unreadable with the migrate command, the others are still read', async () => {
+			await registeredWith('shop', [['s1', 'backlog']]);
 			const dir = sandbox.dir('old-dir', { task: true });
-			fs.writeFileSync(path.join(dir, '.task', 'config.yml'), CONFIG_YML);
+			fs.writeFileSync(path.join(dir, '.task', 'tasks', 'one.json'), '{}');
 			const project = await sandbox.register('old', dir);
-			const unmigrated = openResolvedProject(resolveProject({ cwd: dir, env: sandbox.env }));
-			unmigrated.store.create('b1', 'backlog');
 
 			const answer = listTasksAcrossProjects({ env: sandbox.env });
 
-			expect(answer.unreadable).toEqual([]);
-			const byTitle = Object.fromEntries(answer.tasks.map(task => [task.title, task.project]));
-			expect(byTitle['b1']).toEqual({ id: project.id, name: 'old', path: path.resolve(dir) });
+			expect(answer.tasks.map(task => task.title)).toEqual(['s1']);
+			expect(answer.unreadable).toEqual([
+				{
+					id: project.id,
+					name: 'old',
+					path: path.resolve(dir),
+					error: expect.stringContaining('task cli migrate-data -p old') as unknown,
+				},
+			]);
 		});
 
 		it('a REAL split (tasks in both places, different ids) is listed unreadable with both folders and the way out', async () => {

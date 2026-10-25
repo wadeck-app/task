@@ -8,7 +8,6 @@ import { TaskStore } from '@wadeck-app/task-core';
 import type { TaskResolvedConfig } from '@wadeck-app/task-core';
 
 import type { TaskServiceContext } from './context.js';
-import { legacyStorage } from './legacyData.js';
 
 export interface TestContext {
 	ctx: TaskServiceContext;
@@ -26,7 +25,7 @@ const DEFAULT_TEST_CONFIG: TaskResolvedConfig = {
 	projectHooks: {},
 };
 
-/** Builds a context over a disposable `<tmp>/.task/tasks` store (index lives next to it, inside the tmp root). */
+/** Builds a context over a disposable `<tmp>/.task/tasks` store (index lives next to it, inside the tmp root): a plain folder standing in for a registry data dir. */
 export function createTestContext(configOverrides: Partial<TaskResolvedConfig> = {}): TestContext {
 	const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-service-'));
 	const tasksDir = path.join(rootDir, '.task', 'tasks');
@@ -35,7 +34,7 @@ export function createTestContext(configOverrides: Partial<TaskResolvedConfig> =
 		ctx: {
 			store: new TaskStore(tasksDir),
 			config: { ...DEFAULT_TEST_CONFIG, ...configOverrides },
-			storage: legacyStorage(rootDir),
+			storage: { dataDir: path.join(rootDir, '.task'), configFiles: [path.join(rootDir, '.task', 'config.yml')] },
 			project: { name: 'proj', path: rootDir },
 		},
 		rootDir,
@@ -79,17 +78,4 @@ export function createSharedRegistrySandbox(): SharedRegistrySandbox {
 			}),
 		cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
 	};
-}
-
-/**
- * Fixture of the LEGACY list: appends a directory to `<configDir>/projects.json`, written by hand (task itself no longer writes
- * it, it only reads it). Creates the config dir; keeps the entries already there; same directory twice is one entry.
- */
-export function addLegacyEntry(configDir: string, dir: string): void {
-	const file = path.join(configDir, 'projects.json');
-	const entries: string[] = fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, 'utf8')) as string[]) : [];
-	const resolved = path.resolve(dir);
-	if (!entries.some(entry => path.resolve(entry).toLowerCase() === resolved.toLowerCase())) entries.push(resolved);
-	fs.mkdirSync(configDir, { recursive: true });
-	fs.writeFileSync(file, JSON.stringify(entries, null, 2) + '\n');
 }

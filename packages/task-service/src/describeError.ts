@@ -13,6 +13,7 @@ import {
 	DataMigrationError,
 	InvalidLinkTypeError,
 	ProjectDataSplitError,
+	UnmigratedDataError,
 	InvalidStatusError,
 	InvalidDeleteFilterError,
 	InvalidTaskTypeError,
@@ -77,10 +78,10 @@ export function describeError(error: unknown): ErrorDescription {
 	if (error instanceof NoReadableProjectsError) {
 		return describe('internal', error, error.hint, { skipped: error.failures });
 	}
-	if (error instanceof ProjectDataSplitError) {
+	if (error instanceof ProjectDataSplitError || error instanceof UnmigratedDataError) {
 		return describe('conflict', error, error.hint, {
 			project: error.projectName,
-			legacyDir: error.legacyDir,
+			oldDir: error.oldDir,
 			dataDir: error.dataDir,
 		});
 	}

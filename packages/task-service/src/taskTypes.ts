@@ -10,8 +10,8 @@ export function listTypes(ctx: TaskServiceContext): string[] {
 }
 
 /**
- * Adds a valid type to the project's OWN config file (created when missing: `<config dir>/config.yml` of a registry project,
- * `.task/config.yml` of a legacy one); no-op if already present. Types belong to the project alone, never to an ancestor layer.
+ * Adds a valid type to the project's OWN config file (created, with its folder, when missing: `<config dir>/config.yml` of the registry);
+ * no-op if already present. Types belong to the project alone, never to an ancestor layer.
  * `ctx.config` is a snapshot: reload the config to see the change.
  */
 export function addType(ctx: TaskServiceContext, input: { name: string }): void {
@@ -19,7 +19,7 @@ export function addType(ctx: TaskServiceContext, input: { name: string }): void 
 		ownConfigFile(ctx.storage),
 		types => (types.includes(input.name) ? types : [...types, input.name]),
 		writeFileAtomic,
-		{ createDirectory: ctx.storage.kind === 'registry' }
+		{ createDirectory: true }
 	);
 }
 
@@ -30,7 +30,7 @@ export function removeType(ctx: TaskServiceContext, input: { name: string }): vo
 		types => types.filter(t => t !== input.name),
 		writeFileAtomic,
 		{
-			createDirectory: ctx.storage.kind === 'registry',
+			createDirectory: true,
 		}
 	);
 }

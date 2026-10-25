@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { TaskConfigLoader } from './TaskConfigLoader';
+import type { TaskProjectConfig } from './TaskConfigLoader';
 
 describe('TaskConfigLoader', () => {
 	let tmpDir: string;
@@ -47,11 +48,31 @@ describe('TaskConfigLoader', () => {
 	});
 
 	describe('TaskConfigLoader.load()', () => {
+		it('is the global config alone: the default statuses, the global defaults and hooks, no project file', () => {
+			fs.writeFileSync(
+				path.join(tmpDir, 'config.yml'),
+				'defaults:\n  priority: high\nhooks:\n  onTaskCreated: echo global\n'
+			);
+
+			const config = TaskConfigLoader.load({ configDir: tmpDir });
+
+			expect(config.statuses).toEqual(['backlog', 'in-progress', 'done']);
+			expect(config.defaults.priority).toBe('high');
+			expect(config.globalHooks['onTaskCreated']).toBe('echo global');
+			expect(config.projectHooks).toEqual({});
+		});
+	});
+
+	const loadWithProject = (configDir: string, projectConfigFile: string) =>
+		TaskConfigLoader.resolve({
+			global: TaskConfigLoader.loadGlobal(configDir),
+			project: TaskConfigLoader.readConfigFile<TaskProjectConfig>(projectConfigFile) ?? {},
+			source: projectConfigFile,
+		});
+
+	describe('TaskConfigLoader.resolve() over the global config and one project file', () => {
 		it('returns defaults when no config files exist', () => {
-			const config = TaskConfigLoader.load({
-				configDir: tmpDir,
-				projectConfigFile: path.join(tmpDir, '.task', 'config.yml'),
-			});
+			const config = loadWithProject(tmpDir, path.join(tmpDir, 'project', 'config.yml'));
 			expect(config.statuses).toEqual(['backlog', 'in-progress', 'done']);
 			expect(config.defaultStatus).toBe('backlog');
 			expect(config.terminalStatuses).toEqual([]);
@@ -62,103 +83,76 @@ describe('TaskConfigLoader', () => {
 
 		it('loads global defaults', () => {
 			fs.writeFileSync(path.join(tmpDir, 'config.yml'), 'defaults:\n  priority: high\n');
-			const config = TaskConfigLoader.load({
-				configDir: tmpDir,
-				projectConfigFile: path.join(tmpDir, '.task', 'config.yml'),
-			});
+			const config = loadWithProject(tmpDir, path.join(tmpDir, 'project', 'config.yml'));
 			expect(config.defaults.priority).toBe('high');
 		});
 
 		it('project priority overrides global priority', () => {
 			fs.writeFileSync(path.join(tmpDir, 'config.yml'), 'defaults:\n  priority: low\n');
-			fs.mkdirSync(path.join(tmpDir, '.task'), { recursive: true });
-			fs.writeFileSync(path.join(tmpDir, '.task', 'config.yml'), 'defaults:\n  priority: critical\n');
-			const config = TaskConfigLoader.load({
-				configDir: tmpDir,
-				projectConfigFile: path.join(tmpDir, '.task', 'config.yml'),
-			});
+			fs.mkdirSync(path.join(tmpDir, 'project'), { recursive: true });
+			fs.writeFileSync(path.join(tmpDir, 'project', 'config.yml'), 'defaults:\n  priority: critical\n');
+			const config = loadWithProject(tmpDir, path.join(tmpDir, 'project', 'config.yml'));
 			expect(config.defaults.priority).toBe('critical');
 		});
 
 		it('project statuses replace defaults', () => {
-			fs.mkdirSync(path.join(tmpDir, '.task'), { recursive: true });
-			fs.writeFileSync(path.join(tmpDir, '.task', 'config.yml'), 'statuses:\n  - todo\n  - doing\n  - done\n');
-			const config = TaskConfigLoader.load({
-				configDir: tmpDir,
-				projectConfigFile: path.join(tmpDir, '.task', 'config.yml'),
-			});
+			fs.mkdirSync(path.join(tmpDir, 'project'), { recursive: true });
+			fs.writeFileSync(path.join(tmpDir, 'project', 'config.yml'), 'statuses:\n  - todo\n  - doing\n  - done\n');
+			const config = loadWithProject(tmpDir, path.join(tmpDir, 'project', 'config.yml'));
 			expect(config.statuses).toEqual(['todo', 'doing', 'done']);
 		});
 
 		it('accepts a mix of plain-string and object status entries', () => {
-			fs.mkdirSync(path.join(tmpDir, '.task'), { recursive: true });
+			fs.mkdirSync(path.join(tmpDir, 'project'), { recursive: true });
 			fs.writeFileSync(
-				path.join(tmpDir, '.task', 'config.yml'),
+				path.join(tmpDir, 'project', 'config.yml'),
 				'statuses:\n  - backlog\n  - in-progress\n  - name: done\n    terminal: true\n'
 			);
-			const config = TaskConfigLoader.load({
-				configDir: tmpDir,
-				projectConfigFile: path.join(tmpDir, '.task', 'config.yml'),
-			});
+			const config = loadWithProject(tmpDir, path.join(tmpDir, 'project', 'config.yml'));
 			expect(config.statuses).toEqual(['backlog', 'in-progress', 'done']);
 			expect(config.terminalStatuses).toEqual(['done']);
 			expect(config.defaultStatus).toBe('backlog');
 		});
 
 		it('uses the status explicitly marked default: true, even if not first', () => {
-			fs.mkdirSync(path.join(tmpDir, '.task'), { recursive: true });
+			fs.mkdirSync(path.join(tmpDir, 'project'), { recursive: true });
 			fs.writeFileSync(
-				path.join(tmpDir, '.task', 'config.yml'),
+				path.join(tmpDir, 'project', 'config.yml'),
 				'statuses:\n  - backlog\n  - name: in-progress\n    default: true\n  - name: done\n    terminal: true\n'
 			);
-			const config = TaskConfigLoader.load({
-				configDir: tmpDir,
-				projectConfigFile: path.join(tmpDir, '.task', 'config.yml'),
-			});
+			const config = loadWithProject(tmpDir, path.join(tmpDir, 'project', 'config.yml'));
 			expect(config.defaultStatus).toBe('in-progress');
 		});
 
 		it('falls back to the first status when none is marked default', () => {
-			fs.mkdirSync(path.join(tmpDir, '.task'), { recursive: true });
-			fs.writeFileSync(path.join(tmpDir, '.task', 'config.yml'), 'statuses:\n  - todo\n  - doing\n  - done\n');
-			const config = TaskConfigLoader.load({
-				configDir: tmpDir,
-				projectConfigFile: path.join(tmpDir, '.task', 'config.yml'),
-			});
+			fs.mkdirSync(path.join(tmpDir, 'project'), { recursive: true });
+			fs.writeFileSync(path.join(tmpDir, 'project', 'config.yml'), 'statuses:\n  - todo\n  - doing\n  - done\n');
+			const config = loadWithProject(tmpDir, path.join(tmpDir, 'project', 'config.yml'));
 			expect(config.defaultStatus).toBe('todo');
 		});
 
 		it('throws when more than one status is marked default: true', () => {
-			fs.mkdirSync(path.join(tmpDir, '.task'), { recursive: true });
+			fs.mkdirSync(path.join(tmpDir, 'project'), { recursive: true });
 			fs.writeFileSync(
-				path.join(tmpDir, '.task', 'config.yml'),
+				path.join(tmpDir, 'project', 'config.yml'),
 				'statuses:\n  - name: backlog\n    default: true\n  - name: done\n    default: true\n'
 			);
-			expect(() =>
-				TaskConfigLoader.load({
-					configDir: tmpDir,
-					projectConfigFile: path.join(tmpDir, '.task', 'config.yml'),
-				})
-			).toThrow(/Multiple statuses marked "default: true"/);
+			expect(() => loadWithProject(tmpDir, path.join(tmpDir, 'project', 'config.yml'))).toThrow(
+				/Multiple statuses marked "default: true"/
+			);
 		});
 
 		it('loads global hooks', () => {
 			fs.writeFileSync(path.join(tmpDir, 'config.yml'), 'hooks:\n  onTaskCreated: echo created\n');
-			const config = TaskConfigLoader.load({
-				configDir: tmpDir,
-				projectConfigFile: path.join(tmpDir, '.task', 'config.yml'),
-			});
+			const config = loadWithProject(tmpDir, path.join(tmpDir, 'project', 'config.yml'));
 			expect(config.globalHooks['onTaskCreated']).toBe('echo created');
 		});
 
 		it('keeps global and project hooks separate', () => {
 			fs.writeFileSync(path.join(tmpDir, 'config.yml'), 'hooks:\n  onTaskCreated: echo global\n');
-			fs.mkdirSync(path.join(tmpDir, '.task'), { recursive: true });
-			fs.writeFileSync(path.join(tmpDir, '.task', 'config.yml'), 'hooks:\n  onStatusChange: node notify.js\n');
-			const config = TaskConfigLoader.load({
-				configDir: tmpDir,
-				projectConfigFile: path.join(tmpDir, '.task', 'config.yml'),
-			});
+			fs.mkdirSync(path.join(tmpDir, 'project'), { recursive: true });
+			fs.writeFileSync(path.join(tmpDir, 'project', 'config.yml'), 'hooks:\n  onStatusChange: node notify.js\n');
+			const config = loadWithProject(tmpDir, path.join(tmpDir, 'project', 'config.yml'));
 			expect(config.globalHooks['onTaskCreated']).toBe('echo global');
 			expect(config.projectHooks['onStatusChange']).toBe('node notify.js');
 			expect(config.globalHooks['onStatusChange']).toBeUndefined();

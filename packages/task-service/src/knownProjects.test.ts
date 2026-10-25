@@ -1,6 +1,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { projectToolDir } from '@wadeck-app/project-sdk';
+
 import { listKnownProjects } from './knownProjects.js';
 import { createSharedRegistrySandbox } from './testHelpers.js';
 import type { SharedRegistrySandbox } from './testHelpers.js';
@@ -30,7 +32,9 @@ describe('listKnownProjects: the projects of the shared registry that have a fol
 				id: project.id,
 				name: 'shop',
 				path: path.resolve(shop),
-				storage: expect.objectContaining({ kind: 'registry' }) as unknown,
+				storage: expect.objectContaining({
+					dataDir: projectToolDir(sandbox.registryDir, project.id, 'task', 'data'),
+				}) as unknown,
 			},
 		]);
 	});

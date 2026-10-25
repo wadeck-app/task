@@ -27,7 +27,7 @@ export interface TestWorld {
 	dataDirOf(id: string): string;
 	/**
 	 * Makes `<root>/<name>` with an OLD-style `.task` folder (`tasks/`, and `config.yml` when given) and registers nothing: the fixture of
-	 * the unmigrated-project tests (register it afterwards with `registerShared`). Returns the folder.
+	 * the unmigrated-project (refused) tests (register it afterwards with `registerShared`). Returns the folder.
 	 */
 	createFolder(name: string, options?: { configYml?: string }): string;
 	/** Makes the project unreadable: its own task config in the registry is invalid YAML (every read of it fails with the file named). */

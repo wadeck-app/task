@@ -44,9 +44,8 @@ describe('resolveProject: the shared registry', () => {
 			registryDir: sandbox.registryDir,
 		});
 		expect(resolved.storage).toMatchObject({
-			kind: 'registry',
 			dataDir: projectToolDir(sandbox.registryDir, project.id, 'task', 'data'),
-			legacyDir: path.join(native(dir), '.task'),
+			mainDir: native(dir),
 		});
 	});
 
@@ -112,7 +111,7 @@ describe('resolveProject: the shared registry', () => {
 		expect(fs.existsSync(resolved.storage.dataDir)).toBe(false);
 	});
 
-	it('resolving never refuses an unmigrated project (migrate-data needs to resolve it); opening its context does', async () => {
+	it('resolving never refuses an unmigrated project (migrate-data needs to resolve it); opening its context does (see openContext.test.ts)', async () => {
 		const dir = sandbox.dir('shop', { task: true });
 		fs.writeFileSync(path.join(dir, '.task', 'tasks', 'one.json'), '{}');
 		await sandbox.register('shop', dir);
@@ -120,7 +119,7 @@ describe('resolveProject: the shared registry', () => {
 		expect(resolveProject({ cwd: dir, env: sandbox.env }).source).toBe('cwd');
 	});
 
-	it('a reference that does not resolve is an error with suggestions, never a fallback to the legacy rules', async () => {
+	it('a reference that does not resolve is an error with suggestions, never a fallback', async () => {
 		const dir = sandbox.dir('shop', { task: true });
 		await sandbox.register('shop', dir);
 
@@ -168,7 +167,7 @@ describe('resolveProject: the shared registry', () => {
 		expect(resolved.id).toBe(project.id);
 		expect(resolved.path).toBeUndefined();
 		expect(resolved.storage.dataDir).toBe(projectToolDir(sandbox.registryDir, project.id, 'task', 'data'));
-		expect(resolved.storage.legacyDir).toBeUndefined();
+		expect(resolved.storage.mainDir).toBeUndefined();
 		expect(resolved.logLine).toContain('virtual');
 	});
 

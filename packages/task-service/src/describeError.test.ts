@@ -7,6 +7,7 @@ import {
 	DanglingParentError,
 	DataMigrationError,
 	ProjectDataSplitError,
+	UnmigratedDataError,
 	InvalidDeleteFilterError,
 	InvalidLinkTypeError,
 	InvalidStatusError,
@@ -101,7 +102,7 @@ describe('describeError: the shared registry storage (stage 2a)', () => {
 			kind: 'conflict',
 			message: expect.stringContaining('/work/shop/.task'),
 			hint: 'Keep one of them',
-			details: { project: 'shop', legacyDir: '/work/shop/.task', dataDir: '/cfg/projects/a1/task/data' },
+			details: { project: 'shop', oldDir: '/work/shop/.task', dataDir: '/cfg/projects/a1/task/data' },
 		});
 	});
 

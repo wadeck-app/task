@@ -14,6 +14,7 @@ export {
 	DanglingParentError,
 	NoReadableProjectsError,
 	ProjectDataSplitError,
+	UnmigratedDataError,
 	DataMigrationError,
 } from './errors.js';
 export type { ProjectFailure } from './errors.js';
@@ -98,17 +99,10 @@ export type { ProjectSource, ResolveProjectInput, ResolvedProject } from './reso
 export { resolveProject, resolveProjectReference } from './resolveProject.js';
 export type { KnownProject, KnownProjects, ListKnownProjectsOptions } from './knownProjects.js';
 export { listKnownProjects } from './knownProjects.js';
-export type { TaskStorage, ChosenStorage } from './storage.js';
-export {
-	chooseDataLocation,
-	hasTaskData,
-	migrateCommand,
-	ownConfigFile,
-	registryStorage,
-	tasksDirOf,
-} from './storage.js';
+export type { TaskStorage } from './storage.js';
+export { hasTaskData, ownConfigFile, registryStorage, tasksDirOf } from './storage.js';
 export { TASK_CONFIG_SCHEMA, loadTaskConfig } from './projectConfig.js';
 export type { MigrateDataOptions, MigrateDataResult } from './migrateData.js';
-export { migrateData } from './migrateData.js';
+export { assertDataMigrated, migrateData } from './migrateData.js';
 export type { Blocker, BlockerSummary, ChildrenSummary } from './taskProgress.js';
 export { describeBlockers, summarizeChildren } from './taskProgress.js';

@@ -1,11 +1,75 @@
-// `task cli migrate-data`: copies the `.task` of a registered project into the shared project registry (stage 2a).
+// `task cli migrate-data`: copies the `.task` of a registered project into the shared project registry. This module is the ONLY one that
+// knows the `.task` folder (architecture rule NO_LEGACY_DATA_PATH): task reads the registry alone, and refuses a project whose data
+// is still in the old folder (`assertDataMigrated`) with the command that copies it.
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { DataMigrationError } from './errors.js';
+import { CONFIG_FILE, INDEX_FILE, jsonFilesIn, taskIdsIn } from './dataFiles.js';
+import { DataMigrationError, ProjectDataSplitError, UnmigratedDataError } from './errors.js';
 import type { ResolvedProject } from './resolveProject.js';
-import { describeLegacyData } from './legacyData.js';
 import { hasTaskData, ownConfigFile, tasksDirOf } from './storage.js';
+import type { TaskStorage } from './storage.js';
+
+/** The old data folder of a project directory (a registered project's main path). */
+function oldDataDirOf(mainDir: string): string {
+	return path.join(mainDir, '.task');
+}
+
+interface OldData {
+	/** Task files in `tasks/`. */
+	tasks: number;
+	index: boolean;
+	config: boolean;
+}
+
+/** What an old data folder holds (what `task cli migrate-data` copies). */
+function describeOldData(dir: string): OldData {
+	return {
+		tasks: jsonFilesIn(path.join(dir, 'tasks')).length,
+		index: fs.existsSync(path.join(dir, INDEX_FILE)),
+		config: fs.existsSync(path.join(dir, CONFIG_FILE)),
+	};
+}
+
+/** The command that copies the old data folder of a project into the shared registry. */
+function migrateCommand(projectName: string): string {
+	return `task cli migrate-data -p ${projectName}`;
+}
+
+/**
+ * Task reads the registry only. Called before every context is built: fails when the project still keeps its data in the `.task` of its
+ * main path, never falls back to it.
+ * - registry has no task data and the `.task` holds data (or a config the registry lacks): {@link UnmigratedDataError} naming both
+ *   folders, hint = the exact `task cli migrate-data -p <name>` command;
+ * - both hold task data with the same task ids (the state right after `migrate-data`): passes, the registry wins, nothing is said;
+ * - both hold task data and the ids differ: a REAL split, {@link ProjectDataSplitError} (nothing is read);
+ * - otherwise (fresh project, registry data only, virtual project): passes.
+ */
+export function assertDataMigrated(storage: TaskStorage, projectName: string): void {
+	if (storage.mainDir === undefined) return;
+	const oldDir = oldDataDirOf(storage.mainDir);
+	const old = describeOldData(oldDir);
+	const oldHasData = old.tasks > 0 || old.index;
+	const registryHasData = hasTaskData(storage.dataDir);
+	if (registryHasData && oldHasData) {
+		const [mine, theirs] = [taskIdsIn(storage.dataDir), taskIdsIn(oldDir)];
+		if (mine.length === theirs.length && mine.every((id, index) => id === theirs[index])) return;
+		throw new ProjectDataSplitError(
+			projectName,
+			oldDir,
+			storage.dataDir,
+			`Keep one of them: to keep the registry data, delete ${oldDir} by hand; to keep the .task data, move ${storage.dataDir} away by hand (then run: ${migrateCommand(projectName)}).`
+		);
+	}
+	if (!registryHasData && (oldHasData || (old.config && !fs.existsSync(ownConfigFile(storage))))) {
+		throw new UnmigratedDataError(
+			projectName,
+			oldDir,
+			storage.dataDir,
+			`Copy the tasks into the registry with: ${migrateCommand(projectName)}, check them (task list -p ${projectName} --all), then delete ${oldDir} by hand.`
+		);
+	}
+}
 
 export interface MigrateDataOptions {
 	/** Report what would be copied; write nothing (not even the destination folders). */
@@ -50,14 +114,14 @@ export function migrateData(resolved: ResolvedProject, options: MigrateDataOptio
 	const dryRun = options.dryRun === true;
 	const { storage } = resolved;
 	const project = { id: resolved.id, name: resolved.name };
-	if (storage.legacyDir === undefined) {
+	if (storage.mainDir === undefined) {
 		return fail(
 			`project ${project.name} (${project.id}) is a virtual project (no path): it has no .task to copy`,
 			'A virtual project keeps its data in the registry already; there is nothing to migrate.'
 		);
 	}
-	const source = storage.legacyDir;
-	const found = describeLegacyData(source);
+	const source = oldDataDirOf(storage.mainDir);
+	const found = describeOldData(source);
 	if (found.tasks === 0 && !found.index && !found.config) {
 		return fail(
 			`nothing to migrate: ${source} holds no task file, no task-index.json and no config.yml`,
@@ -120,7 +184,7 @@ export function migrateData(resolved: ResolvedProject, options: MigrateDataOptio
 		warnings,
 		nextStep:
 			`Check the copy with: task list -p ${project.name} --all (and \`task show <id> -p ${project.name}\`). ` +
-			`When you are satisfied, delete ${source} by hand: task never deletes it. Until you do, commands use the registry copy and print the note "old copy still in ${source}: delete it by hand once checked"; a second copy is refused.`,
+			`When you are satisfied, delete ${source} by hand: task never deletes it. Until you do, commands use the registry copy; a task created or deleted meanwhile makes the two folders differ, and commands then fail (naming both) until ${source} is deleted. A second copy is refused.`,
 	};
 	if (dryRun) {
 		result.nextStep = `Dry run: nothing was written. Run again without --dry-run to copy.`;

@@ -57,7 +57,7 @@ Usage:
   task cli unregister [--json]               Remove the task app-module from app-core
   task cli declare-events [--json]           Tell the queue which events task pushes, now (normally automatic, see Events below)
   task cli migrate-data [-p <ref>] [--dry-run] [--json]
-                                             Copy the .task of a registered project into the registry (COPY only: the .task is never modified or deleted)
+                                             Copy the old .task of a registered project into the registry (COPY only: the .task is never modified or deleted)
   task projects summary [--json]             Open/total tasks per registered project and in total (unreadable projects listed with their reason)
   (task init and task projects add|remove|move|prune|list moved to the project CLI: project add|remove|paths|list)
 
@@ -70,11 +70,11 @@ Global flags:
                        Refused with 'task list --all-projects'. Register a project with the project CLI: project add "<dir>"
   --project-dir        REMOVED: refused with exit 1 ("--project-dir was removed: use -p <id|name|alias> or run from a registered folder"), wherever it is typed
 
-A folder holding a .task that is in no registered project is not a project any more (register it: project add "<dir>"). A REGISTERED project whose tasks are
-still in the .task folder of its main path (the registry holds none) keeps working on that folder for now, with one stderr line (also with --json) giving the
-command that copies them: task cli migrate-data -p <name> (COPY only; delete the .task folder by hand once checked). After the copy the registry is used and
-each command prints "old copy still in <folder>: delete it by hand once checked". Tasks in BOTH places with different ids are a real split: the command fails
-naming both folders (keep one, remove the other by hand). This read of the .task folder is going away: migrate now.
+A folder holding a .task that is in no registered project is not a project (register it: project add "<dir>"). A REGISTERED project whose tasks are still in the
+.task folder of its main path (the registry holds none) is refused (exit 1): task reads the registry only. The error names both folders and the command that
+copies them: task cli migrate-data -p <name> (COPY only; check the copy, then delete the .task folder by hand). After the copy the registry is used and the
+leftover .task is ignored while it holds the same task ids; tasks in BOTH places with different ids are a real split and the command fails naming both folders
+(keep one, remove the other by hand).
 How the project was resolved is in 'task cli logs'.
 
 Events (pushed to queue through @wadeck-app/queue-sdk after the change is saved, with the project directory as cwd so its .queue/subscribers.yml is used):

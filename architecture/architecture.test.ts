@@ -263,7 +263,7 @@ describe('the rules detect what they forbid', () => {
 		expect(violationsIn('task-service', write)).not.toEqual([]);
 	});
 
-	// Stage 2b: the legacy `projects.json` is no longer read; the `.task` folder is known by ONE module (task-service legacyData.ts).
+	// Stage 2b: the legacy `projects.json` is no longer read; the `.task` folder is known by ONE module (task-service migrateData.ts).
 	it.each(PACKAGES)('%s must not mention the legacy projects.json in its sources', pkg => {
 		expect(violationsIn(pkg, "const file = path.join(configDir, 'projects.json');")).not.toEqual([]);
 		expect(
@@ -272,7 +272,7 @@ describe('the rules detect what they forbid', () => {
 		expect(violationsIn(pkg, '// the old projects.json is gone')).toEqual([]);
 	});
 
-	describe('no `.task` path construction outside the legacy-data module', () => {
+	describe('no `.task` path construction outside the migrate-data module', () => {
 		const construction = [
 			"path.join(dir, '.task', 'tasks')",
 			'path.join(dir, ".task")',
@@ -305,10 +305,10 @@ describe('the rules detect what they forbid', () => {
 			expect(violationsIn('task-cli', "const help = 'Global config directory (default: ~/.task)';")).toEqual([]);
 		});
 
-		it('the legacy-data module itself may construct it, no other file of task-service', () => {
+		it('the migrate-data module itself may construct it, no other file of task-service (the deleted legacyData.ts included)', () => {
 			const source = "const dir = path.join(projectDir, '.task');";
 			const inModule = checkSource(
-				'packages/task-service/src/legacyData.ts',
+				'packages/task-service/src/migrateData.ts',
 				source,
 				PACKAGE_RULES['task-service'],
 				{
@@ -327,6 +327,23 @@ describe('the rules detect what they forbid', () => {
 			);
 			expect(inModule).toEqual([]);
 			expect(elsewhere).toHaveLength(1);
+		});
+
+		it('no other file is exempt: not the deleted legacyData.ts, not the context opening, not the CLI command', () => {
+			const source = "const dir = path.join(projectDir, '.task');";
+			for (const file of [
+				'packages/task-service/src/legacyData.ts',
+				'packages/task-service/src/openContext.ts',
+				'packages/task-cli/src/commands/MigrateDataCommand.ts',
+			]) {
+				expect(
+					checkSource(file, source, PACKAGE_RULES[file.includes('task-cli') ? 'task-cli' : 'task-service'], {
+						isTest: false,
+						resolveRelative: noRelative,
+					}),
+					file
+				).toHaveLength(1);
+			}
 		});
 	});
 

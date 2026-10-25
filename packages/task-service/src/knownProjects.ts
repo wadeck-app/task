@@ -14,7 +14,7 @@ export interface KnownProject {
 	name: string;
 	/** The main path of the project. */
 	path: string;
-	/** Where its data and config are: the shared registry (`chooseDataLocation` may still point an unmigrated project at its old folder). */
+	/** Where its data and config are: the shared registry. */
 	storage: TaskStorage;
 	/** Why the project cannot be opened whatever its data (a broken parent chain in the registry); absent when nothing is wrong. */
 	problem?: string;
@@ -35,7 +35,7 @@ export interface ListKnownProjectsOptions {
 /**
  * Every registered project that has a folder (the shared registry, read at every call, never cached). Any registered project can
  * hold tasks (its data is in the registry), so none is filtered out for lack of a `.task`; a project whose main path still holds
- * unmigrated data is listed and read from there (see `chooseDataLocation`); a real split is listed unreadable. A virtual project
+ * unmigrated data is listed unreadable (see `assertDataMigrated`), and so is a real split. A virtual project
  * (no folder) is NOT listed: the cross-project views and the app-module address projects by folder (use the CLI with `-p` for it).
  * A shared registry that cannot be read is reported in `registryProblem` (nothing else lists projects).
  */

@@ -90,7 +90,7 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 		env = {
 			command,
 			jsonMode,
-			// A registered project whose data is still in its old folder keeps working on it (notice below); a real split is refused.
+			// A project whose data is still in its old .task folder, or split between it and the registry, is refused (typed error with the fix).
 			ctx: openResolvedProject(resolved, configDir),
 			// The first event of the process declares the task events to the queue, unless the marker says it was done.
 			eventSink: declareBeforeFirstDelivery(
@@ -98,11 +98,6 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 				{ configDir: ConfigDir.get('task'), taskVersion: VERSION }
 			),
 		};
-		// One line per notice, on stderr whatever the output mode (stdout stays the answer), and in the task log.
-		for (const notice of env.ctx.notices ?? []) {
-			appendTaskLog(getTaskLogDir(ConfigDir.get('task')), 'info', notice);
-			process.stderr.write(notice + '\n');
-		}
 	} catch (error) {
 		return failure(jsonMode, error);
 	}

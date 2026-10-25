@@ -4,7 +4,6 @@ import * as path from 'node:path';
 import { ConfigSchemaError, loadRegistry, setParent } from '@wadeck-app/project-sdk';
 
 import { loadTaskConfig, TASK_CONFIG_SCHEMA } from './projectConfig.js';
-import { legacyStorage } from './legacyData.js';
 import { ownConfigFile, registryStorage } from './storage.js';
 import type { TaskStorage } from './storage.js';
 import { createSharedRegistrySandbox } from './testHelpers.js';
@@ -155,16 +154,5 @@ describe('loadTaskConfig: a project of the shared registry', () => {
 		write(ownConfigFile(storage), 'statuses: [a, b');
 
 		expect(() => loadTaskConfig(storage, sandbox.root)).toThrow(ownConfigFile(storage));
-	});
-});
-
-describe('loadTaskConfig: the legacy storage behaves as before', () => {
-	it('reads <dir>/.task/config.yml and ignores keys it does not know', () => {
-		const dir = sandbox.dir('legacy', { task: true });
-		write(path.join(dir, '.task', 'config.yml'), 'statuses:\n  - todo\ncolour: red\n');
-
-		const config = loadTaskConfig(legacyStorage(dir), sandbox.root);
-
-		expect(config.statuses).toEqual(['todo']);
 	});
 });

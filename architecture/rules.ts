@@ -74,15 +74,15 @@ const NO_PROJECTS_JSON = {
 };
 
 /**
- * `.task` as a path segment (`'.task'`, `"/.task"`, `` `${dir}/.task` ``) belongs to ONE module, task-service `legacyData.ts`, which is
- * used only by the unmigrated-project read (`chooseDataLocation`) and `migrate-data`. Everything else asks it, so removing that
- * read (stage 2b-2) removes the knowledge of the folder with it. The global config dir default (`path.join(os.homedir(), '.task')`)
- * is not project data. Source rule: tests and comments are out of scope.
+ * `.task` as a path segment (`'.task'`, `"/.task"`, `` `${dir}/.task` ``) belongs to ONE module, task-service `migrateData.ts`: the
+ * supported way to bring an old `.task` into the registry (`task cli migrate-data`) and the check that refuses a project whose data
+ * is still there (`assertDataMigrated`). Task reads the registry only; everything else asks that module. The global config dir
+ * default (`path.join(os.homedir(), '.task')`) is not project data. Source rule: tests and comments are out of scope.
  */
 const NO_LEGACY_DATA_PATH = {
 	pattern: /(?<!\bhomedir\(\)\s*,\s*)(?:['"`]\.task(?:['"`/\\])|(?<!~)[/\\]\.task\b)/,
-	why: 'the `.task` folder is known by task-service legacyData.ts only (the unmigrated read and migrate-data); ask it for the path',
-	exceptFiles: /(^|\/)packages\/task-service\/src\/legacyData\.ts$/,
+	why: 'the `.task` folder is known by task-service migrateData.ts only (migrate-data and its unmigrated-project check)',
+	exceptFiles: /(^|\/)packages\/task-service\/src\/migrateData\.ts$/,
 };
 
 /**

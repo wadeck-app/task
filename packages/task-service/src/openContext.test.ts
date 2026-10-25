@@ -4,11 +4,11 @@ import * as path from 'node:path';
 
 import { loadRegistry } from '@wadeck-app/project-sdk';
 
-import { ProjectDataSplitError } from './errors.js';
+import { ProjectDataSplitError, UnmigratedDataError } from './errors.js';
 import { openResolvedProject, openTaskContext } from './openContext.js';
 import { resolveProject } from './resolveProject.js';
-import { legacyStorage } from './legacyData.js';
 import { ownConfigFile, registryStorage } from './storage.js';
+import type { TaskStorage } from './storage.js';
 import { createSharedRegistrySandbox } from './testHelpers.js';
 import type { SharedRegistrySandbox } from './testHelpers.js';
 
@@ -22,17 +22,26 @@ afterEach(() => {
 	fs.rmSync(root, { recursive: true, force: true });
 });
 
+/** A plain storage (data folder + config file) standing in for the registry folders of a project. */
+function storageOf(projectDir: string): TaskStorage {
+	return {
+		dataDir: path.join(projectDir, 'data'),
+		configFiles: [path.join(projectDir, 'config', 'config.yml')],
+	};
+}
+
 function initProject(configYml: string): string {
 	const projectDir = path.join(root, 'my-project');
-	fs.mkdirSync(path.join(projectDir, '.task', 'tasks'), { recursive: true });
-	fs.writeFileSync(path.join(projectDir, '.task', 'config.yml'), configYml, 'utf8');
+	fs.mkdirSync(path.join(projectDir, 'data', 'tasks'), { recursive: true });
+	fs.mkdirSync(path.join(projectDir, 'config'), { recursive: true });
+	fs.writeFileSync(path.join(projectDir, 'config', 'config.yml'), configYml, 'utf8');
 	return projectDir;
 }
 
-/** A context on the `.task` of a directory (the unmigrated layout), named after the directory. */
+/** A context on the folders of a directory, named after the directory. */
 function open(projectDir: string, globalConfigDir?: string): ReturnType<typeof openTaskContext> {
 	return openTaskContext({
-		storage: legacyStorage(projectDir),
+		storage: storageOf(projectDir),
 		globalConfigDir,
 		project: { name: path.basename(projectDir), path: projectDir },
 	});
@@ -44,17 +53,17 @@ describe('openTaskContext', () => {
 		expect(open(projectDir).project).toEqual({ name: 'my-project', path: projectDir });
 	});
 
-	it('takes the identity of a registered project (id and name of the shared registry) and still reads <path>/.task', () => {
+	it('takes the identity of a registered project (id and name of the shared registry)', () => {
 		const projectDir = initProject('statuses:\n  - todo\n');
 
 		const { project, store } = openTaskContext({
-			storage: legacyStorage(projectDir),
+			storage: storageOf(projectDir),
 			project: { id: 'a1b2c3d4', name: 'shop', path: projectDir },
 		});
 
 		expect(project).toEqual({ id: 'a1b2c3d4', name: 'shop', path: projectDir });
 		expect(store.create('x', 'todo').id).toBeTruthy();
-		expect(fs.readdirSync(path.join(projectDir, '.task', 'tasks'))).not.toEqual([]);
+		expect(fs.readdirSync(path.join(projectDir, 'data', 'tasks'))).not.toEqual([]);
 	});
 
 	it('has no id key for a project that is not registered', () => {
@@ -70,11 +79,11 @@ describe('openTaskContext', () => {
 		expect(config.terminalStatuses).toEqual(['done']);
 	});
 
-	it('stores tasks under <project>/.task/tasks', () => {
+	it('stores tasks under <data>/tasks', () => {
 		const projectDir = initProject('statuses:\n  - todo\n');
 		const { store } = open(projectDir);
 		const task = store.create('hello', 'todo');
-		expect(fs.readdirSync(path.join(projectDir, '.task', 'tasks')).some(file => file.includes(task.id))).toBe(true);
+		expect(fs.readdirSync(path.join(projectDir, 'data', 'tasks')).some(file => file.includes(task.id))).toBe(true);
 	});
 
 	it('reads the global hooks from the given global config dir', () => {
@@ -143,34 +152,36 @@ describe('openTaskContext: a project of the shared registry', () => {
 		expect(config.types).toEqual(['bug']);
 	});
 
-	it('UNMIGRATED: keeps reading and writing the .task of the main path like stage 1, keeps the registry identity, and carries the deprecation line', async () => {
+	it('UNMIGRATED: refuses a project whose tasks are in the .task of its main path, names both folders and the command, creates nothing', async () => {
 		const dir = sandbox.dir('shop', { task: true });
+		fs.writeFileSync(path.join(dir, '.task', 'tasks', 'one.json'), '{}');
 		fs.writeFileSync(path.join(dir, '.task', 'config.yml'), 'types:\n  - old\n');
 		const { project, storage } = await registryStorageOf('shop', dir);
-		const first = openTaskContext({ storage, project: { id: project.id, name: 'shop', path: dir } });
-		const task = first.store.create('written in the .task', 'backlog');
-		expect(fs.existsSync(path.join(dir, '.task', 'tasks', `${task.id}.json`))).toBe(true);
 
-		const ctx = openTaskContext({ storage, project: { id: project.id, name: 'shop', path: dir } });
+		let failure: unknown;
+		try {
+			openTaskContext({ storage, project: { id: project.id, name: 'shop', path: dir } });
+		} catch (error) {
+			failure = error;
+		}
 
-		expect(ctx.storage.kind).toBe('legacy');
-		expect(ctx.project).toEqual({ id: project.id, name: 'shop', path: dir });
-		expect(ctx.store.list().map(t => t.id)).toEqual([task.id]);
-		expect(ctx.config.types).toEqual(['old']);
-		expect(ctx.notices).toEqual([
-			`Deprecated: project shop still keeps its task data in ${path.join(path.resolve(dir), '.task')}; copy it with: task cli migrate-data -p shop (then delete .task by hand)`,
-		]);
-		// Nothing was created in the registry.
+		expect(failure).toBeInstanceOf(UnmigratedDataError);
+		const error = failure as UnmigratedDataError;
+		expect(error.message).toContain(path.join(path.resolve(dir), '.task'));
+		expect(error.message).toContain(storage.dataDir);
+		expect(error.hint).toContain('task cli migrate-data -p shop');
+		// Nothing was created in the registry, nothing was written in the .task.
 		expect(fs.existsSync(storage.dataDir)).toBe(false);
+		expect(fs.readdirSync(path.join(dir, '.task', 'tasks'))).toEqual(['one.json']);
 	});
 
-	it('a registry project with no data anywhere is fresh: registry storage, no notice', async () => {
+	it('a registry project with no data anywhere is fresh: it opens, and has no notices', async () => {
 		const { project, storage } = await registryStorageOf('shop');
 
 		const ctx = openTaskContext({ storage, project: { id: project.id, name: 'shop' } });
 
-		expect(ctx.storage.kind).toBe('registry');
-		expect(ctx.notices).toEqual([]);
+		expect(ctx.storage).toBe(storage);
+		expect(ctx).not.toHaveProperty('notices');
 	});
 
 	it('refuses a REAL split (tasks in both places, different ids), naming both folders', async () => {
@@ -214,19 +225,14 @@ describe('openResolvedProject', () => {
 		const ctx = openResolvedProject(resolveProject({ cwd: dir, env: sandbox.env }));
 
 		expect(ctx.project).toEqual({ id: project.id, name: 'shop', path: path.resolve(dir) });
-		expect(ctx.storage.kind).toBe('registry');
+		expect(ctx.storage.dataDir).toContain(project.id);
 	});
 
-	it('opens an unmigrated registered project on its .task (stage 1 behaviour) with the notice', async () => {
+	it('refuses an unmigrated registered project with the command that copies it', async () => {
 		const dir = sandbox.dir('shop', { task: true });
 		fs.writeFileSync(path.join(dir, '.task', 'tasks', 'one.json'), '{}');
-		const project = await sandbox.register('shop', dir);
+		await sandbox.register('shop', dir);
 
-		const ctx = openResolvedProject(resolveProject({ cwd: dir, env: sandbox.env }));
-
-		expect(ctx.storage.kind).toBe('legacy');
-		expect(ctx.project.id).toBe(project.id);
-		expect(ctx.notices).toHaveLength(1);
-		expect(ctx.notices![0]).toContain('task cli migrate-data -p shop');
+		expect(() => openResolvedProject(resolveProject({ cwd: dir, env: sandbox.env }))).toThrow(UnmigratedDataError);
 	});
 });
