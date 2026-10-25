@@ -24,6 +24,7 @@ import { attemptStagedRegistration, type AppCoreAttempt } from '../AppCoreRegist
 import { resolveAppModuleManifest } from '../appModuleManifest.js';
 import { TASK_BUNDLE_NAME } from '../TaskBundleName.js';
 import { interruptedInstallMessage } from '../updateStateWording.js';
+import { formatUpdaterLog } from './updateLog.js';
 
 // Injected by esbuild at bundle time via define; falls back to package.json in dev mode (tsx).
 declare const __TASK_CLI_VERSION__: string;
@@ -83,19 +84,19 @@ export async function runTaskCliVersion(): Promise<void> {
 `);
 }
 
-export async function runTaskCliUpdate(opts: { check?: boolean; log?: boolean; rawArgs?: string[] }): Promise<void> {
+export async function runTaskCliUpdate(opts: {
+	check?: boolean;
+	log?: boolean;
+	json?: boolean;
+	rawArgs?: string[];
+}): Promise<void> {
 	warnUnknownArgs(
 		(opts.rawArgs ?? []).filter(a => a.startsWith('-')),
-		['--check', '--log'],
+		['--check', '--log', '--json'],
 		'task cli update'
 	);
 	if (opts.log) {
-		const logFile = path.join(ConfigDir.get('task'), 'update-log.txt');
-		if (fs.existsSync(logFile)) {
-			process.stdout.write(fs.readFileSync(logFile, 'utf-8'));
-		} else {
-			process.stdout.write('No update log found.\n');
-		}
+		process.stdout.write(formatUpdaterLog(ConfigDir.get('task'), opts.json ?? false));
 		return;
 	}
 	if (opts.check) {
@@ -273,7 +274,7 @@ export function printTaskCliHelp(): void {
 			'  version              Show installed and available version',
 			'  update               Force synchronous update (bypass cache)',
 			'  update --check       Show available version, do not apply',
-			'  update --log         Print the update log',
+			'  update --log [--json]  Print the last 50 updater entries (decisions, applying/rollback, dev-build refusals) from ~/.config/task/logs/',
 			'  rollback             Restore the previously installed version and re-register the app-module with app-core',
 			'  self-check           Run health checks to verify the CLI bundle is functional',
 			"  logs [--follow]      Print today's log from ~/.config/task/logs/",

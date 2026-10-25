@@ -26,7 +26,12 @@ export async function runCliSubcommand(rest: string[], jsonMode: boolean): Promi
 			await runTaskCliVersion();
 			return DONE;
 		case 'update':
-			await runTaskCliUpdate({ check: rest.includes('--check'), log: rest.includes('--log'), rawArgs: rest });
+			await runTaskCliUpdate({
+				check: rest.includes('--check'),
+				log: rest.includes('--log'),
+				json: jsonMode,
+				rawArgs: rest,
+			});
 			return DONE;
 		case 'rollback':
 			await runTaskCliRollback();
