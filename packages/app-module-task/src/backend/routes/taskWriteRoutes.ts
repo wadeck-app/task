@@ -27,6 +27,9 @@ const STATUS_USAGE = 'Send a JSON body { "status": string } (one of the project 
 const LABEL_USAGE = 'Send a JSON body { "label": string }.';
 const PARENT_USAGE = 'Send a JSON body { "parent": string } (task id or prefix).';
 const TYPE_USAGE = 'Send a JSON body { "type": string } (one of the project types, when some are configured).';
+const PATH_LABEL_USAGE = 'Use POST /tasks/<id>/labels/<label> with a non-blank label in the path.';
+const PATH_STATUS_USAGE = 'Use POST /tasks/<id>/status/<status> with one of the project statuses in the path.';
+const PATH_TYPE_USAGE = 'Use POST /tasks/<id>/type/<type> with a non-blank type in the path.';
 const META_USAGE = 'Send a JSON body { "key": string, "value": string }.';
 const LINK_USAGE =
 	'Send { "type": string, "target": string } (type: blockedBy, duplicateOf, causedBy, blocks, duplicates, causes), as a JSON body or, for DELETE, as query parameters.';
@@ -43,6 +46,15 @@ function linkInput(req: RouteRequest, allowQuery: boolean): { id: string; type: 
 		type: requiredString(source, 'type', LINK_USAGE),
 		target: requiredString(source, 'target', LINK_USAGE),
 	};
+}
+
+/** A value of the request path (already decoded once by the server); blank is refused like an empty body field. */
+function pathValue(req: RouteRequest, name: string, usage: string): string {
+	const value = req.params?.[name] ?? '';
+	if (value.trim() === '') {
+		throw new RequestError(400, `${name} must be a non-empty string`, usage);
+	}
+	return value;
 }
 
 export function registerTaskWriteRoutes(kit: RouteKit): void {
@@ -83,13 +95,31 @@ export function registerTaskWriteRoutes(kit: RouteKit): void {
 		};
 	});
 
-	route('POST', '/tasks/:id/status', async req => {
-		const ctx = open(req);
-		const body = bodyObject(req.body, STATUS_USAGE);
-		const result = setStatus(ctx, { id: taskId(req), status: requiredString(body, 'status', STATUS_USAGE) });
+	const answerStatus = async (req: RouteRequest, status: string): Promise<RouteAnswer> => {
+		const result = setStatus(open(req), { id: taskId(req), status });
 		const undelivered = await deliver(result.events);
 		const { events: _events, ...answer } = result;
 		return { status: 200, body: { ...answer, ...undeliveredFields(undelivered) } };
+	};
+
+	route('POST', '/tasks/:id/status', req => {
+		const body = bodyObject(req.body, STATUS_USAGE);
+		return answerStatus(req, requiredString(body, 'status', STATUS_USAGE));
+	});
+
+	// Quick actions (the value is in the path: the installed shell's row action sends no body). Same service call and answer.
+	route('POST', '/tasks/:id/status/:status', req => {
+		return answerStatus(req, pathValue(req, 'status', PATH_STATUS_USAGE));
+	});
+
+	route('POST', '/tasks/:id/type/:type', req => {
+		const type = pathValue(req, 'type', PATH_TYPE_USAGE);
+		return answerChange(setType(open(req), { id: taskId(req), type }));
+	});
+
+	route('POST', '/tasks/:id/labels/:label', req => {
+		const label = pathValue(req, 'label', PATH_LABEL_USAGE);
+		return answerChange(addLabel(open(req), { id: taskId(req), label }));
 	});
 
 	route('POST', '/tasks/:id/labels', req => {

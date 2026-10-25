@@ -11,6 +11,8 @@ import {
 	listTypes,
 	showTask,
 	showTaskWithRelations,
+	describeBlockers,
+	summarizeChildren,
 } from '@wadeck-app/task-service';
 
 import { readAcrossProjects } from '../acrossProjects.js';
@@ -25,7 +27,8 @@ import {
 	optionalQueryValue,
 	showAllFlag,
 } from '../request.js';
-import { withRowLinks, linkRows } from '../rowViews.js';
+import { withRowLinks } from '../rowViews.js';
+import { linkGroups, linkRowViews } from '../taskPresentation.js';
 import { childrenBody, forestBody, taskDetailBody, taskTreeBody, tasksListBody } from '../taskViews.js';
 import { taskId } from './routeKit.js';
 import type { RouteKit } from './routeKit.js';
@@ -56,13 +59,20 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 		if (isBlankRequest(req.query)) return BLANK_ANSWER;
 		const ctx = open(req);
 		const { detail, warnings } = showTaskWithRelations(ctx, { id: taskId(req) });
+		// The full id of the resolved task (the request may hold a prefix).
+		const id = detail['id'] as string;
 		return {
 			status: 200,
 			body: taskDetailBody(ctx, {
 				detail,
 				warnings,
-				links: getTaskLinks(ctx, { id: taskId(req) }),
+				links: getTaskLinks(ctx, { id }),
 				types: listTypes(ctx),
+				// A dangling parent has no chain to show (its warning says so): the store would list a hole.
+				ancestors:
+					detail['parent'] === null && detail['parentId'] !== undefined ? [] : listAncestors(ctx, { id }),
+				childrenSummary: summarizeChildren(ctx, { id }),
+				blockers: describeBlockers(ctx, { id }),
 			}),
 		};
 	});
@@ -95,7 +105,14 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 		const resolvedId = showTask(ctx, { id: taskId(req) })['id'];
 		return {
 			status: 200,
-			body: { project: ctx.project, id: resolvedId, links, rows: linkRows(ctx.project, links) },
+			body: {
+				project: ctx.project,
+				id: resolvedId,
+				links,
+				hasLinks: Object.values(links).some(tasks => tasks.length > 0),
+				rows: linkRowViews(ctx.project, ctx.config, links),
+				groups: linkGroups(ctx.project, ctx.config, links),
+			},
 		};
 	});
 

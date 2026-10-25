@@ -17,5 +17,6 @@
 		"noEmit": true,
 		"types": ["vitest/globals", "node"]
 	},
-	"include": ["src"]
+	"include": ["src"],
+	"exclude": ["src/dsl-components"]
 }

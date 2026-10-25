@@ -1,0 +1,400 @@
+# Detail of one task (/modules/task/tasks/p/:project/:id). ":id" of the manifest path is $route.id, ":project" is
+# $route.project (the slug of the project, resolved by GET /projects). The breadcrumb leads back: no back link here.
+#
+# Every form below submits through a named action ($actions) bound with `onSubmit: $ctx.<action>`:
+# - the body is the form data; it also fills the {placeholders} of the action URL ({id} is the route id);
+# - `projectParam` is the project already URL-encoded by the route (the substitution does not encode), so the URL is
+#   always `?project={projectParam}`; the forms get it through their initialData (`$sources.detail.forms.*`);
+# - the page reloads its sources after a successful action;
+# - `&inlineErrors=true`: the DSL drops the answer of a failed request (nothing is shown, the form just stays as typed),
+#   so the routes answer a failure as data (`errorText`, one line with the hint) and the section of the form shows it;
+# - `resultKey` publishes the answer as $ctx.<key>: the error, and what the queue did not receive (`undeliveredText`),
+#   are shown in the section of the form that produced them (the page is long, a message at the top would be off screen).
+# FieldSelect crashes the page while its options are not loaded: every form sits behind $if on its source data.
+# The sources are fed by `projectQuery` (the project, else `blank=true`): the shell keeps the last answer of a source it
+# skips, so an unknown or unreadable project must replace the previous task with an empty answer, not skip the request.
+# The sources that wait for `projects` also name a $urlParam (`reload`, empty in practice): the shell reloads on a URL
+# change only the sources that name one, so without it a link to another project or filter changed the URL and nothing else.
+$sources:
+    projects:
+        url: GET /api/modules/task/projects
+        params:
+            project: $route.project
+    # inlineErrors on every source: one failing source discards the answers of all the others (the page stays blank), so a
+    # failure is answered as data (`errorText`) and shown by a badge.
+    # `tree` and `links` fail with the same error as `detail` when the task does not exist: `detail` shows it.
+    detail:
+        url: GET /api/modules/task/tasks/{id}?{query}&inlineErrors=true
+        params:
+            id: $route.id
+            query: $source.projects.projectQuery
+            reload: $urlParam.reload
+    tree:
+        url: GET /api/modules/task/tree?{query}&id={id}&inlineErrors=true
+        params:
+            id: $route.id
+            query: $source.projects.projectQuery
+            reload: $urlParam.reload
+    links:
+        url: GET /api/modules/task/tasks/{id}/links?{query}&inlineErrors=true
+        params:
+            id: $route.id
+            query: $source.projects.projectQuery
+            reload: $urlParam.reload
+
+$actions:
+    setStatus:
+        url: POST /api/modules/task/tasks/{id}/status?project={projectParam}&inlineErrors=true
+        resultKey: statusResult
+        reloadSources: true
+    setType:
+        url: POST /api/modules/task/tasks/{id}/type?project={projectParam}&inlineErrors=true
+        resultKey: typeResult
+        reloadSources: true
+    addLabel:
+        url: POST /api/modules/task/tasks/{id}/labels?project={projectParam}&inlineErrors=true
+        resultKey: labelResult
+        reloadSources: true
+    # {label} is the encoded label picked in the select.
+    removeLabel:
+        url: DELETE /api/modules/task/tasks/{id}/labels/{label}?project={projectParam}&inlineErrors=true
+        resultKey: labelResult
+        reloadSources: true
+    setMeta:
+        url: POST /api/modules/task/tasks/{id}/meta?project={projectParam}&inlineErrors=true
+        resultKey: metaResult
+        reloadSources: true
+    setParent:
+        url: POST /api/modules/task/tasks/{id}/parent?project={projectParam}&inlineErrors=true
+        resultKey: parentResult
+        reloadSources: true
+    removeParent:
+        url: DELETE /api/modules/task/tasks/{id}/parent?project={projectParam}&inlineErrors=true
+        resultKey: parentResult
+        reloadSources: true
+    addLink:
+        url: POST /api/modules/task/tasks/{id}/links?project={projectParam}&inlineErrors=true
+        resultKey: linkResult
+        reloadSources: true
+    removeLink:
+        url: DELETE /api/modules/task/tasks/{id}/links?project={projectParam}&inlineErrors=true
+        resultKey: linkResult
+        reloadSources: true
+
+$type: PageContent
+sections:
+    - $type: PageHeader
+      title: $sources.detail.task.title
+      headerActions:
+          - $type: ButtonLink
+            $if: $sources.detail.taskHrefs
+            label: History
+            to: $sources.detail.taskHrefs.history
+          - $type: ButtonLink
+            $if: $sources.detail.taskHrefs
+            label: Children
+            to: $sources.detail.taskHrefs.childrenList
+    # Nothing registered yet: the welcome text of the route (the exact next step) instead of a blank page.
+    - $type: Badge
+      $if: $sources.projects.noProjects
+      label: $sources.projects.noProjectsText
+      variant: info
+    # The selected project cannot be read (not initialized, corrupt config...): the reason and the fix, not a blank page.
+    - $type: Badge
+      $if: $sources.projects.selectedProblem
+      label: $sources.projects.selectedProblem
+      variant: danger
+    # The address names a project the registry does not know (a stale bookmark): said, with the next step, not a blank page.
+    - $type: Badge
+      $if: $sources.projects.unknownProjectText
+      label: $sources.projects.unknownProjectText
+      variant: danger
+    # The task does not exist (or the id is ambiguous): what was asked and what to do.
+    - $type: Badge
+      $if: $sources.detail.errorText
+      label: $sources.detail.errorText
+      variant: danger
+    # Repairable inconsistencies of this task (dangling parent...), with the command that fixes them.
+    - $type: Badge
+      $if: $sources.detail.warningText
+      label: $sources.detail.warningText
+      variant: warning
+    - $type: HorizontalStack
+      gap: gap-3
+      $if: $sources.detail.task
+      items:
+          - $type: Badge
+            label: $sources.detail.projectText
+            variant: info
+          - $type: Badge
+            label: $sources.detail.task.status
+            variant: info
+          - $type: Badge
+            $if: $sources.detail.task.type
+            label: $sources.detail.task.type
+            variant: info
+          - $type: Badge
+            $if: $sources.detail.parent
+            label: $sources.detail.parent.title
+            variant: info
+
+    - $type: Section
+      title: Status
+      $if: $sources.detail.task
+      items:
+          # Events the queue did not receive after a status change: the change itself is saved.
+          - $type: Badge
+            $if: $ctx.statusResult.errorText
+            label: $ctx.statusResult.errorText
+            variant: danger
+          - $type: Badge
+            $if: $ctx.statusResult.undeliveredText
+            label: $ctx.statusResult.undeliveredText
+            variant: warning
+          - $type: Form
+            $if: $sources.detail.forms
+            onSubmit: $ctx.setStatus
+            initialData: $sources.detail.forms.status
+            fields:
+                - $type: FieldSelect
+                  label: Status
+                  bind: status
+                  options: $sources.detail.statusOptions
+            actions:
+                - $type: ButtonSave
+                  label: Change status
+
+    - $type: Section
+      title: Type
+      $if: $sources.detail.task
+      items:
+          - $type: Badge
+            $if: $ctx.typeResult.errorText
+            label: $ctx.typeResult.errorText
+            variant: danger
+          # Events the queue did not receive: the change itself is saved.
+          - $type: Badge
+            $if: $ctx.typeResult.undeliveredText
+            label: $ctx.typeResult.undeliveredText
+            variant: warning
+          # With configured types the choice is restricted; without any, every string is accepted.
+          - $type: Form
+            $if: $sources.detail.hasTypes
+            onSubmit: $ctx.setType
+            initialData: $sources.detail.forms.type
+            fields:
+                - $type: FieldSelect
+                  label: Type
+                  bind: type
+                  options: $sources.detail.typeOptions
+                  placeholder: No type
+            actions:
+                - $type: ButtonSave
+                  label: Set type
+          - $type: Badge
+            $if: $sources.detail.noTypes
+            label: No type is configured for this project (any text is accepted). Add some on the Types page.
+            variant: info
+          - $type: Form
+            $if: $sources.detail.noTypes
+            onSubmit: $ctx.setType
+            initialData: $sources.detail.forms.type
+            fields:
+                - $type: FieldText
+                  label: Type (free text)
+                  bind: type
+            actions:
+                - $type: ButtonSave
+                  label: Set type
+
+    - $type: Section
+      title: Labels
+      $if: $sources.detail.task
+      items:
+          - $type: Badge
+            $if: $ctx.labelResult.errorText
+            label: $ctx.labelResult.errorText
+            variant: danger
+          # Events the queue did not receive: the change itself is saved.
+          - $type: Badge
+            $if: $ctx.labelResult.undeliveredText
+            label: $ctx.labelResult.undeliveredText
+            variant: warning
+          - $type: DataTable
+            rows: $sources.detail.labelRows
+            emptyMessage: No labels
+            columns:
+                - { key: 'label', label: 'Label' }
+          - $type: Form
+            $if: $sources.detail.forms
+            onSubmit: $ctx.addLabel
+            initialData: $sources.detail.forms.label
+            fields:
+                - $type: FieldText
+                  label: New label
+                  bind: label
+            actions:
+                - $type: ButtonSave
+                  label: Add label
+          # The placeholder matters: without it the select shows its first label while the form holds none, and
+          # picking that label (the only one, typically) is no change, so the button stayed off.
+          - $type: Form
+            $if: $sources.detail.hasLabels
+            onSubmit: $ctx.removeLabel
+            initialData: $sources.detail.forms.label
+            fields:
+                - $type: FieldSelect
+                  label: Label to remove
+                  bind: label
+                  options: $sources.detail.labelOptions
+                  placeholder: Choose a label
+            actions:
+                - $type: ButtonSave
+                  label: Remove label
+
+    - $type: Section
+      title: Metadata
+      $if: $sources.detail.task
+      items:
+          - $type: Badge
+            $if: $ctx.metaResult.errorText
+            label: $ctx.metaResult.errorText
+            variant: danger
+          # Events the queue did not receive: the change itself is saved.
+          - $type: Badge
+            $if: $ctx.metaResult.undeliveredText
+            label: $ctx.metaResult.undeliveredText
+            variant: warning
+          - $type: DataTable
+            rows: $sources.detail.metaRows
+            emptyMessage: No metadata
+            columns:
+                - { key: 'key', label: 'Key', mono: true }
+                - { key: 'value', label: 'Value' }
+          - $type: Form
+            $if: $sources.detail.forms
+            onSubmit: $ctx.setMeta
+            initialData: $sources.detail.forms.meta
+            fields:
+                - $type: FieldText
+                  label: Key
+                  bind: key
+                - $type: FieldText
+                  label: Value
+                  bind: value
+            actions:
+                - $type: ButtonSave
+                  label: Set metadata
+
+    - $type: Section
+      title: Hierarchy
+      $if: $sources.detail.task
+      items:
+          - $type: Badge
+            $if: $ctx.parentResult.errorText
+            label: $ctx.parentResult.errorText
+            variant: danger
+          # Events the queue did not receive: the change itself is saved.
+          - $type: Badge
+            $if: $ctx.parentResult.undeliveredText
+            label: $ctx.parentResult.undeliveredText
+            variant: warning
+          # The whole tree containing this task (its ancestors, siblings, children); its own row says "(this task)".
+          - $type: DataTable
+            rows: $sources.tree.rows
+            navigateTo: '{href}'
+            emptyMessage: No hierarchy
+            columns:
+                - { key: 'label', label: 'Task' }
+                - { key: 'id', label: 'ID', mono: true, nowrap: true }
+                - { key: 'status', label: 'Status', nowrap: true }
+          - $type: Form
+            $if: $sources.detail.forms
+            onSubmit: $ctx.setParent
+            initialData: $sources.detail.forms.parent
+            fields:
+                - $type: FieldText
+                  label: New parent (task id or prefix)
+                  bind: parent
+            actions:
+                - $type: ButtonSave
+                  label: Set parent
+          # canDetach: also true for a parent that no longer exists (the warning above), the case to repair.
+          - $type: Form
+            $if: $sources.detail.canDetach
+            onSubmit: $ctx.removeParent
+            initialData: $sources.detail.forms.empty
+            fields: []
+            actions:
+                - $type: ButtonAction
+                  label: Detach from its parent
+                  variant: secondary
+                  type: submit
+
+    - $type: Section
+      title: Links
+      $if: $sources.detail.task
+      items:
+          - $type: Badge
+            $if: $ctx.linkResult.errorText
+            label: $ctx.linkResult.errorText
+            variant: danger
+          # Events the queue did not receive after a link change: the change itself is saved.
+          - $type: Badge
+            $if: $ctx.linkResult.undeliveredText
+            label: $ctx.linkResult.undeliveredText
+            variant: warning
+          # Outgoing links and the inverses derived from the links of the other tasks (blocks, duplicates, causes).
+          - $type: DataTable
+            rows: $sources.links.rows
+            navigateTo: '{href}'
+            emptyMessage: No links
+            columns:
+                - { key: 'relation', label: 'Relation' }
+                - { key: 'direction', label: 'Direction' }
+                - { key: 'id', label: 'Task', mono: true, nowrap: true }
+                - { key: 'titleText', label: 'Title', truncate: true, title: '{title}' }
+                - { key: 'status', label: 'Status', nowrap: true }
+          - $type: Form
+            $if: $sources.detail.linkTypeOptions
+            onSubmit: $ctx.addLink
+            initialData: $sources.detail.forms.link
+            fields:
+                - $type: FieldSelect
+                  label: Relation
+                  bind: type
+                  options: $sources.detail.linkTypeOptions
+                - $type: FieldText
+                  label: Other task (id or prefix)
+                  bind: target
+            actions:
+                - $type: ButtonSave
+                  label: Add link
+          - $type: Form
+            $if: $sources.detail.linkTypeOptions
+            onSubmit: $ctx.removeLink
+            initialData: $sources.detail.forms.link
+            fields:
+                - $type: FieldSelect
+                  label: Relation
+                  bind: type
+                  options: $sources.detail.linkTypeOptions
+                - $type: FieldText
+                  label: Other task (id or prefix)
+                  bind: target
+            actions:
+                - $type: ButtonSave
+                  label: Remove link
+
+    - $type: Section
+      title: Children
+      $if: $sources.detail.task
+      items:
+          - $type: DataTable
+            rows: $sources.detail.children
+            navigateTo: '{href}'
+            emptyMessage: No children
+            columns:
+                - { key: 'id', label: 'ID', mono: true, nowrap: true }
+                - { key: 'titleText', label: 'Title', truncate: true, title: '{title}' }
+                - { key: 'status', label: 'Status', nowrap: true }

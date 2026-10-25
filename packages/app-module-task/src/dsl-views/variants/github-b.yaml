@@ -1,0 +1,55 @@
+label: GitHub B
+hint: GitHub issue with sub-issues - parent chain above the title, a progress bar under it, then the description, the sub-issues list and linked tasks, with a compact sidebar for status, type, labels and parent.
+view:
+    $type: VerticalStack
+    gap: gap-4
+    items:
+        - $use: github-b.header
+        - $type: task:VariantSwitcher
+          id: github-b-progress
+          label: Progress
+          initial: bar
+          variants:
+              bar:
+                  label: Bar
+                  hint: A filled bar with the sentence "2 of 5 done" under the title.
+                  view:
+                      $use: github-b.progress.bar
+              segments:
+                  label: Segments
+                  hint: One block per sub-issue, filled when it is closed.
+                  view:
+                      $use: github-b.progress.segments
+              ring:
+                  label: Ring
+                  hint: A circle with the percentage and the sentence beside it.
+                  view:
+                      $use: github-b.progress.ring
+        - $type: task:VariantSwitcher
+          id: github-b-sidebar
+          label: Sidebar
+          initial: right
+          variants:
+              right:
+                  label: Right
+                  hint: Compact sidebar on the right; metadata, parent and link forms in a closed panel under the lists.
+                  view:
+                      $type: task:SplitLayout
+                      sidePosition: right
+                      sideWidth: narrow
+                      main:
+                          - $use: github-b.main
+                      side:
+                          - $use: github-b.sidebar
+              inline:
+                  label: No sidebar
+                  hint: Properties move into a panel under the title, so the description and sub-issues use the full width.
+                  view:
+                      $type: VerticalStack
+                      gap: gap-4
+                      items:
+                          - $type: task:Panel
+                            title: Properties
+                            items:
+                                - $use: github-b.sidebar
+                          - $use: github-b.main

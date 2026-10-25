@@ -1,0 +1,34 @@
+label: Linear B
+hint: Linear issue - copyable identifier and blocked chip above the title, a narrow properties rail (status, type, labels change on click) beside the description, sub-issues with segmented progress, relations and activity.
+view:
+    $type: VerticalStack
+    gap: gap-4
+    items:
+        - $use: linear-b.header
+        - $type: task:VariantSwitcher
+          id: linear-b-rail
+          label: Rail
+          initial: left
+          variants:
+              left:
+                  label: Left
+                  hint: Properties rail on the left of the content, as in the Linear issue view; stacks below 1024 px.
+                  view:
+                      $type: task:SplitLayout
+                      sidePosition: left
+                      sideWidth: normal
+                      main:
+                          - $use: linear-b.main
+                      side:
+                          - $use: linear-b.side
+              right:
+                  label: Right
+                  hint: The same rail on the right of the content.
+                  view:
+                      $type: task:SplitLayout
+                      sidePosition: right
+                      sideWidth: normal
+                      main:
+                          - $use: linear-b.main
+                      side:
+                          - $use: linear-b.side

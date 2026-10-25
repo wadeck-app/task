@@ -1,0 +1,134 @@
+label: Jira B
+hint: Jira workflow bar - one click per status right under the title (current one highlighted), blocked warning next to it, then description, child and linked issues, with a narrow Details panel (type, labels, parent, more fields).
+view:
+    $type: VerticalStack
+    gap: gap-4
+    items:
+        - $use: jira.breadcrumb
+        - $use: jira.title
+        - $type: HorizontalStack
+          justify: justify-start
+          align: items-start
+          items:
+              - $type: task:VariantSwitcher
+                id: jira-b-transitions
+                label: Transitions
+                initial: segmented
+                variants:
+                    segmented:
+                        label: Segmented
+                        hint: All statuses side by side in one segmented bar; the current status is filled.
+                        view:
+                            $type: VerticalStack
+                            gap: gap-1
+                            items:
+                                - $type: task:SegmentedControl
+                                  $if: $sources.detail.forms
+                                  appearance: segmented
+                                  size: md
+                                  ariaLabel: Move the task to a status
+                                  options: $sources.detail.statusChoices
+                                  value: $sources.detail.task.status
+                                  action: setStatusTo
+                                  valueParam: status
+                                  params: &jiraBParams
+                                      id: $route.id
+                                      projectParam: $sources.detail.projectParam
+                                - $use: feedback.status
+                    pills:
+                        label: Pills
+                        hint: The same statuses as separate rounded buttons, closer to the Jira transition buttons.
+                        view:
+                            $type: VerticalStack
+                            gap: gap-1
+                            items:
+                                - $type: task:SegmentedControl
+                                  $if: $sources.detail.forms
+                                  appearance: pills
+                                  size: md
+                                  ariaLabel: Move the task to a status
+                                  options: $sources.detail.statusChoices
+                                  value: $sources.detail.task.status
+                                  action: setStatusTo
+                                  valueParam: status
+                                  params: *jiraBParams
+                                - $use: feedback.status
+                    select:
+                        label: Select
+                        hint: One status dropdown (a single control instead of a bar); the change applies on selection.
+                        view:
+                            $type: VerticalStack
+                            gap: gap-1
+                            items:
+                                - $type: task:ActionSelect
+                                  $if: $sources.detail.forms
+                                  appearance: pill
+                                  ariaLabel: Status
+                                  options: $sources.detail.statusChoices
+                                  value: $sources.detail.task.status
+                                  action: setStatusTo
+                                  valueParam: status
+                                  params: *jiraBParams
+                                - $use: feedback.status
+        - $use: jira.blocked
+        - $type: task:SplitLayout
+          sidePosition: right
+          sideWidth: normal
+          main:
+              - $type: VerticalStack
+                gap: gap-4
+                items:
+                    - $use: jira.content
+                    - $type: task:VariantSwitcher
+                      id: jira-b-activity
+                      label: Activity
+                      initial: list
+                      variants:
+                          list:
+                              label: List
+                              hint: Activity block under the linked issues, newest first.
+                              view:
+                                  $use: jira.activity
+                          hidden:
+                              label: Hidden
+                              hint: No activity block.
+                              view:
+                                  $type: VerticalStack
+                                  items: []
+          side:
+              - $type: VerticalStack
+                gap: gap-3
+                items:
+                    - $type: task:Panel
+                      title: Details
+                      items:
+                          - $use: jira-b.details.core
+                    - $type: task:VariantSwitcher
+                      id: jira-b-details
+                      label: Details groups
+                      initial: collapsed
+                      variants:
+                          collapsed:
+                              label: Collapsed
+                              hint: More fields (metadata, parent, links forms) folded under Details.
+                              view:
+                                  $type: task:Panel
+                                  title: More fields
+                                  collapsible: true
+                                  defaultOpen: false
+                                  items:
+                                      - $use: jira.details.more
+                          open:
+                              label: Open
+                              hint: More fields open under Details.
+                              view:
+                                  $type: task:Panel
+                                  title: More fields
+                                  collapsible: true
+                                  defaultOpen: true
+                                  items:
+                                      - $use: jira.details.more
+                    - $type: task:Panel
+                      title: Dates
+                      items:
+                          - $use: jira.details.dates

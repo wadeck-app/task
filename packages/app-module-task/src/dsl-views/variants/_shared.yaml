@@ -1,0 +1,2258 @@
+# Reusable fragments of the task page variants, referenced anywhere in a variant as `{ $use: <name> }`.
+# Copied verbatim from the page as it was before the experiment (the `current` variant keeps its own inline copy; a test
+# fails when a fragment drifts from it). Each fragment is ONE node. Mutation feedback: `feedback.<x>` holds the error
+# and the "events not delivered" badges of one resultKey; every variant must show all six.
+feedback.status:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $type: Badge
+          $if: $ctx.statusResult.errorText
+          label: $ctx.statusResult.errorText
+          variant: danger
+        - $type: Badge
+          $if: $ctx.statusResult.undeliveredText
+          label: $ctx.statusResult.undeliveredText
+          variant: warning
+feedback.type:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $type: Badge
+          $if: $ctx.typeResult.errorText
+          label: $ctx.typeResult.errorText
+          variant: danger
+        - $type: Badge
+          $if: $ctx.typeResult.undeliveredText
+          label: $ctx.typeResult.undeliveredText
+          variant: warning
+feedback.label:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $type: Badge
+          $if: $ctx.labelResult.errorText
+          label: $ctx.labelResult.errorText
+          variant: danger
+        - $type: Badge
+          $if: $ctx.labelResult.undeliveredText
+          label: $ctx.labelResult.undeliveredText
+          variant: warning
+feedback.meta:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $type: Badge
+          $if: $ctx.metaResult.errorText
+          label: $ctx.metaResult.errorText
+          variant: danger
+        - $type: Badge
+          $if: $ctx.metaResult.undeliveredText
+          label: $ctx.metaResult.undeliveredText
+          variant: warning
+feedback.parent:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $type: Badge
+          $if: $ctx.parentResult.errorText
+          label: $ctx.parentResult.errorText
+          variant: danger
+        - $type: Badge
+          $if: $ctx.parentResult.undeliveredText
+          label: $ctx.parentResult.undeliveredText
+          variant: warning
+feedback.link:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $type: Badge
+          $if: $ctx.linkResult.errorText
+          label: $ctx.linkResult.errorText
+          variant: danger
+        - $type: Badge
+          $if: $ctx.linkResult.undeliveredText
+          label: $ctx.linkResult.undeliveredText
+          variant: warning
+form.status:
+    $type: Form
+    $if: $sources.detail.forms
+    onSubmit: $ctx.setStatus
+    initialData: $sources.detail.forms.status
+    fields:
+        - $type: FieldSelect
+          label: Status
+          bind: status
+          options: $sources.detail.statusOptions
+    actions:
+        - $type: ButtonSave
+          label: Change status
+form.type:
+    $type: Form
+    $if: $sources.detail.hasTypes
+    onSubmit: $ctx.setType
+    initialData: $sources.detail.forms.type
+    fields:
+        - $type: FieldSelect
+          label: Type
+          bind: type
+          options: $sources.detail.typeOptions
+          placeholder: No type
+    actions:
+        - $type: ButtonSave
+          label: Set type
+notice.noTypes:
+    $type: Badge
+    $if: $sources.detail.noTypes
+    label: No type is configured for this project (any text is accepted). Add some on the Types page.
+    variant: info
+form.typeFree:
+    $type: Form
+    $if: $sources.detail.noTypes
+    onSubmit: $ctx.setType
+    initialData: $sources.detail.forms.type
+    fields:
+        - $type: FieldText
+          label: Type (free text)
+          bind: type
+    actions:
+        - $type: ButtonSave
+          label: Set type
+form.addLabel:
+    $type: Form
+    $if: $sources.detail.forms
+    onSubmit: $ctx.addLabel
+    initialData: $sources.detail.forms.label
+    fields:
+        - $type: FieldText
+          label: New label
+          bind: label
+    actions:
+        - $type: ButtonSave
+          label: Add label
+form.removeLabel:
+    $type: Form
+    $if: $sources.detail.hasLabels
+    onSubmit: $ctx.removeLabel
+    initialData: $sources.detail.forms.label
+    fields:
+        - $type: FieldSelect
+          label: Label to remove
+          bind: label
+          options: $sources.detail.labelOptions
+          placeholder: Choose a label
+    actions:
+        - $type: ButtonSave
+          label: Remove label
+form.meta:
+    $type: Form
+    $if: $sources.detail.forms
+    onSubmit: $ctx.setMeta
+    initialData: $sources.detail.forms.meta
+    fields:
+        - $type: FieldText
+          label: Key
+          bind: key
+        - $type: FieldText
+          label: Value
+          bind: value
+    actions:
+        - $type: ButtonSave
+          label: Set metadata
+form.setParent:
+    $type: Form
+    $if: $sources.detail.forms
+    onSubmit: $ctx.setParent
+    initialData: $sources.detail.forms.parent
+    fields:
+        - $type: FieldText
+          label: New parent (task id or prefix)
+          bind: parent
+    actions:
+        - $type: ButtonSave
+          label: Set parent
+form.detachParent:
+    $type: Form
+    $if: $sources.detail.canDetach
+    onSubmit: $ctx.removeParent
+    initialData: $sources.detail.forms.empty
+    fields: []
+    actions:
+        - $type: ButtonAction
+          label: Detach from its parent
+          variant: secondary
+          type: submit
+form.addLink:
+    $type: Form
+    $if: $sources.detail.linkTypeOptions
+    onSubmit: $ctx.addLink
+    initialData: $sources.detail.forms.link
+    fields:
+        - $type: FieldSelect
+          label: Relation
+          bind: type
+          options: $sources.detail.linkTypeOptions
+        - $type: FieldText
+          label: Other task (id or prefix)
+          bind: target
+    actions:
+        - $type: ButtonSave
+          label: Add link
+form.removeLink:
+    $type: Form
+    $if: $sources.detail.linkTypeOptions
+    onSubmit: $ctx.removeLink
+    initialData: $sources.detail.forms.link
+    fields:
+        - $type: FieldSelect
+          label: Relation
+          bind: type
+          options: $sources.detail.linkTypeOptions
+        - $type: FieldText
+          label: Other task (id or prefix)
+          bind: target
+    actions:
+        - $type: ButtonSave
+          label: Remove link
+
+# Same six feedback blocks as feedback.*, drawn with task:Notice: the text WRAPS, for narrow columns (sidebars).
+feedback.wrapped.status:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $type: task:Notice
+          $if: $ctx.statusResult.errorText
+          label: $ctx.statusResult.errorText
+          variant: danger
+        - $type: task:Notice
+          $if: $ctx.statusResult.undeliveredText
+          label: $ctx.statusResult.undeliveredText
+          variant: warning
+feedback.wrapped.type:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $type: task:Notice
+          $if: $ctx.typeResult.errorText
+          label: $ctx.typeResult.errorText
+          variant: danger
+        - $type: task:Notice
+          $if: $ctx.typeResult.undeliveredText
+          label: $ctx.typeResult.undeliveredText
+          variant: warning
+feedback.wrapped.label:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $type: task:Notice
+          $if: $ctx.labelResult.errorText
+          label: $ctx.labelResult.errorText
+          variant: danger
+        - $type: task:Notice
+          $if: $ctx.labelResult.undeliveredText
+          label: $ctx.labelResult.undeliveredText
+          variant: warning
+feedback.wrapped.meta:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $type: task:Notice
+          $if: $ctx.metaResult.errorText
+          label: $ctx.metaResult.errorText
+          variant: danger
+        - $type: task:Notice
+          $if: $ctx.metaResult.undeliveredText
+          label: $ctx.metaResult.undeliveredText
+          variant: warning
+feedback.wrapped.parent:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $type: task:Notice
+          $if: $ctx.parentResult.errorText
+          label: $ctx.parentResult.errorText
+          variant: danger
+        - $type: task:Notice
+          $if: $ctx.parentResult.undeliveredText
+          label: $ctx.parentResult.undeliveredText
+          variant: warning
+feedback.wrapped.link:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $type: task:Notice
+          $if: $ctx.linkResult.errorText
+          label: $ctx.linkResult.errorText
+          variant: danger
+        - $type: task:Notice
+          $if: $ctx.linkResult.undeliveredText
+          label: $ctx.linkResult.undeliveredText
+          variant: warning
+
+# ---- github-a (GitHub issue page). Namespaced; used only by variants/github-a.yaml. -------------------------------------
+github-a.header:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $type: task:BreadcrumbTrail
+          $if: $sources.detail.hasAncestors
+          items: $sources.detail.ancestors
+          separator: slash
+          maxItems: 4
+          currentLabel: $sources.detail.task.id
+        - $type: PageHeader
+          title: $sources.detail.task.title
+          headerActions:
+              - $type: ButtonLink
+                $if: $sources.detail.taskHrefs
+                label: History
+                to: $sources.detail.taskHrefs.history
+              - $type: ButtonLink
+                $if: $sources.detail.taskHrefs
+                label: Children
+                to: $sources.detail.taskHrefs.childrenList
+              - $type: ButtonLink
+                $if: $sources.detail.taskHrefs
+                label: Delete
+                variant: danger-outline
+                to: $sources.detail.taskHrefs.deleteTasks
+        - $type: HorizontalStack
+          gap: gap-2
+          items:
+              - $type: task:StatusBadge
+                $if: $sources.detail.isOpen
+                label: $sources.detail.task.status
+                tone: $sources.detail.statusTone
+                icon: open
+                size: md
+              - $type: task:StatusBadge
+                $if: $sources.detail.isTerminal
+                label: $sources.detail.task.status
+                tone: $sources.detail.statusTone
+                icon: done
+                size: md
+              - $type: Badge
+                label: $sources.detail.projectText
+                variant: info
+              - $type: RelativeDate
+                date: $sources.detail.createdAt
+              - $type: Badge
+                $if: $sources.detail.blockedText
+                label: $sources.detail.blockedText
+                variant: warning
+github-a.rare.meta:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $use: feedback.meta
+        - $use: form.meta
+github-a.rare.parent:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $use: form.setParent
+github-a.rare.links:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $use: feedback.link
+        - $use: form.addLink
+        - $use: form.removeLink
+github-a.side:
+    $type: task:PropertyList
+    density: compact
+    dividers: true
+    items:
+        - $type: task:PropertyRow
+          label: Status
+          items:
+              - $type: task:ActionSelect
+                $if: $sources.detail.forms
+                appearance: pill
+                ariaLabel: Status
+                options: $sources.detail.statusChoices
+                value: $sources.detail.task.status
+                action: setStatusTo
+                valueParam: status
+                params: &actionParams
+                    id: $route.id
+                    projectParam: $sources.detail.projectParam
+              - $use: feedback.wrapped.status
+        - $type: task:PropertyRow
+          label: Type
+          items:
+              - $type: task:ActionSelect
+                $if: $sources.detail.hasTypes
+                appearance: field
+                ariaLabel: Type
+                options: $sources.detail.typeChoices
+                value: $sources.detail.forms.type.type
+                placeholder: No type
+                action: setTypeTo
+                valueParam: type
+                params: *actionParams
+              - $use: notice.noTypes
+              - $use: form.typeFree
+              - $use: feedback.wrapped.type
+        - $type: task:PropertyRow
+          label: Labels
+          items:
+              - $type: task:LabelChips
+                $if: $sources.detail.forms
+                labels: $sources.detail.labelList
+                addAction: addLabel
+                removeAction: removeLabelChip
+                labelParam: label
+                placeholder: Add a label
+                params: *actionParams
+              - $use: feedback.wrapped.label
+        - $type: task:PropertyRow
+          label: Parent
+          items:
+              - $type: Badge
+                $if: $sources.detail.hasParent
+                label: $sources.detail.parentRow.titleText
+                href: $sources.detail.parentRow.href
+                variant: info
+              - $use: feedback.wrapped.parent
+              - $use: form.detachParent
+        - $type: task:PropertyRow
+          $if: $sources.detail.hasMeta
+          label: Metadata
+          items:
+              - $type: task:KeyValueList
+                entries: $sources.detail.metaList
+        - $type: task:PropertyRow
+          label: Created
+          items:
+              - $type: RelativeDate
+                date: $sources.detail.createdAt
+        - $type: task:PropertyRow
+          label: Updated
+          items:
+              - $type: RelativeDate
+                date: $sources.detail.updatedAt
+github-a.main:
+    $type: VerticalStack
+    gap: gap-4
+    items:
+        - $type: task:Panel
+          $if: $sources.detail.hasDescription
+          title: Description
+          items:
+              - $type: Markdown
+                text: $sources.detail.descriptionText
+        - $type: task:Panel
+          $if: $sources.detail.hasChildren
+          title: Sub-issues
+          count: $sources.detail.childrenSummary.total
+          items:
+              - $type: task:ProgressSummary
+                done: $sources.detail.childrenSummary.done
+                total: $sources.detail.childrenSummary.total
+                text: $sources.detail.childrenSummary.text
+                appearance: bar
+              - $type: task:TaskRowList
+                rows: $sources.detail.children
+                appearance: list
+        - $type: task:Panel
+          $if: $sources.links.hasLinks
+          title: Linked tasks
+          items:
+              - $type: task:TaskRowList
+                rows: $sources.links.rows
+                appearance: list
+        - $type: task:VariantSwitcher
+          id: github-a-activity
+          label: Activity
+          initial: timeline
+          variants:
+              timeline:
+                  label: Timeline
+                  hint: Created and status changes as a dated timeline under the description, like the activity of a GitHub issue.
+                  view:
+                      $type: task:Panel
+                      title: Activity
+                      items:
+                          - $type: task:Timeline
+                            $if: $sources.detail.hasActivity
+                            entries: $sources.detail.activity
+                            groupByDay: true
+                            order: oldest-first
+              hidden:
+                  label: Hidden
+                  hint: No activity block; the page stops after the related tasks.
+                  view:
+                      $type: VerticalStack
+                      items: []
+        - $type: task:VariantSwitcher
+          id: github-a-forms
+          label: Other fields
+          initial: inline
+          variants:
+              inline:
+                  label: Inline
+                  hint: Metadata, parent and links forms are open panels under the activity.
+                  view:
+                      $type: VerticalStack
+                      gap: gap-4
+                      items:
+                          - $type: task:Panel
+                            title: Set metadata
+                            items:
+                                - $use: github-a.rare.meta
+                          - $type: task:Panel
+                            title: Set parent
+                            items:
+                                - $use: github-a.rare.parent
+                          - $type: task:Panel
+                            title: Links
+                            items:
+                                - $use: github-a.rare.links
+              collapsed:
+                  label: Collapsed
+                  hint: The same three forms folded in one closed panel, so the page shows only what is read often.
+                  view:
+                      $type: task:Panel
+                      title: Edit metadata, parent and links
+                      collapsible: true
+                      defaultOpen: false
+                      items:
+                          - $use: github-a.rare.meta
+                          - $use: github-a.rare.parent
+                          - $use: github-a.rare.links
+jira.title:
+    $type: PageHeader
+    title: $sources.detail.task.title
+    headerActions:
+        - $type: ButtonLink
+          $if: $sources.detail.taskHrefs
+          label: History
+          to: $sources.detail.taskHrefs.history
+        - $type: ButtonLink
+          $if: $sources.detail.taskHrefs
+          label: Children
+          to: $sources.detail.taskHrefs.childrenList
+        - $type: ButtonLink
+          $if: $sources.detail.taskHrefs
+          label: Delete
+          variant: danger-outline
+          to: $sources.detail.taskHrefs.deleteTasks
+jira.breadcrumb:
+    $type: task:BreadcrumbTrail
+    $if: $sources.detail.hasAncestors
+    items: $sources.detail.ancestors
+    separator: chevron
+    maxItems: 4
+    currentLabel: $sources.detail.task.id
+jira.details.core:
+    $type: task:PropertyList
+    density: compact
+    labelPlacement: inline
+    labelWidth: narrow
+    dividers: false
+    items:
+        - $type: task:PropertyRow
+          label: Status
+          items:
+              - $type: task:ActionSelect
+                $if: $sources.detail.forms
+                appearance: pill
+                ariaLabel: Status
+                options: $sources.detail.statusChoices
+                value: $sources.detail.task.status
+                action: setStatusTo
+                valueParam: status
+                params: &jiraParams
+                    id: $route.id
+                    projectParam: $sources.detail.projectParam
+              - $use: feedback.wrapped.status
+        - $type: task:PropertyRow
+          label: Type
+          items:
+              - $type: task:ActionSelect
+                $if: $sources.detail.hasTypes
+                appearance: ghost
+                ariaLabel: Type
+                options: $sources.detail.typeChoices
+                value: $sources.detail.forms.type.type
+                placeholder: No type
+                action: setTypeTo
+                valueParam: type
+                params: *jiraParams
+              - $use: notice.noTypes
+              - $use: form.typeFree
+              - $use: feedback.wrapped.type
+        - $type: task:PropertyRow
+          label: Labels
+          items:
+              - $type: task:LabelChips
+                $if: $sources.detail.forms
+                labels: $sources.detail.labelList
+                addAction: addLabel
+                removeAction: removeLabelChip
+                labelParam: label
+                placeholder: Add a label
+                params: *jiraParams
+              - $use: feedback.wrapped.label
+        - $type: task:PropertyRow
+          label: Parent
+          items:
+              - $type: Badge
+                $if: $sources.detail.hasParent
+                label: $sources.detail.parentRow.titleText
+                href: $sources.detail.parentRow.href
+                variant: info
+              - $use: feedback.wrapped.parent
+              - $use: form.detachParent
+# jira-b: the transition bar above already owns the status (and its feedback), so the Details panel has no Status row.
+jira-b.details.core:
+    $type: task:PropertyList
+    density: compact
+    labelPlacement: inline
+    labelWidth: narrow
+    dividers: false
+    items:
+        - $type: task:PropertyRow
+          label: Type
+          items:
+              - $type: task:ActionSelect
+                $if: $sources.detail.hasTypes
+                appearance: ghost
+                ariaLabel: Type
+                options: $sources.detail.typeChoices
+                value: $sources.detail.forms.type.type
+                placeholder: No type
+                action: setTypeTo
+                valueParam: type
+                params: *jiraParams
+              - $use: notice.noTypes
+              - $use: form.typeFree
+              - $use: feedback.wrapped.type
+        - $type: task:PropertyRow
+          label: Labels
+          items:
+              - $type: task:LabelChips
+                $if: $sources.detail.forms
+                labels: $sources.detail.labelList
+                addAction: addLabel
+                removeAction: removeLabelChip
+                labelParam: label
+                placeholder: Add a label
+                params: *jiraParams
+              - $use: feedback.wrapped.label
+        - $type: task:PropertyRow
+          label: Parent
+          items:
+              - $type: Badge
+                $if: $sources.detail.hasParent
+                label: $sources.detail.parentRow.titleText
+                href: $sources.detail.parentRow.href
+                variant: info
+              - $use: feedback.wrapped.parent
+              - $use: form.detachParent
+jira.details.more:
+    $type: VerticalStack
+    gap: gap-3
+    items:
+        - $type: task:KeyValueList
+          $if: $sources.detail.hasMeta
+          entries: $sources.detail.metaList
+        - $use: feedback.wrapped.meta
+        - $use: feedback.wrapped.link
+        - $type: task:Panel
+          title: Edit fields
+          appearance: plain
+          collapsible: true
+          defaultOpen: false
+          items:
+              - $use: form.meta
+              - $use: form.setParent
+              - $use: form.addLink
+              - $use: form.removeLink
+jira.details.dates:
+    $type: task:PropertyList
+    density: compact
+    labelPlacement: inline
+    labelWidth: narrow
+    items:
+        - $type: task:PropertyRow
+          label: Created
+          items:
+              - $type: RelativeDate
+                date: $sources.detail.createdAt
+        - $type: task:PropertyRow
+          label: Updated
+          items:
+              - $type: RelativeDate
+                date: $sources.detail.updatedAt
+jira.blocked:
+    $type: HorizontalStack
+    $if: $sources.detail.blockedText
+    justify: justify-start
+    items:
+        - $type: Badge
+          label: $sources.detail.blockedText
+          variant: warning
+jira.content:
+    $type: VerticalStack
+    gap: gap-4
+    items:
+        - $type: task:Panel
+          $if: $sources.detail.hasDescription
+          title: Description
+          appearance: plain
+          items:
+              - $type: Markdown
+                text: $sources.detail.descriptionText
+        - $type: task:Panel
+          $if: $sources.detail.hasChildren
+          title: Child issues
+          appearance: plain
+          count: $sources.detail.childrenSummary.total
+          items:
+              - $type: task:ProgressSummary
+                done: $sources.detail.childrenSummary.done
+                total: $sources.detail.childrenSummary.total
+                text: $sources.detail.childrenSummary.text
+                appearance: bar
+              - $type: task:TaskRowList
+                rows: $sources.detail.children
+                appearance: table
+                density: compact
+        - $type: task:Panel
+          $if: $sources.links.hasLinks
+          title: Linked issues
+          appearance: plain
+          items:
+              - $type: task:TaskRowList
+                rows: $sources.links.rows
+                appearance: table
+                density: compact
+jira.activity:
+    $type: task:Panel
+    title: Activity
+    appearance: plain
+    items:
+        - $type: task:Timeline
+          $if: $sources.detail.hasActivity
+          entries: $sources.detail.activity
+          groupByDay: false
+          order: newest-first
+linear-a.title:
+    $type: PageHeader
+    title: $sources.detail.task.title
+    headerActions:
+        - $type: ButtonLink
+          $if: $sources.detail.taskHrefs
+          label: History
+          to: $sources.detail.taskHrefs.history
+        - $type: ButtonLink
+          $if: $sources.detail.taskHrefs
+          label: Children
+          to: $sources.detail.taskHrefs.childrenList
+        - $type: ButtonLink
+          $if: $sources.detail.taskHrefs
+          label: Delete
+          variant: danger-outline
+          to: $sources.detail.taskHrefs.deleteTasks
+linear-a.chips.core:
+    $type: task:ChipRow
+    gap: gap-2
+    align: center
+    items:
+        - $type: task:ActionSelect
+          $if: $sources.detail.forms
+          appearance: pill
+          ariaLabel: Status
+          options: $sources.detail.statusChoices
+          value: $sources.detail.task.status
+          action: setStatusTo
+          valueParam: status
+          params: &linearParams
+              id: $route.id
+              projectParam: $sources.detail.projectParam
+        - $type: task:ActionSelect
+          $if: $sources.detail.hasTypes
+          appearance: ghost
+          ariaLabel: Type
+          options: $sources.detail.typeChoices
+          value: $sources.detail.forms.type.type
+          placeholder: No type
+          action: setTypeTo
+          valueParam: type
+          params: *linearParams
+        - $type: task:LabelChips
+          $if: $sources.detail.forms
+          labels: $sources.detail.labelList
+          addAction: addLabel
+          removeAction: removeLabelChip
+          labelParam: label
+          placeholder: Label
+          params: *linearParams
+        - $type: Badge
+          $if: $sources.detail.hasParent
+          label: $sources.detail.parentRow.titleText
+          href: $sources.detail.parentRow.href
+          variant: info
+        - $type: Badge
+          $if: $sources.detail.blockedText
+          label: $sources.detail.blockedText
+          variant: warning
+linear-a.feedback:
+    $type: VerticalStack
+    gap: gap-1
+    items:
+        - $use: feedback.status
+        - $use: feedback.type
+        - $use: feedback.label
+        - $use: feedback.meta
+        - $use: feedback.parent
+        - $use: feedback.link
+linear-a.chips.popovers:
+    $type: task:ChipRow
+    gap: gap-2
+    align: center
+    items:
+        - $type: Popover
+          trigger:
+              - $type: Badge
+                label: Metadata
+                variant: default
+          items:
+              - $type: task:KeyValueList
+                $if: $sources.detail.hasMeta
+                entries: $sources.detail.metaList
+              - $use: form.meta
+        - $type: Popover
+          trigger:
+              - $type: Badge
+                label: Parent
+                variant: default
+          items:
+              - $use: form.setParent
+              - $use: form.detachParent
+        - $type: Popover
+          trigger:
+              - $type: Badge
+                label: Links
+                variant: default
+          items:
+              - $use: form.addLink
+              - $use: form.removeLink
+linear-a.edit.collapsed:
+    $type: task:Panel
+    title: Edit properties
+    appearance: plain
+    collapsible: true
+    defaultOpen: false
+    items:
+        - $type: task:KeyValueList
+          $if: $sources.detail.hasMeta
+          entries: $sources.detail.metaList
+        - $use: form.meta
+        - $use: form.setParent
+        - $use: form.detachParent
+        - $use: form.addLink
+        - $use: form.removeLink
+linear-a.description:
+    $type: Markdown
+    $if: $sources.detail.hasDescription
+    text: $sources.detail.descriptionText
+linear-a.subissues:
+    $type: task:Panel
+    $if: $sources.detail.hasChildren
+    title: Sub-issues
+    appearance: plain
+    count: $sources.detail.childrenSummary.total
+    items:
+        - $type: task:ProgressSummary
+          done: $sources.detail.childrenSummary.done
+          total: $sources.detail.childrenSummary.total
+          text: $sources.detail.childrenSummary.text
+          appearance: ring
+        - $type: task:TaskRowList
+          rows: $sources.detail.children
+          appearance: list
+          density: compact
+linear-a.relations:
+    $type: task:Panel
+    $if: $sources.links.hasLinks
+    title: Relations
+    appearance: plain
+    items:
+        - $type: task:TaskRowList
+          rows: $sources.links.rows
+          appearance: list
+          density: compact
+linear-a.activity:
+    $type: task:Timeline
+    $if: $sources.detail.hasActivity
+    entries: $sources.detail.activity
+    groupByDay: false
+    order: newest-first
+
+# ---- linear-b (identifier + properties rail). Namespaced; used only by variants/linear-b.yaml. ------------------------
+linear-b.header:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $type: task:BreadcrumbTrail
+          $if: $sources.detail.hasAncestors
+          items: $sources.detail.ancestors
+          separator: chevron
+          maxItems: 4
+        - $type: HorizontalStack
+          gap: gap-3
+          align: items-center
+          items:
+              - $type: FieldReadOnly
+                label: Identifier
+                value: $sources.detail.task.id
+                mono: true
+                copyable: true
+              - $type: Badge
+                $if: $sources.detail.blockedText
+                label: $sources.detail.blockedText
+                variant: warning
+        - $type: PageHeader
+          title: $sources.detail.task.title
+          headerActions:
+              - $type: ButtonLink
+                $if: $sources.detail.taskHrefs
+                label: History
+                to: $sources.detail.taskHrefs.history
+              - $type: ButtonLink
+                $if: $sources.detail.taskHrefs
+                label: Children
+                to: $sources.detail.taskHrefs.childrenList
+              - $type: ButtonLink
+                $if: $sources.detail.taskHrefs
+                label: Delete
+                variant: danger-outline
+                to: $sources.detail.taskHrefs.deleteTasks
+linear-b.rail:
+    $type: task:Panel
+    title: Properties
+    appearance: card
+    items:
+        - $type: task:PropertyList
+          density: compact
+          labelPlacement: inline
+          labelWidth: narrow
+          items:
+              - $type: task:PropertyRow
+                label: Status
+                items:
+                    - $type: task:ActionSelect
+                      $if: $sources.detail.forms
+                      appearance: pill
+                      ariaLabel: Status
+                      options: $sources.detail.statusChoices
+                      value: $sources.detail.task.status
+                      action: setStatusTo
+                      valueParam: status
+                      params: &linearBParams
+                          id: $route.id
+                          projectParam: $sources.detail.projectParam
+                    - $use: feedback.wrapped.status
+              - $type: task:PropertyRow
+                label: Type
+                items:
+                    - $type: task:ActionSelect
+                      $if: $sources.detail.hasTypes
+                      appearance: ghost
+                      ariaLabel: Type
+                      options: $sources.detail.typeChoices
+                      value: $sources.detail.forms.type.type
+                      placeholder: No type
+                      action: setTypeTo
+                      valueParam: type
+                      params: *linearBParams
+                    - $use: notice.noTypes
+                    - $use: form.typeFree
+                    - $use: feedback.wrapped.type
+              - $type: task:PropertyRow
+                label: Labels
+                items:
+                    - $type: task:LabelChips
+                      $if: $sources.detail.forms
+                      labels: $sources.detail.labelList
+                      addAction: addLabel
+                      removeAction: removeLabelChip
+                      labelParam: label
+                      placeholder: Add a label
+                      size: sm
+                      params: *linearBParams
+                    - $use: feedback.wrapped.label
+              - $type: task:PropertyRow
+                label: Parent
+                items:
+                    - $type: Badge
+                      $if: $sources.detail.hasParent
+                      label: $sources.detail.parentRow.titleText
+                      href: $sources.detail.parentRow.href
+                      variant: info
+                    - $use: feedback.wrapped.parent
+                    - $use: form.detachParent
+              - $type: task:PropertyRow
+                label: Project
+                items:
+                    - $type: Badge
+                      label: $sources.detail.projectText
+                      variant: info
+              - $type: task:PropertyRow
+                label: Created
+                items:
+                    - $type: RelativeDate
+                      date: $sources.detail.createdAt
+              - $type: task:PropertyRow
+                label: Updated
+                items:
+                    - $type: RelativeDate
+                      date: $sources.detail.updatedAt
+linear-b.side:
+    $type: VerticalStack
+    gap: gap-3
+    items:
+        - $use: linear-b.rail
+        - $type: task:Panel
+          $if: $sources.detail.hasMeta
+          title: Metadata
+          appearance: card
+          items:
+              - $type: task:KeyValueList
+                entries: $sources.detail.metaList
+linear-b.edit:
+    $type: task:Panel
+    title: Edit metadata, parent and links
+    collapsible: true
+    defaultOpen: false
+    items:
+        - $use: feedback.meta
+        - $use: form.meta
+        - $use: form.setParent
+        - $use: feedback.link
+        - $use: form.addLink
+        - $use: form.removeLink
+linear-b.main:
+    $type: VerticalStack
+    gap: gap-5
+    items:
+        - $type: Markdown
+          $if: $sources.detail.hasDescription
+          text: $sources.detail.descriptionText
+        - $type: VerticalStack
+          $if: $sources.detail.hasChildren
+          gap: gap-2
+          items:
+              - $type: task:ProgressSummary
+                done: $sources.detail.childrenSummary.done
+                total: $sources.detail.childrenSummary.total
+                text: $sources.detail.childrenSummary.text
+                appearance: segments
+              - $type: task:VariantSwitcher
+                id: linear-b-subissues
+                label: Sub-issues
+                initial: list
+                variants:
+                    list:
+                        label: List
+                        hint: Sub-issues as divided rows with a status icon, like the sub-issue list of a Linear issue.
+                        view:
+                            $type: task:Panel
+                            title: Sub-issues
+                            count: $sources.detail.childrenSummary.total
+                            appearance: flush
+                            items:
+                                - $type: task:TaskRowList
+                                  rows: $sources.detail.children
+                                  appearance: list
+                    cards:
+                        label: Cards
+                        hint: Each sub-issue as its own bordered card.
+                        view:
+                            $type: task:Panel
+                            title: Sub-issues
+                            count: $sources.detail.childrenSummary.total
+                            appearance: plain
+                            items:
+                                - $type: task:TaskRowList
+                                  rows: $sources.detail.children
+                                  appearance: cards
+        - $type: task:Panel
+          $if: $sources.links.hasLinks
+          title: Relations
+          appearance: flush
+          items:
+              - $type: task:TaskRowList
+                rows: $sources.links.rows
+                appearance: list
+        - $type: task:VariantSwitcher
+          id: linear-b-activity
+          label: Activity
+          initial: timeline
+          variants:
+              timeline:
+                  label: Timeline
+                  hint: Created and status changes as a dated timeline, like the Linear activity feed.
+                  view:
+                      $type: task:Panel
+                      title: Activity
+                      appearance: plain
+                      items:
+                          - $type: task:Timeline
+                            $if: $sources.detail.hasActivity
+                            entries: $sources.detail.activity
+                            groupByDay: true
+                            order: oldest-first
+              hidden:
+                  label: Hidden
+                  hint: No activity block.
+                  view:
+                      $type: VerticalStack
+                      items: []
+        - $use: linear-b.edit
+
+# ---- notion-a / notion-b (database page with a property table). Namespaced; used by variants/notion-a.yaml and notion-b.yaml. ----
+notion.header:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $type: task:BreadcrumbTrail
+          $if: $sources.detail.hasAncestors
+          items: $sources.detail.ancestors
+          separator: chevron
+          maxItems: 4
+        - $type: PageHeader
+          title: $sources.detail.task.title
+          headerActions:
+              - $type: ButtonLink
+                $if: $sources.detail.taskHrefs
+                label: History
+                to: $sources.detail.taskHrefs.history
+              - $type: ButtonLink
+                $if: $sources.detail.taskHrefs
+                label: Children
+                to: $sources.detail.taskHrefs.childrenList
+              - $type: ButtonLink
+                $if: $sources.detail.taskHrefs
+                label: Delete
+                variant: danger-outline
+                to: $sources.detail.taskHrefs.deleteTasks
+notion.row.status:
+    $type: task:PropertyRow
+    label: Status
+    items:
+        - $type: task:ActionSelect
+          $if: $sources.detail.forms
+          appearance: pill
+          ariaLabel: Status
+          options: $sources.detail.statusChoices
+          value: $sources.detail.task.status
+          action: setStatusTo
+          valueParam: status
+          params:
+              id: $route.id
+              projectParam: $sources.detail.projectParam
+        - $use: feedback.wrapped.status
+notion.row.type:
+    $type: task:PropertyRow
+    label: Type
+    items:
+        - $type: task:ActionSelect
+          $if: $sources.detail.hasTypes
+          appearance: field
+          ariaLabel: Type
+          options: $sources.detail.typeChoices
+          value: $sources.detail.forms.type.type
+          placeholder: No type
+          action: setTypeTo
+          valueParam: type
+          params:
+              id: $route.id
+              projectParam: $sources.detail.projectParam
+        - $use: notice.noTypes
+        - $use: form.typeFree
+        - $use: feedback.wrapped.type
+notion.row.type.set:
+    $type: task:PropertyRow
+    $if: $sources.detail.hasType
+    label: Type
+    items:
+        - $type: task:ActionSelect
+          $if: $sources.detail.hasTypes
+          appearance: field
+          ariaLabel: Type
+          options: $sources.detail.typeChoices
+          value: $sources.detail.forms.type.type
+          placeholder: No type
+          action: setTypeTo
+          valueParam: type
+          params:
+              id: $route.id
+              projectParam: $sources.detail.projectParam
+        - $use: notice.noTypes
+        - $use: form.typeFree
+        - $use: feedback.wrapped.type
+notion.row.labels:
+    $type: task:PropertyRow
+    label: Labels
+    items:
+        - $type: task:LabelChips
+          $if: $sources.detail.forms
+          labels: $sources.detail.labelList
+          addAction: addLabel
+          removeAction: removeLabelChip
+          labelParam: label
+          placeholder: Add a label
+          params:
+              id: $route.id
+              projectParam: $sources.detail.projectParam
+        - $use: feedback.wrapped.label
+notion.row.labels.set:
+    $type: task:PropertyRow
+    $if: $sources.detail.hasLabels
+    label: Labels
+    items:
+        - $type: task:LabelChips
+          $if: $sources.detail.forms
+          labels: $sources.detail.labelList
+          addAction: addLabel
+          removeAction: removeLabelChip
+          labelParam: label
+          placeholder: Add a label
+          params:
+              id: $route.id
+              projectParam: $sources.detail.projectParam
+        - $use: feedback.wrapped.label
+notion.row.parent:
+    $type: task:PropertyRow
+    label: Parent
+    items:
+        - $type: Badge
+          $if: $sources.detail.hasParent
+          label: $sources.detail.parentRow.titleText
+          href: $sources.detail.parentRow.href
+          variant: info
+        - $use: feedback.wrapped.parent
+        - $use: form.detachParent
+notion.row.parent.set:
+    $type: task:PropertyRow
+    $if: $sources.detail.hasParent
+    label: Parent
+    items:
+        - $type: Badge
+          label: $sources.detail.parentRow.titleText
+          href: $sources.detail.parentRow.href
+          variant: info
+        - $use: feedback.wrapped.parent
+        - $use: form.detachParent
+# notion-b: the editors of an EMPTY property (once it has a value its row, above, takes over with the same feedback).
+notion.empty.type:
+    $type: task:PropertyList
+    labelPlacement: inline
+    labelWidth: normal
+    density: compact
+    items:
+        - $type: task:PropertyRow
+          $if: $sources.detail.noType
+          label: Type
+          items:
+              - $type: task:ActionSelect
+                $if: $sources.detail.hasTypes
+                appearance: field
+                ariaLabel: Type
+                options: $sources.detail.typeChoices
+                value: $sources.detail.forms.type.type
+                placeholder: No type
+                action: setTypeTo
+                valueParam: type
+                params:
+                    id: $route.id
+                    projectParam: $sources.detail.projectParam
+              - $use: notice.noTypes
+              - $use: form.typeFree
+              - $use: feedback.wrapped.type
+        - $type: task:PropertyRow
+          $if: $sources.detail.noLabels
+          label: Labels
+          items:
+              - $type: task:LabelChips
+                $if: $sources.detail.forms
+                labels: $sources.detail.labelList
+                addAction: addLabel
+                removeAction: removeLabelChip
+                labelParam: label
+                placeholder: Add a label
+                params:
+                    id: $route.id
+                    projectParam: $sources.detail.projectParam
+              - $use: feedback.wrapped.label
+notion.empty.parent:
+    $type: VerticalStack
+    $if: $sources.detail.noParent
+    gap: gap-1
+    items:
+        - $use: feedback.wrapped.parent
+notion.row.project:
+    $type: task:PropertyRow
+    label: Project
+    items:
+        - $type: Badge
+          label: $sources.detail.projectText
+          variant: info
+notion.row.created:
+    $type: task:PropertyRow
+    label: Created
+    items:
+        - $type: RelativeDate
+          date: $sources.detail.createdAt
+notion.row.updated:
+    $type: task:PropertyRow
+    label: Updated
+    items:
+        - $type: RelativeDate
+          date: $sources.detail.updatedAt
+notion.row.meta:
+    $type: task:PropertyRow
+    $if: $sources.detail.hasMeta
+    label: Metadata
+    items:
+        - $type: task:KeyValueList
+          entries: $sources.detail.metaList
+# The editors of what has no row of its own (metadata, parent change, links). Labels, type and the parent feedback live in the
+# property rows, so nothing here repeats a control the page already shows.
+notion.editors:
+    $type: VerticalStack
+    gap: gap-3
+    items:
+        - $use: feedback.meta
+        - $use: form.meta
+        - $use: form.setParent
+        - $use: feedback.link
+        - $use: form.addLink
+        - $use: form.removeLink
+
+# notion-a
+notion-a.rows:
+    $type: task:PropertyList
+    labelPlacement: inline
+    labelWidth: normal
+    density: comfortable
+    items:
+        - $use: notion.row.status
+        - $use: notion.row.type
+        - $use: notion.row.labels
+        - $use: notion.row.parent
+        - $use: notion.row.project
+        - $use: notion.row.created
+        - $use: notion.row.updated
+        - $use: notion.row.meta
+notion-a.props:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $type: task:VariantSwitcher
+          id: notion-a-properties
+          label: Properties
+          initial: all
+          variants:
+              all:
+                  label: All shown
+                  hint: The whole property table is open under the title, like a Notion database page.
+                  view:
+                      $type: task:Panel
+                      title: Properties
+                      appearance: card
+                      items:
+                          - $use: notion-a.rows
+              folded:
+                  label: Folded
+                  hint: The property table folded behind one Properties line, as when Notion hides properties.
+                  view:
+                      $type: task:Panel
+                      title: Properties
+                      appearance: card
+                      collapsible: true
+                      defaultOpen: false
+                      items:
+                          - $use: notion-a.rows
+        - $type: task:Panel
+          title: Add a property
+          appearance: plain
+          collapsible: true
+          defaultOpen: false
+          items:
+              - $use: notion.editors
+notion-a.body:
+    $type: VerticalStack
+    gap: gap-5
+    items:
+        - $type: Divider
+        - $type: Markdown
+          $if: $sources.detail.hasDescription
+          text: $sources.detail.descriptionText
+        - $type: task:VariantSwitcher
+          id: notion-a-subitems
+          label: Sub-items
+          initial: table
+          variants:
+              table:
+                  label: Table
+                  hint: Sub-items as an inline table under the page body, with a progress line.
+                  view:
+                      $type: VerticalStack
+                      $if: $sources.detail.hasChildren
+                      gap: gap-2
+                      items:
+                          - $type: task:Panel
+                            title: Sub-items
+                            count: $sources.detail.childrenSummary.total
+                            appearance: plain
+                            items:
+                                - $type: task:ProgressSummary
+                                  done: $sources.detail.childrenSummary.done
+                                  total: $sources.detail.childrenSummary.total
+                                  text: $sources.detail.childrenSummary.text
+                                  appearance: text
+                                - $type: task:TaskRowList
+                                  rows: $sources.detail.children
+                                  appearance: table
+              hidden:
+                  label: Hidden
+                  hint: No sub-items block; they stay reachable through the Children button.
+                  view:
+                      $type: VerticalStack
+                      items: []
+        - $type: task:Panel
+          $if: $sources.links.hasLinks
+          title: Relations
+          appearance: plain
+          items:
+              - $type: task:TaskRowList
+                rows: $sources.links.rows
+                appearance: table
+notion-a.page:
+    $type: task:VariantSwitcher
+    id: notion-a-order
+    label: Order
+    initial: properties-first
+    variants:
+        properties-first:
+            label: Properties first
+            hint: The property table above the page body, as in a Notion database page.
+            view:
+                $type: VerticalStack
+                gap: gap-4
+                items:
+                    - $use: notion-a.props
+                    - $use: notion-a.body
+        body-first:
+            label: Body first
+            hint: The page body first and the property table after it.
+            view:
+                $type: VerticalStack
+                gap: gap-4
+                items:
+                    - $use: notion-a.body
+                    - $use: notion-a.props
+
+# notion-b
+notion-b.empty:
+    $type: task:VariantSwitcher
+    id: notion-b-empty
+    label: Empty properties
+    initial: folded
+    variants:
+        folded:
+            label: Folded
+            hint: Properties without a value are hidden; they are added from one folded Add a property block.
+            view:
+                $type: task:Panel
+                title: Add a property
+                appearance: plain
+                collapsible: true
+                defaultOpen: false
+                items:
+                    - $use: notion.empty.type
+                    - $use: notion.empty.parent
+                    - $use: notion.editors
+        open:
+            label: Open
+            hint: The same editors always visible, as the block Notion shows when empty properties are not hidden.
+            view:
+                $type: task:Panel
+                title: Empty properties
+                appearance: card
+                items:
+                    - $use: notion.empty.type
+                    - $use: notion.empty.parent
+                    - $use: notion.editors
+notion-b.left:
+    $type: task:PropertyList
+    labelPlacement: inline
+    labelWidth: normal
+    density: compact
+    items:
+        - $use: notion.row.status
+        - $use: notion.row.type.set
+        - $use: notion.row.labels.set
+        - $use: notion.row.parent.set
+notion-b.right:
+    $type: task:PropertyList
+    labelPlacement: inline
+    labelWidth: normal
+    density: compact
+    items:
+        - $use: notion.row.project
+        - $use: notion.row.created
+        - $use: notion.row.updated
+        - $use: notion.row.meta
+notion-b.all:
+    $type: task:PropertyList
+    labelPlacement: inline
+    labelWidth: normal
+    density: compact
+    items:
+        - $use: notion.row.status
+        - $use: notion.row.type.set
+        - $use: notion.row.labels.set
+        - $use: notion.row.parent.set
+        - $use: notion.row.project
+        - $use: notion.row.created
+        - $use: notion.row.updated
+        - $use: notion.row.meta
+notion-b.props:
+    $type: VerticalStack
+    gap: gap-3
+    items:
+        - $type: task:VariantSwitcher
+          id: notion-b-layout
+          label: Layout
+          initial: single
+          variants:
+              single:
+                  label: One column
+                  hint: Properties with a value in a single column.
+                  view:
+                      $type: task:Panel
+                      title: Properties
+                      appearance: plain
+                      items:
+                          - $use: notion-b.all
+              double:
+                  label: Two columns
+                  hint: Properties with a value in two columns, the page facts on the right; stacks below 1024 px.
+                  view:
+                      $type: task:Panel
+                      title: Properties
+                      appearance: plain
+                      items:
+                          - $type: task:SplitLayout
+                            sticky: false
+                            sideWidth: wide
+                            main:
+                                - $use: notion-b.left
+                            side:
+                                - $use: notion-b.right
+        - $use: notion-b.empty
+notion-b.body:
+    $type: VerticalStack
+    gap: gap-4
+    items:
+        - $type: Markdown
+          $if: $sources.detail.hasDescription
+          text: $sources.detail.descriptionText
+        - $type: task:Panel
+          $if: $sources.detail.hasChildren
+          title: Sub-items
+          count: $sources.detail.childrenSummary.total
+          appearance: plain
+          items:
+              - $type: task:ProgressSummary
+                done: $sources.detail.childrenSummary.done
+                total: $sources.detail.childrenSummary.total
+                text: $sources.detail.childrenSummary.text
+                appearance: bar
+              - $type: task:TaskRowList
+                rows: $sources.detail.children
+                appearance: list
+        - $type: task:Panel
+          $if: $sources.links.hasLinks
+          title: Relations
+          appearance: plain
+          items:
+              - $type: task:TaskRowList
+                rows: $sources.links.rows
+                appearance: list
+        - $type: task:Panel
+          $if: $sources.detail.hasActivity
+          title: Activity
+          appearance: plain
+          collapsible: true
+          defaultOpen: false
+          items:
+              - $type: task:Timeline
+                entries: $sources.detail.activity
+                groupByDay: true
+                order: oldest-first
+
+# ---- gitlab-a / gitlab-b (GitLab work item). Namespaced; used only by variants/gitlab-a.yaml and gitlab-b.yaml. ----------
+gitlab.header:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $type: task:BreadcrumbTrail
+          $if: $sources.detail.hasAncestors
+          items: $sources.detail.ancestors
+          separator: chevron
+          maxItems: 4
+          currentLabel: $sources.detail.task.id
+        - $type: HorizontalStack
+          gap: gap-2
+          items:
+              - $type: task:StatusBadge
+                $if: $sources.detail.isOpen
+                label: Open
+                tone: $sources.detail.statusTone
+                icon: open
+                size: md
+              - $type: task:StatusBadge
+                $if: $sources.detail.isTerminal
+                label: Closed
+                tone: $sources.detail.statusTone
+                icon: done
+                size: md
+              - $type: Badge
+                label: $sources.detail.task.status
+                variant: info
+              - $type: Badge
+                label: $sources.detail.projectText
+                variant: info
+              - $type: RelativeDate
+                date: $sources.detail.createdAt
+              - $type: Badge
+                $if: $sources.detail.blockedText
+                label: $sources.detail.blockedText
+                variant: warning
+        - $type: PageHeader
+          title: $sources.detail.task.title
+          headerActions:
+              - $type: ButtonLink
+                $if: $sources.detail.taskHrefs
+                label: History
+                to: $sources.detail.taskHrefs.history
+              - $type: ButtonLink
+                $if: $sources.detail.taskHrefs
+                label: Children
+                to: $sources.detail.taskHrefs.childrenList
+              - $type: ButtonLink
+                $if: $sources.detail.taskHrefs
+                label: Delete
+                variant: danger-outline
+                to: $sources.detail.taskHrefs.deleteTasks
+gitlab.b.status:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $type: task:ActionSelect
+          $if: $sources.detail.forms
+          appearance: pill
+          ariaLabel: Status
+          options: $sources.detail.statusChoices
+          value: $sources.detail.task.status
+          action: setStatusTo
+          valueParam: status
+          params: &gitlabActionParams
+              id: $route.id
+              projectParam: $sources.detail.projectParam
+        - $use: feedback.wrapped.status
+gitlab.b.type:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $type: task:ActionSelect
+          $if: $sources.detail.hasTypes
+          appearance: field
+          ariaLabel: Type
+          options: $sources.detail.typeChoices
+          value: $sources.detail.forms.type.type
+          placeholder: No type
+          action: setTypeTo
+          valueParam: type
+          params: *gitlabActionParams
+        - $use: notice.noTypes
+        - $use: form.typeFree
+        - $use: feedback.wrapped.type
+gitlab.b.labels:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $type: task:LabelChips
+          $if: $sources.detail.forms
+          labels: $sources.detail.labelList
+          addAction: addLabel
+          removeAction: removeLabelChip
+          labelParam: label
+          placeholder: Add a label
+          params: *gitlabActionParams
+        - $use: feedback.wrapped.label
+gitlab.b.parent:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $type: Badge
+          $if: $sources.detail.hasParent
+          label: $sources.detail.parentRow.titleText
+          href: $sources.detail.parentRow.href
+          variant: info
+        - $use: feedback.wrapped.parent
+        - $use: form.detachParent
+        - $type: task:Panel
+          title: Change parent
+          appearance: plain
+          collapsible: true
+          defaultOpen: false
+          items:
+              - $use: form.setParent
+gitlab.b.meta:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $type: task:KeyValueList
+          $if: $sources.detail.hasMeta
+          entries: $sources.detail.metaList
+        - $use: feedback.wrapped.meta
+        - $type: task:Panel
+          title: Set metadata
+          appearance: plain
+          collapsible: true
+          defaultOpen: false
+          items:
+              - $use: form.meta
+gitlab.side.open:
+    $type: VerticalStack
+    gap: gap-3
+    items:
+        - $type: task:Panel
+          title: Status
+          collapsible: true
+          defaultOpen: true
+          items:
+              - $use: gitlab.b.status
+        - $type: task:Panel
+          title: Type
+          collapsible: true
+          defaultOpen: true
+          items:
+              - $use: gitlab.b.type
+        - $type: task:Panel
+          title: Labels
+          count: $sources.detail.labelCount
+          collapsible: true
+          defaultOpen: true
+          items:
+              - $use: gitlab.b.labels
+        - $type: task:Panel
+          title: Parent
+          collapsible: true
+          defaultOpen: true
+          items:
+              - $use: gitlab.b.parent
+        - $type: task:Panel
+          title: Metadata
+          count: $sources.detail.metaCount
+          collapsible: true
+          defaultOpen: true
+          items:
+              - $use: gitlab.b.meta
+gitlab.side.closed:
+    $type: VerticalStack
+    gap: gap-3
+    items:
+        - $type: task:Panel
+          title: Status
+          collapsible: true
+          defaultOpen: true
+          items:
+              - $use: gitlab.b.status
+        - $type: task:Panel
+          title: Type
+          collapsible: true
+          defaultOpen: false
+          items:
+              - $use: gitlab.b.type
+        - $type: task:Panel
+          title: Labels
+          count: $sources.detail.labelCount
+          collapsible: true
+          defaultOpen: false
+          items:
+              - $use: gitlab.b.labels
+        - $type: task:Panel
+          title: Parent
+          collapsible: true
+          defaultOpen: false
+          items:
+              - $use: gitlab.b.parent
+        - $type: task:Panel
+          title: Metadata
+          count: $sources.detail.metaCount
+          collapsible: true
+          defaultOpen: false
+          items:
+              - $use: gitlab.b.meta
+gitlab.p.description:
+    $type: task:Panel
+    $if: $sources.detail.hasDescription
+    title: Description
+    items:
+        - $type: Markdown
+          text: $sources.detail.descriptionText
+gitlab.c.children:
+    $type: VerticalStack
+    gap: gap-3
+    items:
+        - $type: task:ProgressSummary
+          $if: $sources.detail.hasChildren
+          done: $sources.detail.childrenSummary.done
+          total: $sources.detail.childrenSummary.total
+          text: $sources.detail.childrenSummary.text
+          appearance: bar
+        - $type: task:TaskRowList
+          rows: $sources.detail.children
+          appearance: list
+          emptyText: No child items
+gitlab.c.links:
+    $type: VerticalStack
+    gap: gap-3
+    items:
+        - $type: task:TaskRowList
+          rows: $sources.links.rows
+          appearance: list
+          emptyText: No linked items
+        - $type: task:Panel
+          title: Add or remove a link
+          appearance: plain
+          collapsible: true
+          defaultOpen: false
+          items:
+              - $use: feedback.link
+              - $use: form.addLink
+              - $use: form.removeLink
+gitlab.c.activity:
+    $type: task:Timeline
+    $if: $sources.detail.hasActivity
+    entries: $sources.detail.activity
+    groupByDay: true
+    order: newest-first
+gitlab.p.children:
+    $type: task:Panel
+    title: Child items
+    count: $sources.detail.childrenSummary.total
+    collapsible: true
+    items:
+        - $use: gitlab.c.children
+gitlab.p.children.ifany:
+    $type: task:Panel
+    $if: $sources.detail.hasChildren
+    title: Child items
+    count: $sources.detail.childrenSummary.total
+    collapsible: true
+    items:
+        - $use: gitlab.c.children
+gitlab.p.links:
+    $type: task:Panel
+    title: Linked items
+    count: $sources.detail.linkCount
+    collapsible: true
+    items:
+        - $use: gitlab.c.links
+gitlab.p.activity:
+    $type: task:Panel
+    title: Activity
+    collapsible: true
+    items:
+        - $use: gitlab.c.activity
+gitlab.main.show:
+    $type: VerticalStack
+    gap: gap-4
+    items:
+        - $use: gitlab.p.description
+        - $use: gitlab.p.children
+        - $use: gitlab.p.links
+        - $use: gitlab.p.activity
+gitlab.main.hide:
+    $type: VerticalStack
+    gap: gap-4
+    items:
+        - $use: gitlab.p.description
+        - $use: gitlab.p.children.ifany
+        - $use: gitlab.p.links
+        - $use: gitlab.p.activity
+gitlab.tabs.children:
+    $type: VerticalStack
+    gap: gap-4
+    items:
+        - $use: gitlab.p.description
+        - $type: task:TabPanels
+          counts:
+              child-items: $sources.detail.childrenSummary.total
+              linked-items: $sources.detail.linkCount
+          tabs:
+              - key: child-items
+                label: Child items
+                items:
+                    - $use: gitlab.c.children
+              - key: linked-items
+                label: Linked items
+                items:
+                    - $use: gitlab.c.links
+              - key: activity
+                label: Activity
+                items:
+                    - $use: gitlab.c.activity
+gitlab.tabs.links:
+    $type: VerticalStack
+    gap: gap-4
+    items:
+        - $use: gitlab.p.description
+        - $type: task:TabPanels
+          defaultTab: linked-items
+          counts:
+              child-items: $sources.detail.childrenSummary.total
+              linked-items: $sources.detail.linkCount
+          tabs:
+              - key: child-items
+                label: Child items
+                items:
+                    - $use: gitlab.c.children
+              - key: linked-items
+                label: Linked items
+                items:
+                    - $use: gitlab.c.links
+              - key: activity
+                label: Activity
+                items:
+                    - $use: gitlab.c.activity
+
+# ---- github-b (GitHub sub-issues layout). Namespaced; used only by variants/github-b.yaml. ----------------------------
+github-b.header:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $type: task:BreadcrumbTrail
+          $if: $sources.detail.hasAncestors
+          items: $sources.detail.ancestors
+          separator: slash
+          maxItems: 5
+          currentLabel: $sources.detail.task.id
+        - $type: PageHeader
+          title: $sources.detail.task.title
+          headerActions:
+              - $type: ButtonLink
+                $if: $sources.detail.taskHrefs
+                label: History
+                to: $sources.detail.taskHrefs.history
+              - $type: ButtonLink
+                $if: $sources.detail.taskHrefs
+                label: Children
+                to: $sources.detail.taskHrefs.childrenList
+              - $type: ButtonLink
+                $if: $sources.detail.taskHrefs
+                label: Delete
+                variant: danger-outline
+                to: $sources.detail.taskHrefs.deleteTasks
+        - $type: HorizontalStack
+          gap: gap-2
+          items:
+              - $type: task:StatusBadge
+                $if: $sources.detail.isOpen
+                label: $sources.detail.task.status
+                tone: $sources.detail.statusTone
+                icon: open
+                size: md
+              - $type: task:StatusBadge
+                $if: $sources.detail.isTerminal
+                label: $sources.detail.task.status
+                tone: $sources.detail.statusTone
+                icon: done
+                size: md
+              - $type: Badge
+                label: $sources.detail.projectText
+                variant: info
+              - $type: RelativeDate
+                date: $sources.detail.updatedAt
+              - $type: Badge
+                $if: $sources.detail.blockedText
+                label: $sources.detail.blockedText
+                variant: warning
+github-b.progress.bar:
+    $type: task:ProgressSummary
+    $if: $sources.detail.hasChildren
+    done: $sources.detail.childrenSummary.done
+    total: $sources.detail.childrenSummary.total
+    text: $sources.detail.childrenSummary.text
+    appearance: bar
+github-b.progress.segments:
+    $type: task:ProgressSummary
+    $if: $sources.detail.hasChildren
+    done: $sources.detail.childrenSummary.done
+    total: $sources.detail.childrenSummary.total
+    text: $sources.detail.childrenSummary.text
+    appearance: segments
+github-b.progress.ring:
+    $type: task:ProgressSummary
+    $if: $sources.detail.hasChildren
+    done: $sources.detail.childrenSummary.done
+    total: $sources.detail.childrenSummary.total
+    text: $sources.detail.childrenSummary.text
+    appearance: ring
+github-b.sidebar:
+    $type: task:PropertyList
+    density: compact
+    dividers: true
+    items:
+        - $type: task:PropertyRow
+          label: Status
+          items:
+              - $type: task:ActionSelect
+                $if: $sources.detail.forms
+                appearance: pill
+                ariaLabel: Status
+                options: $sources.detail.statusChoices
+                value: $sources.detail.task.status
+                action: setStatusTo
+                valueParam: status
+                params: &githubBActionParams
+                    id: $route.id
+                    projectParam: $sources.detail.projectParam
+              - $use: feedback.wrapped.status
+        - $type: task:PropertyRow
+          label: Type
+          items:
+              - $type: task:ActionSelect
+                $if: $sources.detail.hasTypes
+                appearance: field
+                ariaLabel: Type
+                options: $sources.detail.typeChoices
+                value: $sources.detail.forms.type.type
+                placeholder: No type
+                action: setTypeTo
+                valueParam: type
+                params: *githubBActionParams
+              - $use: notice.noTypes
+              - $use: form.typeFree
+              - $use: feedback.wrapped.type
+        - $type: task:PropertyRow
+          label: Labels
+          items:
+              - $type: task:LabelChips
+                $if: $sources.detail.forms
+                labels: $sources.detail.labelList
+                addAction: addLabel
+                removeAction: removeLabelChip
+                labelParam: label
+                placeholder: Add a label
+                params: *githubBActionParams
+              - $use: feedback.wrapped.label
+        - $type: task:PropertyRow
+          label: Parent
+          items:
+              - $type: Badge
+                $if: $sources.detail.hasParent
+                label: $sources.detail.parentRow.titleText
+                href: $sources.detail.parentRow.href
+                variant: info
+              - $use: feedback.wrapped.parent
+              - $use: form.detachParent
+        - $type: task:PropertyRow
+          $if: $sources.detail.hasMeta
+          label: Metadata
+          items:
+              - $type: task:KeyValueList
+                entries: $sources.detail.metaList
+github-b.lists:
+    $type: VerticalStack
+    gap: gap-4
+    items:
+        - $type: task:Panel
+          $if: $sources.detail.hasChildren
+          title: Sub-issues
+          count: $sources.detail.childrenSummary.total
+          items:
+              - $type: task:TaskRowList
+                rows: $sources.detail.children
+                appearance: list
+        - $type: task:Panel
+          $if: $sources.links.hasLinks
+          title: Linked
+          count: $sources.detail.linkCount
+          items:
+              - $type: task:TaskRowList
+                rows: $sources.links.rows
+                appearance: list
+github-b.lists.folded:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $type: task:Panel
+          $if: $sources.detail.hasChildren
+          title: Sub-issues
+          count: $sources.detail.childrenSummary.total
+          collapsible: true
+          defaultOpen: false
+          items:
+              - $type: task:TaskRowList
+                rows: $sources.detail.children
+                appearance: list
+        - $type: task:Panel
+          $if: $sources.links.hasLinks
+          title: Linked
+          count: $sources.detail.linkCount
+          collapsible: true
+          defaultOpen: false
+          items:
+              - $type: task:TaskRowList
+                rows: $sources.links.rows
+                appearance: list
+github-b.body:
+    $type: task:Panel
+    $if: $sources.detail.hasDescription
+    title: Description
+    items:
+        - $type: Markdown
+          text: $sources.detail.descriptionText
+github-b.edit.meta:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $type: task:KeyValueList
+          $if: $sources.detail.hasMeta
+          entries: $sources.detail.metaList
+        - $use: feedback.meta
+        - $use: form.meta
+github-b.edit.parent:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $use: form.setParent
+github-b.edit.links:
+    $type: VerticalStack
+    gap: gap-2
+    items:
+        - $use: feedback.link
+        - $use: form.addLink
+        - $use: form.removeLink
+github-b.edit:
+    $type: task:Panel
+    title: Metadata, parent and links
+    collapsible: true
+    defaultOpen: false
+    items:
+        - $use: github-b.edit.meta
+        - $use: github-b.edit.parent
+        - $use: github-b.edit.links
+github-b.activity:
+    $type: task:Panel
+    title: Activity
+    collapsible: true
+    defaultOpen: false
+    items:
+        - $type: task:Timeline
+          $if: $sources.detail.hasActivity
+          entries: $sources.detail.activity
+          groupByDay: true
+          order: oldest-first
+gitlab-a.main:
+    $type: task:VariantSwitcher
+    id: gitlab-a-empty
+    label: Empty sections
+    initial: show
+    variants:
+        show:
+            label: Shown
+            hint: Child items, linked items and activity always have a panel, with a sentence when they are empty.
+            view:
+                $use: gitlab.main.show
+        hide:
+            label: Hidden
+            hint: The child items panel is left out for a task without children; linked items stay because they hold the link forms.
+            view:
+                $use: gitlab.main.hide
+gitlab-a.side:
+    $type: task:VariantSwitcher
+    id: gitlab-a-sections
+    label: Sidebar sections
+    initial: open
+    variants:
+        open:
+            label: All open
+            hint: Every sidebar section starts open.
+            view:
+                $use: gitlab.side.open
+        closed:
+            label: Closed
+            hint: Only Status starts open; Type, Labels, Parent and Metadata fold to a title with a count.
+            view:
+                $use: gitlab.side.closed
+gitlab-b.main:
+    $type: task:VariantSwitcher
+    id: gitlab-b-lower
+    label: Below the description
+    initial: tabs
+    variants:
+        tabs:
+            label: Tabs
+            hint: Child items, linked items and activity are tabs of one box, child items first, as in a GitLab work item.
+            view:
+                $use: gitlab.tabs.children
+        tabs-links:
+            label: Tabs, links first
+            hint: The same tabs, opened on Linked items.
+            view:
+                $use: gitlab.tabs.links
+        stacked:
+            label: Stacked
+            hint: The three blocks one under the other, each in a collapsible panel.
+            view:
+                $use: gitlab.main.show
+gitlab-b.side:
+    $type: task:VariantSwitcher
+    id: gitlab-b-sections
+    label: Sidebar sections
+    initial: open
+    variants:
+        open:
+            label: All open
+            hint: Every sidebar section starts open.
+            view:
+                $use: gitlab.side.open
+        closed:
+            label: Closed
+            hint: Only Status starts open; the other sections fold to a title with a count.
+            view:
+                $use: gitlab.side.closed
+github-b.main:
+    $type: VerticalStack
+    gap: gap-4
+    items:
+        - $use: github-b.body
+        - $type: task:VariantSwitcher
+          id: github-b-lists
+          label: Lists
+          initial: open
+          variants:
+              open:
+                  label: Open
+                  hint: Sub-issues and linked tasks are open lists, shown only when they have rows.
+                  view:
+                      $use: github-b.lists
+              folded:
+                  label: Folded
+                  hint: Sub-issues and linked tasks start folded to a title with a count.
+                  view:
+                      $use: github-b.lists.folded
+        - $use: github-b.edit
+        - $use: github-b.activity

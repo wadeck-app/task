@@ -1,0 +1,85 @@
+label: Jira A
+hint: Jira issue view - ancestors as a breadcrumb above the title, description, child issues, linked issues and activity on the left, a Details panel on the right (status, type, labels and parent change on click) with a More fields group and the dates.
+view:
+    $type: VerticalStack
+    gap: gap-4
+    items:
+        - $type: task:VariantSwitcher
+          id: jira-a-ancestors
+          label: Breadcrumb
+          initial: shown
+          variants:
+              shown:
+                  label: Shown
+                  hint: The ancestors of the task as a breadcrumb above the title, the way Jira shows the parent chain.
+                  view:
+                      $use: jira.breadcrumb
+              hidden:
+                  label: Hidden
+                  hint: No breadcrumb; the parent is only in the Details panel.
+                  view:
+                      $type: VerticalStack
+                      items: []
+        - $use: jira.title
+        - $use: jira.blocked
+        - $type: task:SplitLayout
+          sidePosition: right
+          sideWidth: normal
+          main:
+              - $type: VerticalStack
+                gap: gap-4
+                items:
+                    - $use: jira.content
+                    - $type: task:VariantSwitcher
+                      id: jira-a-activity
+                      label: Activity
+                      initial: list
+                      variants:
+                          list:
+                              label: List
+                              hint: Activity block under the linked issues, with creation and every status change, newest first.
+                              view:
+                                  $use: jira.activity
+                          hidden:
+                              label: Hidden
+                              hint: No activity block; the page stops after the linked issues.
+                              view:
+                                  $type: VerticalStack
+                                  items: []
+          side:
+              - $type: VerticalStack
+                gap: gap-3
+                items:
+                    - $type: task:Panel
+                      title: Details
+                      items:
+                          - $use: jira.details.core
+                    - $type: task:VariantSwitcher
+                      id: jira-a-details
+                      label: Details groups
+                      initial: open
+                      variants:
+                          open:
+                              label: Open
+                              hint: The More fields group (metadata, parent, links forms) is open under Details.
+                              view:
+                                  $type: task:Panel
+                                  title: More fields
+                                  collapsible: true
+                                  defaultOpen: true
+                                  items:
+                                      - $use: jira.details.more
+                          collapsed:
+                              label: Collapsed
+                              hint: The More fields group is folded; click its title to open it.
+                              view:
+                                  $type: task:Panel
+                                  title: More fields
+                                  collapsible: true
+                                  defaultOpen: false
+                                  items:
+                                      - $use: jira.details.more
+                    - $type: task:Panel
+                      title: Dates
+                      items:
+                          - $use: jira.details.dates

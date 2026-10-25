@@ -1,0 +1,8 @@
+label: Notion A
+hint: Notion database page - the title, a bordered property table (status, type, labels change on click; each value editable in place), a divider, then the page body, sub-items as an inline table and relations; more properties are added from a folded block.
+view:
+    $type: VerticalStack
+    gap: gap-4
+    items:
+        - $use: notion.header
+        - $use: notion-a.page

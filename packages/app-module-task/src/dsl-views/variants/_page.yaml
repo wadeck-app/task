@@ -1,0 +1,170 @@
+# ============================================================================================================
+# TASK PAGE VARIANTS - how this page is built (read this before editing task-page.yaml: it is GENERATED)
+#
+# `src/dsl-views/task-page.yaml` is assembled by `npm run views --workspace=packages/app-module-task` (script:
+# scripts/generate-task-page.mjs at the repository root) from the files of this folder:
+#   _page.yaml     this file: the sources, the actions, the notices and the experiment (variant order).
+#                  Everything up to the line `$type: PageContent` is copied verbatim (comments included).
+#   _shared.yaml   named fragments, used anywhere as `{ $use: form.status }` (one node each; no other key next to $use).
+#   <variant>.yaml one file per variant with exactly three keys: `label`, `hint` (shown by the switcher), `view` (ONE node).
+# A test fails when task-page.yaml is stale, so run the script after every edit here.
+#
+# Add a variant: create <name>.yaml here and add <name> to `variants` under `$experiment` below, then run the script.
+# Options of a variant: nested `task:VariantSwitcher` nodes inside its view, id `<variant>-<option>`, 2-3 choices.
+# Remove a variant: take its name out of `variants`, move its file out of the folder.
+# REMOVE THE EXPERIMENT (bake the winner): in this file keep $sources/$actions, replace the `task:VariantSwitcher` by the
+# `view` of the chosen variant (expand its `$use`), delete the other fragments, the generator, `npm run views`,
+# taskPageVariants.test.ts and the fixture, then drop the presentation fields no remaining view reads (see taskViews.ts).
+#
+# Conventions for the components that run actions (the installed shell, dsl-ui 175, sends NO body from onAction):
+#   params: { id: $route.id, projectParam: $sources.detail.projectParam }   plus the value, which the component adds
+#   quick actions (below): setStatusTo / setTypeTo / addLabelTo carry the value in the URL path; removeLabel already does.
+# ============================================================================================================
+
+# Detail of one task (/modules/task/tasks/p/:project/:id). ":id" of the manifest path is $route.id, ":project" is
+# $route.project (the slug of the project, resolved by GET /projects). The breadcrumb leads back: no back link here.
+#
+# Every form below submits through a named action ($actions) bound with `onSubmit: $ctx.<action>`:
+# - the body is the form data; it also fills the {placeholders} of the action URL ({id} is the route id);
+# - `projectParam` is the project already URL-encoded by the route (the substitution does not encode), so the URL is
+#   always `?project={projectParam}`; the forms get it through their initialData (`$sources.detail.forms.*`);
+# - the page reloads its sources after a successful action;
+# - `&inlineErrors=true`: the DSL drops the answer of a failed request (nothing is shown, the form just stays as typed),
+#   so the routes answer a failure as data (`errorText`, one line with the hint) and the section of the form shows it;
+# - `resultKey` publishes the answer as $ctx.<key>: the error, and what the queue did not receive (`undeliveredText`),
+#   are shown in the section of the form that produced them (the page is long, a message at the top would be off screen).
+# FieldSelect crashes the page while its options are not loaded: every form sits behind $if on its source data.
+# The sources are fed by `projectQuery` (the project, else `blank=true`): the shell keeps the last answer of a source it
+# skips, so an unknown or unreadable project must replace the previous task with an empty answer, not skip the request.
+# The sources that wait for `projects` also name a $urlParam (`reload`, empty in practice): the shell reloads on a URL
+# change only the sources that name one, so without it a link to another project or filter changed the URL and nothing else.
+$sources:
+    projects:
+        url: GET /api/modules/task/projects
+        params:
+            project: $route.project
+    # inlineErrors on every source: one failing source discards the answers of all the others (the page stays blank), so a
+    # failure is answered as data (`errorText`) and shown by a badge.
+    # `tree` and `links` fail with the same error as `detail` when the task does not exist: `detail` shows it.
+    detail:
+        url: GET /api/modules/task/tasks/{id}?{query}&inlineErrors=true
+        params:
+            id: $route.id
+            query: $source.projects.projectQuery
+            reload: $urlParam.reload
+    tree:
+        url: GET /api/modules/task/tree?{query}&id={id}&inlineErrors=true
+        params:
+            id: $route.id
+            query: $source.projects.projectQuery
+            reload: $urlParam.reload
+    links:
+        url: GET /api/modules/task/tasks/{id}/links?{query}&inlineErrors=true
+        params:
+            id: $route.id
+            query: $source.projects.projectQuery
+            reload: $urlParam.reload
+
+$actions:
+    setStatus:
+        url: POST /api/modules/task/tasks/{id}/status?project={projectParam}&inlineErrors=true
+        resultKey: statusResult
+        reloadSources: true
+    setType:
+        url: POST /api/modules/task/tasks/{id}/type?project={projectParam}&inlineErrors=true
+        resultKey: typeResult
+        reloadSources: true
+    addLabel:
+        url: POST /api/modules/task/tasks/{id}/labels?project={projectParam}&inlineErrors=true
+        resultKey: labelResult
+        reloadSources: true
+    # {label} is the encoded label picked in the select.
+    removeLabel:
+        url: DELETE /api/modules/task/tasks/{id}/labels/{label}?project={projectParam}&inlineErrors=true
+        resultKey: labelResult
+        reloadSources: true
+    # The chip x of task:LabelChips: DELETE twin of addLabelTo (the label travels encoded in the path).
+    removeLabelChip:
+        url: DELETE /api/modules/task/tasks/{id}/labels/{labelEncoded}?project={projectParam}&inlineErrors=true
+        resultKey: labelResult
+        reloadSources: true
+    setMeta:
+        url: POST /api/modules/task/tasks/{id}/meta?project={projectParam}&inlineErrors=true
+        resultKey: metaResult
+        reloadSources: true
+    setParent:
+        url: POST /api/modules/task/tasks/{id}/parent?project={projectParam}&inlineErrors=true
+        resultKey: parentResult
+        reloadSources: true
+    removeParent:
+        url: DELETE /api/modules/task/tasks/{id}/parent?project={projectParam}&inlineErrors=true
+        resultKey: parentResult
+        reloadSources: true
+    addLink:
+        url: POST /api/modules/task/tasks/{id}/links?project={projectParam}&inlineErrors=true
+        resultKey: linkResult
+        reloadSources: true
+    removeLink:
+        url: DELETE /api/modules/task/tasks/{id}/links?project={projectParam}&inlineErrors=true
+        resultKey: linkResult
+        reloadSources: true
+
+    # Quick actions for the task: components (ActionSelect, SegmentedControl, LabelChips): the value is in the URL path,
+    # because the shell's onAction sends no body. Same service calls, same answers, same resultKeys as the Form twins.
+    setStatusTo:
+        url: POST /api/modules/task/tasks/{id}/status/{statusEncoded}?project={projectParam}&inlineErrors=true
+        resultKey: statusResult
+        reloadSources: true
+    setTypeTo:
+        url: POST /api/modules/task/tasks/{id}/type/{typeEncoded}?project={projectParam}&inlineErrors=true
+        resultKey: typeResult
+        reloadSources: true
+    addLabelTo:
+        url: POST /api/modules/task/tasks/{id}/labels/{labelEncoded}?project={projectParam}&inlineErrors=true
+        resultKey: labelResult
+        reloadSources: true
+
+$type: PageContent
+# Shown above whatever variant is chosen, so every variant has the same error and empty states by construction.
+$notices:
+    # Nothing registered yet: the welcome text of the route (the exact next step) instead of a blank page.
+    - $type: Badge
+      $if: $sources.projects.noProjects
+      label: $sources.projects.noProjectsText
+      variant: info
+    # The selected project cannot be read (not initialized, corrupt config...): the reason and the fix, not a blank page.
+    - $type: Badge
+      $if: $sources.projects.selectedProblem
+      label: $sources.projects.selectedProblem
+      variant: danger
+    # The address names a project the registry does not know (a stale bookmark): said, with the next step, not a blank page.
+    - $type: Badge
+      $if: $sources.projects.unknownProjectText
+      label: $sources.projects.unknownProjectText
+      variant: danger
+    # The task does not exist (or the id is ambiguous): what was asked and what to do.
+    - $type: Badge
+      $if: $sources.detail.errorText
+      label: $sources.detail.errorText
+      variant: danger
+    # Repairable inconsistencies of this task (dangling parent...), with the command that fixes them.
+    - $type: Badge
+      $if: $sources.detail.warningText
+      label: $sources.detail.warningText
+      variant: warning
+$experiment:
+    id: task-design
+    label: Task page
+    initial: current
+    variants:
+        - current
+        - github-a
+        - github-b
+        - gitlab-a
+        - gitlab-b
+        - jira-a
+        - jira-b
+        - linear-a
+        - linear-b
+        - notion-a
+        - notion-b

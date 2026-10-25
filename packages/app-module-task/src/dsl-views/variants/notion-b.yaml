@@ -1,0 +1,30 @@
+label: Notion B
+hint: Notion page that hides empty properties - only the properties that have a value are listed; the others are reachable from an Add a property block. Properties in one or two columns, the body above or below them.
+view:
+    $type: VerticalStack
+    gap: gap-4
+    items:
+        - $use: notion.header
+        - $type: task:VariantSwitcher
+          id: notion-b-order
+          label: Order
+          initial: properties-first
+          variants:
+              properties-first:
+                  label: Properties first
+                  hint: Properties with a value, then the page body.
+                  view:
+                      $type: VerticalStack
+                      gap: gap-5
+                      items:
+                          - $use: notion-b.props
+                          - $use: notion-b.body
+              body-first:
+                  label: Body first
+                  hint: The page body first, the properties after it.
+                  view:
+                      $type: VerticalStack
+                      gap: gap-5
+                      items:
+                          - $use: notion-b.body
+                          - $use: notion-b.props

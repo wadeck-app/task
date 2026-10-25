@@ -64,7 +64,11 @@ describe('manifest.json (source manifest of the app-core-cli layout)', () => {
 			'new-task-page.yaml': ['/tasks/new', '/tasks/p/:project/new'],
 			'delete-page.yaml': ['/tasks/delete', '/tasks/p/:project/delete'],
 		});
-		expect([...byView.keys()].sort()).toEqual(readdirSync(join(packageDir, 'src/dsl-views')).sort());
+		expect([...byView.keys()].sort()).toEqual(
+			readdirSync(join(packageDir, 'src/dsl-views'))
+				.filter(name => name.endsWith('.yaml'))
+				.sort()
+		);
 	});
 });
 
@@ -743,7 +747,8 @@ describe('views: feedback and refresh conventions found by driving the pages in 
 	it('the tables use the display texts of the routes: truncated titles and short dates', () => {
 		expect(view('tasks-page.yaml')).toContain("key: 'titleText'");
 		expect(view('tasks-page.yaml')).toContain("key: 'created'");
-		expect(view('task-page.yaml')).toContain("key: 'titleText'");
+		// task-page.yaml is generated (js-yaml): the key is written without quotes.
+		expect(view('task-page.yaml')).toMatch(/key: '?titleText'?/);
 		expect(view('task-history-page.yaml')).toContain('$sources.history.rows');
 		expect(view('task-history-page.yaml')).toContain("key: 'time'");
 	});
@@ -888,10 +893,11 @@ describe('views: no link whose purpose is going back (the breadcrumb carries the
 		'delete-page.yaml': [],
 		'new-task-page.yaml': [{ label: 'Open the new task', to: '$ctx.created.href' }],
 		'task-history-page.yaml': [],
-		// History and Children are features of the task (forward), not a way back.
+		// History, Children and (in the design variants) Delete are features of the task (forward), not a way back.
 		'task-page.yaml': [
 			{ label: 'History', to: '$sources.detail.taskHrefs.history' },
 			{ label: 'Children', to: '$sources.detail.taskHrefs.childrenList' },
+			{ label: 'Delete', to: '$sources.detail.taskHrefs.deleteTasks' },
 		],
 		'tasks-page.yaml': [
 			{ label: 'New task', to: '$sources.tasks.hrefs.newTask' },
@@ -910,7 +916,14 @@ describe('views: no link whose purpose is going back (the breadcrumb carries the
 	});
 
 	it.each(viewNames)('%s: every link is a feature of the page, none leads back', name => {
-		const links = linkNodes(view(name)).map(({ label, to }) => ({ label, to }));
+		// The task page holds the links of every design variant: the same link in several variants counts once.
+		const seen = new Set<string>();
+		const links = linkNodes(view(name))
+			.map(({ label, to }) => ({ label, to }))
+			.filter(link => {
+				const key = `${link.label}|${link.to}`;
+				return name !== 'task-page.yaml' || !seen.has(key) ? (seen.add(key), true) : false;
+			});
 		expect(links).toEqual(KEPT[name]);
 	});
 
@@ -989,14 +1002,18 @@ describe('views: every mutating action that produces queue events shows what the
 			'delete-page.yaml:deleteTasks',
 			'new-task-page.yaml:createTask',
 			'task-page.yaml:addLabel',
+			'task-page.yaml:addLabelTo',
 			'task-page.yaml:addLink',
 			'task-page.yaml:removeLabel',
+			'task-page.yaml:removeLabelChip',
 			'task-page.yaml:removeLink',
 			'task-page.yaml:removeParent',
 			'task-page.yaml:setMeta',
 			'task-page.yaml:setParent',
 			'task-page.yaml:setStatus',
+			'task-page.yaml:setStatusTo',
 			'task-page.yaml:setType',
+			'task-page.yaml:setTypeTo',
 		]);
 	});
 

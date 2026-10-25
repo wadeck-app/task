@@ -34,13 +34,16 @@ const EXPECTED_ROUTES = [
 	'GET /types',
 	'POST /tasks',
 	'POST /tasks/:id/status',
+	'POST /tasks/:id/status/:status',
 	'POST /tasks/:id/labels',
+	'POST /tasks/:id/labels/:label',
 	'DELETE /tasks/:id/labels/:label',
 	'POST /tasks/:id/links',
 	'DELETE /tasks/:id/links',
 	'POST /tasks/:id/parent',
 	'DELETE /tasks/:id/parent',
 	'POST /tasks/:id/type',
+	'POST /tasks/:id/type/:type',
 	'POST /tasks/:id/meta',
 	'POST /types',
 	'DELETE /types/:name',
@@ -2072,11 +2075,16 @@ describe('GET /tasks/:id/links', () => {
 		expect(fromA.body['rows']).toEqual([
 			{
 				relation: 'blockedBy',
+				// the relation as a reader says it (TaskRowList shows it on the right)
+				meta: 'Blocked by',
 				direction: 'outgoing',
 				id: b,
 				title: 'b',
 				titleText: 'b',
 				status: 'backlog',
+				tone: 'neutral',
+				statusTone: 'neutral',
+				isDone: false,
 				href: hrefOf(b),
 			},
 		]);
@@ -2084,11 +2092,15 @@ describe('GET /tasks/:id/links', () => {
 		expect(fromB.body['rows']).toEqual([
 			{
 				relation: 'blocks',
+				meta: 'Blocks',
 				direction: 'derived',
 				id: a,
 				title: 'a',
 				titleText: 'a',
 				status: 'backlog',
+				tone: 'neutral',
+				statusTone: 'neutral',
+				isDone: false,
 				href: hrefOf(a),
 			},
 		]);
@@ -2762,6 +2774,7 @@ describe('view data: page links, filters and form defaults', () => {
 				detail: `/modules/task/tasks/p/${project}/${id}`,
 				history: `/modules/task/tasks/p/${project}/${id}/history`,
 				childrenList: page('tasks', `?parent=${id}&showAll=true`),
+				deleteTasks: page('delete'),
 			});
 		});
 	});
@@ -3773,5 +3786,382 @@ describe('delete stays explicit per project', () => {
 		expect(answer.body['error']).toContain('no project chosen');
 		const left = await h.call('GET /tasks', { query: { project } });
 		expect(left.body['tasks']).toHaveLength(1);
+	});
+});
+
+// The presentation fields the task-page variants bind to (contract: the comment at the top of taskViews.ts).
+describe('GET /tasks/:id presentation contract', () => {
+	const detail = (id: string) => h.call('GET /tasks/:id', { params: { id }, query: { project } });
+	const setStatus = (id: string, status: string) =>
+		h.call('POST /tasks/:id/status', { params: { id }, query: { project }, body: { status } });
+
+	it('gives the encoded project, the dates with their display text, and the description flags', async () => {
+		const id = await createTask('plain');
+		const { body } = await detail(id);
+		expect(body['projectParam']).toBe(project);
+		expect(body['createdAt']).toBe(body['task']['createdAt']);
+		expect(body['updatedAt']).toBe(body['task']['updatedAt']);
+		expect(body['createdText']).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d$/);
+		expect(body['updatedText']).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d$/);
+		expect(body['descriptionText']).toBe('plain');
+		expect(body['hasDescription']).toBe(true);
+	});
+
+	it('a task without a description has descriptionText null and hasDescription false', async () => {
+		const id = await createTask('has title');
+		const file = path.join(h.world.dataDirOf(project), 'tasks', `${id}.json`);
+		const record = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
+		record['description'] = '';
+		fs.writeFileSync(file, JSON.stringify(record));
+		const { body } = await detail(id);
+		expect(body['descriptionText']).toBeNull();
+		expect(body['hasDescription']).toBe(false);
+	});
+
+	it('statusChoices carry the tone (terminal success, default neutral, others info) and the flags; statusOptions stays', async () => {
+		const id = await createTask('t');
+		const { body } = await detail(id);
+		expect(body['statusChoices']).toEqual([
+			{ value: 'backlog', label: 'backlog', tone: 'neutral', isDefault: true, isTerminal: false },
+			{ value: 'in-progress', label: 'in-progress', tone: 'info', isDefault: false, isTerminal: false },
+			{ value: 'done', label: 'done', tone: 'success', isDefault: false, isTerminal: true },
+		]);
+		expect(body['statusOptions']).toHaveLength(3);
+		expect(body['statusTone']).toBe('neutral');
+		expect(body['isTerminal']).toBe(false);
+		// The DSL has no negation: a flag for the open case.
+		expect(body['isOpen']).toBe(true);
+		await setStatus(id, 'done');
+		const closed = await detail(id);
+		expect(closed.body['statusTone']).toBe('success');
+		expect(closed.body['isTerminal']).toBe(true);
+		expect(closed.body['isOpen']).toBe(false);
+	});
+
+	it('typeChoices, labelList, metaList and the has* flags', async () => {
+		const id = await createTask('t');
+		const empty = (await detail(id)).body;
+		expect(empty['typeChoices']).toEqual([]);
+		expect(empty['labelList']).toEqual([]);
+		expect(empty['metaList']).toEqual([]);
+		expect(empty).toMatchObject({
+			hasLabels: false,
+			hasMeta: false,
+			hasChildren: false,
+			hasLinks: false,
+			hasAncestors: false,
+		});
+		await h.call('POST /tasks/:id/labels', { params: { id }, query: { project }, body: { label: 'bug' } });
+		await h.call('POST /tasks/:id/meta', { params: { id }, query: { project }, body: { key: 'k', value: 'v' } });
+		const filled = (await detail(id)).body;
+		expect(filled['labelList']).toEqual(['bug']);
+		expect(filled['metaList']).toEqual([{ key: 'k', value: 'v' }]);
+		expect(filled).toMatchObject({ hasLabels: true, hasMeta: true });
+		// Counts for headers (the DSL cannot take the length of a list).
+		expect(empty).toMatchObject({ labelCount: 0, metaCount: 0, linkCount: 0 });
+		expect(filled).toMatchObject({ labelCount: 1, metaCount: 1, linkCount: 0 });
+	});
+
+	it('activity: created first, then one entry per status change, closing ones flagged done, oldest first', async () => {
+		const id = await createTask('t');
+		await setStatus(id, 'in-progress');
+		await setStatus(id, 'done');
+		const { body } = await detail(id);
+		expect(body['hasActivity']).toBe(true);
+		const kinds = body['activity'].map((a: { kind: string }) => a.kind);
+		expect(kinds).toEqual(['created', 'status', 'done']);
+		expect(body['activity'][1]).toMatchObject({
+			from: 'backlog',
+			to: 'in-progress',
+			tone: 'info',
+			title: 'Moved from backlog to in-progress',
+		});
+		expect(body['activity'][2]).toMatchObject({
+			from: 'in-progress',
+			to: 'done',
+			tone: 'success',
+			title: 'Closed (done)',
+		});
+		expect(body['activity'][0]).toMatchObject({ to: 'backlog', title: 'Created' });
+		for (const entry of body['activity']) {
+			expect(entry['at']).toMatch(/^\d{4}-/);
+			expect(entry['atText']).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d$/);
+			expect(typeof entry['id']).toBe('string');
+		}
+	});
+
+	// The DSL has no negation: a variant that shows an editor only while the property is empty needs the opposite flags.
+	it('has the opposite flags noType, noLabels and noParent for empty properties', async () => {
+		const parent = await createTask('parent');
+		const plain = (await detail(parent)).body;
+		expect(plain['noLabels']).toBe(true);
+		expect(plain['noParent']).toBe(true);
+		expect(plain['hasType']).toBe(false);
+		expect(plain['noType']).toBe(true);
+
+		const child = await createTask('child', { parent });
+		await h.call('POST /tasks/:id/labels', { params: { id: child }, query: { project }, body: { label: 'ux' } });
+		const full = (await detail(child)).body;
+		expect(full['noLabels']).toBe(false);
+		expect(full['noParent']).toBe(false);
+	});
+
+	it('ancestors are root first, with their href; a root task has none', async () => {
+		const root = await createTask('root');
+		const mid = await createTask('mid', { parent: root });
+		const leaf = await createTask('leaf', { parent: mid });
+		const { body } = await detail(leaf);
+		expect(body['hasAncestors']).toBe(true);
+		expect(body['ancestors'].map((a: { id: string }) => a.id)).toEqual([root, mid]);
+		// the direct parent as a linkable row (the sidebar of the variants)
+		expect(body['hasParent']).toBe(true);
+		expect(body['parentRow']).toMatchObject({
+			id: mid,
+			title: 'mid',
+			href: `/modules/task/tasks/p/${project}/${mid}`,
+		});
+		expect(body['ancestors'][0]).toMatchObject({
+			title: 'root',
+			titleText: 'root',
+			// BreadcrumbTrail reads label / href / title
+			label: 'root',
+			status: 'backlog',
+			tone: 'neutral',
+			href: `/modules/task/tasks/p/${project}/${root}`,
+		});
+		const top = (await detail(root)).body;
+		expect(top['ancestors']).toEqual([]);
+		expect(top['hasAncestors']).toBe(false);
+		expect(top['hasParent']).toBe(false);
+		expect(top['parentRow']).toBeNull();
+	});
+
+	it('a dangling parent has no ancestors and keeps its warning', async () => {
+		const parent = await createTask('parent');
+		const child = await createTask('child', { parent });
+		const indexPath = path.join(h.world.dataDirOf(project), 'task-index.json');
+		const index = JSON.parse(fs.readFileSync(indexPath, 'utf8')) as { tasks: Array<{ id: string }> };
+		index.tasks = index.tasks.filter(x => x.id !== parent);
+		fs.writeFileSync(indexPath, JSON.stringify(index));
+		const { status, body } = await detail(child);
+		expect(status).toBe(200);
+		expect(body['ancestors']).toEqual([]);
+		expect(body['hasAncestors']).toBe(false);
+		expect(body['canDetach']).toBe(true);
+		expect(body['warnings']).toHaveLength(1);
+	});
+
+	it('childrenSummary comes from the service count and the children rows carry their tone', async () => {
+		const parent = await createTask('parent');
+		const a = await createTask('a', { parent });
+		await createTask('b', { parent });
+		await setStatus(a, 'done');
+		const { body } = await detail(parent);
+		expect(body['childrenSummary']).toEqual({
+			total: 2,
+			done: 1,
+			open: 1,
+			value: 1,
+			max: 2,
+			text: '1 of 2 done',
+			hasChildren: true,
+		});
+		expect(body['hasChildren']).toBe(true);
+		const rows = body['children'] as Array<{ id: string; isDone: boolean; tone: string; statusTone: string }>;
+		expect(rows.find(r => r.id === a)).toMatchObject({ isDone: true, tone: 'success', statusTone: 'success' });
+		expect(rows.find(r => r.id !== a)).toMatchObject({ isDone: false, tone: 'neutral' });
+	});
+
+	it('childrenSummary of a leaf is empty with max 0 and no text', async () => {
+		const id = await createTask('leaf');
+		const { body } = await detail(id);
+		expect(body['childrenSummary']).toEqual({
+			total: 0,
+			done: 0,
+			open: 0,
+			value: 0,
+			max: 0,
+			text: '',
+			hasChildren: false,
+		});
+	});
+
+	it('blockedText and blockers list the open blockers only; a closed blocker unblocks', async () => {
+		const blocker = await createTask('blocker');
+		const blocked = await createTask('blocked');
+		await h.call('POST /tasks/:id/links', {
+			params: { id: blocked },
+			query: { project },
+			body: { type: 'blockedBy', target: blocker },
+		});
+		const open = (await detail(blocked)).body;
+		expect(open['blockedText']).toBe('Blocked by 1 open task(s)');
+		expect(open['blockers']).toEqual([
+			{
+				id: blocker,
+				title: 'blocker',
+				status: 'backlog',
+				href: `/modules/task/tasks/p/${project}/${blocker}`,
+			},
+		]);
+		expect(open['hasLinks']).toBe(true);
+		await setStatus(blocker, 'done');
+		const free = (await detail(blocked)).body;
+		expect(free['blockedText']).toBeNull();
+		expect(free['blockers']).toEqual([]);
+		// The blocker side is not "blocked".
+		expect((await detail(blocker)).body['blockedText']).toBeNull();
+	});
+
+	it('taskHrefs gains the delete page of the project', async () => {
+		const id = await createTask('t');
+		const { body } = await detail(id);
+		expect(body['taskHrefs']['deleteTasks']).toBe(`/modules/task/tasks/p/${project}/delete`);
+		expect(body['taskHrefs']['history']).toContain('/history');
+	});
+
+	it('the blank and missing-task answers do not gain the fields', async () => {
+		const blank = await h.call('GET /tasks/:id', { params: { id: 'x' }, query: { blank: 'true' } });
+		expect(blank.body).toEqual({ blank: true });
+		const missing = await h.call('GET /tasks/:id', {
+			params: { id: 'nope' },
+			query: { project, inlineErrors: 'true' },
+		});
+		expect(missing.status).toBe(200);
+		expect(missing.body['failed']).toBe(true);
+		expect(missing.body['activity']).toBeUndefined();
+	});
+});
+
+describe('GET /tasks/:id/links presentation contract', () => {
+	it('hasLinks and groups by relation (empty relations left out), with the rows kept and a tone per row', async () => {
+		const a = await createTask('a');
+		const b = await createTask('b');
+		const c = await createTask('c');
+		await h.call('POST /tasks/:id/links', {
+			params: { id: a },
+			query: { project },
+			body: { type: 'blockedBy', target: b },
+		});
+		await h.call('POST /tasks/:id/links', {
+			params: { id: a },
+			query: { project },
+			body: { type: 'causedBy', target: c },
+		});
+		await h.call('POST /tasks/:id/status', { params: { id: c }, query: { project }, body: { status: 'done' } });
+		const { body } = await h.call('GET /tasks/:id/links', { params: { id: a }, query: { project } });
+		expect(body['hasLinks']).toBe(true);
+		expect(body['rows']).toHaveLength(2);
+		expect(body['groups'].map((g: { relation: string }) => g.relation)).toEqual(['blockedBy', 'causedBy']);
+		expect(body['groups'][0]).toMatchObject({ label: 'Blocked by' });
+		expect(body['groups'][0]['rows']).toHaveLength(1);
+		expect(body['groups'][1]['rows'][0]).toMatchObject({ id: c, tone: 'success' });
+		expect(body['groups'][0]['rows'][0]).toMatchObject({ id: b, tone: 'neutral' });
+		const inverse = await h.call('GET /tasks/:id/links', { params: { id: b }, query: { project } });
+		expect(inverse.body['groups'].map((g: { relation: string }) => g.relation)).toEqual(['blocks']);
+		const lone = await createTask('lone');
+		const empty = await h.call('GET /tasks/:id/links', { params: { id: lone }, query: { project } });
+		expect(empty.body).toMatchObject({ hasLinks: false, groups: [], rows: [] });
+	});
+});
+
+// Quick actions: the value is in the PATH, because the installed shell's onAction sends no body.
+describe('quick-action routes', () => {
+	it('POST /tasks/:id/status/:status changes the status like the body route, delivering onStatusChange', async () => {
+		const id = await createTask('t');
+		const answer = await h.call('POST /tasks/:id/status/:status', {
+			params: { id, status: 'in-progress' },
+			query: { project },
+		});
+		expect(answer.status).toBe(200);
+		expect(answer.body).toMatchObject({
+			task: { id, status: 'in-progress' },
+			oldStatus: 'backlog',
+			undelivered: [],
+		});
+		expect(h.sink.events.map(e => e.name)).toEqual(['onStatusChange']);
+	});
+
+	it('the status route gives the same typed errors: 400 unknown status, 409 unchanged, 404 unknown task', async () => {
+		const id = await createTask('t');
+		const unknown = await h.call('POST /tasks/:id/status/:status', {
+			params: { id, status: 'doen' },
+			query: { project },
+		});
+		expect(unknown.status).toBe(400);
+		expect(unknown.body['error']).toContain('doen');
+		const same = await h.call('POST /tasks/:id/status/:status', {
+			params: { id, status: 'backlog' },
+			query: { project },
+		});
+		expect(same.status).toBe(409);
+		const missing = await h.call('POST /tasks/:id/status/:status', {
+			params: { id: 'nope', status: 'done' },
+			query: { project },
+		});
+		expect(missing.status).toBe(404);
+		expect(h.sink.events).toEqual([]);
+	});
+
+	it('answers a failure as data with ?inlineErrors=true (so the section can show it)', async () => {
+		const id = await createTask('t');
+		const answer = await h.call('POST /tasks/:id/status/:status', {
+			params: { id, status: 'doen' },
+			query: { project, inlineErrors: 'true' },
+		});
+		expect(answer.status).toBe(200);
+		expect(answer.body['failed']).toBe(true);
+		expect(answer.body['errorText']).toContain('doen');
+	});
+
+	it('POST /tasks/:id/type/:type sets the type; an unknown type is refused when types are configured', async () => {
+		const id = await createTask('t');
+		const ok = await h.call('POST /tasks/:id/type/:type', { params: { id, type: 'bug' }, query: { project } });
+		expect(ok.status).toBe(200);
+		expect(ok.body['task']).toMatchObject({ id, type: 'bug' });
+		expect(h.sink.events.map(e => e.name)).toEqual(['onTaskTypeChanged']);
+		await h.call('POST /types', { query: { project }, body: { name: 'feature' } });
+		const bad = await h.call('POST /tasks/:id/type/:type', { params: { id, type: 'nope' }, query: { project } });
+		expect(bad.status).toBe(400);
+	});
+
+	it('POST /tasks/:id/labels/:label adds the label once (the path value is used as given), delivering one event', async () => {
+		const id = await createTask('t');
+		const added = await h.call('POST /tasks/:id/labels/:label', {
+			params: { id, label: 'needs review' },
+			query: { project },
+		});
+		expect(added.status).toBe(200);
+		expect(added.body['task']['labels']).toEqual(['needs review']);
+		const again = await h.call('POST /tasks/:id/labels/:label', {
+			params: { id, label: 'needs review' },
+			query: { project },
+		});
+		expect(again.status).toBe(200);
+		expect(h.sink.events.map(e => e.name)).toEqual(['onTaskLabelAdded']);
+		// Fastify decodes the path once: a label that itself reads "100%25" is stored as such, not decoded again.
+		const literal = await h.call('POST /tasks/:id/labels/:label', {
+			params: { id, label: '100%25' },
+			query: { project },
+		});
+		expect(literal.body['task']['labels']).toContain('100%25');
+	});
+
+	it('a blank label is a 400 and delivers nothing', async () => {
+		const id = await createTask('t');
+		for (const label of ['', '   ']) {
+			const answer = await h.call('POST /tasks/:id/labels/:label', { params: { id, label }, query: { project } });
+			expect(answer.status, JSON.stringify(label)).toBe(400);
+			expect(answer.body['hint']).toContain('label');
+		}
+		expect(h.sink.events).toEqual([]);
+	});
+
+	it('404 for an unknown project, before touching anything', async () => {
+		const answer = await h.call('POST /tasks/:id/labels/:label', {
+			params: { id: 'x', label: 'a' },
+			query: { project: 'zzzzzzzz' },
+		});
+		expect(answer.status).toBe(404);
 	});
 });

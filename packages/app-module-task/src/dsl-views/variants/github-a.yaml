@@ -1,0 +1,32 @@
+label: GitHub A
+hint: GitHub issue page - title, status badge and age, description first, sub-issues with progress, linked tasks and activity in the main column, a sidebar of properties where status, type and labels change on click (no Save button).
+view:
+    $type: VerticalStack
+    gap: gap-4
+    items:
+        - $use: github-a.header
+        - $type: task:VariantSwitcher
+          id: github-a-layout
+          label: Sidebar
+          initial: right
+          variants:
+              right:
+                  label: Right
+                  hint: Properties sidebar on the right of the description, as GitHub does; stacks below 1024 px.
+                  view:
+                      $type: task:SplitLayout
+                      sidePosition: right
+                      main:
+                          - $use: github-a.main
+                      side:
+                          - $use: github-a.side
+              left:
+                  label: Left
+                  hint: Properties sidebar on the left of the description; stacks below 1024 px.
+                  view:
+                      $type: task:SplitLayout
+                      sidePosition: left
+                      main:
+                          - $use: github-a.main
+                      side:
+                          - $use: github-a.side

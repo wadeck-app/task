@@ -1,0 +1,38 @@
+/* The library's stylesheet. app-core's shell already has Tailwind's base layer and dsl-ui's palette, so there is no
+   `@tailwind base` here and no palette: only the utilities the task components use and the tokens dsl-ui does not own. */
+@tailwind components;
+@tailwind utilities;
+
+/* Label chip palette (LabelChips): deterministic colour by hash of the label. -N is the text, -N-bg the chip behind it;
+   text on chip is 4.5:1 or better in both themes. */
+:root {
+	--color-task-chip-1: #3730a3;
+	--color-task-chip-2: #075985;
+	--color-task-chip-3: #065f46;
+	--color-task-chip-4: #92400e;
+	--color-task-chip-5: #9d174d;
+	--color-task-chip-6: #5b21b6;
+	--color-task-chip-1-bg: #e0e7ff;
+	--color-task-chip-2-bg: #e0f2fe;
+	--color-task-chip-3-bg: #d1fae5;
+	--color-task-chip-4-bg: #fef3c7;
+	--color-task-chip-5-bg: #fce7f3;
+	--color-task-chip-6-bg: #ede9fe;
+}
+
+/* The dark tokens apply under the shell's `.dark` class as well as under `data-theme="dark"`. */
+.dark,
+[data-theme='dark'] {
+	--color-task-chip-1: #c7d2fe;
+	--color-task-chip-2: #bae6fd;
+	--color-task-chip-3: #a7f3d0;
+	--color-task-chip-4: #fde68a;
+	--color-task-chip-5: #fbcfe8;
+	--color-task-chip-6: #ddd6fe;
+	--color-task-chip-1-bg: #312e81;
+	--color-task-chip-2-bg: #0c4a6e;
+	--color-task-chip-3-bg: #064e3b;
+	--color-task-chip-4-bg: #78350f;
+	--color-task-chip-5-bg: #831843;
+	--color-task-chip-6-bg: #4c1d95;
+}

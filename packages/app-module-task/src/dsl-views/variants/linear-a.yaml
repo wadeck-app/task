@@ -1,0 +1,79 @@
+label: Linear A
+hint: Linear issue - big title, one row of property chips (status, type, labels, parent) that change on click, description full width, sub-issues with progress, relations and activity below; no sidebar.
+view:
+    $type: VerticalStack
+    gap: gap-4
+    items:
+        - $use: linear-a.title
+        - $type: VerticalStack
+          gap: gap-2
+          items:
+              - $use: linear-a.chips.core
+              - $use: linear-a.feedback
+              - $type: task:VariantSwitcher
+                id: linear-a-chips
+                label: Other properties
+                initial: popovers
+                variants:
+                    popovers:
+                        label: Popovers
+                        hint: Metadata, Parent and Links are chips that open a small form, like Linear property pickers.
+                        view:
+                            $use: linear-a.chips.popovers
+                    collapsed:
+                        label: Collapsed
+                        hint: The same forms folded in one Edit properties block under the chips.
+                        view:
+                            $use: linear-a.edit.collapsed
+        - $use: linear-a.description
+        - $type: task:VariantSwitcher
+          id: linear-a-subissues
+          label: Sub-issues
+          initial: shown
+          variants:
+              shown:
+                  label: Shown
+                  hint: Sub-issues with a progress ring and the relations of the task under the description.
+                  view:
+                      $type: VerticalStack
+                      gap: gap-4
+                      items:
+                          - $use: linear-a.subissues
+                          - $use: linear-a.relations
+              hidden:
+                  label: Hidden
+                  hint: Neither sub-issues nor relations; the page stops after the description.
+                  view:
+                      $type: VerticalStack
+                      items: []
+        - $type: task:VariantSwitcher
+          id: linear-a-activity
+          label: Activity
+          initial: collapsed
+          variants:
+              collapsed:
+                  label: Collapsed
+                  hint: Activity folded under its title; click to open.
+                  view:
+                      $type: task:Panel
+                      title: Activity
+                      appearance: plain
+                      collapsible: true
+                      defaultOpen: false
+                      items:
+                          - $use: linear-a.activity
+              open:
+                  label: Open
+                  hint: Activity always open under the relations.
+                  view:
+                      $type: task:Panel
+                      title: Activity
+                      appearance: plain
+                      items:
+                          - $use: linear-a.activity
+              hidden:
+                  label: Hidden
+                  hint: No activity block.
+                  view:
+                      $type: VerticalStack
+                      items: []

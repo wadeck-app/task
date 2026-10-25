@@ -1,15 +1,16 @@
 ## Packages
 
-| Package           | Role                                                                                                             |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `task-core`       | Storage: `TaskStore`, config loading, domain errors.                                                             |
-| `task-service`    | Use cases shared by the CLI and the app-module. Pure: no console, no `process.exit`; returns results and events. |
-| `task-cli`        | `task` binary: arg parsing and output over task-service, updater, app-core registration.                         |
-| `app-module-task` | app-core module (id `task`): routes `/api/modules/task/*` and dsl-views over task-service.                       |
+| Package           | Role                                                                                                                |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `task-core`       | Storage: `TaskStore`, config loading, domain errors.                                                                |
+| `task-service`    | Use cases shared by the CLI and the app-module. Pure: no console, no `process.exit`; returns results and events.    |
+| `task-cli`        | `task` binary: arg parsing and output over task-service, updater, app-core registration.                            |
+| `app-module-task` | app-core module (id `task`): routes `/api/modules/task/*` and dsl-views over task-service.                          |
+| `dsl-lib-task`    | Browser components (React) the module ships as `task:<Name>`; no storage, service or Node API. See Task components. |
 
 ## Dependency direction
 
-`task-core` <- `task-service` <- `task-cli` and `app-module-task`. The two adapters never import each other, and `task-service` knows no CLI, HTTP or app-core library, never prints or exits. `npm run test:architecture` (`architecture/`, part of `npm test`) enforces it on imports, `package.json` dependencies and source patterns.
+`task-core` <- `task-service` <- `task-cli` and `app-module-task`; `app-module-task` -> `dsl-lib-task` (loaded by its `src/dsl-components`, props only). The two adapters never import each other, and `task-service` knows no CLI, HTTP or app-core library, never prints or exits. `npm run test:architecture` (`architecture/`, part of `npm test`) enforces it on imports, `package.json` dependencies and source patterns.
 
 `@wadeck-app/project-sdk` ("latest", lockfile pins it; zero dependencies) is imported by `task-service` only; the architecture test forbids it in the sources of the adapters and `task-core` (their tests may use its mutations for fixtures). Shared rules live in `task-service` (`resolveProject`, `resolveProjectReference`, `listKnownProjects`, `describeError` for the SDK errors), adapters only parse input and format output: `describeError` (error kind, message, hint; CLI maps to stderr, module to HTTP status), `selectDeleteTargets` / `describeDeleteEffects`, `openTaskContext`, `getTaskLogDir`, `countTasksByStatus`, `showTaskWithRelations`, the storage (`storage.ts`: `registryStorage`, `chooseDataLocation`; `openResolvedProject`; `loadTaskConfig`; `migrateData`; `legacyData.ts` is the ONLY module that knows the `.task` folder, see stage 2b-2), the per-project health (`inspectRegisteredProjects`), `listStatuses` (the valid statuses with `default` / `terminal`, from the same merged config as `setStatus`), and the cross-project reads `summarizeProjects` / `listTasksAcrossProjects` (per-project figures and tasks tagged with their project; unreadable projects reported, `NoReadableProjectsError` when none can be read; used by the app-module and by the CLI, see CLI parity below).
 
@@ -167,6 +168,46 @@ Decided:
 Open decisions (the owner's, nothing implemented):
 
 - Replay text for cmd.exe / PowerShell, or a `--cwd` option in `queue push` (queue repo) to drop the `cd`.
+
+## Task components (to be transferred to dsl-view)
+
+`packages/dsl-lib-task` holds React business components, loaded by the shell as `task:<Name>` through the module's `src/dsl-components/index.ts` (`createTaskLibEntries({ apiBase, routeBase })`, manifest `dslLib.shared`). Modelled on orchestrator's `dsl-lib-orch`; written to move to dsl-view unchanged. Browser code: architecture rule allows only react, react-dom, dsl-ui, dsl-renderer, lucide-react and relative imports; never task-service, task-core, the module backend or a `node:` module.
+
+| Component                      | Role                                                                                                      |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| `SplitLayout`                  | main + side column, stacks below `lg`, optional sticky side                                               |
+| `PropertyList` / `PropertyRow` | label / value rows, `density`, `labelPlacement`, `labelWidth`, `dividers`                                 |
+| `Timeline`                     | dated events with icons, optional day groups, ordered by `at` (UTC day)                                   |
+| `SegmentedControl`             | exclusive choices; with `action` a click runs it                                                          |
+| `ActionSelect`                 | select that runs a page action on change, no Save button (the "StatusSelect": serves status and type)     |
+| `LabelChips`                   | coloured chips, x removes (`removeAction`), inline field adds (`addAction`)                               |
+| `StatusBadge`                  | status pill / dot / icon by tone                                                                          |
+| `TaskRowList`                  | tasks as navigable rows (data, not nodes): id, truncated title, status                                    |
+| `BreadcrumbTrail`              | ancestors chain with folding                                                                              |
+| `ProgressSummary`              | `done` of `total` as bar, segments, ring or text                                                          |
+| `Panel`                        | titled box: count, header `actions`, collapsible body                                                     |
+| `VariantSwitcher`              | A/B switcher with the props of dsl-ui `AbTest`; large bottom-centre bar, nested switchers add option rows |
+
+- Actions: controls call `onAction(name, params)` (default `ctx.onAction`, `@ctxDefault`). The installed shell (dsl-ui 175) passes NO body: the action url carries the value (`POST /tasks/{id}/status/{status}`) and every placeholder (`id`, `projectParam`, the value) comes from `params`. The handler publishes the answer under the action's `resultKey` and reloads the sources, so the page's error and `undeliveredText` badges keep working. A control with an action but no page is disabled with a tooltip and one console error.
+- Also: `ChipRow` (chips that wrap; `HorizontalStack` never does), `TabPanels` (tabs + content, counts in a `counts` prop because the renderer resolves expressions in `items` only), `KeyValueList` (metadata pairs), `Notice` (feedback text that wraps and clamps to 3 lines, for narrow columns; the variants use it in sidebars through `feedback.wrapped.*`).
+- Which handler runs an action (verified in the installed shell 094): `ctx.onAction(name, row)` reloads but does NOT publish the action's `resultKey`, so `errorText` / `undeliveredText` never show. The generated entries therefore default `onAction` to `pageActionHandler(ctx)` (`src/compat/actions.ts`): the page's named handler `ctx.<action>(data)` (what a Form's `onSubmit` calls; publishes the `resultKey`), else `ctx.onAction`. The named handler fills url placeholders WITHOUT encoding: each string param is also given as `<key>Encoded` (`/labels/{labelEncoded}`). Object props holding expressions (`params`) need `@resolveDeep` in their JSDoc, else the literal `$route.id` reaches the url. Limit: a label containing `/` or `%` cannot be removed by path (app-core answers 404); adding goes through the body action.
+- Installed shell renderer (dsl-renderer 175) does not export `coerceProp`, `resolveExpressionsDeep`, `coerceDate`, `coerceStringList`: `scripts/generate-entries.ts` rewrites those imports to `src/compat/dslRenderer.ts` (the shell's own when present, else a local copy tested against dsl-renderer 260).
+- `VariantSwitcher` gating: `useAbExperiments().enabled` of the shell host, else `isDev()`. Off (production build): renders `initial` only, never reads storage or URL. Keys `ab.<id>`, `?ab.<id>=`, `ab.collapsed` are the dsl-ui ones. It exists only because the dock of `AbTest` is not configurable and too small; delete it when dsl-ui can size the dock.
+- Entries are generated (`npm run entries --workspace=packages/dsl-lib-task`, committed, freshness-tested); the stylesheet is built by `npm run css` (part of `bundle`, gitignored `src/dsl-components/style.css`).
+- Navigation uses plain `<a href>` (dsl-ui's `AppLink` is not exported): full page load. Using react-router needs `react-router-dom` added to `BROWSER_LIB_IMPORT` in `architecture/rules.ts`.
+
+Transfer checklist: copy `src/components/*` (+ `tones.ts`, `useAction.ts`, `useStoredChoice.ts`, `reportOnce.ts`, `propertyContext.ts`) into dsl-view's component folder; drop `src/compat` and the generator rewrite; replace `runtime-config.ts` (only `appPath`/`getApiBase` helpers, unused by these components so far); move the `task-chip-*` tokens of `src/styles/task.css` into the dsl-ui theme; register as `<Name>` and drop the `task:` prefix in the views; keep the tests.
+
+## Task page variants (temporary A/B experiment)
+
+`/tasks/p/:project/:id` renders `task:VariantSwitcher` `task-design`: `current` (today's page, `initial`) plus github-a/b, gitlab-a/b, jira-a/b, linear-a/b, notion-a/b, each with up to 3 nested option switchers (`<variant>-<option>`). Production (installed shell, no dev host) renders `current` only, with no bar and no read of storage or URL; the other variants ship in the YAML.
+
+- Source: `src/dsl-views/variants/` (`_page.yaml` head, `_shared.yaml` named fragments used as `{ $use: name }`, one `<variant>.yaml` = `label`, `hint`, `view`). `task-page.yaml` is GENERATED by `scripts/generate-task-page.mjs` (`npm run views --workspace=packages/app-module-task`, freshness-tested). `bundle` runs `views`, then `css`, then `app-core-cli package`. Every variant but `current` is wrapped in `$if: $sources.detail.task`; the notices stay outside the switcher.
+- Data: the presentation fields of `GET /tasks/:id` and `/links` are listed in the comment at the top of `taskViews.ts`; `summarizeChildren` / `describeBlockers` live in task-service (`taskProgress.ts`).
+- Actions: the installed shell's `onAction` sends no body, so on-change controls use routes with the value in the path (`POST /tasks/:id/status/:status`, `/type/:type`, `/labels/:label`) and `$actions` `setStatusTo`, `setTypeTo`, `addLabelTo`, `removeLabelChip`. Named page handlers publish `resultKey`; `ctx.onAction` does not (see Task components).
+- Tests (`taskPageVariants.test.ts`): every combination of options keeps the 9 logical actions, the links to history / children / delete, both feedback badges per resultKey (shown once), no 250-only construct, only known node types, no back link.
+- Seen twice by the forks and NOT reproduced in 6 attempts (cold load, app-core restart with the page open, repackaged module on the same port): "Unknown component type: task:VariantSwitcher" right after an app-core restart or first switch, fixed by a reload. Code facts: `ModuleLibGate` renders its children while the module has no lib status yet (the status is set in an effect after the first render), and `registry.ts` has no HMR handling, so a Vite hot update of it would replace `appRegistry` and drop the module entries until reload. Neither was confirmed as the cause; app-core's owner should know both.
+- Remove the experiment (bake the winner): put the chosen variant's view in `_page.yaml` in place of `$experiment` (or inline it in `task-page.yaml`), delete `variants/`, `scripts/generate-task-page.mjs`, the `views` script, `taskPageVariants.test.ts` and its fixture, the `task:VariantSwitcher` / unused components and `$use` fragments, the unused detail fields and quick routes, and the `removeLabelChip` / `*To` actions the winner does not call.
 
 ## Agent reference docs
 

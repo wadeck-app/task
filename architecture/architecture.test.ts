@@ -25,7 +25,7 @@ function violationsOf(pkg: PackageName): { checked: number; violations: Violatio
 	const files = sourceFiles(path.join(ROOT, 'packages', pkg, 'src'));
 	const violations = files.flatMap(file =>
 		checkSource(repoRelative(file), fs.readFileSync(file, 'utf8'), rule, {
-			isTest: /\.test\.tsx?$/.test(file) || path.basename(file) === 'testHelpers.ts',
+			isTest: /\.test\.tsx?$/.test(file) || ['testHelpers.ts', 'test-setup.ts'].includes(path.basename(file)),
 			resolveRelative: specifier => repoRelative(path.resolve(path.dirname(file), specifier)),
 		})
 	);
@@ -106,6 +106,84 @@ describe('the rules detect what they forbid', () => {
 		expect(violationsIn('task-service', "import { x } from '@wadeck-app/task-core';")).toEqual([]);
 	});
 
+	describe('dsl-lib-task: browser components', () => {
+		const inLib = (source: string, isTest = false): string[] =>
+			violationsIn('dsl-lib-task', source, { isTest, resolveRelative: noRelative });
+
+		it('may import react, the shared dsl packages, the icon set and its own files', () => {
+			for (const specifier of [
+				'react',
+				'react/jsx-runtime',
+				'react-dom',
+				'@wadeck-app/dsl-ui',
+				'@wadeck-app/dsl-ui/dist/components/display/Badge.js',
+				'@wadeck-app/dsl-renderer',
+				'lucide-react',
+				'./Timeline.js',
+				'../runtime-config.js',
+			]) {
+				expect(inLib(`import { x } from '${specifier}';`), specifier).toEqual([]);
+			}
+		});
+
+		it('must not import a Node builtin or an unlisted dependency (outside tests)', () => {
+			for (const specifier of ['node:fs', 'node:path', 'fs', 'path', 'zod', 'react-router-dom', 'lodash']) {
+				expect(inLib(`import { x } from '${specifier}';`), specifier).toHaveLength(1);
+			}
+			expect(inLib("import fs from 'node:fs';", true)).toEqual([]);
+			expect(inLib("import { render } from '@testing-library/react';", true)).toEqual([]);
+		});
+
+		it('must not import the service, the storage, the CLI, the module or the app-core libraries', () => {
+			for (const specifier of [
+				'@wadeck-app/task-service',
+				'@wadeck-app/task-core',
+				'task-cli',
+				'@wadeck-app/app-module-task',
+				'@wadeck-app/app-module-task/dist',
+				'@wadeck-app/app-core-sdk',
+				'@wadeck-app/shared-cli',
+				'fastify',
+			]) {
+				expect(inLib(`import { x } from '${specifier}';`).length, specifier).toBeGreaterThan(0);
+				// Not even a test may couple the components to the backend.
+				expect(
+					inLib(`import { x } from '${specifier}';`, true).length,
+					`${specifier} in a test`
+				).toBeGreaterThan(0);
+			}
+			expect(
+				violationsIn('dsl-lib-task', "import { x } from '../../task-service/src/x.js';", {
+					isTest: false,
+					resolveRelative: () => 'packages/task-service/src/x.js',
+				}).length
+			).toBeGreaterThan(0);
+		});
+
+		it('must not use the Node process API', () => {
+			expect(inLib('const dir = process.cwd();')).toHaveLength(1);
+			expect(inLib('const dir = process.env.HOME;')).toHaveLength(1);
+			expect(inLib('const dir = process.cwd();', true)).toEqual([]);
+		});
+
+		it('is itself unknown to the node-side packages', () => {
+			for (const pkg of ['task-core', 'task-service', 'task-cli'] as const) {
+				expect(violationsIn(pkg, "import { x } from '@wadeck-app/dsl-lib-task';"), pkg).toHaveLength(1);
+			}
+			// The module loads it (src/dsl-components).
+			expect(violationsIn('app-module-task', "import { x } from '@wadeck-app/dsl-lib-task';")).toEqual([]);
+		});
+
+		it('declaring a forbidden dependency in package.json is reported', () => {
+			const found = checkManifest(
+				'p.json',
+				{ dependencies: { '@wadeck-app/task-service': '*' } },
+				PACKAGE_RULES['dsl-lib-task']
+			);
+			expect(found).toHaveLength(1);
+		});
+	});
+
 	// The queue SDK is the shared delivery adapter of the events (queueEventSink.ts): both adapters get it through task-service.
 	it('task-service may import the queue SDK, while shared-cli and app-core stay forbidden there', () => {
 		expect(violationsIn('task-service', "import { createQueuePublisher } from '@wadeck-app/queue-sdk';")).toEqual(
@@ -129,7 +207,7 @@ describe('the rules detect what they forbid', () => {
 
 	// Stage 2a: the shared registry belongs to the project CLI. Task reads it (resolution, listing) and never writes it; the legacy
 	// projects.json is read only too (its writers and their lock are deleted).
-	it.each(['task-core', 'task-service', 'task-cli', 'app-module-task'] as const)(
+	it.each(['task-core', 'task-service', 'task-cli', 'app-module-task', 'dsl-lib-task'] as const)(
 		'%s must not write the shared registry nor the legacy projects.json',
 		pkg => {
 			for (const mutation of [

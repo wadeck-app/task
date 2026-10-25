@@ -1,0 +1,32 @@
+label: GitLab B
+hint: GitLab work item with tabs - same sidebar as GitLab A, but child items, linked items and activity are tabs of one box instead of a stack.
+view:
+    $type: VerticalStack
+    gap: gap-4
+    items:
+        - $use: gitlab.header
+        - $type: task:VariantSwitcher
+          id: gitlab-b-sidebar
+          label: Sidebar
+          initial: right
+          variants:
+              right:
+                  label: Right
+                  hint: Sidebar sections on the right of the description; stacks below 1024 px.
+                  view:
+                      $type: task:SplitLayout
+                      sidePosition: right
+                      main:
+                          - $use: gitlab-b.main
+                      side:
+                          - $use: gitlab-b.side
+              left:
+                  label: Left
+                  hint: Sidebar sections on the left of the description; stacks below 1024 px.
+                  view:
+                      $type: task:SplitLayout
+                      sidePosition: left
+                      main:
+                          - $use: gitlab-b.main
+                      side:
+                          - $use: gitlab-b.side

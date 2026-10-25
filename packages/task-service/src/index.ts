@@ -110,3 +110,5 @@ export {
 export { TASK_CONFIG_SCHEMA, loadTaskConfig } from './projectConfig.js';
 export type { MigrateDataOptions, MigrateDataResult } from './migrateData.js';
 export { migrateData } from './migrateData.js';
+export type { Blocker, BlockerSummary, ChildrenSummary } from './taskProgress.js';
+export { describeBlockers, summarizeChildren } from './taskProgress.js';

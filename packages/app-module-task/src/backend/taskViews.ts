@@ -1,10 +1,57 @@
 // View models of the task pages: what the dsl-views bind to (hrefs, options, flags, form data), built from service results.
+//
+// CONTRACT OF `GET /tasks/:id` (the task page and ALL its design variants bind to these; `$sources.detail.<field>`).
+// Presentation only: every rule shown (what is closed, what blocks, the children count) is computed by task-service.
+// A list is never tested for emptiness in the DSL (`[]` is truthy): use the boolean next to it.
+//
+// Pre-existing: task, parent (null when root or dangling), children (rows), links, labelRows, metaRows, statusOptions,
+//   typeOptions, hasTypes, noTypes, hasLabels, labelOptions, linkTypeOptions, hrefs, taskHrefs.{detail,history,childrenList},
+//   projectParam, forms.*, canDetach, warnings, warningText, project, projectText.
+//
+// | field                   | type                                   | meaning                                                              | consumer |
+// | ----------------------- | -------------------------------------- | -------------------------------------------------------------------- | -------- |
+// | projectParam            | string                                 | encoded project id: `params` of the quick actions                    | actions  |
+// | createdAt, updatedAt    | ISO string                             | raw dates (RelativeDate)                                             | all      |
+// | createdText, updatedText| "2026-10-19 19:37"                     | UTC minute display of the dates                                      | all      |
+// | descriptionText         | string or null                         | the description; null when blank                                     | Markdown |
+// | hasDescription          | boolean                                | `descriptionText !== null`                                           | $if      |
+// | statusChoices           | [{value,label,tone,isDefault,isTerminal}] | statuses in config order; tone success (closed), neutral (initial), info (others) | ActionSelect, SegmentedControl |
+// | statusTone, isTerminal, isOpen | tone, boolean, boolean          | of the task's current status; isOpen = not terminal (the DSL has no negation) | badges   |
+// | typeChoices             | [{value,label}]                        | configured types; [] when the project has none (free text)           | ActionSelect |
+// | labelList               | string[]                               | the labels                                                           | LabelChips |
+// | labelCount, metaCount, linkCount | number                | counts for panel headers (the DSL cannot take a length)             | Panel count |
+// | metaList                | [{key,value}]                          | the metadata (same rows as metaRows)                                 | PropertyList |
+// | activity, hasActivity   | [{id,kind,title,detail,from,to,tone,at,atText}] | oldest first: "created" then one per status change; kind created, status or done (closing) | Timeline |
+// | ancestors, hasAncestors | [{id,title,titleText,status,tone,href}] | root first; empty for a root task or a dangling parent (see warnings) | breadcrumb |
+// | parentRow, hasParent    | row or null, boolean                   | the direct parent (last ancestor) as a linkable row                  | sidebars |
+// | noParent, noType, hasType, noLabels | boolean          | opposite flags (the DSL has no negation): editors shown only while a property is empty | variants |
+// | children (rows)         | + tone, statusTone, isDone             | the existing rows with the tone of their status                      | lists    |
+// | childrenSummary         | {total,done,open,value,max,text,hasChildren} | text "2 of 5 done" ('' without children); value/max feed a Progress | progress |
+// | hasChildren, hasLinks, hasLabels, hasMeta | boolean              | non-empty flags                                                      | $if      |
+// | blockers, blockedText   | [{id,title,status,href}], string or null | OPEN blockers only; "Blocked by N open task(s)" or null             | warnings |
+// | taskHrefs.deleteTasks   | href                                   | the delete page of the project                                       | links    |
+//
+// `GET /tasks/:id/links` adds: hasLinks, rows (each + tone, statusTone, isDone) and groups [{relation,label,rows}]
+// (relations without a task left out). Quick-action routes (value in the PATH, see taskWriteRoutes.ts): POST
+// /tasks/:id/status/:status, /tasks/:id/type/:type, /tasks/:id/labels/:label (remove: DELETE /tasks/:id/labels/:label).
 import type { TaskLinks, TaskRecord, TaskSummary, TaskTreeNode } from '@wadeck-app/task-core';
 import { ALL_LINK_NAMES } from '@wadeck-app/task-service';
+import type { BlockerSummary, ChildrenSummary } from '@wadeck-app/task-service';
 
+import { shortUtcTime } from './display.js';
 import { detailHref, encodedProject, historyHref, pageHrefs, pageLink, projectText, showAllToggle } from './hrefs.js';
 import type { OpenedProject } from './projects.js';
 import { flattenTree, withRowLinks, withTreeLinks } from './rowViews.js';
+import {
+	activityEntries,
+	ancestorChips,
+	blockedText,
+	blockerRows,
+	childrenSummaryView,
+	statusChoices,
+	statusTone,
+	withTones,
+} from './taskPresentation.js';
 
 type Project = OpenedProject['project'];
 
@@ -51,24 +98,70 @@ function detailForms(project: Project, task: TaskRecord): Record<string, Record<
 /** The detail page of a task. `detail` is the service's task detail with `parent` and `children`. */
 export function taskDetailBody(
 	ctx: OpenedProject,
-	data: { detail: Record<string, unknown>; warnings: string[]; links: TaskLinks; types: string[] }
+	data: {
+		detail: Record<string, unknown>;
+		warnings: string[];
+		links: TaskLinks;
+		types: string[];
+		/** Nearest first, as the store lists them (empty for a root task or a dangling parent). */
+		ancestors: Array<TaskSummary | undefined>;
+		childrenSummary: ChildrenSummary;
+		blockers: BlockerSummary;
+	}
 ): Record<string, unknown> {
-	const { project } = ctx;
+	const { project, config } = ctx;
 	const { parent, children, ...task } = data.detail;
 	const record = task as unknown as TaskRecord;
 	const labels = record.labels ?? [];
+	const meta = Object.entries(record.meta ?? {}).map(([key, value]) => ({ key, value }));
+	const description = (record.description ?? '').trim() === '' ? null : record.description;
+	const activity = activityEntries(config, record);
+	const ancestors = ancestorChips(project, config, data.ancestors);
+	const linkCount = Object.values(data.links).reduce((sum, tasks) => sum + tasks.length, 0);
 	return {
 		project,
 		projectText: projectText(project),
 		task,
+		createdAt: record.createdAt,
+		updatedAt: record.updatedAt,
+		createdText: shortUtcTime(record.createdAt),
+		updatedText: shortUtcTime(record.updatedAt),
+		descriptionText: description,
+		hasDescription: description !== null,
+		statusChoices: statusChoices(config),
+		statusTone: statusTone(config, record.status),
+		isTerminal: config.terminalStatuses.includes(record.status),
+		isOpen: !config.terminalStatuses.includes(record.status),
+		typeChoices: data.types.map(type => ({ value: type, label: type })),
+		labelList: labels,
+		labelCount: labels.length,
+		metaList: meta,
+		metaCount: meta.length,
+		linkCount,
+		hasMeta: meta.length > 0,
+		activity,
+		hasActivity: activity.length > 0,
+		ancestors,
+		hasAncestors: ancestors.length > 0,
+		parentRow: ancestors.length === 0 ? null : ancestors[ancestors.length - 1],
+		hasParent: ancestors.length > 0,
+		noParent: ancestors.length === 0,
+		hasType: Boolean(record.type),
+		noType: !record.type,
+		childrenSummary: childrenSummaryView(data.childrenSummary),
+		hasChildren: data.childrenSummary.total > 0,
+		hasLinks: linkCount > 0,
+		blockers: blockerRows(project, data.blockers.blockers),
+		blockedText: blockedText(data.blockers.count),
 		// Rows for the tables of the detail page (a table shows lists of objects).
 		labelRows: labels.map(label => ({ label })),
-		metaRows: Object.entries(record.meta ?? {}).map(([key, value]) => ({ key, value })),
+		metaRows: meta,
 		statusOptions: ctx.config.statuses.map(status => ({ value: status, label: status })),
 		typeOptions: data.types.map(type => ({ value: type, label: type })),
 		hasTypes: data.types.length > 0,
 		noTypes: data.types.length === 0,
 		hasLabels: labels.length > 0,
+		noLabels: labels.length === 0,
 		labelOptions: labels.map(label => ({ value: encodeURIComponent(label), label })),
 		linkTypeOptions: ALL_LINK_NAMES.map(name => ({ value: name, label: name })),
 		hrefs: pageHrefs(project),
@@ -76,6 +169,7 @@ export function taskDetailBody(
 			detail: detailHref(project, record.id),
 			history: historyHref(project, record.id),
 			childrenList: pageLink(project, 'tasks', { parent: record.id, showAll: 'true' }),
+			deleteTasks: pageHrefs(project)['deleteTasks'],
 		},
 		projectParam: encodedProject(project),
 		forms: detailForms(project, record),
@@ -84,7 +178,7 @@ export function taskDetailBody(
 		canDetach: record.parentId !== undefined,
 		warnings: data.warnings,
 		warningText: data.warnings.length === 0 ? null : data.warnings.join(' '),
-		children: withRowLinks(project, children as TaskSummary[]),
+		children: withTones(config, withRowLinks(project, children as TaskSummary[]) as TaskSummary[]),
 		links: data.links,
 	};
 }

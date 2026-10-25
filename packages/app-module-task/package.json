@@ -9,7 +9,9 @@
 	"scripts": {
 		"build": "tsc -p tsconfig.json --noEmit",
 		"check": "app-core-cli check .",
-		"bundle": "app-core-cli package .",
+		"views": "node ../../scripts/generate-task-page.mjs",
+		"css": "npm run css --workspace=@wadeck-app/dsl-lib-task",
+		"bundle": "npm run views && npm run css && app-core-cli package .",
 		"pretest": "cd ../task-service && npm run build",
 		"test": "vitest run --bail=1",
 		"test:watch": "vitest",
@@ -17,14 +19,17 @@
 		"clean": "rimraf dist-module"
 	},
 	"dependencies": {
+		"@wadeck-app/dsl-lib-task": "*",
 		"@wadeck-app/task-core": "*",
 		"@wadeck-app/task-service": "*"
 	},
 	"devDependencies": {
+		"@types/js-yaml": "^4.0.9",
 		"@types/node": "^26.2.0",
 		"@wadeck-app/app-core-cli": "latest",
 		"@wadeck-app/app-core-sdk": "latest",
 		"@wadeck-app/project-sdk": "latest",
+		"js-yaml": "^4.3.2",
 		"rimraf": "^6.0.1",
 		"typescript": "^7.0.0",
 		"vitest": "^4.0.14"

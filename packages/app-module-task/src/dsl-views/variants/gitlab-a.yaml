@@ -1,0 +1,32 @@
+label: GitLab A
+hint: GitLab work item - Open/Closed badge with age, description, then child items, linked items and activity as collapsible panels; the sidebar is a stack of collapsible sections (Status, Type, Labels, Parent, Metadata) with counts.
+view:
+    $type: VerticalStack
+    gap: gap-4
+    items:
+        - $use: gitlab.header
+        - $type: task:VariantSwitcher
+          id: gitlab-a-sidebar
+          label: Sidebar
+          initial: right
+          variants:
+              right:
+                  label: Right
+                  hint: Sidebar sections on the right of the description, as GitLab does; stacks below 1024 px.
+                  view:
+                      $type: task:SplitLayout
+                      sidePosition: right
+                      main:
+                          - $use: gitlab-a.main
+                      side:
+                          - $use: gitlab-a.side
+              left:
+                  label: Left
+                  hint: Sidebar sections on the left of the description; stacks below 1024 px.
+                  view:
+                      $type: task:SplitLayout
+                      sidePosition: left
+                      main:
+                          - $use: gitlab-a.main
+                      side:
+                          - $use: gitlab-a.side

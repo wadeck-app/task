@@ -1,11 +1,12 @@
 // Dependency-direction rules of the task packages, checked by architecture.test.ts.
 //
 //   task-core  <-  task-service  <-  task-cli
-//                              \<-  app-module-task
+//                              \<-  app-module-task  ->  dsl-lib-task (browser components, loaded by src/dsl-components)
 //
-// The two adapters (task-cli, app-module-task) never know each other; task-service is caller-agnostic.
+// The two adapters (task-cli, app-module-task) never know each other; task-service is caller-agnostic. dsl-lib-task is
+// browser code (React, DOM): it knows no storage, no service, no backend and no Node API; data reaches it through props.
 
-export type PackageName = 'task-core' | 'task-service' | 'task-cli' | 'app-module-task';
+export type PackageName = 'task-core' | 'task-service' | 'task-cli' | 'app-module-task' | 'dsl-lib-task';
 
 export interface Violation {
 	file: string;
@@ -16,6 +17,11 @@ export interface Violation {
 interface PackageRule {
 	/** Import specifiers this package must never use (matched against the module specifier). */
 	forbiddenImports: { pattern: RegExp; why: string }[];
+	/**
+	 * When set, a non-test source may import ONLY a relative path or a specifier matching one of these (tests may
+	 * import anything not forbidden above: Testing Library, vitest, node:).
+	 */
+	allowedImports?: { patterns: RegExp[]; why: string };
 	/** Patterns forbidden in the non-test source text of this package. */
 	forbiddenSource: { pattern: RegExp; why: string; exceptFiles?: RegExp }[];
 }
@@ -29,6 +35,14 @@ function workspacePackage(folder: string, npmName: string): RegExp {
 const TASK_CLI = workspacePackage('task-cli', 'task-cli');
 const APP_MODULE = workspacePackage('app-module-task', '@wadeck-app/app-module-task');
 const TASK_SERVICE = workspacePackage('task-service', '@wadeck-app/task-service');
+const TASK_CORE = workspacePackage('task-core', '@wadeck-app/task-core');
+const DSL_LIB = workspacePackage('dsl-lib-task', '@wadeck-app/dsl-lib-task');
+/**
+ * What a browser component bundle may import besides its own files: React, the dsl packages the shell shares as
+ * singletons (dsl-ui, dsl-renderer) and the icon set. Anything else is a decision, so it is added here on purpose.
+ */
+const BROWSER_LIB_IMPORT =
+	/^(react|react-dom|@wadeck-app\/dsl-ui|@wadeck-app\/dsl-renderer|lucide-react)(\/[\w./-]+)?$/;
 const SHARED_CLI = /^@wadeck-app\/shared-(cli|updater)(\/|$)/;
 const APP_CORE = /^@wadeck-app\/app-core-(sdk|cli)(\/|$)/;
 const HTTP_AND_CLI_LIBS = /^(fastify|express|koa|commander|yargs|inquirer|chalk)(\/|$)/;
@@ -95,6 +109,7 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 			{ pattern: TASK_SERVICE, why: 'storage must not depend on the use-case layer above it' },
 			{ pattern: TASK_CLI, why: 'storage must not depend on an adapter' },
 			{ pattern: APP_MODULE, why: 'storage must not depend on an adapter' },
+			{ pattern: DSL_LIB, why: 'storage must not depend on browser components' },
 		],
 		forbiddenSource: [
 			...NO_CONSOLE_NO_EXIT,
@@ -111,12 +126,14 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 			{ pattern: SHARED_CLI, why: 'CLI libraries belong to task-cli' },
 			{ pattern: APP_CORE, why: 'app-core belongs to app-module-task and the registration in task-cli' },
 			{ pattern: HTTP_AND_CLI_LIBS, why: 'HTTP and CLI frameworks belong to the adapters' },
+			{ pattern: DSL_LIB, why: 'the service is caller-agnostic: it must not know browser components' },
 		],
 		forbiddenSource: [...NO_CONSOLE_NO_EXIT, ...NO_REGISTRY_WRITE, NO_PROJECTS_JSON, NO_LEGACY_DATA_PATH],
 	},
 	'task-cli': {
 		forbiddenImports: [
 			{ pattern: APP_MODULE, why: 'the adapters must not know each other: share through task-service' },
+			{ pattern: DSL_LIB, why: 'the CLI has no browser components' },
 		],
 		forbiddenSource: [NO_PROJECT_SDK_OUTSIDE_SERVICE, ...NO_REGISTRY_WRITE, NO_PROJECTS_JSON, NO_LEGACY_DATA_PATH],
 	},
@@ -126,6 +143,31 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 			{ pattern: SHARED_CLI, why: 'CLI libraries belong to task-cli; share through task-service' },
 		],
 		forbiddenSource: [NO_PROJECT_SDK_OUTSIDE_SERVICE, ...NO_REGISTRY_WRITE, NO_PROJECTS_JSON, NO_LEGACY_DATA_PATH],
+	},
+	'dsl-lib-task': {
+		forbiddenImports: [
+			{ pattern: TASK_SERVICE, why: 'browser components get their data through props, never from the service' },
+			{ pattern: TASK_CORE, why: 'browser components must not read the storage' },
+			{ pattern: TASK_CLI, why: 'browser components must not know the CLI' },
+			{
+				pattern: APP_MODULE,
+				why: 'the module loads the components, not the other way round (its backend is Node code)',
+			},
+			{ pattern: SHARED_CLI, why: 'CLI libraries belong to task-cli' },
+			{ pattern: APP_CORE, why: 'app-core belongs to app-module-task and the registration in task-cli' },
+			{ pattern: HTTP_AND_CLI_LIBS, why: 'HTTP and CLI frameworks belong to the adapters' },
+		],
+		allowedImports: {
+			patterns: [BROWSER_LIB_IMPORT],
+			why: 'a component bundle shares react and the dsl packages with the shell and runs in a browser: no Node builtin (node:*, fs, path...) and no other dependency without a decision recorded in architecture/rules.ts',
+		},
+		forbiddenSource: [
+			NO_PROJECT_SDK_OUTSIDE_SERVICE,
+			...NO_REGISTRY_WRITE,
+			NO_PROJECTS_JSON,
+			NO_LEGACY_DATA_PATH,
+			{ pattern: /\bprocess\.(?:env|argv|exit|cwd)\b/, why: 'no Node process API in browser code' },
+		],
 	},
 };
 
@@ -166,6 +208,17 @@ export function checkSource(
 			if (pattern.test(target)) {
 				violations.push({ file, rule: 'forbidden-import', detail: `imports "${specifier}": ${why}` });
 			}
+		}
+	}
+	if (!options.isTest && rule.allowedImports) {
+		for (const specifier of importedModules(source)) {
+			if (specifier.startsWith('.') || rule.allowedImports.patterns.some(pattern => pattern.test(specifier)))
+				continue;
+			violations.push({
+				file,
+				rule: 'unlisted-import',
+				detail: `imports "${specifier}": ${rule.allowedImports.why}`,
+			});
 		}
 	}
 	if (!options.isTest) {

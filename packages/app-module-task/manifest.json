@@ -1,5 +1,13 @@
 {
 	"id": "task",
+	"dslLib": {
+		"shared": {
+			"react": "^19",
+			"react-router-dom": "^7",
+			"@wadeck-app/dsl-ui": ">=2026.10.3-0",
+			"@wadeck-app/dsl-renderer": ">=2026.10.14-0"
+		}
+	},
 	"lifecycle": {
 		"teardown": "./src/backend/teardown.ts"
 	},
