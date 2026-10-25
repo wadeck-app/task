@@ -15,6 +15,7 @@ import type { TaskChangeResult } from '@wadeck-app/task-service';
 
 import { RequestError } from '../errors.js';
 import { detailHref } from '../hrefs.js';
+import { labelFromKey } from '../labelKey.js';
 import { rememberLastProject } from '../lastProject.js';
 import { bodyObject, optionalString, queryValue, requiredString } from '../request.js';
 import type { RouteAnswer, RouteRequest } from '../request.js';
@@ -130,6 +131,12 @@ export function registerTaskWriteRoutes(kit: RouteKit): void {
 
 	route('DELETE', '/tasks/:id/labels/:label', req => {
 		return answerChange(removeLabel(open(req), { id: taskId(req), label: req.params?.['label'] ?? '' }));
+	});
+
+	// Same removal, the label given as its base64url key: a label with "/" or "%" cannot travel in the path (see labelKey.ts).
+	route('DELETE', '/tasks/:id/label-keys/:key', req => {
+		const label = labelFromKey(req.params?.['key'] ?? '');
+		return answerChange(removeLabel(open(req), { id: taskId(req), label }));
 	});
 
 	route('POST', '/tasks/:id/parent', req => {

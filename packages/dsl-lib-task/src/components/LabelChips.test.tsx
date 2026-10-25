@@ -53,7 +53,42 @@ describe('LabelChips', () => {
 
 		await userEvent.setup().click(screen.getByRole('button', { name: 'Remove label bug' }));
 
-		expect(onAction).toHaveBeenCalledWith('removeLabel', { id: 't1', projectParam: 'p1', label: 'bug' });
+		expect(onAction).toHaveBeenCalledWith('removeLabel', {
+			id: 't1',
+			projectParam: 'p1',
+			label: 'bug',
+			labelKey: Buffer.from('bug', 'utf8').toString('base64url'),
+		});
+	});
+
+	it('gives the key of the label (labelKeys) as <labelParam>Key, for labels a path cannot carry', async () => {
+		const onAction = vi.fn().mockResolvedValue(undefined);
+		render(
+			<LabelChips
+				labels={['a/b', '100%']}
+				labelKeys={{ 'a/b': 'KEY-AB', '100%': 'KEY-PCT' }}
+				removeAction="r"
+				onAction={onAction}
+			/>
+		);
+
+		await userEvent.setup().click(screen.getByRole('button', { name: 'Remove label a/b' }));
+		await userEvent.setup().click(screen.getByRole('button', { name: 'Remove label 100%' }));
+
+		expect(onAction).toHaveBeenNthCalledWith(1, 'r', { label: 'a/b', labelKey: 'KEY-AB' });
+		expect(onAction).toHaveBeenNthCalledWith(2, 'r', { label: '100%', labelKey: 'KEY-PCT' });
+	});
+
+	it('computes the base64url (UTF-8, no padding) key itself when labelKeys is not given', async () => {
+		const onAction = vi.fn().mockResolvedValue(undefined);
+		render(<LabelChips labels={['é ü/%']} removeAction="r" onAction={onAction} />);
+
+		await userEvent.setup().click(screen.getByRole('button', { name: 'Remove label é ü/%' }));
+
+		expect(onAction).toHaveBeenCalledWith('r', {
+			label: 'é ü/%',
+			labelKey: Buffer.from('é ü/%', 'utf8').toString('base64url'),
+		});
 	});
 
 	it('adds a label on Enter, trimmed, and clears the field once saved', async () => {

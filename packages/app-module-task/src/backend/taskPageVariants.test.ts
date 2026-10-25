@@ -293,6 +293,27 @@ describe('quick actions', () => {
 	);
 });
 
+describe('label removal by key', () => {
+	const actions = page.$actions as Record<string, { url: string }>;
+
+	// Labels with "/" or "%" cannot travel in a path (app-core answers 404), so removal uses the base64url key route.
+	it.each(['removeLabel', 'removeLabelChip'])('%s calls the label-keys route', name => {
+		expect(actions[name]!.url).toContain('DELETE /api/modules/task/tasks/{id}/label-keys/{label');
+	});
+
+	it('every LabelChips with a remove action is given the keys of the labels', () => {
+		const chips: Node[] = [];
+		walk(page, node => {
+			if (node.$type === 'task:LabelChips' && node.removeAction !== undefined) chips.push(node);
+		});
+		expect(chips.length).toBeGreaterThan(0);
+		for (const chip of chips) {
+			expect(chip.removeAction).toBe('removeLabelChip');
+			expect(chip.labelKeys).toBe('$sources.detail.labelKeys');
+		}
+	});
+});
+
 // A logical feature of the page -> the actions that can provide it. A variant keeps every feature in every combination.
 const LOGICAL_ACTIONS: Record<string, string[]> = {
 	status: ['setStatus', 'setStatusTo'],

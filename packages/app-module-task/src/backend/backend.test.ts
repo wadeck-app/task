@@ -38,6 +38,7 @@ const EXPECTED_ROUTES = [
 	'POST /tasks/:id/labels',
 	'POST /tasks/:id/labels/:label',
 	'DELETE /tasks/:id/labels/:label',
+	'DELETE /tasks/:id/label-keys/:key',
 	'POST /tasks/:id/links',
 	'DELETE /tasks/:id/links',
 	'POST /tasks/:id/parent',
@@ -241,6 +242,7 @@ describe('project selection', () => {
 			['POST /tasks/:id/status', { id: 'x' }, { status: 'done' }],
 			['POST /tasks/:id/labels', { id: 'x' }, { label: 'l' }],
 			['DELETE /tasks/:id/labels/:label', { id: 'x', label: 'l' }, undefined],
+			['DELETE /tasks/:id/label-keys/:key', { id: 'x', key: 'bA' }, undefined],
 			['POST /tasks/:id/links', { id: 'x' }, { type: 'blockedBy', target: 'y' }],
 			['DELETE /tasks/:id/links', { id: 'x' }, { type: 'blockedBy', target: 'y' }],
 		];
@@ -1207,6 +1209,51 @@ describe('events of the label routes', () => {
 			},
 		]);
 	});
+
+	it.each(['a/b', '100%', 'é ü', 'x%2Fy', 'plain'])(
+		'DELETE /tasks/:id/label-keys/:key removes the label %j given as base64url and delivers onTaskLabelRemoved',
+		async label => {
+			const id = await createTask('a');
+			await h.call('POST /tasks/:id/labels', { params: { id }, query: { project }, body: { label } });
+			h.sink.events.length = 0;
+			const key = Buffer.from(label, 'utf8').toString('base64url');
+			expect(key).not.toMatch(/[=/+%]/);
+
+			const answer = await h.call('DELETE /tasks/:id/label-keys/:key', {
+				params: { id, key },
+				query: { project },
+			});
+
+			expect(answer.status).toBe(200);
+			expect(answer.body['task']['labels'] ?? []).toEqual([]);
+			expect(answer.body['undelivered']).toEqual([]);
+			expect(h.sink.events.map(e => [e.name, (e.payload as { label?: string }).label])).toEqual([
+				['onTaskLabelRemoved', label],
+			]);
+		}
+	);
+
+	it('DELETE /tasks/:id/label-keys/:key delivers nothing for an absent label', async () => {
+		const id = await createTask('a');
+		const key = Buffer.from('never-there', 'utf8').toString('base64url');
+		const answer = await h.call('DELETE /tasks/:id/label-keys/:key', { params: { id, key }, query: { project } });
+		expect(answer.status).toBe(200);
+		expect(h.sink.events.filter(e => e.name === 'onTaskLabelRemoved')).toEqual([]);
+	});
+
+	it.each(['a/b', 'not base64!', 'YQ==', '', '   ', '_w'])(
+		'DELETE /tasks/:id/label-keys/:key answers 400 with a hint for the invalid key %j',
+		async key => {
+			const id = await createTask('a');
+			const answer = await h.call('DELETE /tasks/:id/label-keys/:key', {
+				params: { id, key },
+				query: { project },
+			});
+			expect(answer.status).toBe(400);
+			expect(JSON.stringify(answer.body)).toMatch(/base64url/);
+			expect(h.sink.events.filter(e => e.name === 'onTaskLabelRemoved')).toEqual([]);
+		}
+	);
 
 	it('lists the undelivered label event when the sink reports it', async () => {
 		const unreachable: EventSink = { deliver: () => Promise.resolve({ delivered: false, reason: 'exit 3' }) };
@@ -2731,8 +2778,11 @@ describe('view data: page links, filters and form defaults', () => {
 			expect(answer.body['noTypes']).toBe(false);
 			expect(answer.body['hasLabels']).toBe(true);
 			expect(answer.body['labelOptions']).toEqual([
-				{ value: encodeURIComponent('needs review'), label: 'needs review' },
+				{ value: Buffer.from('needs review', 'utf8').toString('base64url'), label: 'needs review' },
 			]);
+			expect(answer.body['labelKeys']).toEqual({
+				'needs review': Buffer.from('needs review', 'utf8').toString('base64url'),
+			});
 			expect(answer.body['linkTypeOptions'].map((o: { value: string }) => o.value)).toEqual([
 				'blockedBy',
 				'duplicateOf',

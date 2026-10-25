@@ -13,8 +13,13 @@ export interface LabelChipsProps {
 	addAction?: string;
 	/** Name of the `$actions` entry that removes a label (the x of each chip). Without it there is no x. */
 	removeAction?: string;
-	/** Name of the parameter that carries the label (a `{placeholder}` of the action urls). */
+	/** Name of the parameter that carries the label (a `{placeholder}` of the action urls). The key of the label is `<labelParam>Key`. */
 	labelParam?: string;
+	/**
+	 * Key of each label (label -> base64url of its UTF-8 bytes), sent as `<labelParam>Key` with the action. A label
+	 * with "/" or "%" cannot travel in a url path; its key can. A label missing here gets its key computed.
+	 */
+	labelKeys?: Record<string, string>;
 	/**
 	 * The other `{placeholders}` of the action url (`id`, `projectParam`...). The installed shell sends no body.
 	 * @resolveDeep
@@ -36,6 +41,15 @@ export interface LabelChipsProps {
 	 * @ctxDefault $actionPending
 	 */
 	actionPending?: Record<string, boolean>;
+}
+
+/** base64url (no padding) of the UTF-8 bytes of a label: the same key the task module computes. */
+export function labelKeyOf(label: string): string {
+	let binary = '';
+	for (const byte of new TextEncoder().encode(label)) {
+		binary += String.fromCharCode(byte);
+	}
+	return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 // @formatter:off
@@ -66,6 +80,7 @@ export function LabelChips({
 	addAction,
 	removeAction,
 	labelParam = 'label',
+	labelKeys,
 	params,
 	placeholder = 'Add label',
 	size = 'sm',
@@ -99,7 +114,11 @@ export function LabelChips({
 
 	const remove = async (label: string): Promise<void> => {
 		setProblem(null);
-		await remover.run({ ...(params ?? {}), [labelParam]: label });
+		await remover.run({
+			...(params ?? {}),
+			[labelParam]: label,
+			[`${labelParam}Key`]: labelKeys?.[label] ?? labelKeyOf(label),
+		});
 	};
 
 	const showField = !readOnly && addAction !== undefined && addAction !== '';

@@ -400,6 +400,7 @@ github-a.side:
               - $type: task:LabelChips
                 $if: $sources.detail.forms
                 labels: $sources.detail.labelList
+                labelKeys: $sources.detail.labelKeys
                 addAction: addLabel
                 removeAction: removeLabelChip
                 labelParam: label
@@ -589,6 +590,7 @@ jira.details.core:
               - $type: task:LabelChips
                 $if: $sources.detail.forms
                 labels: $sources.detail.labelList
+                labelKeys: $sources.detail.labelKeys
                 addAction: addLabel
                 removeAction: removeLabelChip
                 labelParam: label
@@ -635,6 +637,7 @@ jira-b.details.core:
               - $type: task:LabelChips
                 $if: $sources.detail.forms
                 labels: $sources.detail.labelList
+                labelKeys: $sources.detail.labelKeys
                 addAction: addLabel
                 removeAction: removeLabelChip
                 labelParam: label
@@ -785,6 +788,7 @@ linear-a.chips.core:
         - $type: task:LabelChips
           $if: $sources.detail.forms
           labels: $sources.detail.labelList
+          labelKeys: $sources.detail.labelKeys
           addAction: addLabel
           removeAction: removeLabelChip
           labelParam: label
@@ -978,6 +982,7 @@ linear-b.rail:
                     - $type: task:LabelChips
                       $if: $sources.detail.forms
                       labels: $sources.detail.labelList
+                      labelKeys: $sources.detail.labelKeys
                       addAction: addLabel
                       removeAction: removeLabelChip
                       labelParam: label
@@ -1202,6 +1207,7 @@ notion.row.labels:
         - $type: task:LabelChips
           $if: $sources.detail.forms
           labels: $sources.detail.labelList
+          labelKeys: $sources.detail.labelKeys
           addAction: addLabel
           removeAction: removeLabelChip
           labelParam: label
@@ -1218,6 +1224,7 @@ notion.row.labels.set:
         - $type: task:LabelChips
           $if: $sources.detail.forms
           labels: $sources.detail.labelList
+          labelKeys: $sources.detail.labelKeys
           addAction: addLabel
           removeAction: removeLabelChip
           labelParam: label
@@ -1281,6 +1288,7 @@ notion.empty.type:
               - $type: task:LabelChips
                 $if: $sources.detail.forms
                 labels: $sources.detail.labelList
+                labelKeys: $sources.detail.labelKeys
                 addAction: addLabel
                 removeAction: removeLabelChip
                 labelParam: label
@@ -1692,6 +1700,7 @@ gitlab.b.labels:
         - $type: task:LabelChips
           $if: $sources.detail.forms
           labels: $sources.detail.labelList
+          labelKeys: $sources.detail.labelKeys
           addAction: addLabel
           removeAction: removeLabelChip
           labelParam: label
@@ -2051,6 +2060,7 @@ github-b.sidebar:
               - $type: task:LabelChips
                 $if: $sources.detail.forms
                 labels: $sources.detail.labelList
+                labelKeys: $sources.detail.labelKeys
                 addAction: addLabel
                 removeAction: removeLabelChip
                 labelParam: label

@@ -66,7 +66,13 @@ describe('the params of a component that runs an action', () => {
 
 		await waitFor(() => expect(onAction).toHaveBeenCalled());
 		expect(onAction).toHaveBeenCalledWith(
-			expect.objectContaining({ id: 'abc123', projectParam: 'p%201', label: 'bug', labelEncoded: 'bug' })
+			expect.objectContaining({
+				id: 'abc123',
+				projectParam: 'p%201',
+				label: 'bug',
+				labelEncoded: 'bug',
+				labelKey: 'YnVn',
+			})
 		);
 	});
 

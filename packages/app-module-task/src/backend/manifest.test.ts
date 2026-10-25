@@ -354,7 +354,7 @@ describe('task detail page: forms and links', () => {
 			'POST /api/modules/task/tasks/{id}/status',
 			'POST /api/modules/task/tasks/{id}/type',
 			'POST /api/modules/task/tasks/{id}/labels',
-			'DELETE /api/modules/task/tasks/{id}/labels/{label}',
+			'DELETE /api/modules/task/tasks/{id}/label-keys/{label}',
 			'POST /api/modules/task/tasks/{id}/meta',
 			'POST /api/modules/task/tasks/{id}/parent',
 			'DELETE /api/modules/task/tasks/{id}/parent',

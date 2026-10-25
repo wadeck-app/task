@@ -86,6 +86,7 @@ export const LabelChipsEntry: ComponentRegistryEntry = {
 		const addAction = coerceProp(resolveExpressionValue(node['addAction'], ctx), 'LabelChips.addAction', 'string', false) as import('../components/LabelChips.js').LabelChipsProps['addAction']
 		const removeAction = coerceProp(resolveExpressionValue(node['removeAction'], ctx), 'LabelChips.removeAction', 'string', false) as import('../components/LabelChips.js').LabelChipsProps['removeAction']
 		const labelParam = coerceProp(resolveExpressionValue(node['labelParam'], ctx), 'LabelChips.labelParam', 'string', false) as import('../components/LabelChips.js').LabelChipsProps['labelParam']
+		const labelKeys = coerceProp(resolveExpressionValue(node['labelKeys'], ctx), 'LabelChips.labelKeys', 'object', false) as import('../components/LabelChips.js').LabelChipsProps['labelKeys']
 		const params = coerceProp(resolveExpressionsDeep(node['params'], ctx), 'LabelChips.params', 'object', false) as import('../components/LabelChips.js').LabelChipsProps['params']
 		const placeholder = coerceProp(resolveExpressionValue(node['placeholder'], ctx), 'LabelChips.placeholder', 'string', false) as import('../components/LabelChips.js').LabelChipsProps['placeholder']
 		const size = coerceProp(resolveExpressionValue(node['size'], ctx), 'LabelChips.size', 'primitive', false) as import('../components/LabelChips.js').LabelChipsProps['size']
@@ -93,7 +94,7 @@ export const LabelChipsEntry: ComponentRegistryEntry = {
 		const emptyText = coerceProp(resolveExpressionValue(node['emptyText'], ctx), 'LabelChips.emptyText', 'string', false) as import('../components/LabelChips.js').LabelChipsProps['emptyText']
 		const onAction = coerceProp(resolveExpressionValue(node['onAction'], ctx) ?? pageActionHandler(ctx), 'LabelChips.onAction', 'function', false) as import('../components/LabelChips.js').LabelChipsProps['onAction']
 		const actionPending = coerceProp(resolveExpressionValue(node['actionPending'], ctx) ?? ctx['$actionPending'], 'LabelChips.actionPending', 'object', false) as import('../components/LabelChips.js').LabelChipsProps['actionPending']
-		return <LabelChips labels={labels} colors={colors} addAction={addAction} removeAction={removeAction} labelParam={labelParam} params={params} placeholder={placeholder} size={size} readOnly={readOnly} emptyText={emptyText} onAction={onAction} actionPending={actionPending} />
+		return <LabelChips labels={labels} colors={colors} addAction={addAction} removeAction={removeAction} labelParam={labelParam} labelKeys={labelKeys} params={params} placeholder={placeholder} size={size} readOnly={readOnly} emptyText={emptyText} onAction={onAction} actionPending={actionPending} />
 	},
 }
 
@@ -286,7 +287,7 @@ BreadcrumbTrailEntry.knownKeys = ["currentLabel","items","maxItems","separator"]
 ChipRowEntry.allowedChildren = {"items":["atomic","composite","display"]};
 ChipRowEntry.knownKeys = ["align","gap","items"];
 KeyValueListEntry.knownKeys = ["density","emptyText","entries"];
-LabelChipsEntry.knownKeys = ["actionPending","addAction","colors","emptyText","labelParam","labels","onAction","params","placeholder","readOnly","removeAction","size"];
+LabelChipsEntry.knownKeys = ["actionPending","addAction","colors","emptyText","labelKeys","labelParam","labels","onAction","params","placeholder","readOnly","removeAction","size"];
 NoticeEntry.knownKeys = ["label","variant"];
 PanelEntry.allowedChildren = {"actions":["layout","display","composite","atomic"],"items":["layout","table","form","display","composite","atomic"]};
 PanelEntry.knownKeys = ["actions","appearance","collapsible","count","defaultOpen","items","title"];

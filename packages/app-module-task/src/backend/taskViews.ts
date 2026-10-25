@@ -19,6 +19,7 @@
 // | statusTone, isTerminal, isOpen | tone, boolean, boolean          | of the task's current status; isOpen = not terminal (the DSL has no negation) | badges   |
 // | typeChoices             | [{value,label}]                        | configured types; [] when the project has none (free text)           | ActionSelect |
 // | labelList               | string[]                               | the labels                                                           | LabelChips |
+// | labelKeys               | Record<string,string>                  | label -> base64url key, for DELETE /tasks/:id/label-keys/:key         | LabelChips |
 // | labelCount, metaCount, linkCount | number                | counts for panel headers (the DSL cannot take a length)             | Panel count |
 // | metaList                | [{key,value}]                          | the metadata (same rows as metaRows)                                 | PropertyList |
 // | activity, hasActivity   | [{id,kind,title,detail,from,to,tone,at,atText}] | oldest first: "created" then one per status change; kind created, status or done (closing) | Timeline |
@@ -33,12 +34,14 @@
 //
 // `GET /tasks/:id/links` adds: hasLinks, rows (each + tone, statusTone, isDone) and groups [{relation,label,rows}]
 // (relations without a task left out). Quick-action routes (value in the PATH, see taskWriteRoutes.ts): POST
-// /tasks/:id/status/:status, /tasks/:id/type/:type, /tasks/:id/labels/:label (remove: DELETE /tasks/:id/labels/:label).
+// /tasks/:id/status/:status, /tasks/:id/type/:type, /tasks/:id/labels/:label; a label is removed by key: DELETE /tasks/:id/label-keys/:key
+// (labelKeys: label -> base64url key, labelOptions values are keys; a label may hold "/" or "%").
 import type { TaskLinks, TaskRecord, TaskSummary, TaskTreeNode } from '@wadeck-app/task-core';
 import { ALL_LINK_NAMES } from '@wadeck-app/task-service';
 import type { BlockerSummary, ChildrenSummary } from '@wadeck-app/task-service';
 
 import { shortUtcTime } from './display.js';
+import { labelKey } from './labelKey.js';
 import { detailHref, encodedProject, historyHref, pageHrefs, pageLink, projectText, showAllToggle } from './hrefs.js';
 import type { OpenedProject } from './projects.js';
 import { flattenTree, withRowLinks, withTreeLinks } from './rowViews.js';
@@ -162,7 +165,9 @@ export function taskDetailBody(
 		noTypes: data.types.length === 0,
 		hasLabels: labels.length > 0,
 		noLabels: labels.length === 0,
-		labelOptions: labels.map(label => ({ value: encodeURIComponent(label), label })),
+		// The value is the key of the label (DELETE /tasks/:id/label-keys/:key), whatever characters the label holds.
+		labelOptions: labels.map(label => ({ value: labelKey(label), label })),
+		labelKeys: Object.fromEntries(labels.map(label => [label, labelKey(label)])),
 		linkTypeOptions: ALL_LINK_NAMES.map(name => ({ value: name, label: name })),
 		hrefs: pageHrefs(project),
 		taskHrefs: {

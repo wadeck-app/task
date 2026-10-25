@@ -78,14 +78,14 @@ $actions:
         url: POST /api/modules/task/tasks/{id}/labels?project={projectParam}&inlineErrors=true
         resultKey: labelResult
         reloadSources: true
-    # {label} is the encoded label picked in the select.
+    # {label} is the base64url key of the label picked in the select (see labelOptions).
     removeLabel:
-        url: DELETE /api/modules/task/tasks/{id}/labels/{label}?project={projectParam}&inlineErrors=true
+        url: DELETE /api/modules/task/tasks/{id}/label-keys/{label}?project={projectParam}&inlineErrors=true
         resultKey: labelResult
         reloadSources: true
-    # The chip x of task:LabelChips: DELETE twin of addLabelTo (the label travels encoded in the path).
+    # The chip x of task:LabelChips: removes by the base64url key of the label ({labelKey}), which any label can travel in a path.
     removeLabelChip:
-        url: DELETE /api/modules/task/tasks/{id}/labels/{labelEncoded}?project={projectParam}&inlineErrors=true
+        url: DELETE /api/modules/task/tasks/{id}/label-keys/{labelKey}?project={projectParam}&inlineErrors=true
         resultKey: labelResult
         reloadSources: true
     setMeta:
