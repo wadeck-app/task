@@ -564,6 +564,7 @@ describe('GET /summary per-project rows (the global dashboard widget)', () => {
 			{
 				name: 'alpha',
 				label: 'alpha',
+				labelTitle: 'alpha',
 				path: projectDir,
 				openText: '1',
 				totalText: '2',
@@ -573,6 +574,7 @@ describe('GET /summary per-project rows (the global dashboard widget)', () => {
 			{
 				name: 'beta',
 				label: 'beta',
+				labelTitle: 'beta',
 				path: h.world.dirOf(beta),
 				openText: '0',
 				totalText: '0',

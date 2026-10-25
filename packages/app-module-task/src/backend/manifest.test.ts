@@ -2,13 +2,21 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { load } from 'js-yaml';
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const manifest = JSON.parse(readFileSync(join(packageDir, 'manifest.json'), 'utf8')) as {
 	id?: string;
 	version?: unknown;
 	backendEntryPath?: unknown;
-	extensionPoints: { kind: string; slot: string; path?: string; view: { type: string; value: string } }[];
+	extensionPoints: {
+		kind: string;
+		slot: string;
+		path?: string;
+		width?: number;
+		height?: number;
+		view: { type: string; value: string };
+	}[];
 };
 
 describe('manifest.json (source manifest of the app-core-cli layout)', () => {
@@ -110,6 +118,52 @@ describe('dashboard widget (src/dsl-views/tasks-widget.yaml)', () => {
 		for (const key of ['label', 'openText', 'totalText']) {
 			expect(widget).toContain(`key: '${key}'`);
 		}
+	});
+
+	// The dashboard is a grid of 100px cells (16px apart); a widget without width gets 2 cells and widens itself on overflow.
+	it('declares its size on the dashboard grid: 3 cells wide (about 332px) for the table and the two figures', () => {
+		const point = manifest.extensionPoints.find(p => p.kind === 'widget') as { width?: unknown; height?: unknown };
+		expect(point.width).toBe(3);
+		// Height is a minimum and grows by whole rows to fit: leaving it out lets the content decide.
+		if (point.height !== undefined) {
+			expect(
+				Number.isInteger(point.height) && (point.height as number) >= 1 && (point.height as number) <= 12
+			).toBe(true);
+		}
+	});
+
+	it('only the dashboard widget declares a size (check rejects it elsewhere)', () => {
+		for (const p of manifest.extensionPoints as { kind: string; width?: unknown; height?: unknown }[]) {
+			if (p.kind !== 'widget') {
+				expect(p, `${p.kind}`).not.toHaveProperty('width');
+				expect(p, `${p.kind}`).not.toHaveProperty('height');
+			}
+		}
+	});
+
+	it('labels the two figures with one short word each, so they do not wrap in a 3-cell tile', () => {
+		const tree = load(widget) as { items: { $type: string; items?: { $type: string; label?: string }[] }[] };
+		const tiles = tree.items.flatMap(item => (item.items ?? []).filter(child => child.$type === 'StatTile'));
+		expect(tiles.map(tile => tile.label)).toEqual(['Open', 'All']);
+		for (const tile of tiles) expect((tile.label ?? '').length).toBeLessThanOrEqual(6);
+	});
+
+	it('the project table never breaks a name mid-word: nowrap + truncate (ellipsis) and the full name in the title tooltip', () => {
+		const tree = load(widget) as { items: { $type: string; columns?: Record<string, unknown>[] }[] };
+		const table = tree.items.find(item => item.$type === 'DataTable');
+		const project = table?.columns?.find(column => column.key === 'label');
+		expect(project).toMatchObject({ nowrap: true, truncate: true, title: '{labelTitle}' });
+	});
+
+	// The shell caps a truncated cell at 320px, not at the tile, and a column width is only a minimum: the route cuts the label
+	// (WIDGET_LABEL_MAX, allProjectsViews.test.ts) so the figure columns stay inside a 3-cell tile. The figure columns never wrap.
+	it('the figure columns are nowrap and the project column has no fixed width (it is only a minimum in the shell)', () => {
+		const tree = load(widget) as { items: { $type: string; columns?: Record<string, unknown>[] }[] };
+		const table = tree.items.find(item => item.$type === 'DataTable');
+		const [project, ...figures] = table?.columns ?? [];
+		expect(project).not.toHaveProperty('width');
+		expect(figures.map(column => column.key)).toEqual(['openText', 'totalText']);
+		for (const column of figures) expect(column).toMatchObject({ nowrap: true });
 	});
 
 	it('shows the zero-project welcome as an info badge, never a danger badge, and no figures with it', () => {

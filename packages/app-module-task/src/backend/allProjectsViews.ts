@@ -46,19 +46,36 @@ function shortProblem(project: ProjectOverview): string {
 	return 'invalid config';
 }
 
+/**
+ * Characters of the project column of the widget. The shell caps a truncated cell at 320px (not at its tile), so a long name
+ * would push the figure columns out of a 3-cell tile (about 300px of table): the route cuts the text itself.
+ */
+export const WIDGET_LABEL_MAX = 24;
+
+/** The text cut to `max` characters, ending with an ellipsis when it was longer. */
+function clamp(text: string, max: number): string {
+	return text.length <= max ? text : `${text.slice(0, Math.max(0, max - 1))}…`;
+}
+
 /** What the project table of the widget shows: figures and link for a readable project, the reason for the others. */
 export function projectRows(projects: readonly ProjectOverview[]): Record<string, unknown>[] {
-	return projects.map(p => ({
-		name: p.name,
-		// The widget table has no room for a Problem column: the reason's gist sits next to the name, the full one is in `problem`.
-		label: p.error === null ? p.name : `${p.name} (${shortProblem(p)})`,
-		path: p.path,
-		// A project that cannot be read has no figures: a dash, never a 0 that reads as "empty".
-		openText: p.open === null ? '-' : String(p.open),
-		totalText: p.total === null ? '-' : String(p.total),
-		problem: p.error ?? '',
-		href: p.error === null ? tasksPageHref(p) : null,
-	}));
+	return projects.map(p => {
+		// The gist of an unreadable project stays visible: the name gives way, never the reason.
+		const suffix = p.error === null ? '' : ` (${shortProblem(p)})`;
+		return {
+			name: p.name,
+			// The widget table has no room for a Problem column: the reason's gist sits next to the (cut) name, the full one is in `problem`.
+			label: `${clamp(p.name, WIDGET_LABEL_MAX - suffix.length)}${suffix}`,
+			// Tooltip of the cell: the whole name, and for an unreadable project the whole reason with its fix.
+			labelTitle: p.error === null ? p.name : `${p.name}: ${p.error}`,
+			path: p.path,
+			// A project that cannot be read has no figures: a dash, never a 0 that reads as "empty".
+			openText: p.open === null ? '-' : String(p.open),
+			totalText: p.total === null ? '-' : String(p.total),
+			problem: p.error ?? '',
+			href: p.error === null ? tasksPageHref(p) : null,
+		};
+	});
 }
 
 /** "3 open tasks", or "3 tasks (closed ones included)" when the closed ones are listed. */

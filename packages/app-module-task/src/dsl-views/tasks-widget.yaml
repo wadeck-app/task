@@ -2,6 +2,8 @@
 # No ?project: the route aggregates every registered project (task-service summarizeProjects). Nothing registered is
 # an info text with the next step (not an error); a project that cannot be read is a row with its reason, never dropped.
 # The row click opens the Tasks page of the project. The status table is in the API (`rows`) but not here: the widget is narrow.
+# Sized in manifest.json (width 3 = about 332px on the 100px grid). Figure labels are one word and the project column
+# is cut by the route (WIDGET_LABEL_MAX) and truncates with an ellipsis, full name or reason in the tooltip, so nothing wraps or breaks mid-word.
 $sources:
     summary:
         url: GET /api/modules/task/summary?inlineErrors=true
@@ -36,16 +38,16 @@ items:
       $if: $sources.summary.projectCount
       items:
           - $type: StatTile
-            label: Open tasks
+            label: Open
             value: $sources.summary.open
           - $type: StatTile
-            label: All tasks
+            label: All
             value: $sources.summary.total
     - $type: DataTable
       $if: $sources.summary.projectCount
       rows: $sources.summary.projectRows
       navigateTo: '{href}'
       columns:
-          - { key: 'label', label: 'Project' }
+          - { key: 'label', label: 'Project', nowrap: true, truncate: true, title: '{labelTitle}' }
           - { key: 'openText', label: 'Open', nowrap: true }
           - { key: 'totalText', label: 'Total', nowrap: true }

@@ -16,6 +16,7 @@
 			"kind": "widget",
 			"slot": "dashboard",
 			"label": "Open Tasks",
+			"width": 3,
 			"view": {
 				"type": "path",
 				"value": "./src/dsl-views/tasks-widget.yaml"
