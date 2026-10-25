@@ -202,13 +202,14 @@ describe('project selection', () => {
 		}
 	});
 
-	it('the absolute directory of the project and an old slug are refused: 404 no project matches, hint naming id, name or alias', async () => {
+	it('the absolute directory of the project and a name~hex slug are no project reference: 404 no project matches, hint naming id, name or alias', async () => {
 		for (const ref of [projectDir, 'alpha~0a1b2c']) {
 			const answer = await h.call('GET /tasks', { query: { project: ref } });
 			expect(answer.status, ref).toBe(404);
-			expect(answer.body['error'], ref).toBe(`no project matches "${ref}"`);
+			expect(answer.body['error'], ref).toContain('no project matches');
+			expect(answer.body['error'], ref).toContain(ref);
 			expect(answer.body['hint'], ref).toContain('id, name or alias');
-			expect(answer.body['hint'], ref).toContain('no longer accepted');
+			expect(answer.body['hint'], ref).not.toContain('no longer accepted');
 		}
 	});
 
@@ -216,13 +217,6 @@ describe('project selection', () => {
 		const answer = await h.call('GET /tasks', { query: { project: [project, project] } });
 		expect(answer.status).toBe(400);
 		expect(answer.body['error']).toContain('project');
-	});
-
-	it('a corrupt projects.json next to the config is ignored: the registry projects work as before', async () => {
-		fs.mkdirSync(h.world.configDir, { recursive: true });
-		fs.writeFileSync(path.join(h.world.configDir, 'projects.json'), '{not json');
-		const answer = await h.call('GET /tasks', { query: { project } });
-		expect(answer.status).toBe(200);
 	});
 
 	it('every route resolves the project (mutating ones answer 404 before touching anything)', async () => {
@@ -507,13 +501,14 @@ describe('GET /summary', () => {
 		});
 	});
 
-	it('the aggregate with no registered project is a 200 flagged noProjects, with the two ways to register (not an error)', async () => {
+	it('the aggregate with no registered project is a 200 flagged noProjects, with the way to register (not an error)', async () => {
 		await h.world.unregister(project);
 		const answer = await h.call('GET /summary');
 		expect(answer.status).toBe(200);
 		expect(answer.body).toMatchObject({ scope: 'all', noProjects: true, projectCount: 0, open: 0, total: 0 });
 		expect(answer.body['noProjectsText']).toContain('project add');
-		expect(answer.body['noProjectsText']).toContain('task cli migrate-data');
+		expect(answer.body['noProjectsText']).not.toContain('migrate');
+		expect(answer.body['noProjectsText']).not.toContain('.task');
 		expect(answer.body['noProjectsText']).not.toContain('task init');
 		expect(answer.body['projectRows']).toEqual([]);
 		expect(answer.body).not.toHaveProperty('errorText');
@@ -527,19 +522,7 @@ describe('GET /summary', () => {
 	it('the summary of one project by the absolute folder is a 404 too (the registry id, name or alias only)', async () => {
 		const answer = await h.call('GET /summary', { query: { project: projectDir } });
 		expect(answer.status).toBe(404);
-		expect(answer.body['error']).toBe(`no project matches "${projectDir}"`);
-	});
-
-	it('the summary answers carry no registered marker: the field is gone from the rows', async () => {
-		for (const query of [{}, { project }]) {
-			const answer = await h.call('GET /summary', { query });
-			for (const row of answer.body['projectRows'] as Array<Record<string, unknown>>) {
-				for (const field of ['registered', 'registryHint', 'initialized'])
-					expect(row).not.toHaveProperty(field);
-			}
-			expect(answer.body).not.toHaveProperty('registryNotice');
-			expect(answer.body['registryProblem']).toBeNull();
-		}
+		expect(answer.body['error']).toContain(`no project matches '${projectDir}'`);
 	});
 
 	it('has noProjects false and no text once a project is registered', async () => {
@@ -3158,13 +3141,14 @@ describe('nothing registered yet (the views must say what to do)', () => {
 		await h.world.unregister(project);
 	});
 
-	it('GET /projects flags noProjects with the way to register a project (project CLI) and to bring old tasks along', async () => {
+	it('GET /projects flags noProjects with the way to register a project (project CLI)', async () => {
 		const answer = await h.call('GET /projects');
 		expect(answer.status).toBe(200);
 		expect(answer.body['noProjects']).toBe(true);
 		expect(answer.body['noProjectsText']).toContain('No project is registered');
 		expect(answer.body['noProjectsText']).toContain('project add');
-		expect(answer.body['noProjectsText']).toContain('task cli migrate-data');
+		expect(answer.body['noProjectsText']).not.toContain('migrate');
+		expect(answer.body['noProjectsText']).not.toContain('.task');
 		expect(answer.body['noProjectsText']).not.toContain('task init');
 	});
 
@@ -3179,7 +3163,8 @@ describe('nothing registered yet (the views must say what to do)', () => {
 		const answer = await h.call('GET /tasks');
 		expect(answer.status).toBe(404);
 		expect(answer.body['hint']).toContain('project add');
-		expect(answer.body['hint']).toContain('task cli migrate-data');
+		expect(answer.body['hint']).not.toContain('migrate');
+		expect(answer.body['hint']).not.toContain('.task');
 		expect(answer.body['hint']).not.toContain('task init');
 	});
 });

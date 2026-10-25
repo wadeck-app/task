@@ -25,16 +25,16 @@ const DEFAULT_TEST_CONFIG: TaskResolvedConfig = {
 	projectHooks: {},
 };
 
-/** Builds a context over a disposable `<tmp>/.task/tasks` store (index lives next to it, inside the tmp root): a plain folder standing in for a registry data dir. */
+/** Builds a context over a disposable `<tmp>/data/tasks` store (index lives next to it, inside the tmp root): a plain folder standing in for a registry data dir. */
 export function createTestContext(configOverrides: Partial<TaskResolvedConfig> = {}): TestContext {
 	const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-service-'));
-	const tasksDir = path.join(rootDir, '.task', 'tasks');
+	const tasksDir = path.join(rootDir, 'data', 'tasks');
 	fs.mkdirSync(tasksDir, { recursive: true });
 	return {
 		ctx: {
 			store: new TaskStore(tasksDir),
 			config: { ...DEFAULT_TEST_CONFIG, ...configOverrides },
-			storage: { dataDir: path.join(rootDir, '.task'), configFiles: [path.join(rootDir, '.task', 'config.yml')] },
+			storage: { dataDir: path.join(rootDir, 'data'), configFiles: [path.join(rootDir, 'data', 'config.yml')] },
 			project: { name: 'proj', path: rootDir },
 		},
 		rootDir,
@@ -49,8 +49,8 @@ export interface SharedRegistrySandbox {
 	env: NodeJS.ProcessEnv;
 	/** The registry directory the SDK derives from `env`. */
 	registryDir: string;
-	/** Creates (once) a project directory under the root; with `task: true` it holds a `.task/tasks` folder. */
-	dir: (name: string, options?: { task?: boolean }) => string;
+	/** Creates (once) a project directory under the root. */
+	dir: (name: string) => string;
 	/** Registers a project with the SDK's own mutation (never the real registry: the sandbox registry only). */
 	register: (name: string, dir: string | undefined, options?: { aliases?: string[] }) => Promise<Project>;
 	cleanup: () => void;
@@ -65,9 +65,9 @@ export function createSharedRegistrySandbox(): SharedRegistrySandbox {
 		root,
 		env,
 		registryDir,
-		dir: (name, options = {}) => {
+		dir: name => {
 			const dir = path.join(root, 'work', name);
-			fs.mkdirSync(options.task === true ? path.join(dir, '.task', 'tasks') : dir, { recursive: true });
+			fs.mkdirSync(dir, { recursive: true });
 			return dir;
 		},
 		register: (name, dir, options = {}) =>

@@ -11,7 +11,6 @@ import type { KnownProject, TaskServiceContext } from '@wadeck-app/task-service'
 
 import { RequestError } from './errors.js';
 import { tasksPageHref } from './hrefs.js';
-import { retiredRefKind } from './projectRef.js';
 
 /** The service context of a project the module can address: a registered project with a folder, so its path is known. */
 export type OpenedProject = TaskServiceContext & { project: { id: string; name: string; path: string } };
@@ -26,7 +25,7 @@ export interface ProjectListing {
 	exists: boolean;
 	/** Tasks in a non-terminal status; null when the project cannot be read (see `error`). */
 	openCount: number | null;
-	/** Why the project cannot be read (data still in the old .task folder or split between it and the registry, invalid config.yml, broken parent chain...), with the fix; null when it can. */
+	/** Why the project cannot be read (invalid config.yml, broken parent chain...), with the fix; null when it can. */
 	error: string | null;
 	/** Link to the tasks page of the project; null when the project cannot be read. */
 	href: string | null;
@@ -38,7 +37,7 @@ function problemOf(error: unknown): string {
 	return hint === undefined ? message : `${message}. ${hint}`;
 }
 
-/** The checks every use of a known project starts with, then its context. A registered project needs no `.task`: its data is in the registry. */
+/** The checks every use of a known project starts with, then its context. */
 function openKnown(known: KnownProject): OpenedProject {
 	if (known.problem !== undefined) {
 		throw new RequestError(
@@ -88,10 +87,9 @@ export function listProjects(): ProjectListing[] {
 /**
  * Resolves the project a request targets and builds the service context over its store.
  * `requested` is the `?project=` value: the id, an id prefix (>= 4), the name or an alias of a project of the shared registry,
- * nothing else (a folder or an old page slug is a 404 saying so). Without it, the only known project is used; several make the
+ * nothing else (a folder or a slug is an unknown reference, a 404). Without it, the only known project is used; several make the
  * choice ambiguous (400 listing them). An unreadable shared registry throws its error unchanged (never read as "no project");
- * an unknown reference is a 404 (suggestions of the registry), an ambiguous one a 409 with candidates; a registered project
- * whose data is still in its old `.task` folder, or split between it and the registry, is a 409 naming both folders and the `migrate-data` command.
+ * an unknown reference is a 404 (suggestions of the registry), an ambiguous one a 409 with candidates.
  */
 export function openProject(requested: string | undefined): OpenedProject {
 	// A form whose project select was left on its placeholder sends an empty project: say so, instead of "not found".
@@ -116,7 +114,7 @@ export function openProject(requested: string | undefined): OpenedProject {
 
 /** What to do when nothing is registered: shown by every view and answered by every route. */
 export const NO_PROJECT_HINT =
-	'Register a project with the project CLI (project add <dir>): its tasks then live in the shared registry. A project that still has a .task folder: copy its tasks with `task cli migrate-data -p <name>`.';
+	'Register a project with the project CLI (project add <dir>): its tasks then live in the shared registry.';
 
 function requireAny(known: readonly KnownProject[]): void {
 	if (known.length === 0) {
@@ -128,17 +126,8 @@ function requireAny(known: readonly KnownProject[]): void {
 const KNOWN_PROJECTS_HINT =
 	'Use the id, name or alias of a registered project (GET /api/modules/task/projects lists them).';
 
-const RETIRED_HINT = {
-	directory: `${KNOWN_PROJECTS_HINT} A project folder is no longer accepted.`,
-	slug: `${KNOWN_PROJECTS_HINT} An old page slug (name~hex) is no longer accepted: the page address uses the project id.`,
-};
-
 function pickProject(known: readonly KnownProject[], requested: string | undefined): KnownProject {
 	if (requested !== undefined) {
-		const retired = retiredRefKind(requested);
-		if (retired !== null) {
-			throw new RequestError(404, `no project matches "${requested}"`, RETIRED_HINT[retired]);
-		}
 		// An id, a name, an alias or an id prefix is the shared registry's to resolve (typed errors: not found, ambiguous, unreadable).
 		let resolved;
 		try {

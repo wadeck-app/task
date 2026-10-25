@@ -10,7 +10,7 @@ import { createTestContext, type TestContext } from './testHelpers.js';
 function createDanglingChild(t: TestContext): { parentId: string; childId: string } {
 	const parent = t.ctx.store.create('parent', 'backlog');
 	const child = t.ctx.store.create('child', 'backlog', parent.id);
-	const indexPath = `${t.rootDir}/.task/task-index.json`;
+	const indexPath = `${t.rootDir}/data/task-index.json`;
 	const index = JSON.parse(fs.readFileSync(indexPath, 'utf8')) as { tasks: Array<{ id: string }> };
 	index.tasks = index.tasks.filter(x => x.id !== parent.id);
 	fs.writeFileSync(indexPath, JSON.stringify(index));

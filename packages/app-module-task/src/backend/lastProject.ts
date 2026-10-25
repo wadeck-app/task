@@ -7,9 +7,9 @@ import * as path from 'node:path';
 const FILE_NAME = 'last-project.json';
 
 export interface LastProject {
-	/** The remembered project (registry id); null when none was remembered yet, the file is in the old format, or it cannot be used (see `problem`). */
+	/** The remembered project (registry id); null when none was remembered yet or it cannot be used (see `problem`). */
 	id: string | null;
-	/** Why the file cannot be used, with what to do; null when it is absent or fine (an old-format file is not a problem, see `onOldFormat`). */
+	/** Why the file cannot be used, with what to do; null when it is absent or fine. */
 	problem: string | null;
 }
 
@@ -22,14 +22,10 @@ function reasonOf(error: unknown): string {
 }
 
 /**
- * Reads the remembered project. An absent file is the normal first state; any other failure is reported, never hidden. A file of
- * the old format (`{ "path": ... }`, before the shared registry) names a project by directory: it is ignored, and `onOldFormat`
- * is told (the next created task writes the new format).
+ * Reads the remembered project. An absent file is the normal first state; any other failure (including a file without an `id`)
+ * is reported, never hidden.
  */
-export function readLastProject(
-	dataDir: string,
-	onOldFormat: (message: string) => void = () => undefined
-): LastProject {
+export function readLastProject(dataDir: string): LastProject {
 	const file = fileOf(dataDir);
 	let raw: string;
 	try {
@@ -39,14 +35,8 @@ export function readLastProject(
 		return { id: null, problem: unusable(file, reasonOf(error)) };
 	}
 	try {
-		const parsed = JSON.parse(raw) as { id?: unknown; path?: unknown } | null;
+		const parsed = JSON.parse(raw) as { id?: unknown } | null;
 		if (typeof parsed?.id === 'string' && parsed.id !== '') return { id: parsed.id, problem: null };
-		if (typeof parsed?.path === 'string') {
-			onOldFormat(
-				`${file} is in the old format (it names a project by directory: ${parsed.path}): ignored, no project is preselected on the New task page until the next task is created`
-			);
-			return { id: null, problem: null };
-		}
 		return { id: null, problem: unusable(file, 'it has no "id" string') };
 	} catch (error) {
 		return { id: null, problem: unusable(file, reasonOf(error)) };

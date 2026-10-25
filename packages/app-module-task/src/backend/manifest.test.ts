@@ -891,13 +891,10 @@ describe('projects page: a read-only list (src/dsl-views/projects-page.yaml)', (
 		expect(page).toContain('project CLI');
 	});
 
-	it('shows the id, name, directory, open tasks and the problem of each row: no registry column, no registered marker', () => {
+	it('shows the id, name, directory, open tasks and the problem of each row: no registry column', () => {
 		expect(page).toContain('rows: $sources.projects.projectRows');
 		for (const key of ['id', 'name', 'path', 'openText', 'problemText']) {
 			expect(page, key).toContain(`key: '${key}'`);
-		}
-		for (const gone of ['registryText', 'registryHint', 'registryNotice', 'legacy']) {
-			expect(page, gone).not.toContain(gone);
 		}
 		expect(page).not.toContain('type: actions');
 	});
@@ -912,12 +909,6 @@ describe('projects page: a read-only list (src/dsl-views/projects-page.yaml)', (
 		expect(page).toContain('items: $sources.projects.openLinks');
 		expect(page).not.toContain('onRowClick');
 		expect(page).not.toContain('navigateTo');
-	});
-
-	it('no page asks page=projects any more (that parameter only existed to point at the add form)', () => {
-		for (const name of viewNames) {
-			expect(view(name), name).not.toContain('page=projects');
-		}
 	});
 });
 
@@ -1097,13 +1088,5 @@ describe('shared project registry: the views say when it cannot be read', () => 
 		expect(widget).toMatch(
 			/\$if: \$sources\.summary\.registryProblem\n\s+label: \$sources\.summary\.registryProblem\n\s+variant: danger/
 		);
-	});
-
-	it('no view still binds the retired legacy fields', () => {
-		for (const name of viewNames) {
-			for (const gone of ['registryNotice', 'registryText', 'registryHint', '.registered']) {
-				expect(view(name), `${name}: ${gone}`).not.toContain(gone);
-			}
-		}
 	});
 });

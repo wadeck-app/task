@@ -41,7 +41,6 @@ export function skippedOf(projects: readonly ProjectOverview[]): SkippedProject[
 
 /** Three or four words on why a project cannot be read: the narrow widget has no room for the full reason. */
 function shortProblem(project: ProjectOverview): string {
-	if (project.error?.includes('task cli migrate-data') === true) return 'not migrated';
 	if (!project.exists) return 'missing';
 	return 'invalid config';
 }

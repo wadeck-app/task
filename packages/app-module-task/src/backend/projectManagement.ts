@@ -15,7 +15,7 @@ export function listRows(projects: readonly ProjectListing[]): Record<string, un
 		name: project.name,
 		path: project.path,
 		openText: project.openCount === null ? '-' : String(project.openCount),
-		// The reason carries its own fix (migration command, config file to repair, project CLI command).
+		// The reason carries its own fix (config file to repair, project CLI command).
 		problemText: project.error ?? '',
 	}));
 }

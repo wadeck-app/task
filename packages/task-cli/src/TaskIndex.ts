@@ -14,7 +14,7 @@ import {
 import type { ResolvedProject } from '@wadeck-app/task-service';
 import { declareBeforeFirstDelivery } from './QueueEventsDeclaration.js';
 import { TASK_BUNDLE_NAME } from './TaskBundleName.js';
-import { parseArgs, usesRemovedProjectDir } from './cli/args.js';
+import { parseArgs, usesProjectDirOption } from './cli/args.js';
 import type { CommandEnv } from './cli/env.js';
 import { STATUS_HELP, taskHelp } from './cli/help.js';
 import { errorOutput, failure } from './cli/output.js';
@@ -22,11 +22,9 @@ import type { CommandResult } from './cli/output.js';
 import { printUpdateNotice } from './cli/updateNotice.js';
 import { runCliSubcommand } from './commands/CliSubcommands.js';
 import { describeProjectSelection, runListAllProjects } from './commands/GlobalViewCommands.js';
-import { runMigrateData } from './commands/MigrateDataCommand.js';
 import { runPluginsCommand } from './commands/PluginsCommand.js';
 import { runProjectsCommand } from './commands/ProjectsCommand.js';
 import { isStatusHelp } from './commands/StatusCommand.js';
-import { runRemovedInit, runRemovedProjectDirFlag, warnIgnoredTaskProjectDir } from './commands/RemovedCommands.js';
 import { PROJECT_COMMANDS, VALID_COMMANDS_HINT } from './commands/projectCommands.js';
 import { VERSION } from './version.js';
 
@@ -42,8 +40,15 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 		/* never block the CLI on logging failure */
 	}
 
-	// A removed selector is refused (or called out) before anything runs: never taken for an argument, never silently ignored.
-	if (usesRemovedProjectDir(args)) return runRemovedProjectDirFlag(jsonMode);
+	// The CLI does not reject unknown options in general: without this, `--project-dir x` would be taken for an argument and the command
+	// would silently run on the project of the cwd, which may not be the one the user meant.
+	if (usesProjectDirOption(args)) {
+		return errorOutput(
+			jsonMode,
+			'unknown option: --project-dir',
+			'Select the project with -p <id|name|alias> or run from a registered folder (register one with: project add "<dir>")'
+		);
+	}
 
 	printUpdateNotice();
 
@@ -53,17 +58,6 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 	if (command === '--version' || command === '-V') {
 		return { exitCode: 0, output: VERSION };
 	}
-	warnIgnoredTaskProjectDir();
-	if (command === 'init') {
-		return runRemovedInit(cwd, jsonMode);
-	}
-	if (command === 'cli' && rest[0] === 'migrate-data') {
-		return runMigrateData(rest.slice(1), jsonMode, () => {
-			const resolved = resolveProject({ cwd, projectRef });
-			announceResolution(resolved);
-			return resolved;
-		});
-	}
 	if (command === 'cli') {
 		return runCliSubcommand(rest, jsonMode);
 	}
@@ -71,7 +65,7 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 		return runPluginsCommand(rest, jsonMode);
 	}
 	if (command === 'projects') {
-		return runProjectsCommand(rest, jsonMode, cwd);
+		return runProjectsCommand(rest, jsonMode);
 	}
 	// Help needs no project (the listing itself does: it goes through the handler below).
 	if (command === 'status' && isStatusHelp(rest)) {
@@ -83,6 +77,12 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 		return runListAllProjects(rest, jsonMode, describeProjectSelection(projectRef));
 	}
 
+	// Checked before the project is looked up: an unknown command fails the same way in any folder.
+	const handler = PROJECT_COMMANDS.get(command);
+	if (handler === undefined) {
+		return errorOutput(jsonMode, `unknown command: ${command}`, VALID_COMMANDS_HINT);
+	}
+
 	let env: CommandEnv;
 	try {
 		const resolved = resolveProject({ cwd, projectRef });
@@ -90,7 +90,6 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 		env = {
 			command,
 			jsonMode,
-			// A project whose data is still in its old .task folder, or split between it and the registry, is refused (typed error with the fix).
 			ctx: openResolvedProject(resolved, configDir),
 			// The first event of the process declares the task events to the queue, unless the marker says it was done.
 			eventSink: declareBeforeFirstDelivery(
@@ -102,10 +101,6 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 		return failure(jsonMode, error);
 	}
 
-	const handler = PROJECT_COMMANDS.get(command);
-	if (handler === undefined) {
-		return errorOutput(jsonMode, `unknown command: ${command}`, VALID_COMMANDS_HINT);
-	}
 	try {
 		return await handler(rest, env);
 	} finally {

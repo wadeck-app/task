@@ -11,7 +11,7 @@ describe('task types', () => {
 	let configPath: string;
 	beforeEach(() => {
 		t = createTestContext({ types: ['bug'] });
-		configPath = path.join(t.rootDir, '.task', 'config.yml');
+		configPath = path.join(t.rootDir, 'data', 'config.yml');
 		fs.writeFileSync(
 			configPath,
 			['statuses:', '  - backlog', '  - done', 'types:', '  - bug', ''].join('\n'),

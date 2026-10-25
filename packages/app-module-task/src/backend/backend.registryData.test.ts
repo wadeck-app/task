@@ -69,13 +69,6 @@ async function call(
 const dataDirOf = (id: string): string => projectToolDir(world.registryDir, id, 'task', 'data');
 const configDirOf = (id: string): string => projectToolDir(world.registryDir, id, 'task', 'config');
 
-/** A folder with an old-style `.task` holding one task (and the config template): data not migrated. */
-function unmigratedDir(name: string): string {
-	const dir = world.createFolder(name, { configYml: 'types:\n  - bug\n' });
-	fs.writeFileSync(path.join(dir, '.task', 'tasks', 'abc12345.json'), '{}');
-	return dir;
-}
-
 describe('a registered project keeps its data and config in the shared registry', () => {
 	it('a created task lands in <data>/tasks, the project folder stays clean, and the event keeps the main path as cwd', async () => {
 		const dir = path.join(world.root, 'plain-dir');
@@ -137,113 +130,23 @@ describe('a registered project keeps its data and config in the shared registry'
 	});
 });
 
-describe('a registered project whose data is still in <main path>/.task is refused with the migrate command; only copying it into the registry fixes that', () => {
-	// The log is ndjson: the backslashes of a Windows path are doubled in it.
-	const taskLog = (): string => {
-		const logDir = path.join(world.configDir, 'logs');
-		return fs.existsSync(logDir)
-			? fs
-					.readdirSync(logDir)
-					.map(file => fs.readFileSync(path.join(logDir, file), 'utf8'))
-					.join('')
-			: '';
-	};
-
-	it('reads and writes answer 409 with both folders and the exact command; nothing is read, written or created', async () => {
-		const dir = unmigratedDir('shop-dir');
+describe('a folder of the project is never read for tasks or config', () => {
+	it('tasks in <main path>/.task are not seen: the project is listed readable with 0 open tasks and answers its (empty) task list', async () => {
+		const dir = path.join(world.root, 'shop-dir');
+		fs.mkdirSync(path.join(dir, '.task', 'tasks'), { recursive: true });
+		fs.writeFileSync(path.join(dir, '.task', 'tasks', 'abc12345.json'), '{}');
+		fs.writeFileSync(path.join(dir, '.task', 'config.yml'), 'types:\n  - bug\n');
 		const project = await world.registerShared('shop', dir);
-		const oldDir = path.join(path.resolve(dir), '.task');
 
-		const answers = [
-			await call('GET /tasks', { query: { project: 'shop' } }),
-			await call('POST /tasks', { query: { project: 'shop' }, body: { description: 'x' } }),
-			await call('GET /types', { query: { project: 'shop' } }),
-		];
+		const projects = await call('GET /projects');
+		const tasks = await call('GET /tasks', { query: { project: 'shop' } });
 
-		for (const answer of answers) {
-			expect(answer.status).toBe(409);
-			expect(answer.body['error']).toContain(oldDir);
-			expect(answer.body['error']).toContain(dataDirOf(project.id));
-			expect(answer.body['hint']).toContain('task cli migrate-data -p shop');
-		}
+		expect(projects.body['projects']).toEqual([
+			expect.objectContaining({ id: project.id, openCount: 0, error: null }),
+		]);
+		expect(tasks.status).toBe(200);
+		expect(tasks.body['tasks']).toEqual([]);
 		expect(fs.readdirSync(path.join(dir, '.task', 'tasks'))).toEqual(['abc12345.json']);
-		expect(fs.existsSync(dataDirOf(project.id))).toBe(false);
-		expect(sink.events).toEqual([]);
-		expect(taskLog()).not.toContain('Deprecated');
-	});
-
-	it('a view (inlineErrors=true) gets the same failure as data: failed, httpStatus 409 and the errorText with the command', async () => {
-		const dir = unmigratedDir('shop-dir');
-		await world.registerShared('shop', dir);
-
-		const answer = await call('GET /tasks', { query: { project: 'shop', inlineErrors: 'true' } });
-
-		expect(answer.status).toBe(200);
-		expect(answer.body).toMatchObject({ failed: true, httpStatus: 409 });
-		expect(answer.body['errorText']).toContain('task cli migrate-data -p shop');
-	});
-
-	it('GET /projects lists it unreadable (not hidden, not read as 0) with the migrate command in the problem text of the Projects page', async () => {
-		const dir = unmigratedDir('shop-dir');
-		await world.registerShared('shop', dir);
-
-		const answer = await call('GET /projects');
-
-		const [entry] = answer.body['projects'] as Array<Record<string, any>>;
-		expect(entry).toMatchObject({ name: 'shop', openCount: null, href: null });
-		expect(entry!['error']).toContain('task cli migrate-data -p shop');
-		const [row] = answer.body['projectRows'] as Array<Record<string, any>>;
-		expect(row!['problemText']).toContain('task cli migrate-data -p shop');
-		expect(row!['problemText']).toContain(path.join(path.resolve(dir), '.task'));
-	});
-
-	it('the dashboard widget (GET /summary) shows it as "not migrated" with the full reason, command included, in the tooltip', async () => {
-		const dir = unmigratedDir('shop-dir');
-		await world.registerShared('shop', dir);
-		// A summary of projects that ALL fail is a 500: one readable project keeps the widget answering.
-		const okDir = path.join(world.root, 'ok-dir');
-		fs.mkdirSync(okDir);
-		await world.registerShared('ok', okDir);
-
-		const answer = await call('GET /summary');
-
-		const rows = answer.body['projectRows'] as Array<Record<string, any>>;
-		const row = rows.find(candidate => String(candidate['label']).includes('shop'));
-		expect(row!['label']).toContain('not migrated');
-		expect(row!['labelTitle']).toContain('task cli migrate-data -p shop');
-	});
-
-	it('right after migration (same task ids in both places) the registry is used, and nothing is logged about the old copy', async () => {
-		const dir = unmigratedDir('shop-dir');
-		const project = await world.registerShared('shop', dir);
-		fs.mkdirSync(path.join(dataDirOf(project.id), 'tasks'), { recursive: true });
-		fs.writeFileSync(path.join(dataDirOf(project.id), 'tasks', 'abc12345.json'), '{}');
-
-		const read = await call('GET /tasks', { query: { project: 'shop' } });
-
-		expect(read.status).toBe(200);
-		expect(taskLog()).not.toContain('old copy');
-	});
-
-	it('a REAL split answers 409 with both folders and the two ways out, and writes nothing; GET /projects lists it unreadable', async () => {
-		const dir = unmigratedDir('shop-dir');
-		const project = await world.registerShared('shop', dir);
-		fs.mkdirSync(path.join(dataDirOf(project.id), 'tasks'), { recursive: true });
-		fs.writeFileSync(path.join(dataDirOf(project.id), 'tasks', 'other999.json'), '{}');
-
-		const write = await call('POST /tasks', { query: { project: 'shop' }, body: { description: 'x' } });
-		const listed = await call('GET /projects');
-
-		const oldDir = path.join(path.resolve(dir), '.task');
-		expect(write.status).toBe(409);
-		expect(write.body['error']).toContain(oldDir);
-		expect(write.body['error']).toContain(dataDirOf(project.id));
-		expect(write.body['hint']).toContain(`delete ${oldDir} by hand`);
-		expect(write.body['hint']).toContain(`move ${dataDirOf(project.id)} away`);
-		expect(fs.readdirSync(path.join(dataDirOf(project.id), 'tasks'))).toEqual(['other999.json']);
-		const [entry] = listed.body['projects'] as Array<Record<string, any>>;
-		expect(entry).toMatchObject({ openCount: null, href: null });
-		expect(entry!['error']).toContain('Keep one of them');
 	});
 });
 
@@ -308,7 +211,7 @@ describe('the last project is remembered by id', () => {
 		expect(projects.body['lastProjectProblem']).toBeNull();
 	});
 
-	it('an old file holding a path is ignored with a line in the task log: no crash, no problem shown, nothing preselected', async () => {
+	it('a file without an id (for example one holding only a path) is shown as a problem; nothing is preselected', async () => {
 		const a = path.join(world.root, 'a');
 		const b = path.join(world.root, 'b');
 		fs.mkdirSync(a);
@@ -320,14 +223,8 @@ describe('the last project is remembered by id', () => {
 
 		const projects = await call('GET /projects');
 
-		expect(projects.body['lastProjectProblem']).toBeNull();
+		expect(projects.body['lastProjectProblem']).toContain('last-project.json');
+		expect(projects.body['lastProjectProblem']).toContain('no "id" string');
 		expect(projects.body['forms'].create.projectParam).toBe('');
-		const logDir = path.join(world.configDir, 'logs');
-		const log = fs
-			.readdirSync(logDir)
-			.map(file => fs.readFileSync(path.join(logDir, file), 'utf8'))
-			.join('');
-		expect(log).toContain('last-project.json');
-		expect(log).toContain('old format');
 	});
 });

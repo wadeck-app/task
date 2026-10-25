@@ -205,10 +205,9 @@ describe('the rules detect what they forbid', () => {
 		expect(violationsIn('task-cli', '// see @wadeck-app/project-sdk in task-service')).toEqual([]);
 	});
 
-	// Stage 2a: the shared registry belongs to the project CLI. Task reads it (resolution, listing) and never writes it; the legacy
-	// projects.json is read only too (its writers and their lock are deleted).
+	// The shared registry belongs to the project CLI. Task reads it (resolution, listing) and never writes it.
 	it.each(['task-core', 'task-service', 'task-cli', 'app-module-task', 'dsl-lib-task'] as const)(
-		'%s must not write the shared registry nor the legacy projects.json',
+		'%s must not write the shared registry',
 		pkg => {
 			for (const mutation of [
 				'addProject',
@@ -231,20 +230,6 @@ describe('the rules detect what they forbid', () => {
 					[]
 				);
 			}
-			for (const legacy of [
-				'registerProject',
-				'unregisterProject',
-				'registerInitializedProject',
-				'removeRegisteredProject',
-				'relocateProject',
-				'pruneMissingProjects',
-				'initProject',
-			]) {
-				expect(
-					violationsIn(pkg, `export function ${legacy}(dir: string) {}`),
-					`${pkg} defines ${legacy}`
-				).not.toEqual([]);
-			}
 		}
 	);
 
@@ -263,16 +248,7 @@ describe('the rules detect what they forbid', () => {
 		expect(violationsIn('task-service', write)).not.toEqual([]);
 	});
 
-	// Stage 2b: the legacy `projects.json` is no longer read; the `.task` folder is known by ONE module (task-service migrateData.ts).
-	it.each(PACKAGES)('%s must not mention the legacy projects.json in its sources', pkg => {
-		expect(violationsIn(pkg, "const file = path.join(configDir, 'projects.json');")).not.toEqual([]);
-		expect(
-			violationsIn(pkg, "const file = 'projects.json';", { isTest: true, resolveRelative: noRelative })
-		).toEqual([]);
-		expect(violationsIn(pkg, '// the old projects.json is gone')).toEqual([]);
-	});
-
-	describe('no `.task` path construction outside the migrate-data module', () => {
+	describe('no `.task` project data path construction in any non-test source', () => {
 		const construction = [
 			"path.join(dir, '.task', 'tasks')",
 			'path.join(dir, ".task")',
@@ -305,36 +281,13 @@ describe('the rules detect what they forbid', () => {
 			expect(violationsIn('task-cli', "const help = 'Global config directory (default: ~/.task)';")).toEqual([]);
 		});
 
-		it('the migrate-data module itself may construct it, no other file of task-service (the deleted legacyData.ts included)', () => {
-			const source = "const dir = path.join(projectDir, '.task');";
-			const inModule = checkSource(
-				'packages/task-service/src/migrateData.ts',
-				source,
-				PACKAGE_RULES['task-service'],
-				{
-					isTest: false,
-					resolveRelative: noRelative,
-				}
-			);
-			const elsewhere = checkSource(
-				'packages/task-service/src/storage.ts',
-				source,
-				PACKAGE_RULES['task-service'],
-				{
-					isTest: false,
-					resolveRelative: noRelative,
-				}
-			);
-			expect(inModule).toEqual([]);
-			expect(elsewhere).toHaveLength(1);
-		});
-
-		it('no other file is exempt: not the deleted legacyData.ts, not the context opening, not the CLI command', () => {
+		it('no file is exempt: the global config dir default (homedir) is the only allowed spelling', () => {
 			const source = "const dir = path.join(projectDir, '.task');";
 			for (const file of [
-				'packages/task-service/src/legacyData.ts',
+				'packages/task-service/src/anyFile.ts',
+				'packages/task-service/src/storage.ts',
 				'packages/task-service/src/openContext.ts',
-				'packages/task-cli/src/commands/MigrateDataCommand.ts',
+				'packages/task-cli/src/commands/AnyCommand.ts',
 			]) {
 				expect(
 					checkSource(file, source, PACKAGE_RULES[file.includes('task-cli') ? 'task-cli' : 'task-service'], {

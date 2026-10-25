@@ -24,7 +24,7 @@
 # ============================================================================================================
 
 # Detail of one task (/modules/task/tasks/p/:project/:id). ":id" of the manifest path is $route.id, ":project" is
-# $route.project (the slug of the project, resolved by GET /projects). The breadcrumb leads back: no back link here.
+# $route.project (the id of the project, resolved by GET /projects). The breadcrumb leads back: no back link here.
 #
 # Every form below submits through a named action ($actions) bound with `onSubmit: $ctx.<action>`:
 # - the body is the form data; it also fills the {placeholders} of the action URL ({id} is the route id);

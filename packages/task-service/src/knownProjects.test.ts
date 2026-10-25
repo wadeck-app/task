@@ -21,7 +21,7 @@ const list = (): ReturnType<typeof listKnownProjects> => listKnownProjects({ env
 
 describe('listKnownProjects: the projects of the shared registry that have a folder', () => {
 	it('lists registered projects with their id, registry name, main path and registry storage', async () => {
-		const shop = sandbox.dir('shop-dir', { task: true });
+		const shop = sandbox.dir('shop-dir');
 		const project = await sandbox.register('shop', shop);
 
 		const known = list();
@@ -39,7 +39,7 @@ describe('listKnownProjects: the projects of the shared registry that have a fol
 		]);
 	});
 
-	it('lists a registered project that has no .task: its data lives in the registry, any project can hold tasks', async () => {
+	it('lists a registered project that has no data yet: its data lives in the registry, any project can hold tasks', async () => {
 		await sandbox.register('fresh', sandbox.dir('fresh'));
 
 		expect(list().projects.map(p => p.name)).toEqual(['fresh']);

@@ -5,9 +5,6 @@ import { describeError } from './describeError.js';
 import {
 	AmbiguousDeletePrefixError,
 	DanglingParentError,
-	DataMigrationError,
-	ProjectDataSplitError,
-	UnmigratedDataError,
 	InvalidDeleteFilterError,
 	InvalidLinkTypeError,
 	InvalidStatusError,
@@ -92,26 +89,7 @@ describe('describeError', () => {
 	});
 });
 
-describe('describeError: the shared registry storage (stage 2a)', () => {
-	it('a real split of the data is a "conflict" (the request is fine, the state is not) with the way out as hint and both folders in details', () => {
-		const description = describeError(
-			new ProjectDataSplitError('shop', '/work/shop/.task', '/cfg/projects/a1/task/data', 'Keep one of them')
-		);
-
-		expect(description).toEqual({
-			kind: 'conflict',
-			message: expect.stringContaining('/work/shop/.task'),
-			hint: 'Keep one of them',
-			details: { project: 'shop', oldDir: '/work/shop/.task', dataDir: '/cfg/projects/a1/task/data' },
-		});
-	});
-
-	it('a refused migration is "invalid" and keeps its hint', () => {
-		const description = describeError(new DataMigrationError('nothing to migrate', 'register the folder'));
-
-		expect(description).toMatchObject({ kind: 'invalid', hint: 'register the folder' });
-	});
-
+describe('describeError: the shared registry', () => {
 	it('a config key the schema does not know is "invalid", names the file in the message, and says what to do', () => {
 		const description = describeError(
 			new ConfigSchemaError("layer '/cfg/config.yml': key 'colour' is not declared")

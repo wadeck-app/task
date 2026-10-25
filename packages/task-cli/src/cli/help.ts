@@ -56,10 +56,7 @@ Usage:
   task cli register [--json]                 Tell app-core where the task app-module is (also done by task cli update)
   task cli unregister [--json]               Remove the task app-module from app-core
   task cli declare-events [--json]           Tell the queue which events task pushes, now (normally automatic, see Events below)
-  task cli migrate-data [-p <ref>] [--dry-run] [--json]
-                                             Copy the old .task of a registered project into the registry (COPY only: the .task is never modified or deleted)
   task projects summary [--json]             Open/total tasks per registered project and in total (unreadable projects listed with their reason)
-  (task init and task projects add|remove|move|prune|list moved to the project CLI: project add|remove|paths|list)
 
 Global flags:
   --config <dir>       Global config directory (default: ~/.task)
@@ -68,13 +65,7 @@ Global flags:
                        Order: -p, then TASK_PROJECT, then the registered project that contains the cwd (deepest registered folder wins). A reference that
                        does not resolve is an error (suggestions listed), never a fallback; so is a folder that is in no registered project (the error gives: project add "<dir>").
                        Refused with 'task list --all-projects'. Register a project with the project CLI: project add "<dir>"
-  --project-dir        REMOVED: refused with exit 1 ("--project-dir was removed: use -p <id|name|alias> or run from a registered folder"), wherever it is typed
 
-A folder holding a .task that is in no registered project is not a project (register it: project add "<dir>"). A REGISTERED project whose tasks are still in the
-.task folder of its main path (the registry holds none) is refused (exit 1): task reads the registry only. The error names both folders and the command that
-copies them: task cli migrate-data -p <name> (COPY only; check the copy, then delete the .task folder by hand). After the copy the registry is used and the
-leftover .task is ignored while it holds the same task ids; tasks in BOTH places with different ids are a real split and the command fails naming both folders
-(keep one, remove the other by hand).
 How the project was resolved is in 'task cli logs'.
 
 Events (pushed to queue through @wadeck-app/queue-sdk after the change is saved, with the project directory as cwd so its .queue/subscribers.yml is used):
@@ -113,9 +104,7 @@ Exit codes:
 
 Environment variables:
   TASK_CONFIG       Override global config directory (default: ~/.task)
-  TASK_PROJECT      Project of the shared registry (name, alias or id), below -p; refused by 'task list --all-projects'
-  TASK_PROJECT_DIR  REMOVED, ignored with one stderr line ("Ignored: TASK_PROJECT_DIR was removed, use TASK_PROJECT"); it does not fail the command
-  PROJECT_DIR       Not read (a generic variable of other tools): the cwd, -p or TASK_PROJECT select the project`;
+  TASK_PROJECT      Project of the shared registry (name, alias or id), below -p; refused by 'task list --all-projects'`;
 }
 
 /** `task projects --help`. */
@@ -125,13 +114,6 @@ Usage:
   task projects summary [--json]             Open/total tasks per project and in total; an unreadable project shows its reason and is not counted;
                                              exit 1 only when registered projects exist and none can be read
   task projects --help                       Show this help
-
-task projects add|remove|move|prune|list moved to the project CLI (they answer with the replacement command):
-  task projects add [dir]    ->  project add "<dir>"
-  task projects remove <dir> ->  project remove <name|id>
-  task projects move         ->  project paths move
-  task projects prune        ->  project list, then project remove / project paths move
-  task projects list         ->  project list
 
 These commands need no project: the registry is global (-p and TASK_PROJECT are not used here).`;
 

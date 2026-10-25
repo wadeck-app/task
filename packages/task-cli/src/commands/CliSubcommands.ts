@@ -65,7 +65,7 @@ export async function runCliSubcommand(rest: string[], jsonMode: boolean): Promi
 			return errorOutput(
 				jsonMode,
 				`unknown task cli subcommand: ${subCmd}`,
-				'Valid subcommands: version, update, rollback, self-check, logs, register, unregister, declare-events, migrate-data'
+				'Valid subcommands: version, update, rollback, self-check, logs, register, unregister, declare-events'
 			);
 	}
 }

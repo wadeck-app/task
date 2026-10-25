@@ -51,10 +51,10 @@ export function parseArgs(args: string[]): ParsedArgs {
 }
 
 /**
- * `--project-dir <dir>` was removed (stage 2b): a project is named with `-p <id|name|alias>` or found from a registered cwd.
+ * `--project-dir` is not an option: a project is named with `-p <id|name|alias>` or found from a registered cwd.
  * True when it is typed anywhere (`--project-dir x`, `--project-dir=x`, a bare `--project-dir`): the caller refuses loudly
  * instead of letting it be taken for an argument of the command.
  */
-export function usesRemovedProjectDir(args: readonly string[]): boolean {
+export function usesProjectDirOption(args: readonly string[]): boolean {
 	return args.some(arg => arg === '--project-dir' || arg.startsWith('--project-dir='));
 }

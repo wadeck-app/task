@@ -13,9 +13,6 @@ export {
 	PartialDeleteError,
 	DanglingParentError,
 	NoReadableProjectsError,
-	ProjectDataSplitError,
-	UnmigratedDataError,
-	DataMigrationError,
 } from './errors.js';
 export type { ProjectFailure } from './errors.js';
 export type { ErrorDescription, ErrorKind } from './describeError.js';
@@ -51,9 +48,8 @@ export type {
 } from './queueEventSink.js';
 export { createQueueEventSink } from './queueEventSink.js';
 export type { QueueEventDeclaration } from './queueEventDeclarations.js';
-export { TASK_QUEUE_SOURCE, queueEventDeclarations, queueEventDeclarationsHash } from './queueEventDeclarations.js';
-export type { DeclareEventsOutcome, DeclareTaskEventsOptions } from './declareTaskEvents.js';
-export { declareTaskEvents } from './declareTaskEvents.js';
+export { queueEventDeclarations, queueEventDeclarationsHash } from './queueEventDeclarations.js';
+export type { DeclareEventsOutcome } from './declareTaskEvents.js';
 export { appendTaskLog } from './taskLog.js';
 export type { CreateTaskInput, CreateTaskResult } from './createTask.js';
 export { createTask } from './createTask.js';
@@ -75,18 +71,16 @@ export type {
 	DeletePlan,
 	ExecuteDeleteResult,
 } from './deleteTasks.js';
-export { parseDeleteFilter, planDelete, executeDelete } from './deleteTasks.js';
+export { planDelete, executeDelete } from './deleteTasks.js';
 export type { DeleteSelection, DeleteSelectionProblem } from './deleteSelection.js';
 export { selectDeleteTargets, describeDeleteEffects } from './deleteSelection.js';
 export type { StatusInfo } from './listStatuses.js';
 export { listStatuses } from './listStatuses.js';
-export type { StatusCount } from './taskStats.js';
-export { countTasksByStatus } from './taskStats.js';
 export { listTypes, addType, removeType } from './taskTypes.js';
 export { getTaskConfigDir, getTaskLogDir } from './configDir.js';
 export type { ProjectHealth } from './projectsHealth.js';
 export type { InspectedProject } from './projectsHealth.js';
-export { inspectKnownProjects, inspectProject, inspectRegisteredProjects } from './projectsHealth.js';
+export { inspectKnownProjects } from './projectsHealth.js';
 export type {
 	ProjectOverview,
 	ProjectsSummary,
@@ -100,9 +94,6 @@ export { resolveProject, resolveProjectReference } from './resolveProject.js';
 export type { KnownProject, KnownProjects, ListKnownProjectsOptions } from './knownProjects.js';
 export { listKnownProjects } from './knownProjects.js';
 export type { TaskStorage } from './storage.js';
-export { hasTaskData, ownConfigFile, registryStorage, tasksDirOf } from './storage.js';
-export { TASK_CONFIG_SCHEMA, loadTaskConfig } from './projectConfig.js';
-export type { MigrateDataOptions, MigrateDataResult } from './migrateData.js';
-export { assertDataMigrated, migrateData } from './migrateData.js';
+export { ownConfigFile } from './storage.js';
 export type { Blocker, BlockerSummary, ChildrenSummary } from './taskProgress.js';
 export { describeBlockers, summarizeChildren } from './taskProgress.js';

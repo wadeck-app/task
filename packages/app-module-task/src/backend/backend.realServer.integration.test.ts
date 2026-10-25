@@ -261,7 +261,7 @@ describe('the packaged module through a real app-core server', () => {
 	it('a folder is no project reference: 404 no project matches, with the hint to use the id, name or alias', async () => {
 		const { status, body } = await call('GET', `/tasks?project=${encodeURIComponent(projectDir)}`);
 		expect(status).toBe(404);
-		expect(body['error']).toBe(`no project matches "${projectDir}"`);
+		expect(body['error']).toContain(`no project matches '${projectDir}'`);
 		expect(body['hint']).toContain('id, name or alias');
 	});
 

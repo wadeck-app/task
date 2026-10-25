@@ -27,23 +27,12 @@ interface JsonSummary {
 	total: number;
 }
 
-function restoreEnv(name: string, value: string | undefined): void {
-	if (value === undefined) delete process.env[name];
-	else process.env[name] = value;
-}
-
 describe('global view commands (task list --all-projects, task projects summary)', () => {
 	let root: string;
 	let previousXdg: string | undefined;
 	let stderr: string[];
-	let previousTaskProjectDir: string | undefined;
-	let previousProjectDir: string | undefined;
 
 	beforeEach(() => {
-		previousTaskProjectDir = process.env['TASK_PROJECT_DIR'];
-		previousProjectDir = process.env['PROJECT_DIR'];
-		delete process.env['TASK_PROJECT_DIR'];
-		delete process.env['PROJECT_DIR'];
 		root = fs.mkdtempSync(path.join(os.tmpdir(), 'task-global-cmd-'));
 		previousXdg = process.env['XDG_CONFIG_HOME'];
 		process.env['XDG_CONFIG_HOME'] = path.join(root, 'xdg');
@@ -58,8 +47,6 @@ describe('global view commands (task list --all-projects, task projects summary)
 	afterEach(() => {
 		vi.restoreAllMocks();
 		process.env['XDG_CONFIG_HOME'] = previousXdg;
-		restoreEnv('TASK_PROJECT_DIR', previousTaskProjectDir);
-		restoreEnv('PROJECT_DIR', previousProjectDir);
 		fs.rmSync(root, { recursive: true, force: true });
 	});
 
@@ -268,11 +255,9 @@ describe('global view commands (task list --all-projects, task projects summary)
 			expect(help).toContain('cannot be combined with --follow, --tree, --parent, -p or TASK_PROJECT');
 		});
 
-		it('task projects --help says no project is used and where the removed subcommands went', async () => {
+		it('task projects --help says no project is used', async () => {
 			const help = (await runTaskCommand(['projects', '--help'], root)).output;
 			expect(help).toContain('-p and TASK_PROJECT are not used here');
-			expect(help).toContain('project add');
-			expect(help).toContain('moved to the project CLI');
 		});
 	});
 

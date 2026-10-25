@@ -4,7 +4,6 @@ import * as path from 'node:path';
 
 import { loadRegistry } from '@wadeck-app/project-sdk';
 
-import { ProjectDataSplitError, UnmigratedDataError } from './errors.js';
 import { openResolvedProject, openTaskContext } from './openContext.js';
 import { resolveProject } from './resolveProject.js';
 import { ownConfigFile, registryStorage } from './storage.js';
@@ -152,48 +151,27 @@ describe('openTaskContext: a project of the shared registry', () => {
 		expect(config.types).toEqual(['bug']);
 	});
 
-	it('UNMIGRATED: refuses a project whose tasks are in the .task of its main path, names both folders and the command, creates nothing', async () => {
-		const dir = sandbox.dir('shop', { task: true });
+	it('never reads a .task folder of the main path: its tasks and config are not seen, the project is fresh, nothing is written there', async () => {
+		const dir = sandbox.dir('shop');
+		fs.mkdirSync(path.join(dir, '.task', 'tasks'), { recursive: true });
 		fs.writeFileSync(path.join(dir, '.task', 'tasks', 'one.json'), '{}');
 		fs.writeFileSync(path.join(dir, '.task', 'config.yml'), 'types:\n  - old\n');
 		const { project, storage } = await registryStorageOf('shop', dir);
 
-		let failure: unknown;
-		try {
-			openTaskContext({ storage, project: { id: project.id, name: 'shop', path: dir } });
-		} catch (error) {
-			failure = error;
-		}
+		const ctx = openTaskContext({ storage, project: { id: project.id, name: 'shop', path: dir } });
 
-		expect(failure).toBeInstanceOf(UnmigratedDataError);
-		const error = failure as UnmigratedDataError;
-		expect(error.message).toContain(path.join(path.resolve(dir), '.task'));
-		expect(error.message).toContain(storage.dataDir);
-		expect(error.hint).toContain('task cli migrate-data -p shop');
-		// Nothing was created in the registry, nothing was written in the .task.
+		expect(ctx.store.list()).toEqual([]);
+		expect(ctx.config.types).toEqual([]);
 		expect(fs.existsSync(storage.dataDir)).toBe(false);
 		expect(fs.readdirSync(path.join(dir, '.task', 'tasks'))).toEqual(['one.json']);
 	});
 
-	it('a registry project with no data anywhere is fresh: it opens, and has no notices', async () => {
+	it('a registry project with no data anywhere is fresh: it opens', async () => {
 		const { project, storage } = await registryStorageOf('shop');
 
 		const ctx = openTaskContext({ storage, project: { id: project.id, name: 'shop' } });
 
 		expect(ctx.storage).toBe(storage);
-		expect(ctx).not.toHaveProperty('notices');
-	});
-
-	it('refuses a REAL split (tasks in both places, different ids), naming both folders', async () => {
-		const dir = sandbox.dir('shop', { task: true });
-		fs.writeFileSync(path.join(dir, '.task', 'tasks', 'one.json'), '{}');
-		const { project, storage } = await registryStorageOf('shop', dir);
-		fs.mkdirSync(path.join(storage.dataDir, 'tasks'), { recursive: true });
-		fs.writeFileSync(path.join(storage.dataDir, 'tasks', 'two.json'), '{}');
-
-		expect(() => openTaskContext({ storage, project: { id: project.id, name: 'shop' } })).toThrow(
-			ProjectDataSplitError
-		);
 	});
 
 	it('a virtual project has data, and no path in its identity', async () => {
@@ -226,13 +204,5 @@ describe('openResolvedProject', () => {
 
 		expect(ctx.project).toEqual({ id: project.id, name: 'shop', path: path.resolve(dir) });
 		expect(ctx.storage.dataDir).toContain(project.id);
-	});
-
-	it('refuses an unmigrated registered project with the command that copies it', async () => {
-		const dir = sandbox.dir('shop', { task: true });
-		fs.writeFileSync(path.join(dir, '.task', 'tasks', 'one.json'), '{}');
-		await sandbox.register('shop', dir);
-
-		expect(() => openResolvedProject(resolveProject({ cwd: dir, env: sandbox.env }))).toThrow(UnmigratedDataError);
 	});
 });

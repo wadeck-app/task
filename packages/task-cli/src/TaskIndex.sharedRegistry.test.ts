@@ -14,7 +14,7 @@ let previousXdg: string | undefined;
 let previousEnv: Record<string, string | undefined>;
 let stderr: string[];
 
-const ENV_NAMES = ['TASK_PROJECT', 'TASK_PROJECT_DIR', 'PROJECT_DIR'];
+const ENV_NAMES = ['TASK_PROJECT'];
 
 beforeEach(() => {
 	root = fs.mkdtempSync(path.join(os.tmpdir(), 'task-shared-cli-'));
@@ -180,12 +180,11 @@ describe('the task log records how the project was resolved', () => {
 });
 
 describe('--help', () => {
-	it('lists -p / --project and TASK_PROJECT, --project-dir as removed, and taskProjectId', async () => {
+	it('lists -p / --project and TASK_PROJECT, and taskProjectId', async () => {
 		const { output } = await runTaskCommand(['--help'], root);
 
 		expect(output).toMatch(/-p, --project <ref>/);
 		expect(output).toContain('TASK_PROJECT ');
-		expect(output).toMatch(/--project-dir\s+REMOVED/);
 		expect(output).toContain('taskProjectId');
 	});
 });

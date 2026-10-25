@@ -1,5 +1,4 @@
 import type { ModuleContext } from '@wadeck-app/app-core-sdk';
-import { appendTaskLog } from '@wadeck-app/task-service';
 import type { EventSink, QueueEventSinkOptions, TaskEvent } from '@wadeck-app/task-service';
 
 import { toHttpError, toInlineError } from '../errors.js';
@@ -30,8 +29,6 @@ export interface RouteKit {
 	route(method: string, subPath: string, run: (req: RouteRequest) => RouteAnswer | Promise<RouteAnswer>): void;
 	/** The service context of the project the request targets (`?project=`). */
 	open(req: RouteRequest): OpenedProject;
-	/** Writes one info line to the task log, once per module lifetime for a given `key` (a state read at every request must not flood it). */
-	logOnce(key: string, message: string): void;
 	/** Delivers the events; those the queue did not get are returned for the body, the change is not failed. */
 	deliver(events: readonly TaskEvent[]): Promise<UndeliveredAnswer[]>;
 }
@@ -48,12 +45,6 @@ export function createRouteKit(
 	deps: { eventSink: EventSink; logDir: string; writeStderr: (text: string) => void }
 ): RouteKit {
 	const { eventSink, logDir, writeStderr } = deps;
-	const logged = new Set<string>();
-	const logOnce = (key: string, message: string): void => {
-		if (logged.has(key)) return;
-		logged.add(key);
-		appendTaskLog(logDir, 'info', message);
-	};
 	return {
 		dataDir: ctx.dataDir,
 		route(method, subPath, run) {
@@ -80,7 +71,6 @@ export function createRouteKit(
 		open(req) {
 			return openProject(queryValue(req.query, 'project'));
 		},
-		logOnce,
 		deliver: events => deliverForRequest(eventSink, events),
 	};
 }

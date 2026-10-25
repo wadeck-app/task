@@ -81,20 +81,21 @@ describe('?project=<id|name|alias>', () => {
 		}
 	});
 
-	it('the absolute directory of a registered project is refused: 404 no project matches, with a hint naming id, name or alias', async () => {
+	it('the absolute directory of a registered project is no project reference: 404 no project matches, with a hint naming id, name or alias', async () => {
 		const dir = world.createFolder('shop-dir');
 		await world.registerShared('shop', dir, ['store']);
 
 		const answer = await call('GET /tasks', { query: { project: dir } });
 
 		expect(answer.status).toBe(404);
-		expect(answer.body['error']).toBe(`no project matches "${dir}"`);
+		expect(answer.body['error']).toContain('no project matches');
+		expect(answer.body['error']).toContain(dir);
 		expect(answer.body['hint']).toContain('id, name or alias');
-		expect(answer.body['hint']).toContain('no longer accepted');
+		expect(answer.body['hint']).not.toContain('no longer accepted');
 		expect(answer.body['hint']).toContain('/api/modules/task/projects');
 	});
 
-	it('an old page slug (name~hex) is refused the same way, also on a mutation', async () => {
+	it('a name~hex slug is refused the same way, also on a mutation', async () => {
 		const dir = world.createFolder('shop-dir');
 		await world.registerShared('shop', dir);
 
@@ -104,9 +105,10 @@ describe('?project=<id|name|alias>', () => {
 		] as const) {
 			const answer = await call(route, { query: { project: 'shop-dir~0a1b2c' }, ...extra });
 			expect(answer.status, route).toBe(404);
-			expect(answer.body['error'], route).toBe('no project matches "shop-dir~0a1b2c"');
+			expect(answer.body['error'], route).toContain('no project matches');
+			expect(answer.body['error'], route).toContain('shop-dir~0a1b2c');
 			expect(answer.body['hint'], route).toContain('id, name or alias');
-			expect(answer.body['hint'], route).toContain('no longer accepted');
+			expect(answer.body['hint'], route).not.toContain('no longer accepted');
 		}
 		expect(sink.events).toEqual([]);
 	});
@@ -194,7 +196,7 @@ describe('?project=<id|name|alias>', () => {
 });
 
 describe('GET /projects: the projects of the shared registry', () => {
-	it('lists the registry project: id, registry name, path, the id in its link, and no legacy field', async () => {
+	it('lists the registry project: id, registry name, path, the id in its link', async () => {
 		const shared = world.createFolder('shared-dir');
 		const project = await world.registerShared('shop', shared);
 
@@ -207,13 +209,9 @@ describe('GET /projects: the projects of the shared registry', () => {
 			path: path.resolve(shared),
 			href: `/modules/task/tasks/p/${project.id}`,
 		});
-		for (const field of ['registered', 'registryHint', 'initialized']) {
-			expect(first, field).not.toHaveProperty(field);
-		}
-		expect(body).not.toHaveProperty('registryNotice');
 	});
 
-	it('the Projects table lists id, name, main path and open count, with no registry column and no marker', async () => {
+	it('the Projects table lists id, name, main path and open count, with no registry column', async () => {
 		const shared = world.createFolder('shared-dir');
 		const project = await world.registerShared('shop', shared);
 		await call('POST /tasks', { query: { project: project.id }, body: { description: 'one' } });
@@ -285,26 +283,6 @@ describe('GET /projects: the projects of the shared registry', () => {
 		expect(body['registryProblem']).toContain('could not be read');
 	});
 
-	it('a projects.json next to the config is ignored: nothing is listed from it, and a corrupt one fails nothing', async () => {
-		const stray = world.createFolder('stray-dir');
-		fs.mkdirSync(world.configDir, { recursive: true });
-		fs.writeFileSync(path.join(world.configDir, 'projects.json'), JSON.stringify([stray]));
-
-		const listed = await call('GET /projects');
-		expect(listed.status).toBe(200);
-		expect(listed.body['projects']).toEqual([]);
-
-		fs.writeFileSync(path.join(world.configDir, 'projects.json'), '{not json');
-		for (const [route, query] of [
-			['GET /projects', {}],
-			['GET /summary', {}],
-			['GET /tasks', { allProjects: 'true' }],
-		] as const) {
-			const answer = await call(route, { query });
-			expect(answer.status, route).toBe(200);
-		}
-	});
-
 	it('the module never writes registry.json: only the data folder of the project it works on appears (tool data, not the registry)', async () => {
 		const shared = world.createFolder('shared-dir');
 		await world.registerShared('shop', shared);
@@ -369,10 +347,6 @@ describe('the cross-project views with the shared registry', () => {
 				href: `/modules/task/tasks/p/${project.id}`,
 			}),
 		]);
-		const [row] = body['projectRows'] as Array<Record<string, any>>;
-		expect(row).not.toHaveProperty('registered');
-		expect(row).not.toHaveProperty('registryHint');
-		expect(body).not.toHaveProperty('registryNotice');
 		expect(body['registryProblem']).toBeNull();
 	});
 

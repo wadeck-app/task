@@ -8,7 +8,7 @@ import { readLastProject } from '../lastProject.js';
 import { attentionText, listRows, openLinks, registryProblemText } from '../projectManagement.js';
 import { NO_PROJECT_HINT, openProject, readProjects } from '../projects.js';
 import type { ProjectListing } from '../projects.js';
-import { apiRef, retiredRefKind } from '../projectRef.js';
+import { apiRef } from '../projectRef.js';
 import { optionalQueryValue, queryValue } from '../request.js';
 import type { RouteRequest } from '../request.js';
 import type { RouteKit } from './routeKit.js';
@@ -52,7 +52,7 @@ function summaryBody(scope: 'all' | 'project', summary: ProjectsSummary): Record
 	};
 }
 
-/** Why the selected project cannot be shown: the reason already carries its fix (migration command, file to repair, project CLI command). */
+/** Why the selected project cannot be shown: the reason already carries its fix (file to repair, project CLI command). */
 function problemText(project: ProjectListing): string {
 	const cause = project.error?.endsWith('.') ? project.error : `${project.error}.`;
 	return `${cause} Fix the cause above, then reload.`;
@@ -62,17 +62,11 @@ export function registerProjectRoutes(kit: RouteKit): void {
 	kit.route('GET', '/projects', req => {
 		const { projects, registryProblem } = readProjects();
 		// What a page address or a query names (the views pass `$route.project`): an id, an id prefix, a name or an alias, which
-		// the shared registry resolves. A folder or an old slug is no project reference any more. Why it did not resolve is said on the page.
+		// the shared registry resolves (a folder or a slug is none). Why it did not resolve is said on the page.
 		const requested = optionalQueryValue(req.query, 'project');
 		let requestedProject: ProjectListing | undefined;
 		let unresolvedReason: string | null = null;
-		const retired = requested === undefined ? null : retiredRefKind(requested);
-		if (retired !== null) {
-			unresolvedReason =
-				retired === 'directory'
-					? 'a project folder is no longer accepted: use the id, name or alias'
-					: 'an old page slug is no longer accepted: use the project id';
-		} else if (requested !== undefined) {
+		if (requested !== undefined) {
 			try {
 				const resolved = resolveProjectReference(requested);
 				requestedProject = projects.find(entry => entry.id === resolved.id);
@@ -98,7 +92,7 @@ export function registerProjectRoutes(kit: RouteKit): void {
 		// Several projects, one of them readable: nothing to hesitate over for a creation. Never for a deletion.
 		const onlyReadable = projects.length > 1 && readableProjects.length === 1 ? readableProjects[0] : undefined;
 		// Otherwise the project a task was last created in, while it is still registered and readable.
-		const lastUsed = readLastProject(kit.dataDir, message => kit.logOnce('last-project-old-format', message));
+		const lastUsed = readLastProject(kit.dataDir);
 		const lastReadable = readableProjects.find(entry => lastUsed.id !== null && entry.id === lastUsed.id);
 		const createProject = selected === undefined ? (onlyReadable ?? lastReadable) : selected;
 		const taskLinks = openLinks(projects);

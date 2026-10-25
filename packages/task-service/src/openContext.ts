@@ -4,7 +4,6 @@ import { TaskStore } from '@wadeck-app/task-core';
 import type { TaskServiceContext } from './context.js';
 import { loadTaskConfig } from './projectConfig.js';
 import type { ResolvedProject } from './resolveProject.js';
-import { assertDataMigrated } from './migrateData.js';
 import { tasksDirOf } from './storage.js';
 import type { TaskStorage } from './storage.js';
 
@@ -26,12 +25,10 @@ function writeAtomically(file: string, content: string): void {
 }
 
 /**
- * Builds the context of a project: its task store, its resolved config and its identity. A project whose data is still in the old
- * `.task` folder of its main path is refused (`UnmigratedDataError`, with the `migrate-data` command), and so is a real split of the data
- * (`ProjectDataSplitError`), see {@link assertDataMigrated}. An invalid config file throws the loader's error, never defaults.
+ * Builds the context of a project: its task store, its resolved config and its identity. An invalid config file throws the loader's
+ * error, never defaults.
  */
 export function openTaskContext(input: OpenTaskContextInput): TaskServiceContext {
-	assertDataMigrated(input.storage, input.project.name);
 	const { storage } = input;
 	const { id, name, path: projectPath } = input.project;
 	return {
@@ -46,7 +43,7 @@ export function openTaskContext(input: OpenTaskContextInput): TaskServiceContext
 	};
 }
 
-/** Opens the context of a project found by `resolveProject` (its storage, id, name and path). Same refusals as {@link openTaskContext}. */
+/** Opens the context of a project found by `resolveProject` (its storage, id, name and path). */
 export function openResolvedProject(resolved: ResolvedProject, globalConfigDir?: string): TaskServiceContext {
 	return openTaskContext({
 		storage: resolved.storage,

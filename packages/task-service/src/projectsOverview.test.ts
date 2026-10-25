@@ -23,7 +23,7 @@ describe('projects overview (every project of the shared registry that has a fol
 		sandbox.cleanup();
 	});
 
-	/** A registered project whose tasks and config are in the registry (its main path holds no .task). */
+	/** A registered project whose tasks and config are in the registry. */
 	async function registeredWith(name: string, tasks: Array<[string, string]> = []) {
 		const dir = sandbox.dir(name);
 		const project = await sandbox.register(name, dir);
@@ -81,7 +81,7 @@ describe('projects overview (every project of the shared registry that has a fol
 			]);
 		});
 
-		it('has no trace of the legacy list in a row: no `registered` marker, no `initialized` flag', async () => {
+		it('a row has exactly the documented keys', async () => {
 			await registeredWith('alpha');
 
 			const [row] = summarizeProjects({ env: sandbox.env }).projects;
@@ -159,17 +159,6 @@ describe('projects overview (every project of the shared registry that has a fol
 
 			expect(summary.registryProblem).toContain('registry.json');
 			expect(summary.projects).toEqual([]);
-		});
-
-		it('a projects.json in the task config dir is ignored: only the registry lists projects', () => {
-			const configDir = path.join(sandbox.root, 'task-config');
-			fs.mkdirSync(configDir, { recursive: true });
-			fs.writeFileSync(
-				path.join(configDir, 'projects.json'),
-				JSON.stringify([sandbox.dir('old', { task: true })])
-			);
-
-			expect(summarizeProjects({ env: sandbox.env }).projects).toEqual([]);
 		});
 
 		it('a registered project with no task anywhere is listed (0 tasks), a virtual one is not', async () => {
@@ -263,43 +252,6 @@ describe('projects overview (every project of the shared registry that has a fol
 			await unreadable('a');
 
 			expect(() => listTasksAcrossProjects({ env: sandbox.env })).toThrow(NoReadableProjectsError);
-		});
-
-		it('a registered project whose data is still in its .task (unmigrated) is listed unreadable with the migrate command, the others are still read', async () => {
-			await registeredWith('shop', [['s1', 'backlog']]);
-			const dir = sandbox.dir('old-dir', { task: true });
-			fs.writeFileSync(path.join(dir, '.task', 'tasks', 'one.json'), '{}');
-			const project = await sandbox.register('old', dir);
-
-			const answer = listTasksAcrossProjects({ env: sandbox.env });
-
-			expect(answer.tasks.map(task => task.title)).toEqual(['s1']);
-			expect(answer.unreadable).toEqual([
-				{
-					id: project.id,
-					name: 'old',
-					path: path.resolve(dir),
-					error: expect.stringContaining('task cli migrate-data -p old') as unknown,
-				},
-			]);
-		});
-
-		it('a REAL split (tasks in both places, different ids) is listed unreadable with both folders and the way out', async () => {
-			await registeredWith('shop', [['s1', 'backlog']]);
-			const { dir, project } = await registeredWith('split', [['in registry', 'backlog']]);
-			fs.mkdirSync(path.join(dir, '.task', 'tasks'), { recursive: true });
-			fs.writeFileSync(path.join(dir, '.task', 'tasks', 'other.json'), '{}');
-
-			const answer = listTasksAcrossProjects({ env: sandbox.env });
-
-			expect(answer.unreadable).toEqual([
-				{
-					id: project.id,
-					name: 'split',
-					path: dir,
-					error: expect.stringContaining('Keep one of them') as unknown,
-				},
-			]);
 		});
 	});
 });

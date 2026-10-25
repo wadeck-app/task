@@ -3,8 +3,8 @@ import * as path from 'node:path';
 import { addProject, defaultRegistryDir, LabelTakenError, type Project } from '@wadeck-app/project-sdk';
 import { ownConfigFile, resolveProject, type TaskStorage } from '@wadeck-app/task-service';
 
-/** The config `task init` used to write (statuses with `done` terminal): fixtures keep it so status/terminal assertions hold. */
-export const TEMPLATE_CONFIG = `# Task configuration for this project
+/** A project config with statuses (`done` terminal): fixtures use it so status/terminal assertions hold. */
+const TEMPLATE_CONFIG = `# Task configuration for this project
 
 statuses:
   - backlog

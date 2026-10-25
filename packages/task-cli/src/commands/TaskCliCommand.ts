@@ -281,7 +281,6 @@ export function printTaskCliHelp(): void {
 			'  register [--json]    Tell app-core where the task app-module is (update does it too; app-core absent is not an error)',
 			'  unregister [--json]  Remove the task app-module from app-core',
 			'  declare-events [--json]  Tell the queue which events task pushes now (done automatically before the first event after an install or update)',
-			'  migrate-data [-p <ref>] [--dry-run] [--json]  Copy the old .task of a registered project into the shared registry (copy only: the .task is never modified or deleted)',
 		].join('\n') + '\n'
 	);
 }

@@ -29,8 +29,8 @@ afterEach(() => {
 const native = (dir: string): string => path.resolve(dir);
 
 describe('resolveProject: the shared registry', () => {
-	it('-p <name> resolves the project; its data is in the registry data folder, not in <main path>/.task', async () => {
-		const dir = sandbox.dir('shop', { task: true });
+	it('-p <name> resolves the project; its data is in the registry data folder', async () => {
+		const dir = sandbox.dir('shop');
 		const project = await sandbox.register('shop', dir);
 
 		const resolved = resolveProject({ cwd: sandbox.root, projectRef: 'shop', env: sandbox.env });
@@ -45,12 +45,11 @@ describe('resolveProject: the shared registry', () => {
 		});
 		expect(resolved.storage).toMatchObject({
 			dataDir: projectToolDir(sandbox.registryDir, project.id, 'task', 'data'),
-			mainDir: native(dir),
 		});
 	});
 
 	it('-p accepts an alias, an id and a unique id prefix, case-insensitively', async () => {
-		const dir = sandbox.dir('shop', { task: true });
+		const dir = sandbox.dir('shop');
 		const project = await sandbox.register('shop', dir, { aliases: ['store'] });
 
 		for (const ref of ['store', 'STORE', project.id, project.id.slice(0, 4)]) {
@@ -59,8 +58,8 @@ describe('resolveProject: the shared registry', () => {
 	});
 
 	it('TASK_PROJECT selects the project, and -p wins over it', async () => {
-		const shop = await sandbox.register('shop', sandbox.dir('shop', { task: true }));
-		const blog = await sandbox.register('blog', sandbox.dir('blog', { task: true }));
+		const shop = await sandbox.register('shop', sandbox.dir('shop'));
+		const blog = await sandbox.register('blog', sandbox.dir('blog'));
 		const env = { ...sandbox.env, TASK_PROJECT: 'blog' };
 
 		const fromEnv = resolveProject({ cwd: sandbox.root, env });
@@ -71,7 +70,7 @@ describe('resolveProject: the shared registry', () => {
 	});
 
 	it('a blank TASK_PROJECT counts as unset', async () => {
-		const dir = sandbox.dir('shop', { task: true });
+		const dir = sandbox.dir('shop');
 		await sandbox.register('shop', dir);
 
 		const resolved = resolveProject({ cwd: dir, env: { ...sandbox.env, TASK_PROJECT: '  ' } });
@@ -80,7 +79,7 @@ describe('resolveProject: the shared registry', () => {
 	});
 
 	it('the cwd inside a registered folder resolves the project (deepest registered ancestor)', async () => {
-		const dir = sandbox.dir('shop', { task: true });
+		const dir = sandbox.dir('shop');
 		const sub = path.join(dir, 'src', 'deep');
 		fs.mkdirSync(sub, { recursive: true });
 		const project = await sandbox.register('shop', dir);
@@ -91,7 +90,7 @@ describe('resolveProject: the shared registry', () => {
 	});
 
 	it('the cwd in a secondary path of the project resolves to the MAIN path (events run there)', async () => {
-		const main = sandbox.dir('shop', { task: true });
+		const main = sandbox.dir('shop');
 		const worktree = sandbox.dir('shop-feature');
 		const project = await sandbox.register('shop', main);
 		await addPath(sandbox.registryDir, 'shop', worktree);
@@ -101,7 +100,7 @@ describe('resolveProject: the shared registry', () => {
 		expect(resolved).toMatchObject({ id: project.id, path: native(main), source: 'cwd' });
 	});
 
-	it('a registered project whose main path has no .task is a fresh project, not an error (its data lives in the registry)', async () => {
+	it('a registered project with no data yet is a fresh project, not an error (its data lives in the registry)', async () => {
 		const dir = sandbox.dir('shop');
 		const project = await sandbox.register('shop', dir);
 
@@ -111,16 +110,8 @@ describe('resolveProject: the shared registry', () => {
 		expect(fs.existsSync(resolved.storage.dataDir)).toBe(false);
 	});
 
-	it('resolving never refuses an unmigrated project (migrate-data needs to resolve it); opening its context does (see openContext.test.ts)', async () => {
-		const dir = sandbox.dir('shop', { task: true });
-		fs.writeFileSync(path.join(dir, '.task', 'tasks', 'one.json'), '{}');
-		await sandbox.register('shop', dir);
-
-		expect(resolveProject({ cwd: dir, env: sandbox.env }).source).toBe('cwd');
-	});
-
 	it('a reference that does not resolve is an error with suggestions, never a fallback', async () => {
-		const dir = sandbox.dir('shop', { task: true });
+		const dir = sandbox.dir('shop');
 		await sandbox.register('shop', dir);
 
 		const failure = captureError(() => resolveProject({ cwd: dir, projectRef: 'shpo', env: sandbox.env }));
@@ -167,12 +158,11 @@ describe('resolveProject: the shared registry', () => {
 		expect(resolved.id).toBe(project.id);
 		expect(resolved.path).toBeUndefined();
 		expect(resolved.storage.dataDir).toBe(projectToolDir(sandbox.registryDir, project.id, 'task', 'data'));
-		expect(resolved.storage.mainDir).toBeUndefined();
 		expect(resolved.logLine).toContain('virtual');
 	});
 
 	it('the log line says how the project was resolved: project, source, path and registry dir', async () => {
-		const dir = sandbox.dir('shop', { task: true });
+		const dir = sandbox.dir('shop');
 		const project = await sandbox.register('shop', dir);
 
 		const { logLine } = resolveProject({ cwd: dir, env: sandbox.env });
@@ -184,9 +174,9 @@ describe('resolveProject: the shared registry', () => {
 	});
 });
 
-describe('resolveProject: folders the registry does not know (the legacy path is gone)', () => {
-	it('an unregistered cwd fails with the neutral registry error and the hint to register it, even when it holds a .task', () => {
-		const dir = sandbox.dir('old', { task: true });
+describe('resolveProject: folders the registry does not know', () => {
+	it('an unregistered cwd fails with the neutral registry error and the hint to register it', () => {
+		const dir = sandbox.dir('old');
 
 		const failure = captureError(() => resolveProject({ cwd: dir, env: sandbox.env }));
 
@@ -200,38 +190,12 @@ describe('resolveProject: folders the registry does not know (the legacy path is
 	});
 
 	it('the registry is not created by a failed resolution (first-use state)', () => {
-		const dir = sandbox.dir('old', { task: true });
+		const dir = sandbox.dir('old');
 
 		expect(captureError(() => resolveProject({ cwd: dir, env: sandbox.env }))).toBeInstanceOf(
 			NoProjectInScopeError
 		);
 		expect(fs.existsSync(sandbox.registryDir)).toBe(false);
-	});
-
-	it('a subfolder with a .task of its own inside a registered folder resolves to the registered project', async () => {
-		const parent = sandbox.dir('mono', { task: true });
-		const nested = path.join(parent, 'packages', 'app');
-		fs.mkdirSync(path.join(nested, '.task', 'tasks'), { recursive: true });
-		const project = await sandbox.register('mono', parent);
-
-		const resolved = resolveProject({ cwd: nested, env: sandbox.env });
-
-		expect(resolved).toMatchObject({ id: project.id, source: 'cwd', path: native(parent) });
-	});
-
-	it('TASK_PROJECT_DIR and PROJECT_DIR select nothing: the cwd decides', async () => {
-		const registered = sandbox.dir('shop', { task: true });
-		await sandbox.register('shop', registered);
-		const elsewhere = sandbox.dir('elsewhere');
-
-		for (const name of ['TASK_PROJECT_DIR', 'PROJECT_DIR']) {
-			const env = { ...sandbox.env, [name]: registered };
-			expect(
-				captureError(() => resolveProject({ cwd: elsewhere, env })),
-				name
-			).toBeInstanceOf(NoProjectInScopeError);
-			expect(resolveProject({ cwd: registered, env: { ...env, [name]: elsewhere } }).via, name).toBe('cwd');
-		}
 	});
 
 	it('a corrupt registry is the error, for the cwd and for a reference', () => {
@@ -260,7 +224,7 @@ function captureError(action: () => unknown): unknown {
 
 describe('resolveProjectReference: a caller without a cwd (the app-module)', () => {
 	it('resolves a name, an alias or an id like -p does, from the registry only', async () => {
-		const dir = sandbox.dir('shop', { task: true });
+		const dir = sandbox.dir('shop');
 		const project = await sandbox.register('shop', dir, { aliases: ['store'] });
 
 		for (const ref of ['shop', 'store', project.id]) {
@@ -273,7 +237,7 @@ describe('resolveProjectReference: a caller without a cwd (the app-module)', () 
 	});
 
 	it('never reads TASK_PROJECT nor a path: an unknown reference is the typed error with suggestions', async () => {
-		await sandbox.register('shop', sandbox.dir('shop', { task: true }));
+		await sandbox.register('shop', sandbox.dir('shop'));
 		const env = { ...sandbox.env, TASK_PROJECT: 'shop' };
 
 		const failure = captureError(() => resolveProjectReference('shpo', env));

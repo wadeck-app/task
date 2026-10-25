@@ -26,10 +26,9 @@ export interface TestWorld {
 	/** Where the registry keeps the task files of the project (`tasks/`, `task-index.json`). */
 	dataDirOf(id: string): string;
 	/**
-	 * Makes `<root>/<name>` with an OLD-style `.task` folder (`tasks/`, and `config.yml` when given) and registers nothing: the fixture of
-	 * the unmigrated-project (refused) tests (register it afterwards with `registerShared`). Returns the folder.
+	 * Makes the plain folder `<root>/<name>` and registers nothing (register it afterwards with `registerShared`). Returns the folder.
 	 */
-	createFolder(name: string, options?: { configYml?: string }): string;
+	createFolder(name: string): string;
 	/** Makes the project unreadable: its own task config in the registry is invalid YAML (every read of it fails with the file named). */
 	breakConfig(id: string): void;
 	/** Removes a project from the shared registry with the SDK's own mutation (what `project remove` does). */
@@ -83,12 +82,9 @@ export function createTestWorld(): TestWorld {
 		async unregister(ref) {
 			await removeProject(registryDir, ref, { recursive: false });
 		},
-		createFolder(name, options = {}) {
+		createFolder(name) {
 			const dir = path.join(root, name);
-			fs.mkdirSync(path.join(dir, '.task', 'tasks'), { recursive: true });
-			if (options.configYml !== undefined) {
-				fs.writeFileSync(path.join(dir, '.task', 'config.yml'), options.configYml);
-			}
+			fs.mkdirSync(dir, { recursive: true });
 			return dir;
 		},
 		cleanup: () => {

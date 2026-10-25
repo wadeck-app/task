@@ -1,4 +1,4 @@
-import { parseArgs, usesRemovedProjectDir } from './args.js';
+import { parseArgs, usesProjectDirOption } from './args.js';
 
 describe('parseArgs', () => {
 	it('splits the command from its arguments', () => {
@@ -55,12 +55,12 @@ describe('parseArgs: -p / --project <ref>', () => {
 	});
 });
 
-describe('--project-dir (removed)', () => {
-	it('is no longer read: it stays in the arguments, and usesRemovedProjectDir tells it was typed', () => {
+describe('--project-dir (not an option)', () => {
+	it('is never read: it stays in the arguments, and usesProjectDirOption tells it was typed', () => {
 		const args = ['show', 'abc', '--project-dir', '/proj'];
 		expect(parseArgs(args)).toMatchObject({ rest: ['abc', '--project-dir', '/proj'] });
 		expect(parseArgs(args)).not.toHaveProperty('projectDir');
-		expect(usesRemovedProjectDir(args)).toBe(true);
+		expect(usesProjectDirOption(args)).toBe(true);
 	});
 
 	it.each([
@@ -69,11 +69,11 @@ describe('--project-dir (removed)', () => {
 		[['list', '--project-dir']],
 		[['--json', 'list', '-p', 'shop', '--project-dir', '.']],
 	])('is found anywhere in %j', args => {
-		expect(usesRemovedProjectDir(args)).toBe(true);
+		expect(usesProjectDirOption(args)).toBe(true);
 	});
 
 	it('is not found in other arguments', () => {
-		expect(usesRemovedProjectDir(['list', '-p', 'shop', '--json'])).toBe(false);
-		expect(usesRemovedProjectDir(['new', 'a title about project-dir'])).toBe(false);
+		expect(usesProjectDirOption(['list', '-p', 'shop', '--json'])).toBe(false);
+		expect(usesProjectDirOption(['new', 'a title about project-dir'])).toBe(false);
 	});
 });

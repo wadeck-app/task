@@ -23,7 +23,7 @@ interface PackageRule {
 	 */
 	allowedImports?: { patterns: RegExp[]; why: string };
 	/** Patterns forbidden in the non-test source text of this package. */
-	forbiddenSource: { pattern: RegExp; why: string; exceptFiles?: RegExp }[];
+	forbiddenSource: { pattern: RegExp; why: string }[];
 }
 
 /** Specifier of a workspace package: its npm name, or the path of its folder (a relative import resolved from the repository root). */
@@ -65,41 +65,24 @@ const NO_PROJECT_SDK_OUTSIDE_SERVICE = {
 };
 
 /**
- * Stage 2b: the legacy `projects.json` list is not read any more (the shared registry is the only list of projects), so no
- * source names the file. Tests may (they prove it is ignored).
+ * Task keeps its project data and config in the shared project registry, never in the project folder: no source names `.task` as a
+ * path segment (`'.task'`, `"/.task"`, `` `${dir}/.task` ``). The only spelling allowed is the global config dir default,
+ * `path.join(os.homedir(), '.task')` (and the prose `~/.task`). Source rule: tests and comments are out of scope.
  */
-const NO_PROJECTS_JSON = {
-	pattern: /projects\.json/,
-	why: 'the legacy projects.json is not read any more: the shared project registry (project CLI) is the only list of projects',
-};
-
-/**
- * `.task` as a path segment (`'.task'`, `"/.task"`, `` `${dir}/.task` ``) belongs to ONE module, task-service `migrateData.ts`: the
- * supported way to bring an old `.task` into the registry (`task cli migrate-data`) and the check that refuses a project whose data
- * is still there (`assertDataMigrated`). Task reads the registry only; everything else asks that module. The global config dir
- * default (`path.join(os.homedir(), '.task')`) is not project data. Source rule: tests and comments are out of scope.
- */
-const NO_LEGACY_DATA_PATH = {
+const NO_PROJECT_DATA_DIR = {
 	pattern: /(?<!\bhomedir\(\)\s*,\s*)(?:['"`]\.task(?:['"`/\\])|(?<!~)[/\\]\.task\b)/,
-	why: 'the `.task` folder is known by task-service migrateData.ts only (migrate-data and its unmigrated-project check)',
-	exceptFiles: /(^|\/)packages\/task-service\/src\/migrateData\.ts$/,
+	why: 'project data and config live in the shared project registry: no source builds a `.task` path (only the global config dir default, path.join(os.homedir(), ".task"))',
 };
 
 /**
- * Task never writes the project registry (Decision #20, stage 2a): the shared registry belongs to the project CLI, and its
- * writers (`task init`, `task projects add|remove|move|prune` and their lock) are gone. Source rules (non-test files; tests build registry
- * fixtures with the SDK's own mutations): no import of an SDK mutation, no function of the deleted legacy writers.
+ * Task never writes the project registry: it belongs to the project CLI. Source rule (non-test files; tests build registry
+ * fixtures with the SDK's own mutations): no import of an SDK mutation.
  */
 const NO_REGISTRY_WRITE = [
 	{
 		pattern:
 			/import\s*(?:type\s*)?\{[^}]*\b(?:addProject|removeProject|renameProject|addAlias|removeAlias|setParent|setGit|addPath|removePath|movePath|setMain|withRegistryLock)\b[^}]*\}\s*from\s*['"]@wadeck-app\/project-sdk['"]/,
 		why: 'task reads the shared project registry, it never writes it (project add / paths / remove belong to the project CLI)',
-	},
-	{
-		pattern:
-			/\b(?:registerProject|unregisterProject|registerInitializedProject|removeRegisteredProject|relocateProject|pruneMissingProjects|initProject)\b/,
-		why: 'the legacy projects.json is read only: its writers (task init, task projects add|remove|move|prune) were removed in stage 2a',
 	},
 ];
 
@@ -115,8 +98,7 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 			...NO_CONSOLE_NO_EXIT,
 			NO_PROJECT_SDK_OUTSIDE_SERVICE,
 			...NO_REGISTRY_WRITE,
-			NO_PROJECTS_JSON,
-			NO_LEGACY_DATA_PATH,
+			NO_PROJECT_DATA_DIR,
 		],
 	},
 	'task-service': {
@@ -128,21 +110,21 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 			{ pattern: HTTP_AND_CLI_LIBS, why: 'HTTP and CLI frameworks belong to the adapters' },
 			{ pattern: DSL_LIB, why: 'the service is caller-agnostic: it must not know browser components' },
 		],
-		forbiddenSource: [...NO_CONSOLE_NO_EXIT, ...NO_REGISTRY_WRITE, NO_PROJECTS_JSON, NO_LEGACY_DATA_PATH],
+		forbiddenSource: [...NO_CONSOLE_NO_EXIT, ...NO_REGISTRY_WRITE, NO_PROJECT_DATA_DIR],
 	},
 	'task-cli': {
 		forbiddenImports: [
 			{ pattern: APP_MODULE, why: 'the adapters must not know each other: share through task-service' },
 			{ pattern: DSL_LIB, why: 'the CLI has no browser components' },
 		],
-		forbiddenSource: [NO_PROJECT_SDK_OUTSIDE_SERVICE, ...NO_REGISTRY_WRITE, NO_PROJECTS_JSON, NO_LEGACY_DATA_PATH],
+		forbiddenSource: [NO_PROJECT_SDK_OUTSIDE_SERVICE, ...NO_REGISTRY_WRITE, NO_PROJECT_DATA_DIR],
 	},
 	'app-module-task': {
 		forbiddenImports: [
 			{ pattern: TASK_CLI, why: 'the adapters must not know each other: share through task-service' },
 			{ pattern: SHARED_CLI, why: 'CLI libraries belong to task-cli; share through task-service' },
 		],
-		forbiddenSource: [NO_PROJECT_SDK_OUTSIDE_SERVICE, ...NO_REGISTRY_WRITE, NO_PROJECTS_JSON, NO_LEGACY_DATA_PATH],
+		forbiddenSource: [NO_PROJECT_SDK_OUTSIDE_SERVICE, ...NO_REGISTRY_WRITE, NO_PROJECT_DATA_DIR],
 	},
 	'dsl-lib-task': {
 		forbiddenImports: [
@@ -164,8 +146,7 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 		forbiddenSource: [
 			NO_PROJECT_SDK_OUTSIDE_SERVICE,
 			...NO_REGISTRY_WRITE,
-			NO_PROJECTS_JSON,
-			NO_LEGACY_DATA_PATH,
+			NO_PROJECT_DATA_DIR,
 			{ pattern: /\bprocess\.(?:env|argv|exit|cwd)\b/, why: 'no Node process API in browser code' },
 		],
 	},
@@ -223,8 +204,7 @@ export function checkSource(
 	}
 	if (!options.isTest) {
 		const code = stripComments(source);
-		for (const { pattern, why, exceptFiles } of rule.forbiddenSource) {
-			if (exceptFiles?.test(file) === true) continue;
+		for (const { pattern, why } of rule.forbiddenSource) {
 			if (pattern.test(code)) {
 				violations.push({ file, rule: 'forbidden-source', detail: `matches ${pattern}: ${why}` });
 			}

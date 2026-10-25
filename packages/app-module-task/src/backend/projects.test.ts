@@ -77,30 +77,31 @@ describe('openProject', () => {
 		expect(error.extra).toMatchObject({ suggestions: [expect.objectContaining({ text: 'alpha' })] });
 	});
 
-	it('404 for the absolute directory of a registered project: it is no longer a project reference', async () => {
+	it('404 for the absolute directory of a registered project: it is no project reference', async () => {
 		const id = await world.createProject('alpha');
 		const dir = world.dirOf(id);
 		const error = failure(() => openProject(dir));
 		expect(error.status).toBe(404);
-		expect(error.message).toBe(`no project matches "${dir}"`);
+		expect(error.message).toContain('no project matches');
+		expect(error.message).toContain(dir);
 		expect(error.hint).toContain('id, name or alias');
-		expect(error.hint).toContain('no longer accepted');
+		expect(error.hint).not.toContain('no longer accepted');
 		expect(error.hint).toContain('/api/modules/task/projects');
 	});
 
-	it('404 for an old page slug (name~hex), also when its name is a registered project', async () => {
+	it('404 for a name~hex slug, also when its name is a registered project', async () => {
 		await world.createProject('alpha');
 		const error = failure(() => openProject('alpha~0a1b2c'));
 		expect(error.status).toBe(404);
-		expect(error.message).toBe('no project matches "alpha~0a1b2c"');
+		expect(error.message).toContain('no project matches');
+		expect(error.message).toContain('alpha~0a1b2c');
 		expect(error.hint).toContain('id, name or alias');
-		expect(error.hint).toContain('slug');
-		expect(error.hint).toContain('no longer accepted');
+		expect(error.hint).not.toContain('slug');
+		expect(error.hint).not.toContain('no longer accepted');
 	});
 
-	it('a registered project whose folder has no .task needs none: its data is in the registry', async () => {
+	it('a registered project with no data yet opens an empty store: its data is in the registry', async () => {
 		const id = await world.createProject('alpha');
-		expect(fs.existsSync(path.join(world.dirOf(id), '.task'))).toBe(false);
 		expect(openProject(id).store.list()).toEqual([]);
 	});
 
@@ -108,14 +109,6 @@ describe('openProject', () => {
 		fs.mkdirSync(world.registryDir, { recursive: true });
 		fs.writeFileSync(path.join(world.registryDir, 'registry.json'), '{not json');
 		expect(() => openProject(undefined)).toThrow(/registry\.json/);
-	});
-
-	it('a projects.json next to the module config is not read: it lists nothing and fails on nothing, corrupt or not', () => {
-		fs.mkdirSync(world.configDir, { recursive: true });
-		fs.writeFileSync(path.join(world.configDir, 'projects.json'), '{not json');
-		const error = failure(() => openProject(undefined));
-		expect(error.status).toBe(404);
-		expect(error.message).toContain('no project is registered');
 	});
 });
 
@@ -143,14 +136,6 @@ describe('listProjects', () => {
 				href: `/modules/task/tasks/p/${b}`,
 			},
 		]);
-	});
-
-	it('has none of the retired legacy fields', async () => {
-		await world.createProject('alpha');
-		const [listing] = listProjects();
-		for (const field of ['registered', 'registryHint', 'initialized']) {
-			expect(listing, field).not.toHaveProperty(field);
-		}
 	});
 
 	it('counts only the non-terminal tasks as open', async () => {
