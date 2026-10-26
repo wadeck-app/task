@@ -6,5 +6,7 @@ export default defineConfig({
 	test: {
 		environment: 'node',
 		include: ['*.test.ts'],
+		// Sweeps the temp dirs an interrupted earlier run left behind.
+		globalSetup: ['../scripts/testTempGlobalSetup.ts'],
 	},
 });

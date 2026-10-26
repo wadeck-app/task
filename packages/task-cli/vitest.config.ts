@@ -30,7 +30,9 @@ export default defineConfig({
 		mockReset: true,
 		restoreMocks: true,
 		// Points XDG_CONFIG_HOME at a temp dir so no test touches the real ~/.config/task.
-		setupFiles: ['./vitest.setup.ts'],
+		setupFiles: ['../../scripts/testTempSetup.ts', './vitest.setup.ts'],
+		// Sweeps the temp dirs an interrupted earlier run left behind.
+		globalSetup: ['../../scripts/testTempGlobalSetup.ts'],
 	},
 	resolve: {
 		extensions: ['.ts', '.tsx', '.js', '.jsx', '.json'],

@@ -10,7 +10,9 @@ export default defineConfig({
 		mockReset: true,
 		restoreMocks: true,
 		// Sets QUEUE_SDK_OFF=1: no test can push to a real queue.
-		setupFiles: ['./vitest.setup.ts'],
+		setupFiles: ['../../scripts/testTempSetup.ts', './vitest.setup.ts'],
+		// Sweeps the temp dirs an interrupted earlier run left behind.
+		globalSetup: ['../../scripts/testTempGlobalSetup.ts'],
 	},
 	resolve: {
 		extensions: ['.ts', '.tsx', '.js', '.jsx', '.json'],

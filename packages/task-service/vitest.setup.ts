@@ -17,6 +17,4 @@ process.env['XDG_CONFIG_HOME'] = sandbox;
 process.env['HOME'] = sandbox;
 process.env['USERPROFILE'] = sandbox;
 
-afterAll(() => {
-	fs.rmSync(sandbox, { recursive: true, force: true });
-});
+// Removal of the sandbox: scripts/testTempSetup.ts (first setup file) tracks it and removes it after the last test of the file.

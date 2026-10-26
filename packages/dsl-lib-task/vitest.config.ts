@@ -25,8 +25,9 @@ export default defineConfig({
 				test: {
 					name: 'lib',
 					root: import.meta.dirname,
-					globalSetup: ['./test/global-setup.ts'],
-					setupFiles: ['./test/test-setup.ts'],
+					// The sweep of stale temp dirs first, then the packaging.
+					globalSetup: ['../../scripts/testTempGlobalSetup.ts', './test/global-setup.ts'],
+					setupFiles: ['../../scripts/testTempSetup.ts', './test/test-setup.ts'],
 					globals: true,
 					environment: 'node',
 					restoreMocks: true,

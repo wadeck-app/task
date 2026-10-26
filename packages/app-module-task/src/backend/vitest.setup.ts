@@ -17,6 +17,11 @@ process.env['XDG_CONFIG_HOME'] = sandbox;
 process.env['HOME'] = sandbox;
 process.env['USERPROFILE'] = sandbox;
 
-afterAll(() => {
-	fs.rmSync(sandbox, { recursive: true, force: true });
-});
+// Removal of the sandbox: scripts/testTempSetup.ts (first setup file) tracks it and removes it after the last test of the file.
+
+// `app-core-cli package|dev` (backend.realServer.integration.test.ts) schedules a DETACHED background updater that reads
+// <XDG_CONFIG_HOME>/app-core-cli/config.yml. Without `autoUpdate: false` it runs a real `npm install -g` of app-core-cli
+// on the developer's machine (seen: "app-core-cli updated to ..." in a test sandbox) and recreates this sandbox after it
+// was removed. With it, the updater only logs and exits at once.
+fs.mkdirSync(path.join(sandbox, 'app-core-cli'), { recursive: true });
+fs.writeFileSync(path.join(sandbox, 'app-core-cli', 'config.yml'), 'autoUpdate: false\n');

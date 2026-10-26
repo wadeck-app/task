@@ -157,6 +157,10 @@ describe('the packaged module through a real app-core server', () => {
 			const xdg = join(workDir, 'xdg');
 			projectDir = join(workDir, 'proj');
 			mkdirSync(projectDir, { recursive: true });
+			// app-core-cli schedules a detached updater from this config dir: without `autoUpdate: false` it installs a
+			// real app-core-cli globally and recreates `xdg` after the teardown removed it (see vitest.setup.ts).
+			mkdirSync(join(xdg, 'app-core-cli'), { recursive: true });
+			writeFileSync(join(xdg, 'app-core-cli', 'config.yml'), 'autoUpdate: false\n');
 			// The fixture registry: one project, registered with the SDK as `project add` does; its data and config live in the registry.
 			const registryDir = defaultRegistryDir({ XDG_CONFIG_HOME: xdg });
 			projectId = (await addProject(registryDir, { name: 'proj', aliases: [], path: projectDir })).id;

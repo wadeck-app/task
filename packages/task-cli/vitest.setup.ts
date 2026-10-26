@@ -11,9 +11,7 @@ process.env['XDG_CONFIG_HOME'] = sandbox;
 process.env['HOME'] = sandbox;
 process.env['USERPROFILE'] = sandbox;
 
-afterAll(() => {
-	fs.rmSync(sandbox, { recursive: true, force: true });
-});
+// Removal of the sandbox: scripts/testTempSetup.ts (first setup file) tracks it and removes it after the last test of the file.
 
 // Second layer: QUEUE_SDK_OFF=1 makes the SDK send nothing, also in child processes spawned by tests (the packaged CLI),
 // which the mock below cannot reach.
@@ -37,3 +35,10 @@ vi.mock('@wadeck-app/task-service', async importOriginal => {
 		}),
 	};
 });
+
+// TaskIndex.integration.test.ts runs `npm run bundle`, which runs `app-core-cli package`; that schedules a DETACHED background
+// updater reading <XDG_CONFIG_HOME>/app-core-cli/config.yml. Without `autoUpdate: false` it runs a real `npm install -g` of
+// app-core-cli on the developer's machine (seen: "app-core-cli updated to ..." in this sandbox on every run) and recreates the
+// sandbox after it was removed. With it, the updater only logs and exits at once.
+fs.mkdirSync(path.join(sandbox, 'app-core-cli'), { recursive: true });
+fs.writeFileSync(path.join(sandbox, 'app-core-cli', 'config.yml'), 'autoUpdate: false\n');
