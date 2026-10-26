@@ -148,6 +148,15 @@ describe('dashboard widget (src/dsl-views/tasks-widget.yaml)', () => {
 		for (const tile of tiles) expect((tile.label ?? '').length).toBeLessThanOrEqual(6);
 	});
 
+	// A HorizontalStack child keeps its own width (the tiles were 70px wide whatever the tile): `flex` makes each fill an equal share.
+	it('the two figure tiles share the width of the tile (itemSizes flex for each child)', () => {
+		const tree = load(widget) as { items: { $type: string; itemSizes?: string[]; items?: { $type: string }[] }[] };
+		const stack = tree.items.find(item => item.$type === 'HorizontalStack');
+		expect(stack?.items?.map(child => child.$type)).toEqual(['StatTile', 'StatTile']);
+		expect(stack?.itemSizes).toEqual(['flex', 'flex']);
+	});
+
+	// A DataTable cell without nowrap/truncate is break-all (measured in the shell: "a-very-long-project-na|m…" at 3 cells): keep both.
 	it('the project table never breaks a name mid-word: nowrap + truncate (ellipsis) and the full name in the title tooltip', () => {
 		const tree = load(widget) as { items: { $type: string; columns?: Record<string, unknown>[] }[] };
 		const table = tree.items.find(item => item.$type === 'DataTable');

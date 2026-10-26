@@ -2,8 +2,9 @@
 # No ?project: the route aggregates every registered project (task-service summarizeProjects). Nothing registered is
 # an info text with the next step (not an error); a project that cannot be read is a row with its reason, never dropped.
 # The row click opens the Tasks page of the project. The status table is in the API (`rows`) but not here: the widget is narrow.
-# Sized in manifest.json (width 3 = about 332px on the 100px grid). Figure labels are one word and the project column
-# is cut by the route (WIDGET_LABEL_MAX) and truncates with an ellipsis, full name or reason in the tooltip, so nothing wraps or breaks mid-word.
+# Sized in manifest.json (width 3 = about 332px on the 100px grid). The two figure tiles share the tile width (itemSizes). Figure
+# labels are one word and the project column is cut by the route (WIDGET_LABEL_MAX) and truncates with an ellipsis, full name or reason
+# in the tooltip, so nothing breaks mid-word (a DataTable cell without nowrap/truncate is break-all, which split names at 2 and 3 cells).
 $sources:
     summary:
         url: GET /api/modules/task/summary?inlineErrors=true
@@ -35,6 +36,8 @@ items:
     # The figures only when a project was counted: after a failure or with nothing registered the badge above is the whole answer.
     - $type: HorizontalStack
       gap: gap-3
+      # `flex` per tile: each takes an equal share of the tile width (without it a tile keeps its own ~70px and the right half stays empty).
+      itemSizes: [flex, flex]
       $if: $sources.summary.projectCount
       items:
           - $type: StatTile
