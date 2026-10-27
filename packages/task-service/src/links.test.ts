@@ -1,6 +1,9 @@
+import * as fs from 'node:fs';
+
 import { TaskNotFoundError } from '@wadeck-app/task-core';
 
-import { InvalidLinkTypeError } from './errors.js';
+import { describeError } from './describeError.js';
+import { DanglingLinkError, InvalidLinkTypeError } from './errors.js';
 import { ALL_LINK_NAMES, getTaskLinks, linkTasks, parseLinkType, unlinkTasks } from './links.js';
 import { createTestContext, type TestContext } from './testHelpers.js';
 
@@ -108,5 +111,51 @@ describe('linkTasks / unlinkTasks / getTaskLinks', () => {
 		expect(getTaskLinks(t.ctx, { id: a }).blockedBy.map(x => x.id)).toEqual([b]);
 		expect(getTaskLinks(t.ctx, { id: b }).blocks.map(x => x.id)).toEqual([a]);
 		expect(() => getTaskLinks(t.ctx, { id: 'zzzz' })).toThrow(TaskNotFoundError);
+	});
+});
+
+describe('a link to a task that no longer exists (the index was edited outside task)', () => {
+	let t: TestContext;
+	let a: string;
+	let b: string;
+	beforeEach(() => {
+		t = createTestContext();
+		a = t.ctx.store.create('a', 'backlog').id;
+		b = t.ctx.store.create('b', 'backlog').id;
+		linkTasks(t.ctx, { id: a, type: 'blockedBy', target: b });
+		// b leaves the index only: a keeps its link.
+		const indexPath = `${t.rootDir}/data/task-index.json`;
+		const index = JSON.parse(fs.readFileSync(indexPath, 'utf8')) as { tasks: Array<{ id: string }> };
+		index.tasks = index.tasks.filter(x => x.id !== b);
+		fs.writeFileSync(indexPath, JSON.stringify(index));
+	});
+	afterEach(() => t.cleanup());
+
+	it('getTaskLinks says which link dangles and how to remove it (a conflict with a fix, not an index crash)', () => {
+		let caught: unknown;
+		try {
+			getTaskLinks(t.ctx, { id: a });
+		} catch (error) {
+			caught = error;
+		}
+		expect(caught).toBeInstanceOf(DanglingLinkError);
+		const description = describeError(caught);
+		expect(description.kind).toBe('conflict');
+		expect(description.message).toContain(b);
+		expect(description.hint).toBe(`Fix with: task unlink ${a} blockedBy ${b}`);
+	});
+
+	it('unlink removes it by the full id of the vanished task, and emits the event', () => {
+		const { task, events } = unlinkTasks(t.ctx, { id: a, type: 'blockedBy', target: b });
+
+		expect(task.links ?? []).toEqual([]);
+		expect(events[0]).toMatchObject({
+			name: 'onTaskUnlinked',
+			payload: { taskId: a, linkType: 'blockedBy', targetId: b },
+		});
+	});
+
+	it('unlink still refuses an unknown id that is not a link of the task', () => {
+		expect(() => unlinkTasks(t.ctx, { id: a, type: 'blockedBy', target: 'zzzzzzzz' })).toThrow(TaskNotFoundError);
 	});
 });

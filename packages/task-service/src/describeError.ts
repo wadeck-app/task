@@ -14,6 +14,7 @@ import {
 	InvalidStatusError,
 	InvalidDeleteFilterError,
 	InvalidTaskTypeError,
+	DanglingLinkError,
 	DanglingParentError,
 	NoReadableProjectsError,
 	TaskServiceError,
@@ -59,7 +60,8 @@ export function describeError(error: unknown): ErrorDescription {
 		return describe('ambiguous', error, undefined, { matches: error.matches });
 	}
 	if (error instanceof TaskConflictError) return describe('conflict', error);
-	if (error instanceof DanglingParentError) return describe('conflict', error, error.hint);
+	if (error instanceof DanglingParentError || error instanceof DanglingLinkError)
+		return describe('conflict', error, error.hint);
 	if (error instanceof InvalidStatusError) {
 		return describe('invalid', error, error.hint, {
 			validStatuses: error.validStatuses,

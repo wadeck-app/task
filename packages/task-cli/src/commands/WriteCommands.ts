@@ -1,5 +1,6 @@
 // Task commands that change a task: new, set-status, link/unlink, set-type, add-label, remove-label, set-parent, remove-parent, set-meta.
 import {
+	ALL_LINK_NAMES,
 	addLabel,
 	createTask,
 	deliverEvents,
@@ -87,7 +88,12 @@ export const runSetStatus: ProjectCommand = async (rest, { jsonMode, ctx, eventS
 export const runLink: ProjectCommand = async (rest, { command, jsonMode, ctx, eventSink }) => {
 	const [id, type, target] = rest;
 	if (!id || !type || !target) {
-		return errorOutput(jsonMode, 'missing arguments', `Usage: task ${command} <id> <type> <target-id>`);
+		return errorOutput(
+			jsonMode,
+			'missing arguments',
+			`Usage: task ${command} <id> <type> <target-id>
+Types: ${ALL_LINK_NAMES.join(', ')} (an inverse name such as blocks acts on the other task)`
+		);
 	}
 	let result: LinkTasksResult;
 	try {

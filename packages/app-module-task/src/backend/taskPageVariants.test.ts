@@ -230,8 +230,38 @@ describe('regression guard: "current" is the page as it was', () => {
 		const current = variants.current!.view as Node;
 		expect(current.$type).toBe('VerticalStack');
 		expect(current.gap).toBe('gap-4');
-		expect(current.items).toEqual(headRest);
+		// The one deliberate change since the head: the flat Links table became the relation groups (next test).
+		const expected = structuredClone(headRest) as Node[];
+		const links = expected.find(n => n.title === 'Links') as Node;
+		links.items = (links.items as Node[]).filter(n => n.$type !== 'DataTable');
+		expect(current.items).toEqual(
+			expected.map(n => (n.title === 'Links' ? (current.items as Node[]).find(c => c.title === 'Links') : n))
+		);
 		expect(page.$type).toBe(head.$type);
+	});
+
+	it('the Links section of "current" shows the groups of GET /tasks/:id/links instead of the flat table, keeping its feedback and forms', () => {
+		const current = variants.current!.view as Node;
+		const section = (current.items as Node[]).find(n => n.title === 'Links') as Node;
+		const headLinks = (headSections.find(n => n.title === 'Links') as Node).items as Node[];
+		const items = section.items as Node[];
+		const flat = headLinks.findIndex(n => n.$type === 'DataTable');
+		expect(items.slice(0, flat)).toEqual(headLinks.slice(0, flat));
+		expect(items.slice(flat, flat + 2)).toEqual([
+			{ $type: 'ExtensionSlot', $if: '$sources.links.hasLinks', items: '$sources.links.groupSections' },
+			{ $type: 'Badge', $if: '$sources.links.noLinks', label: 'No links', variant: 'info' },
+		]);
+		expect(items.slice(flat + 2)).toEqual(headLinks.slice(flat + 1));
+	});
+
+	it('no variant lists the links as one flat table or row list any more: every one renders the relation groups', () => {
+		for (const { name, index, tree } of combinations) {
+			const strings = stringsOf(tree);
+			expect(strings, `${name}#${index} still reads the flat rows`).not.toContain('$sources.links.rows');
+			const consumes = strings.includes('$sources.links.groupSections');
+			const showsLinks = strings.some(x => x.startsWith('$sources.links.'));
+			if (showsLinks) expect(consumes, `${name}#${index} reads $sources.links but not the groups`).toBe(true);
+		}
 	});
 
 	it('the shared fragments equal the matching nodes of the old page', () => {

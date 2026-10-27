@@ -11,6 +11,7 @@ export {
 	InvalidDeleteFilterError,
 	AmbiguousDeletePrefixError,
 	PartialDeleteError,
+	DanglingLinkError,
 	DanglingParentError,
 	NoReadableProjectsError,
 } from './errors.js';

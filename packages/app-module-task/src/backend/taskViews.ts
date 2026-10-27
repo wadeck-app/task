@@ -32,7 +32,7 @@
 // | blockers, blockedText   | [{id,title,status,href}], string or null | OPEN blockers only; "Blocked by N open task(s)" or null             | warnings |
 // | taskHrefs.deleteTasks   | href                                   | the delete page of the project                                       | links    |
 //
-// `GET /tasks/:id/links` adds: hasLinks, rows (each + tone, statusTone, isDone) and groups [{relation,label,rows}]
+// `GET /tasks/:id/links` adds: hasLinks, noLinks, rows (each + tone, statusTone, isDone), groups [{relation,label,rows}] and groupSections (one Section per group, rendered with ExtensionSlot)
 // (relations without a task left out). Quick-action routes (value in the PATH, see taskWriteRoutes.ts): POST
 // /tasks/:id/status/:status, /tasks/:id/type/:type, /tasks/:id/labels/:label; a label is removed by key: DELETE /tasks/:id/label-keys/:key
 // (labelKeys: label -> base64url key, labelOptions values are keys; a label may hold "/" or "%").

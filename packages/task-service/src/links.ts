@@ -1,8 +1,8 @@
-import { INVERSE_LINK_NAMES, LINK_TYPES } from '@wadeck-app/task-core';
+import { INVERSE_LINK_NAMES, LINK_TYPES, TaskNotFoundError } from '@wadeck-app/task-core';
 import type { LinkType, TaskLinks, TaskRecord } from '@wadeck-app/task-core';
 
 import { projectEnv, type TaskServiceContext } from './context.js';
-import { InvalidLinkTypeError } from './errors.js';
+import { DanglingLinkError, InvalidLinkTypeError } from './errors.js';
 import type { TaskEvent } from './events.js';
 import { suggest } from './text.js';
 
@@ -32,6 +32,32 @@ export interface LinkTasksResult {
 	events: TaskEvent[];
 }
 
+/**
+ * The id of the other task. Unlinking also accepts the exact id of a task that no longer exists, when the task holds a
+ * link to it: that is the only way to remove such a link (the target cannot be resolved by a prefix any more).
+ */
+function resolveTarget(
+	ctx: TaskServiceContext,
+	input: LinkTasksInput,
+	spec: { type: LinkType; inverse: boolean },
+	action: 'link' | 'unlink',
+	holderId: string
+): string {
+	try {
+		return ctx.store.findByPrefix(input.target).id;
+	} catch (error) {
+		const stored = action === 'unlink' && !spec.inverse && ctx.store.get(holderId).links;
+		if (
+			error instanceof TaskNotFoundError &&
+			stored &&
+			stored.some(l => l.type === spec.type && l.target === input.target)
+		) {
+			return input.target;
+		}
+		throw error;
+	}
+}
+
 function changeLink(ctx: TaskServiceContext, input: LinkTasksInput, action: 'link' | 'unlink'): LinkTasksResult {
 	const spec = parseLinkType(input.type);
 	if (!spec) {
@@ -39,7 +65,7 @@ function changeLink(ctx: TaskServiceContext, input: LinkTasksInput, action: 'lin
 		throw new InvalidLinkTypeError(input.type, ALL_LINK_NAMES, hint === undefined ? [] : [hint]);
 	}
 	const first = ctx.store.findByPrefix(input.id).id;
-	const second = ctx.store.findByPrefix(input.target).id;
+	const second = resolveTarget(ctx, input, spec, action, first);
 	// "A blocks B" is stored on B as "B blockedBy A": the holder is the task that owns the stored link.
 	const [holder, target] = spec.inverse ? [second, first] : [first, second];
 	const task =
@@ -69,5 +95,10 @@ export function unlinkTasks(ctx: TaskServiceContext, input: LinkTasksInput): Lin
 
 /** A task's outgoing links and their derived inverses. */
 export function getTaskLinks(ctx: TaskServiceContext, input: { id: string }): TaskLinks {
-	return ctx.store.getLinks(ctx.store.findByPrefix(input.id).id);
+	const id = ctx.store.findByPrefix(input.id).id;
+	// A link to a task that is gone is reported with its fix (the store would only say the index is corrupted).
+	const existing = new Set(ctx.store.list().map(t => t.id));
+	const dangling = (ctx.store.get(id).links ?? []).find(l => !existing.has(l.target));
+	if (dangling) throw new DanglingLinkError(id, dangling.type, dangling.target);
+	return ctx.store.getLinks(id);
 }

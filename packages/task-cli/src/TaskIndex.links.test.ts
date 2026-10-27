@@ -85,6 +85,8 @@ describe('runTaskCommand — link', () => {
 		const result = await runTaskCommand(['link', 'abc', 'blockedBy'], tmpDir);
 		expect(result.exitCode).toBe(1);
 		expect(result.output).toContain('Usage: task link <id> <type> <target-id>');
+		// the usage names the accepted types, as the module error does
+		expect(result.output).toContain('blockedBy, duplicateOf, causedBy, blocks, duplicates, causes');
 	});
 
 	it('rejects an unknown type, lists the valid ones and suggests the closest', async () => {
@@ -224,6 +226,7 @@ describe('runTaskCommand — unlink', () => {
 		const result = await runTaskCommand(['unlink', 'abc'], tmpDir);
 		expect(result.exitCode).toBe(1);
 		expect(result.output).toContain('Usage: task unlink <id> <type> <target-id>');
+		expect(result.output).toContain('blockedBy, duplicateOf, causedBy, blocks, duplicates, causes');
 	});
 });
 

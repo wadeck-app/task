@@ -460,9 +460,7 @@ github-a.main:
           $if: $sources.links.hasLinks
           title: Linked tasks
           items:
-              - $type: task:TaskRowList
-                rows: $sources.links.rows
-                appearance: list
+              - $use: links.groups
         - $type: task:VariantSwitcher
           id: github-a-activity
           label: Activity
@@ -728,10 +726,7 @@ jira.content:
           title: Linked issues
           appearance: plain
           items:
-              - $type: task:TaskRowList
-                rows: $sources.links.rows
-                appearance: table
-                density: compact
+              - $use: links.groups
 jira.activity:
     $type: task:Panel
     title: Activity
@@ -885,10 +880,7 @@ linear-a.relations:
     title: Relations
     appearance: plain
     items:
-        - $type: task:TaskRowList
-          rows: $sources.links.rows
-          appearance: list
-          density: compact
+        - $use: links.groups
 linear-a.activity:
     $type: task:Timeline
     $if: $sources.detail.hasActivity
@@ -1090,9 +1082,7 @@ linear-b.main:
           title: Relations
           appearance: flush
           items:
-              - $type: task:TaskRowList
-                rows: $sources.links.rows
-                appearance: list
+              - $use: links.groups
         - $type: task:VariantSwitcher
           id: linear-b-activity
           label: Activity
@@ -1438,9 +1428,7 @@ notion-a.body:
           title: Relations
           appearance: plain
           items:
-              - $type: task:TaskRowList
-                rows: $sources.links.rows
-                appearance: table
+              - $use: links.groups
 notion-a.page:
     $type: task:VariantSwitcher
     id: notion-a-order
@@ -1591,9 +1579,7 @@ notion-b.body:
           title: Relations
           appearance: plain
           items:
-              - $type: task:TaskRowList
-                rows: $sources.links.rows
-                appearance: list
+              - $use: links.groups
         - $type: task:Panel
           $if: $sources.detail.hasActivity
           title: Activity
@@ -1837,10 +1823,11 @@ gitlab.c.links:
     $type: VerticalStack
     gap: gap-3
     items:
-        - $type: task:TaskRowList
-          rows: $sources.links.rows
-          appearance: list
-          emptyText: No linked items
+        - $use: links.groups
+        - $type: Badge
+          $if: $sources.links.noLinks
+          label: No linked items
+          variant: info
         - $type: task:Panel
           title: Add or remove a link
           appearance: plain
@@ -2100,9 +2087,7 @@ github-b.lists:
           title: Linked
           count: $sources.detail.linkCount
           items:
-              - $type: task:TaskRowList
-                rows: $sources.links.rows
-                appearance: list
+              - $use: links.groups
 github-b.lists.folded:
     $type: VerticalStack
     gap: gap-2
@@ -2124,9 +2109,7 @@ github-b.lists.folded:
           collapsible: true
           defaultOpen: false
           items:
-              - $type: task:TaskRowList
-                rows: $sources.links.rows
-                appearance: list
+              - $use: links.groups
 github-b.body:
     $type: task:Panel
     $if: $sources.detail.hasDescription
@@ -2266,3 +2249,10 @@ github-b.main:
                       $use: github-b.lists.folded
         - $use: github-b.edit
         - $use: github-b.activity
+
+# The linked tasks grouped by relation: the sections the links route built from its `groups` (a view cannot loop), each titled with the
+# relation as a reader says it and its count, every row opening the linked task. Shown only when the task has links.
+links.groups:
+    $type: ExtensionSlot
+    $if: $sources.links.hasLinks
+    items: $sources.links.groupSections

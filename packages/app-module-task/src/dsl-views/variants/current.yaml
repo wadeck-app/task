@@ -243,17 +243,15 @@ view:
                 $if: $ctx.linkResult.undeliveredText
                 label: $ctx.linkResult.undeliveredText
                 variant: warning
-              # Outgoing links and the inverses derived from the links of the other tasks (blocks, duplicates, causes).
-              - $type: DataTable
-                rows: $sources.links.rows
-                navigateTo: '{href}'
-                emptyMessage: No links
-                columns:
-                    - { key: 'relation', label: 'Relation' }
-                    - { key: 'direction', label: 'Direction' }
-                    - { key: 'id', label: 'Task', mono: true, nowrap: true }
-                    - { key: 'titleText', label: 'Title', truncate: true, title: '{title}' }
-                    - { key: 'status', label: 'Status', nowrap: true }
+              # The links grouped by relation (Blocked by, Blocks, Duplicate of, Duplicated by, Caused by, Causes), each group a titled
+              # table of the linked tasks with a count; built by the route from `groups` (a view cannot loop).
+              - $type: ExtensionSlot
+                $if: $sources.links.hasLinks
+                items: $sources.links.groupSections
+              - $type: Badge
+                $if: $sources.links.noLinks
+                label: No links
+                variant: info
               - $type: Form
                 $if: $sources.detail.linkTypeOptions
                 onSubmit: $ctx.addLink

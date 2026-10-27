@@ -28,7 +28,7 @@ import {
 	showAllFlag,
 } from '../request.js';
 import { withRowLinks } from '../rowViews.js';
-import { linkGroups, linkRowViews } from '../taskPresentation.js';
+import { linkGroupSections, linkGroups, linkRowViews } from '../taskPresentation.js';
 import { childrenBody, forestBody, taskDetailBody, taskTreeBody, tasksListBody } from '../taskViews.js';
 import { taskId } from './routeKit.js';
 import type { RouteKit } from './routeKit.js';
@@ -103,15 +103,20 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 		const links = getTaskLinks(ctx, { id: taskId(req) });
 		// The full id of the resolved task (the request may hold a prefix).
 		const resolvedId = showTask(ctx, { id: taskId(req) })['id'];
+		const hasLinks = Object.values(links).some(tasks => tasks.length > 0);
+		const groups = linkGroups(ctx.project, ctx.config, links);
 		return {
 			status: 200,
 			body: {
 				project: ctx.project,
 				id: resolvedId,
 				links,
-				hasLinks: Object.values(links).some(tasks => tasks.length > 0),
+				hasLinks,
+				noLinks: !hasLinks,
 				rows: linkRowViews(ctx.project, ctx.config, links),
-				groups: linkGroups(ctx.project, ctx.config, links),
+				groups,
+				// What the page renders: one Section per group (a view cannot loop; see dslNodes.ts).
+				groupSections: linkGroupSections(groups),
 			},
 		};
 	});

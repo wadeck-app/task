@@ -2145,6 +2145,72 @@ describe('GET /tasks/:id/links', () => {
 		expect(answer.body['rows']).toEqual([]);
 	});
 
+	// `groups` is the data (relation, label, rows); `groupSections` is what the page renders, one Section per group (a view cannot loop).
+	it('gives one section per relation group, titled with its label and count, each row opening its task', async () => {
+		const a = await createTask('a');
+		const b = await createTask('b');
+		const c = await createTask('c');
+		const d = await createTask('d');
+		for (const body of [
+			{ type: 'blockedBy', target: b },
+			{ type: 'blockedBy', target: c },
+			{ type: 'causes', target: d },
+		]) {
+			await h.call('POST /tasks/:id/links', { params: { id: a }, query: { project }, body });
+		}
+		const answer = await h.call('GET /tasks/:id/links', { params: { id: a }, query: { project } });
+
+		const groups = answer.body['groups'] as Array<{ relation: string; label: string; rows: Array<{ id: string }> }>;
+		expect(groups.map(g => [g.relation, g.label, g.rows.map(r => r.id)])).toEqual([
+			['blockedBy', 'Blocked by', [b, c]],
+			['causes', 'Causes', [d]],
+		]);
+		expect(answer.body['noLinks']).toBe(false);
+		// One stack holds the groups: an ExtensionSlot lays its items with no gap, so the heading of a group would touch the table above it.
+		expect(answer.body['groupSections']).toEqual([
+			{
+				$type: 'VerticalStack',
+				gap: 'gap-4',
+				items: [
+					{
+						$type: 'Section',
+						title: 'Blocked by (2)',
+						items: [
+							{
+								$type: 'DataTable',
+								rows: groups[0]!.rows,
+								navigateTo: '{href}',
+								columns: [
+									{ key: 'id', label: 'ID', mono: true, nowrap: true },
+									{ key: 'titleText', label: 'Title', truncate: true, title: '{title}' },
+									{ key: 'status', label: 'Status', nowrap: true },
+								],
+							},
+						],
+					},
+					{
+						$type: 'Section',
+						title: 'Causes (1)',
+						items: [
+							expect.objectContaining({
+								$type: 'DataTable',
+								rows: groups[1]!.rows,
+								navigateTo: '{href}',
+							}),
+						],
+					},
+				],
+			},
+		]);
+	});
+
+	it('has no section and says so with noLinks for a task without links', async () => {
+		const a = await createTask('a');
+		const answer = await h.call('GET /tasks/:id/links', { params: { id: a }, query: { project } });
+		expect(answer.body['groupSections']).toEqual([]);
+		expect(answer.body['noLinks']).toBe(true);
+	});
+
 	it('is a 404 for an unknown id', async () => {
 		const answer = await h.call('GET /tasks/:id/links', { params: { id: 'nope' }, query: { project } });
 		expect(answer.status).toBe(404);

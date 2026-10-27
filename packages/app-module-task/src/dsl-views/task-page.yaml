@@ -389,26 +389,13 @@ sections:
                   $if: $ctx.linkResult.undeliveredText
                   label: $ctx.linkResult.undeliveredText
                   variant: warning
-                - $type: DataTable
-                  rows: $sources.links.rows
-                  navigateTo: '{href}'
-                  emptyMessage: No links
-                  columns:
-                    - key: relation
-                      label: Relation
-                    - key: direction
-                      label: Direction
-                    - key: id
-                      label: Task
-                      mono: true
-                      nowrap: true
-                    - key: titleText
-                      label: Title
-                      truncate: true
-                      title: '{title}'
-                    - key: status
-                      label: Status
-                      nowrap: true
+                - $type: ExtensionSlot
+                  $if: $sources.links.hasLinks
+                  items: $sources.links.groupSections
+                - $type: Badge
+                  $if: $sources.links.noLinks
+                  label: No links
+                  variant: info
                 - $type: Form
                   $if: $sources.detail.linkTypeOptions
                   onSubmit: $ctx.addLink
@@ -557,9 +544,9 @@ sections:
                                 $if: $sources.links.hasLinks
                                 title: Linked tasks
                                 items:
-                                  - $type: task:TaskRowList
-                                    rows: $sources.links.rows
-                                    appearance: list
+                                  - $type: ExtensionSlot
+                                    $if: $sources.links.hasLinks
+                                    items: $sources.links.groupSections
                               - $type: task:VariantSwitcher
                                 id: github-a-activity
                                 label: Activity
@@ -959,9 +946,9 @@ sections:
                                 $if: $sources.links.hasLinks
                                 title: Linked tasks
                                 items:
-                                  - $type: task:TaskRowList
-                                    rows: $sources.links.rows
-                                    appearance: list
+                                  - $type: ExtensionSlot
+                                    $if: $sources.links.hasLinks
+                                    items: $sources.links.groupSections
                               - $type: task:VariantSwitcher
                                 id: github-a-activity
                                 label: Activity
@@ -1470,9 +1457,9 @@ sections:
                                           title: Linked
                                           count: $sources.detail.linkCount
                                           items:
-                                            - $type: task:TaskRowList
-                                              rows: $sources.links.rows
-                                              appearance: list
+                                            - $type: ExtensionSlot
+                                              $if: $sources.links.hasLinks
+                                              items: $sources.links.groupSections
                                   folded:
                                     label: Folded
                                     hint: Sub-issues and linked tasks start folded to a title with a count.
@@ -1497,9 +1484,9 @@ sections:
                                           collapsible: true
                                           defaultOpen: false
                                           items:
-                                            - $type: task:TaskRowList
-                                              rows: $sources.links.rows
-                                              appearance: list
+                                            - $type: ExtensionSlot
+                                              $if: $sources.links.hasLinks
+                                              items: $sources.links.groupSections
                               - $type: task:Panel
                                 title: Metadata, parent and links
                                 collapsible: true
@@ -1909,9 +1896,9 @@ sections:
                                           title: Linked
                                           count: $sources.detail.linkCount
                                           items:
-                                            - $type: task:TaskRowList
-                                              rows: $sources.links.rows
-                                              appearance: list
+                                            - $type: ExtensionSlot
+                                              $if: $sources.links.hasLinks
+                                              items: $sources.links.groupSections
                                   folded:
                                     label: Folded
                                     hint: Sub-issues and linked tasks start folded to a title with a count.
@@ -1936,9 +1923,9 @@ sections:
                                           collapsible: true
                                           defaultOpen: false
                                           items:
-                                            - $type: task:TaskRowList
-                                              rows: $sources.links.rows
-                                              appearance: list
+                                            - $type: ExtensionSlot
+                                              $if: $sources.links.hasLinks
+                                              items: $sources.links.groupSections
                               - $type: task:Panel
                                 title: Metadata, parent and links
                                 collapsible: true
@@ -2162,10 +2149,13 @@ sections:
                                         - $type: VerticalStack
                                           gap: gap-3
                                           items:
-                                            - $type: task:TaskRowList
-                                              rows: $sources.links.rows
-                                              appearance: list
-                                              emptyText: No linked items
+                                            - $type: ExtensionSlot
+                                              $if: $sources.links.hasLinks
+                                              items: $sources.links.groupSections
+                                            - $type: Badge
+                                              $if: $sources.links.noLinks
+                                              label: No linked items
+                                              variant: info
                                             - $type: task:Panel
                                               title: Add or remove a link
                                               appearance: plain
@@ -2262,10 +2252,13 @@ sections:
                                         - $type: VerticalStack
                                           gap: gap-3
                                           items:
-                                            - $type: task:TaskRowList
-                                              rows: $sources.links.rows
-                                              appearance: list
-                                              emptyText: No linked items
+                                            - $type: ExtensionSlot
+                                              $if: $sources.links.hasLinks
+                                              items: $sources.links.groupSections
+                                            - $type: Badge
+                                              $if: $sources.links.noLinks
+                                              label: No linked items
+                                              variant: info
                                             - $type: task:Panel
                                               title: Add or remove a link
                                               appearance: plain
@@ -2795,10 +2788,13 @@ sections:
                                         - $type: VerticalStack
                                           gap: gap-3
                                           items:
-                                            - $type: task:TaskRowList
-                                              rows: $sources.links.rows
-                                              appearance: list
-                                              emptyText: No linked items
+                                            - $type: ExtensionSlot
+                                              $if: $sources.links.hasLinks
+                                              items: $sources.links.groupSections
+                                            - $type: Badge
+                                              $if: $sources.links.noLinks
+                                              label: No linked items
+                                              variant: info
                                             - $type: task:Panel
                                               title: Add or remove a link
                                               appearance: plain
@@ -2895,10 +2891,13 @@ sections:
                                         - $type: VerticalStack
                                           gap: gap-3
                                           items:
-                                            - $type: task:TaskRowList
-                                              rows: $sources.links.rows
-                                              appearance: list
-                                              emptyText: No linked items
+                                            - $type: ExtensionSlot
+                                              $if: $sources.links.hasLinks
+                                              items: $sources.links.groupSections
+                                            - $type: Badge
+                                              $if: $sources.links.noLinks
+                                              label: No linked items
+                                              variant: info
                                             - $type: task:Panel
                                               title: Add or remove a link
                                               appearance: plain
@@ -3497,10 +3496,13 @@ sections:
                                             - $type: VerticalStack
                                               gap: gap-3
                                               items:
-                                                - $type: task:TaskRowList
-                                                  rows: $sources.links.rows
-                                                  appearance: list
-                                                  emptyText: No linked items
+                                                - $type: ExtensionSlot
+                                                  $if: $sources.links.hasLinks
+                                                  items: $sources.links.groupSections
+                                                - $type: Badge
+                                                  $if: $sources.links.noLinks
+                                                  label: No linked items
+                                                  variant: info
                                                 - $type: task:Panel
                                                   title: Add or remove a link
                                                   appearance: plain
@@ -3597,10 +3599,13 @@ sections:
                                             - $type: VerticalStack
                                               gap: gap-3
                                               items:
-                                                - $type: task:TaskRowList
-                                                  rows: $sources.links.rows
-                                                  appearance: list
-                                                  emptyText: No linked items
+                                                - $type: ExtensionSlot
+                                                  $if: $sources.links.hasLinks
+                                                  items: $sources.links.groupSections
+                                                - $type: Badge
+                                                  $if: $sources.links.noLinks
+                                                  label: No linked items
+                                                  variant: info
                                                 - $type: task:Panel
                                                   title: Add or remove a link
                                                   appearance: plain
@@ -3695,10 +3700,13 @@ sections:
                                         - $type: VerticalStack
                                           gap: gap-3
                                           items:
-                                            - $type: task:TaskRowList
-                                              rows: $sources.links.rows
-                                              appearance: list
-                                              emptyText: No linked items
+                                            - $type: ExtensionSlot
+                                              $if: $sources.links.hasLinks
+                                              items: $sources.links.groupSections
+                                            - $type: Badge
+                                              $if: $sources.links.noLinks
+                                              label: No linked items
+                                              variant: info
                                             - $type: task:Panel
                                               title: Add or remove a link
                                               appearance: plain
@@ -4229,10 +4237,13 @@ sections:
                                             - $type: VerticalStack
                                               gap: gap-3
                                               items:
-                                                - $type: task:TaskRowList
-                                                  rows: $sources.links.rows
-                                                  appearance: list
-                                                  emptyText: No linked items
+                                                - $type: ExtensionSlot
+                                                  $if: $sources.links.hasLinks
+                                                  items: $sources.links.groupSections
+                                                - $type: Badge
+                                                  $if: $sources.links.noLinks
+                                                  label: No linked items
+                                                  variant: info
                                                 - $type: task:Panel
                                                   title: Add or remove a link
                                                   appearance: plain
@@ -4329,10 +4340,13 @@ sections:
                                             - $type: VerticalStack
                                               gap: gap-3
                                               items:
-                                                - $type: task:TaskRowList
-                                                  rows: $sources.links.rows
-                                                  appearance: list
-                                                  emptyText: No linked items
+                                                - $type: ExtensionSlot
+                                                  $if: $sources.links.hasLinks
+                                                  items: $sources.links.groupSections
+                                                - $type: Badge
+                                                  $if: $sources.links.noLinks
+                                                  label: No linked items
+                                                  variant: info
                                                 - $type: task:Panel
                                                   title: Add or remove a link
                                                   appearance: plain
@@ -4427,10 +4441,13 @@ sections:
                                         - $type: VerticalStack
                                           gap: gap-3
                                           items:
-                                            - $type: task:TaskRowList
-                                              rows: $sources.links.rows
-                                              appearance: list
-                                              emptyText: No linked items
+                                            - $type: ExtensionSlot
+                                              $if: $sources.links.hasLinks
+                                              items: $sources.links.groupSections
+                                            - $type: Badge
+                                              $if: $sources.links.noLinks
+                                              label: No linked items
+                                              variant: info
                                             - $type: task:Panel
                                               title: Add or remove a link
                                               appearance: plain
@@ -5001,10 +5018,9 @@ sections:
                               title: Linked issues
                               appearance: plain
                               items:
-                                - $type: task:TaskRowList
-                                  rows: $sources.links.rows
-                                  appearance: table
-                                  density: compact
+                                - $type: ExtensionSlot
+                                  $if: $sources.links.hasLinks
+                                  items: $sources.links.groupSections
                         - $type: task:VariantSwitcher
                           id: jira-a-activity
                           label: Activity
@@ -5556,10 +5572,9 @@ sections:
                               title: Linked issues
                               appearance: plain
                               items:
-                                - $type: task:TaskRowList
-                                  rows: $sources.links.rows
-                                  appearance: table
-                                  density: compact
+                                - $type: ExtensionSlot
+                                  $if: $sources.links.hasLinks
+                                  items: $sources.links.groupSections
                         - $type: task:VariantSwitcher
                           id: jira-b-activity
                           label: Activity
@@ -6269,10 +6284,9 @@ sections:
                             title: Relations
                             appearance: plain
                             items:
-                              - $type: task:TaskRowList
-                                rows: $sources.links.rows
-                                appearance: list
-                                density: compact
+                              - $type: ExtensionSlot
+                                $if: $sources.links.hasLinks
+                                items: $sources.links.groupSections
                     hidden:
                       label: Hidden
                       hint: Neither sub-issues nor relations; the page stops after the description.
@@ -6428,9 +6442,9 @@ sections:
                                 title: Relations
                                 appearance: flush
                                 items:
-                                  - $type: task:TaskRowList
-                                    rows: $sources.links.rows
-                                    appearance: list
+                                  - $type: ExtensionSlot
+                                    $if: $sources.links.hasLinks
+                                    items: $sources.links.groupSections
                               - $type: task:VariantSwitcher
                                 id: linear-b-activity
                                 label: Activity
@@ -6751,9 +6765,9 @@ sections:
                                 title: Relations
                                 appearance: flush
                                 items:
-                                  - $type: task:TaskRowList
-                                    rows: $sources.links.rows
-                                    appearance: list
+                                  - $type: ExtensionSlot
+                                    $if: $sources.links.hasLinks
+                                    items: $sources.links.groupSections
                               - $type: task:VariantSwitcher
                                 id: linear-b-activity
                                 label: Activity
@@ -7514,9 +7528,9 @@ sections:
                                 title: Relations
                                 appearance: plain
                                 items:
-                                  - $type: task:TaskRowList
-                                    rows: $sources.links.rows
-                                    appearance: table
+                                  - $type: ExtensionSlot
+                                    $if: $sources.links.hasLinks
+                                    items: $sources.links.groupSections
                     body-first:
                       label: Body first
                       hint: The page body first and the property table after it.
@@ -7568,9 +7582,9 @@ sections:
                                 title: Relations
                                 appearance: plain
                                 items:
-                                  - $type: task:TaskRowList
-                                    rows: $sources.links.rows
-                                    appearance: table
+                                  - $type: ExtensionSlot
+                                    $if: $sources.links.hasLinks
+                                    items: $sources.links.groupSections
                           - $type: VerticalStack
                             gap: gap-2
                             items:
@@ -8740,9 +8754,9 @@ sections:
                                 title: Relations
                                 appearance: plain
                                 items:
-                                  - $type: task:TaskRowList
-                                    rows: $sources.links.rows
-                                    appearance: list
+                                  - $type: ExtensionSlot
+                                    $if: $sources.links.hasLinks
+                                    items: $sources.links.groupSections
                               - $type: task:Panel
                                 $if: $sources.detail.hasActivity
                                 title: Activity
@@ -8786,9 +8800,9 @@ sections:
                                 title: Relations
                                 appearance: plain
                                 items:
-                                  - $type: task:TaskRowList
-                                    rows: $sources.links.rows
-                                    appearance: list
+                                  - $type: ExtensionSlot
+                                    $if: $sources.links.hasLinks
+                                    items: $sources.links.groupSections
                               - $type: task:Panel
                                 $if: $sources.detail.hasActivity
                                 title: Activity

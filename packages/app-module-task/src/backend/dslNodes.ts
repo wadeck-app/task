@@ -54,3 +54,19 @@ export function projectTasksSection(input: {
 		],
 	};
 }
+
+/** Columns of the table of one link group: the relation is the section title, so it is not repeated per row. */
+const LINK_COLUMNS = [
+	{ key: 'id', label: 'ID', mono: true, nowrap: true },
+	{ key: 'titleText', label: 'Title', truncate: true, title: '{title}' },
+	{ key: 'status', label: 'Status', nowrap: true },
+] as const;
+
+/** One link group (relation label, count, the linked tasks): a row click opens the linked task. */
+export function linkGroupSection(input: { label: string; rows: readonly object[] }): DslNode {
+	return {
+		$type: 'Section',
+		title: literal(`${input.label} (${input.rows.length})`),
+		items: [{ $type: 'DataTable', rows: input.rows, navigateTo: '{href}', columns: LINK_COLUMNS }],
+	};
+}

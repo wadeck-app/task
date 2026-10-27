@@ -85,6 +85,20 @@ export class DanglingParentError extends TaskServiceError {
 	}
 }
 
+/** A task holds a link to a task that no longer exists (the data was edited outside task). */
+export class DanglingLinkError extends TaskServiceError {
+	constructor(
+		readonly taskId: string,
+		readonly linkType: string,
+		readonly targetId: string
+	) {
+		super(
+			`task "${taskId}" has a ${linkType} link to "${targetId}", which does not exist`,
+			`Fix with: task unlink ${taskId} ${linkType} ${targetId}`
+		);
+	}
+}
+
 /** One registered project an all-projects view could not read, with why. */
 export interface ProjectFailure {
 	path: string;

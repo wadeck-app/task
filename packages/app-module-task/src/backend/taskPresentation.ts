@@ -6,6 +6,7 @@ import type { Blocker, ChildrenSummary } from '@wadeck-app/task-service';
 import { shortTitle, shortUtcTime } from './display.js';
 import { detailHref } from './hrefs.js';
 import type { ProjectIdentity } from './projectRef.js';
+import { linkGroupSection, type DslNode } from './dslNodes.js';
 import { linkRows } from './rowViews.js';
 
 type ProjectRef = ProjectIdentity & { path: string };
@@ -159,4 +160,25 @@ export function linkGroups(
 		label: relationLabel(relation),
 		rows: rows.filter(row => row.relation === relation),
 	}));
+}
+
+/**
+ * The page nodes of the groups, in the order of {@link linkGroups}: one Section per group inside ONE stack. The view
+ * renders the list with an ExtensionSlot, which lays its items with no gap (a Panel around it gave headings glued to the
+ * table above, seen in nine variants), so the spacing comes from the stack. No group: no node.
+ */
+export function linkGroupSections(groups: Array<Record<string, unknown>>): DslNode[] {
+	if (groups.length === 0) return [];
+	return [
+		{
+			$type: 'VerticalStack',
+			gap: 'gap-4',
+			items: groups.map(group =>
+				linkGroupSection({
+					label: group['label'] as string,
+					rows: group['rows'] as Array<Record<string, unknown>>,
+				})
+			),
+		},
+	];
 }
