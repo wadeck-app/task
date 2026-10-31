@@ -107,6 +107,8 @@ describe('GET /related/project/:projectId', () => {
 		expect(answer.status).toBe(200);
 		expect(answer.body['title']).toBe('Tasks');
 		expect(answer.body['count']).toBe(3);
+		// The project module shows "{count} {countLabel}" and hides a count that comes without a label.
+		expect(answer.body['countLabel']).toBe('open');
 		expect(answer.body['moreUrl']).toBe(`/modules/task/tasks/p/${project}`);
 		expect(answer.body['items']).toEqual([
 			{
@@ -172,6 +174,7 @@ describe('GET /related/project/:projectId', () => {
 		expect(answer.body).toEqual({
 			title: 'Tasks',
 			count: 0,
+			countLabel: 'open',
 			items: [],
 			moreUrl: `/modules/task/tasks/p/${project}`,
 		});

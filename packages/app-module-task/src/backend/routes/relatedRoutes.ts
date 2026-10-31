@@ -36,7 +36,13 @@ export function registerRelatedRoutes(kit: RouteKit): void {
 			}));
 		return {
 			status: 200,
-			body: { title: 'Tasks', count: open.length, items, moreUrl: tasksPageHref(ctx.project) },
+			body: {
+				title: 'Tasks',
+				count: open.length,
+				countLabel: 'open',
+				items,
+				moreUrl: tasksPageHref(ctx.project),
+			},
 		};
 	});
 }
