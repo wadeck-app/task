@@ -4,6 +4,7 @@ import {
 	NoProjectInScopeError,
 	ProjectError,
 	ProjectNotFoundError,
+	ProjectOptionError,
 	VirtualProjectError,
 } from '@wadeck-app/project-sdk';
 import { AmbiguousTaskPrefixError, TaskConflictError, TaskNotFoundError } from '@wadeck-app/task-core';
@@ -97,6 +98,16 @@ function describeProjectError(error: ProjectError): ErrorDescription {
 			'invalid',
 			error,
 			'Fix the config.yml named in the message (remove or rename the key), then retry.'
+		);
+	}
+	if (error instanceof ProjectOptionError) {
+		return describe(
+			'invalid',
+			error,
+			error.kind === 'missing-value'
+				? 'Give the project right after the flag (-p <id|name|alias>, or --project=<ref>); "project list" shows the registered ones.'
+				: 'Pass the project once: keep either -p/--project or the other occurrence.',
+			{ option: error.option, optionKind: error.kind }
 		);
 	}
 	if (error instanceof VirtualProjectError) {

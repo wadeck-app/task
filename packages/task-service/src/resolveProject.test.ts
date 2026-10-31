@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import {
 	AmbiguousReferenceError,
 	NoProjectInScopeError,
+	ProjectOptionError,
 	ProjectNotFoundError,
 	addPath,
 	normalizePath,
@@ -11,7 +12,12 @@ import {
 } from '@wadeck-app/project-sdk';
 
 import { describeError } from './describeError.js';
-import { resolveProject, resolveProjectReference } from './resolveProject.js';
+import {
+	readProjectOption,
+	resolveProject,
+	resolveProjectFromArgs,
+	resolveProjectReference,
+} from './resolveProject.js';
 import { createSharedRegistrySandbox } from './testHelpers.js';
 import type { SharedRegistrySandbox } from './testHelpers.js';
 
@@ -246,5 +252,36 @@ describe('resolveProjectReference: a caller without a cwd (the app-module)', () 
 		expect(captureError(() => resolveProjectReference(sandbox.dir('shop'), env))).toBeInstanceOf(
 			ProjectNotFoundError
 		);
+	});
+});
+
+describe('readProjectOption and resolveProjectFromArgs (the SDK rules, wrapped)', () => {
+	it('readProjectOption takes -p, --project x and --project=x out of argv and reads TASK_PROJECT (blank = unset)', () => {
+		expect(readProjectOption(['list', '-p', 'a', '--all'], {})).toEqual({ args: ['list', '--all'], flag: 'a' });
+		expect(readProjectOption(['--project=b', 'list'], { TASK_PROJECT: 'c' })).toEqual({
+			args: ['list'],
+			flag: 'b',
+			env: 'c',
+		});
+		expect(readProjectOption(['list'], { TASK_PROJECT: '  ' })).toEqual({ args: ['list'] });
+	});
+
+	it('refuses a missing value and a repeated flag with the SDK error, and reads nothing after --', () => {
+		expect(() => readProjectOption(['list', '-p'], {})).toThrow(ProjectOptionError);
+		expect(() => readProjectOption(['-p', 'a', '--project=b'], {})).toThrow(ProjectOptionError);
+		expect(readProjectOption(['list', '--', '-p'], {}).args).toEqual(['list', '--', '-p']);
+	});
+
+	it('resolveProjectFromArgs resolves flag > TASK_PROJECT > cwd and returns the other arguments', async () => {
+		const dir = path.join(sandbox.root, 'shop');
+		fs.mkdirSync(dir, { recursive: true });
+		const project = await sandbox.register('shop', dir);
+		const env = { ...sandbox.env, TASK_PROJECT: 'nothing-like-it' };
+
+		const byFlag = resolveProjectFromArgs({ cwd: sandbox.root, argv: ['list', '-p', project.id], env });
+		expect(byFlag.project).toMatchObject({ id: project.id, source: 'flag' });
+		expect(byFlag.args).toEqual(['list']);
+		expect(() => resolveProjectFromArgs({ cwd: sandbox.root, argv: ['list'], env })).toThrow(ProjectNotFoundError);
+		expect(resolveProjectFromArgs({ cwd: dir, argv: ['list'], env: sandbox.env }).project.source).toBe('cwd');
 	});
 });

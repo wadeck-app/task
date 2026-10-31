@@ -4,11 +4,12 @@ import {
 	NoProjectInScopeError,
 	defaultRegistryDir,
 	describeResolution,
+	extractProjectOption,
 	loadRegistry,
 	mainPath,
-	resolveScope,
+	resolveProjectFromArgs as sdkResolveProjectFromArgs,
 } from '@wadeck-app/project-sdk';
-import type { Registry, Scope } from '@wadeck-app/project-sdk';
+import type { ProjectOption, Registry, Scope } from '@wadeck-app/project-sdk';
 
 import { registryStorage } from './storage.js';
 import type { TaskStorage } from './storage.js';
@@ -47,10 +48,6 @@ export interface ResolvedProject {
 	logLine: string;
 }
 
-function nonBlank(value: string | undefined): string | undefined {
-	return value !== undefined && value.trim() !== '' ? value : undefined;
-}
-
 /** A project found through the registry: its data and config live in the registry, its path (if any) is the main path. */
 function registered(scope: Scope, via: string, registryDir: string, registry: Registry): ResolvedProject {
 	const main = mainPath(scope.project);
@@ -79,28 +76,54 @@ function withNativeFolder(error: NoProjectInScopeError, dir: string): NoProjectI
 }
 
 /**
- * Which project a command works on, and where its data is. `-p` > `TASK_PROJECT` > the cwd looked up in the shared registry
- * (deepest registered ancestor wins). A reference that does not resolve is an error, never a fallback, and so is a folder
- * the registry does not contain. Reads the registry, never writes it.
- * Throws the SDK's typed errors (`ProjectNotFoundError`, `AmbiguousReferenceError`, `NoProjectInScopeError`, `VirtualProjectError`, registry errors).
+ * Takes `-p <ref>`, `--project <ref>` and `--project=<ref>` out of `argv` (wherever they are, nothing after `--`) and reads
+ * TASK_PROJECT (blank = unset): the SDK's rules, shared by every CLI of the registry. The caller decides what to do with the
+ * pieces (e.g. refuse them for a command that spans all projects). Throws `ProjectOptionError` for a flag without value
+ * and for a repeated flag; described by `describeError`.
  */
-export function resolveProject(input: ResolveProjectInput): ResolvedProject {
+export function readProjectOption(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): ProjectOption {
+	return extractProjectOption(argv, env, 'TASK_PROJECT');
+}
+
+export interface ResolveProjectFromArgsInput {
+	cwd: string;
+	/** The command line (it may hold the project flag anywhere before `--`). */
+	argv: readonly string[];
+	/** Default `process.env`. Read: TASK_PROJECT, and XDG_CONFIG_HOME for the registry location. */
+	env?: NodeJS.ProcessEnv;
+}
+
+/**
+ * Which project a command works on, and where its data is: the flag in `argv` > `TASK_PROJECT` > the cwd looked up in the shared
+ * registry (deepest registered ancestor wins), through the SDK's `resolveProjectFromArgs`. A reference that does not resolve is an
+ * error, never a fallback, and so is a folder the registry does not contain. Reads the registry, never writes it.
+ * Returns the project and the arguments without the project flag.
+ * Throws the SDK's typed errors (`ProjectOptionError`, `ProjectNotFoundError`, `AmbiguousReferenceError`, `NoProjectInScopeError`,
+ * `VirtualProjectError`, registry errors).
+ */
+export function resolveProjectFromArgs(input: ResolveProjectFromArgsInput): {
+	project: ResolvedProject;
+	args: string[];
+} {
 	const env = input.env ?? process.env;
 	const registryDir = defaultRegistryDir(env);
 	const cwd = path.resolve(input.cwd);
 	const registry = loadRegistry(registryDir);
 	try {
-		const scope = resolveScope(registry, {
-			...(input.projectRef === undefined ? {} : { flag: input.projectRef }),
-			env: nonBlank(env['TASK_PROJECT']),
-			envName: 'TASK_PROJECT',
-			cwd,
-		});
-		return registered(scope, scope.via, registryDir, registry);
+		const { scope, args } = sdkResolveProjectFromArgs(registry, input.argv, env, 'TASK_PROJECT', cwd);
+		return { project: registered(scope, scope.via, registryDir, registry), args };
 	} catch (error) {
 		if (error instanceof NoProjectInScopeError) throw withNativeFolder(error, cwd);
 		throw error;
 	}
+}
+
+/** Same as `resolveProjectFromArgs` for a caller that already holds the reference (`projectRef` = the `-p` value; TASK_PROJECT still applies below it). */
+export function resolveProject(input: ResolveProjectInput): ResolvedProject {
+	// "--project=<ref>" takes any value (one starting with "-" included).
+	const argv = input.projectRef === undefined ? [] : [`--project=${input.projectRef}`];
+	return resolveProjectFromArgs({ cwd: input.cwd, argv, ...(input.env === undefined ? {} : { env: input.env }) })
+		.project;
 }
 
 /**

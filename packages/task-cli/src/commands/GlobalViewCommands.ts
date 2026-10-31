@@ -1,7 +1,7 @@
 // The cross-project views of the CLI: `task list --all-projects` and `task projects summary`. They need no project:
 // parsing and output only, over summarizeProjects / listTasksAcrossProjects (the same reads as the app-module's global view).
 import { listTasksAcrossProjects, summarizeProjects } from '@wadeck-app/task-service';
-import type { ProjectOverview, ProjectsSummary, TasksAcrossProjects } from '@wadeck-app/task-service';
+import type { ProjectOption, ProjectOverview, ProjectsSummary, TasksAcrossProjects } from '@wadeck-app/task-service';
 
 import { errorOutput, failure, jsonResult } from '../cli/output.js';
 import type { CommandResult } from '../cli/output.js';
@@ -24,12 +24,15 @@ export interface ProjectSelection {
 	explicit?: { name: '--project' | 'TASK_PROJECT'; description: string };
 }
 
-/** Reads the project sources that contradict `--all-projects`: `-p` / `--project`, then TASK_PROJECT (an empty value counts as unset). */
-export function describeProjectSelection(projectRefFlag?: string): ProjectSelection {
-	if (projectRefFlag !== undefined) {
+/**
+ * Reads the project sources that contradict `--all-projects`: `-p` / `--project`, then TASK_PROJECT. Both come from the SDK's
+ * `readProjectOption` (a blank variable is already unset there).
+ */
+export function describeProjectSelection(option: ProjectOption): ProjectSelection {
+	if (option.flag !== undefined) {
 		return { explicit: { name: '--project', description: '--project' } };
 	}
-	if (process.env['TASK_PROJECT']) {
+	if (option.env !== undefined) {
 		return { explicit: { name: 'TASK_PROJECT', description: 'the TASK_PROJECT environment variable' } };
 	}
 	return {};

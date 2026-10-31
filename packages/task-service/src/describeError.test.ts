@@ -1,4 +1,4 @@
-import { ConfigSchemaError } from '@wadeck-app/project-sdk';
+import { ConfigSchemaError, ProjectOptionError } from '@wadeck-app/project-sdk';
 import { AmbiguousTaskPrefixError, TaskConflictError, TaskNotFoundError } from '@wadeck-app/task-core';
 
 import { describeError } from './describeError.js';
@@ -98,5 +98,28 @@ describe('describeError: the shared registry', () => {
 		expect(description.kind).toBe('invalid');
 		expect(description.message).toContain('/cfg/config.yml');
 		expect(description.hint).toContain('config.yml');
+	});
+});
+
+describe('describeError: project option errors of the shared SDK', () => {
+	it('a flag without value is "invalid", names the flag and says how to fix it', () => {
+		const description = describeError(
+			new ProjectOptionError('-p needs a value: the name', { kind: 'missing-value', option: '-p' })
+		);
+		expect(description.kind).toBe('invalid');
+		expect(description.message).toBe('-p needs a value: the name');
+		expect(description.hint).toContain('project list');
+		expect(description.details).toEqual({ option: '-p', optionKind: 'missing-value' });
+	});
+
+	it('a repeated flag is "invalid" and says to pass it once', () => {
+		const description = describeError(
+			new ProjectOptionError('the project is given twice (-p and --project=b); pass it once', {
+				kind: 'repeated',
+				option: '--project=b',
+			})
+		);
+		expect(description.kind).toBe('invalid');
+		expect(description.hint).toContain('once');
 	});
 });

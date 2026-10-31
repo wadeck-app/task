@@ -9,9 +9,10 @@ import {
 	createQueueEventSink,
 	getTaskLogDir,
 	openResolvedProject,
-	resolveProject,
+	readProjectOption,
+	resolveProjectFromArgs,
 } from '@wadeck-app/task-service';
-import type { ResolvedProject } from '@wadeck-app/task-service';
+import type { ProjectOption, ResolvedProject } from '@wadeck-app/task-service';
 import { declareBeforeFirstDelivery } from './QueueEventsDeclaration.js';
 import { TASK_BUNDLE_NAME } from './TaskBundleName.js';
 import { parseArgs, usesProjectDirOption } from './cli/args.js';
@@ -31,7 +32,16 @@ import { VERSION } from './version.js';
 export type { CommandResult } from './cli/output.js';
 
 export async function runTaskCommand(args: string[], cwd: string): Promise<CommandResult> {
-	const { configDir, projectRef, jsonMode, command, rest } = parseArgs(args);
+	// The project flag and TASK_PROJECT are read by the shared SDK. A malformed flag (no value, repeated) is only an error for
+	// a command that needs a project: help, status and 'projects' do not look at it, so the error waits until then.
+	let projectOption: ProjectOption = { args };
+	let projectOptionError: unknown;
+	try {
+		projectOption = readProjectOption(args);
+	} catch (error) {
+		projectOptionError = error;
+	}
+	const { configDir, jsonMode, command, rest } = parseArgs(projectOption.args);
 
 	// Log every CLI invocation to ~/.config/task/logs/YYYY-MM-DD.ndjson
 	try {
@@ -74,7 +84,8 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 
 	// Across every registered project: needs no project here.
 	if (command === 'list' && rest.includes('--all-projects')) {
-		return runListAllProjects(rest, jsonMode, describeProjectSelection(projectRef));
+		if (projectOptionError !== undefined) return failure(jsonMode, projectOptionError);
+		return runListAllProjects(rest, jsonMode, describeProjectSelection(projectOption));
 	}
 
 	// Checked before the project is looked up: an unknown command fails the same way in any folder.
@@ -85,7 +96,8 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 
 	let env: CommandEnv;
 	try {
-		const resolved = resolveProject({ cwd, projectRef });
+		if (projectOptionError !== undefined) throw projectOptionError;
+		const resolved = resolveProjectFromArgs({ cwd, argv: args }).project;
 		announceResolution(resolved);
 		env = {
 			command,

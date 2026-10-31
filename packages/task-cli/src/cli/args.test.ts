@@ -24,34 +24,10 @@ describe('parseArgs', () => {
 	});
 });
 
-describe('parseArgs: -p / --project <ref>', () => {
-	it('reads -p and --project after the command and removes them from the arguments', () => {
-		expect(parseArgs(['list', '-p', 'shop', '--all']).projectRef).toBe('shop');
-		const parsed = parseArgs(['show', 'abc', '--project', 'shop', '--with-parent']);
-		expect(parsed).toMatchObject({ projectRef: 'shop', command: 'show', rest: ['abc', '--with-parent'] });
-	});
-
-	it('reads -p and --project before the command, next to --config and --json', () => {
-		expect(parseArgs(['-p', 'shop', 'list'])).toMatchObject({ projectRef: 'shop', command: 'list', rest: [] });
-		expect(parseArgs(['--json', '--project', 'shop', '--config', '/cfg', 'list'])).toMatchObject({
-			projectRef: 'shop',
-			configDir: '/cfg',
-			jsonMode: true,
-			command: 'list',
-		});
-	});
-
-	it('keeps the reference as typed (an empty one is for the resolver to refuse)', () => {
-		expect(parseArgs(['list', '-p', '']).projectRef).toBe('');
-	});
-
-	it('leaves a -p without value in the arguments, for the command to reject as an unknown flag', () => {
-		expect(parseArgs(['list', '-p']).rest).toEqual(['-p']);
-		expect(parseArgs(['list', '-p']).projectRef).toBeUndefined();
-	});
-
-	it('is undefined when not given', () => {
-		expect(parseArgs(['list']).projectRef).toBeUndefined();
+describe('parseArgs: the project flag is not read here', () => {
+	it('leaves -p and --project in the arguments (readProjectOption of task-service takes them out beforehand)', () => {
+		expect(parseArgs(['list', '-p', 'shop']).rest).toEqual(['-p', 'shop']);
+		expect(parseArgs(['-p', 'shop', 'list']).command).toBe('-p');
 	});
 });
 

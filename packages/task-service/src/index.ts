@@ -79,8 +79,19 @@ export type {
 	TasksAcrossProjects,
 } from './projectsOverview.js';
 export { summarizeProject, summarizeProjects, listTasksAcrossProjects } from './projectsOverview.js';
-export type { ProjectSource, ResolveProjectInput, ResolvedProject } from './resolveProject.js';
-export { resolveProject, resolveProjectReference } from './resolveProject.js';
+export type {
+	ProjectSource,
+	ResolveProjectFromArgsInput,
+	ResolveProjectInput,
+	ResolvedProject,
+} from './resolveProject.js';
+export {
+	readProjectOption,
+	resolveProject,
+	resolveProjectFromArgs,
+	resolveProjectReference,
+} from './resolveProject.js';
+export type { ProjectOption } from '@wadeck-app/project-sdk';
 export type { KnownProject, KnownProjects, ListKnownProjectsOptions } from './knownProjects.js';
 export { listKnownProjects } from './knownProjects.js';
 export type { TaskStorage } from './storage.js';
