@@ -64,6 +64,9 @@ $sources:
             id: $route.id
             query: $source.projects.projectQuery
             reload: $urlParam.reload
+    # The contributions of other modules to the slot task:project-header (declared in manifest.json `expose`).
+    projectHeader:
+        url: GET /api/slots/task:project-header
 
 $actions:
     setStatus:
@@ -127,6 +130,15 @@ $actions:
 $type: PageContent
 # Shown above whatever variant is chosen, so every variant has the same error and empty states by construction.
 $notices:
+    # Extension point task:project-header, above whatever variant is chosen (so every variant has it by construction):
+    # other modules contribute links/buttons about THIS project; they render with this page's context ($route.project).
+    # The slot is shown once its source answered (items is not an array before); an empty slot draws nothing.
+    - $type: task:ChipRow
+      $if: $route.project
+      items:
+          - $type: ExtensionSlot
+            $if: $sources.projectHeader
+            items: $sources.projectHeader
     # Nothing registered yet: the welcome text of the route (the exact next step) instead of a blank page.
     - $type: Badge
       $if: $sources.projects.noProjects

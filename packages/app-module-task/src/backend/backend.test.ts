@@ -24,6 +24,7 @@ import { createRecordingSink, createTestWorld, type RecordingSink, type TestWorl
 const EXPECTED_ROUTES = [
 	'GET /projects',
 	'GET /summary',
+	'GET /related/project/:projectId',
 	'GET /tasks',
 	'GET /tasks/:id',
 	'GET /tasks/:id/history',

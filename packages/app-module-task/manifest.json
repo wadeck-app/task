@@ -11,6 +11,13 @@
 	"lifecycle": {
 		"teardown": "./src/backend/teardown.ts"
 	},
+	"expose": {
+		"slots": {
+			"project-header": {
+				"accepts": ["ButtonLink", "IconButton", "Badge"]
+			}
+		}
+	},
 	"extensionPoints": [
 		{
 			"kind": "widget",

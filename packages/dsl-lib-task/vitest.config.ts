@@ -19,6 +19,8 @@ export default defineConfig({
 					globals: true,
 					setupFiles: ['./src/test-setup.ts'],
 					include: ['src/**/*.test.tsx', 'src/**/*.test.ts'],
+					// The first jsdom render of a generated entry takes about 3 s alone and passed 5 s under load (other sessions share the machine).
+					testTimeout: 20_000,
 				},
 			},
 			{

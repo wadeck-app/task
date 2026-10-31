@@ -172,8 +172,26 @@ describe('the experiment', () => {
 		}
 	});
 
+	// The extension point task:project-header sits OUTSIDE the switcher too: every variant has it by construction.
+	it('has the slot task:project-header outside the switcher, once, whatever the variant', () => {
+		const slots = nodesOf(sections.slice(0, -1)).filter(n => n.$type === 'ExtensionSlot');
+		expect(slots).toEqual([
+			{ $type: 'ExtensionSlot', $if: '$sources.projectHeader', items: '$sources.projectHeader' },
+		]);
+		expect(sections[0]).toMatchObject({ $type: 'task:ChipRow', $if: '$route.project' });
+		expect(page.$sources).toHaveProperty('projectHeader.url', 'GET /api/slots/task:project-header');
+		// No variant draws a slot of its own (the one above would be doubled).
+		for (const { name, tree } of combinations) {
+			expect(
+				nodesOf(tree).filter(n => n.$type === 'ExtensionSlot' && n.items === '$sources.projectHeader'),
+				name
+			).toEqual([]);
+		}
+	});
+
 	it('keeps the notices OUTSIDE the switcher, so every variant has the same error and empty states', () => {
-		const labels = sections.slice(0, -1).map(s => `${String(s.$type)}:${String(s.label)}`);
+		const notices = sections.slice(1, -1);
+		const labels = notices.map(s => `${String(s.$type)}:${String(s.label)}`);
 		expect(labels).toEqual([
 			'Badge:$sources.projects.noProjectsText',
 			'Badge:$sources.projects.selectedProblem',
@@ -181,7 +199,7 @@ describe('the experiment', () => {
 			'Badge:$sources.detail.errorText',
 			'Badge:$sources.detail.warningText',
 		]);
-		expect(sections.slice(0, -1).map(s => s.$if)).toEqual([
+		expect(notices.map(s => s.$if)).toEqual([
 			'$sources.projects.noProjects',
 			'$sources.projects.selectedProblem',
 			'$sources.projects.unknownProjectText',
@@ -209,7 +227,10 @@ describe('regression guard: "current" is the page as it was', () => {
 	const headRest = [headSections[0], ...headSections.slice(6)];
 
 	it('the sources are unchanged and the actions are the old ones plus the quick actions', () => {
-		expect(page.$sources).toEqual(head.$sources);
+		// The one added source is the extension point (see 'has the slot task:project-header').
+		const { projectHeader, ...sources } = page.$sources as Record<string, unknown>;
+		expect(projectHeader).toBeDefined();
+		expect(sources).toEqual(head.$sources);
 		const actions = page.$actions as Record<string, unknown>;
 		const oldActions = head.$actions as Record<string, unknown>;
 		for (const [name, spec] of Object.entries(oldActions)) {
@@ -223,7 +244,7 @@ describe('regression guard: "current" is the page as it was', () => {
 	});
 
 	it('the notices are the old ones', () => {
-		expect(sections.slice(0, -1)).toEqual(headNotices);
+		expect(sections.slice(1, -1)).toEqual(headNotices);
 	});
 
 	it('the view of "current" is the old page body, node for node', () => {

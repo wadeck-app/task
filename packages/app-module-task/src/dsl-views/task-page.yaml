@@ -66,6 +66,9 @@ $sources:
             id: $route.id
             query: $source.projects.projectQuery
             reload: $urlParam.reload
+    # The contributions of other modules to the slot task:project-header (declared in manifest.json `expose`).
+    projectHeader:
+        url: GET /api/slots/task:project-header
 
 $actions:
     setStatus:
@@ -128,6 +131,12 @@ $actions:
 
 $type: PageContent
 sections:
+  - $type: task:ChipRow
+    $if: $route.project
+    items:
+      - $type: ExtensionSlot
+        $if: $sources.projectHeader
+        items: $sources.projectHeader
   - $type: Badge
     $if: $sources.projects.noProjects
     label: $sources.projects.noProjectsText

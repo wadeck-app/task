@@ -18,6 +18,7 @@ import { TASK_BUNDLE_NAME } from './TaskBundleName.js';
 import { parseArgs, usesProjectDirOption } from './cli/args.js';
 import type { CommandEnv } from './cli/env.js';
 import { STATUS_HELP, taskHelp } from './cli/help.js';
+import { ignoredProjectFlagNote, typedProjectFlag } from './cli/ignoredProjectFlag.js';
 import { errorOutput, failure } from './cli/output.js';
 import type { CommandResult } from './cli/output.js';
 import { printUpdateNotice } from './cli/updateNotice.js';
@@ -61,6 +62,22 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 	}
 
 	printUpdateNotice();
+
+	// A valid flag typed for a command that never resolves a project is accepted and stripped, but not silently (stderr only, stdout
+	// stays untouched). TASK_PROJECT is ambient, so it never triggers the note; a malformed flag keeps its error where one is raised.
+	const notScoped =
+		!command ||
+		command === '--help' ||
+		command === '--version' ||
+		command === '-V' ||
+		command === 'cli' ||
+		command === 'plugins' ||
+		command === 'projects' ||
+		(command === 'status' && isStatusHelp(rest));
+	if (notScoped && projectOptionError === undefined && projectOption.flag !== undefined) {
+		const typed = typedProjectFlag(args);
+		if (typed !== undefined) process.stderr.write(ignoredProjectFlagNote(typed) + '\n');
+	}
 
 	if (!command || command === '--help') {
 		return { exitCode: 0, output: taskHelp() };

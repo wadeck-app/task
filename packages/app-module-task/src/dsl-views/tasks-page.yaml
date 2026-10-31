@@ -30,6 +30,9 @@ $sources:
             # global list would leave the buttons of the previous project on screen after a trip to the global list (and the reverse).
             query: $source.projects.scopeQuery
             reload: $urlParam.reload
+    # The contributions of other modules to the slot task:project-header (declared in manifest.json `expose`).
+    projectHeader:
+        url: GET /api/slots/task:project-header
 
 $type: PageContent
 sections:
@@ -49,6 +52,15 @@ sections:
             $if: $sources.tasks.hrefs
             label: Delete tasks
             to: $sources.tasks.hrefs.deleteTasks
+    # Extension point task:project-header: other modules (the project module...) contribute links/buttons about THIS project.
+    # Per-project address only ($route.project is empty on /tasks, the contributions need it); the slot is shown once its
+    # source answered (items is not an array before), and an empty slot draws nothing.
+    - $type: task:ChipRow
+      $if: $route.project
+      items:
+          - $type: ExtensionSlot
+            $if: $sources.projectHeader
+            items: $sources.projectHeader
     # Nothing registered yet: the welcome text of the route (the exact next step) instead of a blank page.
     - $type: Badge
       $if: $sources.projects.noProjects

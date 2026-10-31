@@ -24,6 +24,9 @@ $sources:
         params:
             query: $source.projects.scopeQuery
             reload: $urlParam.reload
+    # The contributions of other modules to the slot task:project-header (declared in manifest.json `expose`).
+    projectHeader:
+        url: GET /api/slots/task:project-header
 
 $type: PageContent
 sections:
@@ -34,6 +37,13 @@ sections:
             $if: $sources.tree.showAllToggle
             label: $sources.tree.showAllToggle.label
             to: $sources.tree.showAllToggle.href
+    # Extension point task:project-header (see tasks-page.yaml): per-project address only, empty slot draws nothing.
+    - $type: task:ChipRow
+      $if: $route.project
+      items:
+          - $type: ExtensionSlot
+            $if: $sources.projectHeader
+            items: $sources.projectHeader
     # Nothing registered yet: the welcome text of the route (the exact next step) instead of a blank page.
     - $type: Badge
       $if: $sources.projects.noProjects

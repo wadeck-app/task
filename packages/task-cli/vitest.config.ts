@@ -28,6 +28,8 @@ export default defineConfig({
 		include: ['src/**/*.test.ts'],
 		exclude: ['**/node_modules/**', '**/dist/**'],
 		mockReset: true,
+		// Several tests spawn the CLI bundle (self-check, updater): a few seconds alone, past the default 5 s on a machine shared with other sessions.
+		testTimeout: 20_000,
 		restoreMocks: true,
 		// Points XDG_CONFIG_HOME at a temp dir so no test touches the real ~/.config/task.
 		setupFiles: ['../../scripts/testTempSetup.ts', './vitest.setup.ts'],

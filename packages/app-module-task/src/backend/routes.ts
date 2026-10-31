@@ -3,6 +3,7 @@ import { createQueueEventSink, getTaskConfigDir, getTaskLogDir } from '@wadeck-a
 import type { EventSink } from '@wadeck-app/task-service';
 
 import { registerProjectRoutes } from './routes/projectRoutes.js';
+import { registerRelatedRoutes } from './routes/relatedRoutes.js';
 import { createRouteKit } from './routes/routeKit.js';
 import type { TaskRoutesOptions } from './routes/routeKit.js';
 import { registerTaskReadRoutes } from './routes/taskReadRoutes.js';
@@ -41,6 +42,7 @@ export function registerTaskRoutes(ctx: ModuleContext, options: TaskRoutesOption
 	void queueSink?.declareEvents();
 	const kit = createRouteKit(ctx, { logDir, writeStderr, eventSink });
 	registerProjectRoutes(kit);
+	registerRelatedRoutes(kit);
 	registerTaskReadRoutes(kit);
 	registerTaskWriteRoutes(kit);
 	registerTypeRoutes(kit);

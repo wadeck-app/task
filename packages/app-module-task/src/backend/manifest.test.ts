@@ -231,6 +231,8 @@ describe('task detail page (src/dsl-views/task-page.yaml)', () => {
 const viewsDir = join(packageDir, 'src/dsl-views');
 const viewNames = readdirSync(viewsDir).filter(name => name.endsWith('.yaml'));
 const view = (name: string): string => readFileSync(join(viewsDir, name), 'utf8');
+/** The source of the extension point `task:project-header` (app-core's endpoint, not a route of this module). */
+const SLOT_URL = '/api/slots/task:project-header';
 
 describe('views: conventions that keep pages rendering', () => {
 	it.each(viewNames)(
@@ -272,6 +274,8 @@ describe('views: conventions that keep pages rendering', () => {
 		name => {
 			const text = view(name);
 			for (const [, , url] of text.matchAll(/^\s+url: (GET|POST|DELETE) (\S+)/gm)) {
+				// The extension point is served by app-core itself (the contributions of other modules), not by this module.
+				if (url === SLOT_URL) continue;
 				expect(url, name).toMatch(/^\/api\/modules\/task\//);
 			}
 			// The registry actions of the Projects page (add, edit, remove) act on no project: they carry none.
@@ -831,11 +835,14 @@ describe('views: a failing source blanks the whole page', () => {
 			const text = view(name);
 			for (const [source, block] of sourceBlocks(text)) {
 				if (source === 'projects') continue;
+				// app-core's slot endpoint answers 200 with the list of contributions; it has no error to inline.
+				if (source === 'projectHeader') continue;
 				expect(block, `${name}: source ${source}`).toContain('inlineErrors=true');
 			}
 			for (const [, , url] of text.matchAll(/^ {8}url: (GET) (\S+)/gm)) {
 				// The projects source itself (it only lists the registry; the Projects page adds page=projects).
 				if (/\/projects(\?page=projects)?$/.test(url!)) continue;
+				if (url === SLOT_URL) continue;
 				expect(url, name).toMatch(/inlineErrors=true$/);
 			}
 		}
@@ -1097,5 +1104,39 @@ describe('shared project registry: the views say when it cannot be read', () => 
 		expect(widget).toMatch(
 			/\$if: \$sources\.summary\.registryProblem\n\s+label: \$sources\.summary\.registryProblem\n\s+variant: danger/
 		);
+	});
+});
+
+// The extension point other modules contribute to: `expose.slots` of the manifest, an ExtensionSlot in every page of one project.
+describe('extension point task:project-header', () => {
+	const exposed = (manifest as unknown as { expose?: { slots?: Record<string, { accepts: string[] }> } }).expose;
+
+	it('is exposed by the manifest, accepting link/button-like nodes only', () => {
+		expect(exposed?.slots).toEqual({ 'project-header': { accepts: ['ButtonLink', 'IconButton', 'Badge'] } });
+	});
+
+	// The pages whose address names the project ($route.project): the list, the task page (generated, variants included) and the tree.
+	it.each(['tasks-page.yaml', 'task-page.yaml', 'tree-page.yaml'])(
+		'%s embeds the slot once, from the app-core endpoint, only when the address names a project',
+		name => {
+			const text = view(name);
+			expect(text.match(/GET \/api\/slots\/task:project-header/g)).toHaveLength(1);
+			expect(
+				text.match(
+					/\$type: ExtensionSlot\n\s+\$if: \$sources\.projectHeader\n\s+items: \$sources\.projectHeader/g
+				)
+			).toHaveLength(1);
+			expect(text).toMatch(
+				/\$type: task:ChipRow\n\s+\$if: \$route\.project\n\s+items:\n\s+- \$type: ExtensionSlot/
+			);
+		}
+	);
+
+	it('is on every project-scoped page of the manifest that shows one project (list, task, tree)', () => {
+		const owners = manifest.extensionPoints
+			.filter(p => p.path?.includes(':project') === true)
+			.filter(p => view(p.view.value.replace('./src/dsl-views/', '')).includes('/api/slots/task:project-header'))
+			.map(p => p.path);
+		expect(owners).toEqual(['/tasks/p/:project', '/tasks/p/:project/:id', '/tree/p/:project']);
 	});
 });

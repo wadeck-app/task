@@ -138,6 +138,77 @@ describe('commands that need no project ignore a valid project flag', () => {
 	});
 });
 
+describe('a valid project flag given to a command that is not scoped to a project', () => {
+	// The stderr spy is shared by the whole file: forget what earlier tests (and the registry setup) wrote.
+	beforeEach(() => {
+		vi.mocked(process.stderr.write).mockClear();
+	});
+
+	function notes(): string[] {
+		return vi
+			.mocked(process.stderr.write)
+			.mock.calls.map(call => String(call[0]))
+			.filter(text => text.includes('ignored'));
+	}
+
+	it.each([
+		[['projects', 'summary', '-p', 'alpha'], 'note: -p alpha ignored: this command is not scoped to a project\n'],
+		[
+			['projects', 'summary', '--project=alpha'],
+			'note: --project=alpha ignored: this command is not scoped to a project\n',
+		],
+		[
+			['projects', 'summary', '--project', 'alpha'],
+			'note: --project alpha ignored: this command is not scoped to a project\n',
+		],
+		[['-p', 'alpha', 'projects', 'summary'], 'note: -p alpha ignored: this command is not scoped to a project\n'],
+		[['status', '--help', '-p', 'alpha'], 'note: -p alpha ignored: this command is not scoped to a project\n'],
+		[['--help', '-p', 'alpha'], 'note: -p alpha ignored: this command is not scoped to a project\n'],
+		[['--version', '-p', 'alpha'], 'note: -p alpha ignored: this command is not scoped to a project\n'],
+		[['plugins', '--help', '-p', 'alpha'], 'note: -p alpha ignored: this command is not scoped to a project\n'],
+		[['cli', '--help', '-p', 'alpha'], 'note: -p alpha ignored: this command is not scoped to a project\n'],
+	])('task %j prints exactly one note on stderr', async (argv, note) => {
+		await runTaskCommand(argv, root);
+		expect(notes()).toEqual([note]);
+	});
+
+	it('keeps stdout pure JSON, and the exit code, with --json', async () => {
+		const plain = await runTaskCommand(['projects', 'summary', '--json'], root);
+		vi.mocked(process.stderr.write).mockClear();
+		const flagged = await runTaskCommand(['projects', 'summary', '--json', '-p', 'alpha'], root);
+		expect(flagged.exitCode).toBe(plain.exitCode);
+		expect(flagged.output).toBe(plain.output);
+		expect(() => JSON.parse(flagged.output)).not.toThrow();
+		expect(notes()).toHaveLength(1);
+	});
+
+	it('prints nothing for TASK_PROJECT alone', async () => {
+		process.env['TASK_PROJECT'] = 'alpha';
+		await runTaskCommand(['projects', 'summary'], root);
+		expect(notes()).toEqual([]);
+	});
+
+	it('prints nothing without a flag', async () => {
+		await runTaskCommand(['projects', 'summary'], root);
+		await runTaskCommand(['--help'], root);
+		expect(notes()).toEqual([]);
+	});
+
+	it('prints nothing for a project-scoped command', async () => {
+		await runTaskCommand(['list', '-p', 'alpha'], root);
+		await runTaskCommand(['status', 'list', '-p', 'alpha'], root);
+		expect(notes()).toEqual([]);
+	});
+
+	it('keeps the loud error for a malformed flag (no note)', async () => {
+		const missing = await runTaskCommand(['list', '-p'], cwd);
+		expect(missing.exitCode).toBe(1);
+		const repeated = await runTaskCommand(['list', '-p', 'alpha', '--project=beta'], cwd);
+		expect(repeated.exitCode).toBe(1);
+		expect(notes()).toEqual([]);
+	});
+});
+
 describe('--all-projects with a malformed project flag', () => {
 	it('names the flag problem (exit 1), not a silent success', async () => {
 		const result = await runTaskCommand(['list', '--all-projects', '-p'], cwd);
