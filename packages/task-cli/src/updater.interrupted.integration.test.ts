@@ -29,7 +29,22 @@ const PKG = '@wadeck-app/task-cli';
 // Unpadded like what npm publishes for the CalVer scheme (a leading zero is not valid semver).
 const OLD = '2026.10.1-001-aaaaaaaa';
 const NEW = '2026.11.1-002-bbbbbbbb';
-const NPM_CLI = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+/** npm's own entry point of the node running the tests: beside the node binary on Windows, under `<prefix>/lib` elsewhere. */
+function findNpmCli(): string {
+	const binDir = path.dirname(process.execPath);
+	const candidates = [
+		path.join(binDir, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+		path.join(binDir, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+	];
+	const found = candidates.find(candidate => fs.existsSync(candidate));
+	if (!found) {
+		throw new Error(
+			`npm-cli.js not found for the node at ${process.execPath}; looked in: ${candidates.join(', ')}`
+		);
+	}
+	return found;
+}
+const NPM_CLI = findNpmCli();
 const INTERRUPTED = 'was interrupted: the installer process is gone';
 
 let bundleDir: string;
@@ -127,7 +142,9 @@ async function waitFor(what: string, condition: () => boolean, timeoutMs = 30000
 }
 
 function globalPackageDir(e: IsolatedCliEnv): string {
-	return path.join(e.npmPrefix, 'node_modules', ...PKG.split('/'));
+	// npm puts global packages in `<prefix>/node_modules` on Windows and `<prefix>/lib/node_modules` elsewhere.
+	const modules = process.platform === 'win32' ? ['node_modules'] : ['lib', 'node_modules'];
+	return path.join(e.npmPrefix, ...modules, ...PKG.split('/'));
 }
 
 /** Names npm moves a package aside to while it replaces it (`.task-cli-XXXXXXXX`). */
