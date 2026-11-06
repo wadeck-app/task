@@ -1,7 +1,20 @@
 #!/usr/bin/env node
 'use strict';
 const { execFileSync, execSync } = require('child_process');
+const fs = require('fs');
 const os = require('os');
+
+// The CLI bundle sits next to bin/. First thing, before any platform lookup or install: a package without its bundle is
+// an incomplete install, and what follows (Node's "Cannot find module ... MODULE_NOT_FOUND" stack, the Go launcher's
+// "LAUNCHER_BUNDLE_OVERRIDE ... is not a file", a global npm install of the platform package) never says so.
+const bundlePath = require('path').join(__dirname, '..', '{{CLI_NAME}}.cjs');
+if (!fs.existsSync(bundlePath)) {
+  process.stderr.write(
+    `{{CLI_NAME}}: the CLI bundle ${bundlePath} is missing: the installation is incomplete.\n` +
+    `{{CLI_NAME}}: reinstall it with: npm install -g @wadeck-app/{{PKG_PREFIX}}\n`
+  );
+  process.exit(1);
+}
 
 const PLATFORM_PKG = {
   'win32-x64':    '@wadeck-app/{{PKG_PREFIX}}-win32-x64',
@@ -42,8 +55,6 @@ try {
     process.exit(1);
   }
 }
-
-const bundlePath = require('path').join(__dirname, '..', '{{CLI_NAME}}.cjs');
 
 // On Windows the Go launcher binary is compiled as SUBSYSTEM:WINDOWS (GUI application).
 // Its hasConsole() check fails when spawned from a terminal, causing node's stdio to be

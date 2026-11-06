@@ -1,10 +1,10 @@
 // Presentation helpers of the task detail page: tones, activity feed, ancestor chips, grouped links. Pure functions over
 // service results; the rules they display (what is closed, what blocks) come from task-service.
 import type { TaskLinks, TaskRecord, TaskSummary } from '@wadeck-app/task-core';
-import type { Blocker, ChildrenSummary } from '@wadeck-app/task-service';
+import type { Blocker, ChildrenSummary, DanglingLink } from '@wadeck-app/task-service';
 
 import { shortTitle, shortUtcTime } from './display.js';
-import { detailHref } from './hrefs.js';
+import { detailHref, encodedProject } from './hrefs.js';
 import type { ProjectIdentity } from './projectRef.js';
 import { linkGroupSection, type DslNode } from './dslNodes.js';
 import { linkRows } from './rowViews.js';
@@ -138,22 +138,62 @@ function relationLabel(relation: string): string {
 	return RELATION_LABELS[relation] ?? relation;
 }
 
-/** The rows of the links answer: a tone, and the relation as `meta` (TaskRowList shows it on the right). */
+/** The task the links belong to, and the links of it that point to a vanished task (see `readTaskLinks`). */
+export interface LinkHolder {
+	/** Full id of the task whose links are shown. */
+	taskId: string;
+	dangling: DanglingLink[];
+}
+
+/**
+ * The rows of the links answer: a tone, and the relation as `meta` (TaskRowList shows it on the right). Each row holds
+ * `removeParams`, the `{placeholders}` of the `removeLinkRow` action (the type is the relation as the row shows it, an
+ * inverse name included: `unlink` accepts both). A link to a vanished task is a row too, with no `href` and the id the
+ * fix needs: it stays visible and removable from the page.
+ */
 export function linkRowViews(
 	project: ProjectRef,
 	config: StatusConfig,
-	links: TaskLinks
+	links: TaskLinks,
+	holder: LinkHolder
 ): Array<Record<string, unknown>> {
-	return withTones(config, linkRows(project, links)).map(row => ({ ...row, meta: relationLabel(row.relation) }));
+	const params = (type: string, target: string): Record<string, unknown> => ({
+		id: holder.taskId,
+		projectParam: encodedProject(project),
+		type,
+		target,
+	});
+	const found = withTones(config, linkRows(project, links)).map(row => ({
+		...row,
+		meta: relationLabel(row.relation),
+		removeParams: params(row.relation, row.id),
+	}));
+	const missing = holder.dangling.map(link => ({
+		relation: link.relation,
+		direction: 'outgoing',
+		id: link.targetId,
+		title: `missing task ${link.targetId}`,
+		titleText: `missing task ${link.targetId}`,
+		status: 'missing',
+		tone: 'danger',
+		missing: true,
+		fix: link.fix,
+		meta: relationLabel(link.relation),
+		removeParams: params(link.relation, link.targetId),
+	}));
+	// Keep the relation order of the links answer: a missing task joins the rows of its own relation.
+	const order = Object.keys(RELATION_LABELS);
+	return [...found, ...missing].sort((a, b) => order.indexOf(a.relation) - order.indexOf(b.relation));
 }
 
 /** The linked tasks grouped by relation (relations without a task left out), each row with the tone of its status. */
 export function linkGroups(
 	project: ProjectRef,
 	config: StatusConfig,
-	links: TaskLinks
+	links: TaskLinks,
+	holder: LinkHolder
 ): Array<Record<string, unknown>> {
-	const rows = linkRowViews(project, config, links) as Array<{ relation: string }>;
+	const rows = linkRowViews(project, config, links, holder) as Array<{ relation: string }>;
 	const relations = [...new Set(rows.map(row => row.relation))];
 	return relations.map(relation => ({
 		relation,

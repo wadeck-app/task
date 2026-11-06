@@ -55,18 +55,28 @@ export function projectTasksSection(input: {
 	};
 }
 
-/** Columns of the table of one link group: the relation is the section title, so it is not repeated per row. */
-const LINK_COLUMNS = [
-	{ key: 'id', label: 'ID', mono: true, nowrap: true },
-	{ key: 'titleText', label: 'Title', truncate: true, title: '{title}' },
-	{ key: 'status', label: 'Status', nowrap: true },
-] as const;
+/** Name of the page action (`$actions`) the remove button of a link row runs. */
+export const REMOVE_LINK_ROW_ACTION = 'removeLinkRow';
 
-/** One link group (relation label, count, the linked tasks): a row click opens the linked task. */
-export function linkGroupSection(input: { label: string; rows: readonly object[] }): DslNode {
+/**
+ * One link group (relation label, count, the linked tasks) as a `task:TaskRowList`: the id and title are a link to the
+ * linked task, and a button beside it removes the link without retyping relation and target (each row carries its
+ * `removeParams`). A DataTable could not do both: a row action with a url leaves `{id}` unsubstituted in the installed
+ * shell, and a table with row actions has no row click. The relation is the section title, so rows drop their `meta`.
+ */
+export function linkGroupSection(input: { label: string; rows: ReadonlyArray<Record<string, unknown>> }): DslNode {
 	return {
 		$type: 'Section',
 		title: literal(`${input.label} (${input.rows.length})`),
-		items: [{ $type: 'DataTable', rows: input.rows, navigateTo: '{href}', columns: LINK_COLUMNS }],
+		items: [
+			{
+				$type: 'task:TaskRowList',
+				rows: input.rows.map(({ meta: _meta, ...row }: Record<string, unknown>) => row),
+				appearance: 'table',
+				density: 'compact',
+				removeAction: REMOVE_LINK_ROW_ACTION,
+				removeLabel: 'Remove link',
+			},
+		],
 	};
 }

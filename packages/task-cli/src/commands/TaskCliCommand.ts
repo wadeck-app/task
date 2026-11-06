@@ -74,11 +74,8 @@ export async function runTaskCliVersion(): Promise<void> {
 	const current = getCurrentTaskVersion();
 	const channel = readChannelFromConfig(ConfigDir.get('task'));
 	await cliVersionCommand(PKG_NAME, current, channel);
-	const applying = readApplyingState();
-	// A running install is normal; only an interrupted one needs the user's attention.
-	if (applying?.kind === 'interrupted')
-		process.stderr.write(`[task] ${applying.message}
-`);
+	// An interrupted install is reported by printUpdateNotice (TaskIndex, before any command runs): a second line here
+	// printed it twice (seen with a real killed `npm install -g`, updater.interrupted.integration.test.ts).
 }
 
 export async function runTaskCliUpdate(opts: {
@@ -143,11 +140,15 @@ export async function runTaskCliRollback(deps: Partial<RollbackAppCoreDeps> = {}
 	// is either racing a live installer or waiting for the updater's own repair, which knows better what to restore.
 	const applying = readApplyingState();
 	if (applying !== undefined) {
-		const how =
+		// An interrupted install is already described by the notice every command prints first (printUpdateNotice): repeating
+		// its sentence here ran two sentences together ("... task cli update Run: task cli update ...", seen on a real
+		// killed install).
+		const refusal =
 			applying.kind === 'live'
-				? `Wait for it to end (pid ${applying.pid}), then retry.`
-				: 'Run: task cli update (it repairs the installation), then retry if you still need the rollback.';
-		process.stderr.write(`[task] Rollback refused: ${applying.message} ${how}
+				? `${applying.message} Wait for it to end (pid ${applying.pid}), then retry.`
+				: 'the previous update was interrupted and the installation is not repaired yet. ' +
+					'Run: task cli update (it repairs the installation), then retry if you still need the rollback.';
+		process.stderr.write(`[task] Rollback refused: ${refusal}
 `);
 		process.exit(1);
 		return;

@@ -111,6 +111,12 @@ $actions:
         url: DELETE /api/modules/task/tasks/{id}/links?project={projectParam}&inlineErrors=true
         resultKey: linkResult
         reloadSources: true
+    # The x of a row of the link groups (task:TaskRowList, nodes built by the route): the row's `removeParams` fill the
+    # placeholders, so nothing is retyped. {targetEncoded} is the named handler's percent-encoded copy of `target`.
+    removeLinkRow:
+        url: DELETE /api/modules/task/tasks/{id}/links?project={projectParam}&type={type}&target={targetEncoded}&inlineErrors=true
+        resultKey: linkResult
+        reloadSources: true
 
     # Quick actions for the task: components (ActionSelect, SegmentedControl, LabelChips): the value is in the URL path,
     # because the shell's onAction sends no body. Same service calls, same answers, same resultKeys as the Form twins.

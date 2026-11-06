@@ -4,7 +4,7 @@ import { TaskNotFoundError } from '@wadeck-app/task-core';
 
 import { describeError } from './describeError.js';
 import { DanglingLinkError, InvalidLinkTypeError } from './errors.js';
-import { ALL_LINK_NAMES, getTaskLinks, linkTasks, parseLinkType, unlinkTasks } from './links.js';
+import { ALL_LINK_NAMES, getTaskLinks, linkTasks, parseLinkType, readTaskLinks, unlinkTasks } from './links.js';
 import { createTestContext, type TestContext } from './testHelpers.js';
 
 describe('parseLinkType', () => {
@@ -143,6 +143,28 @@ describe('a link to a task that no longer exists (the index was edited outside t
 		expect(description.kind).toBe('conflict');
 		expect(description.message).toContain(b);
 		expect(description.hint).toBe(`Fix with: task unlink ${a} blockedBy ${b}`);
+	});
+
+	it('readTaskLinks reports the dangling entry instead of throwing, keeps the other links and words the fix', () => {
+		const c = t.ctx.store.create('c', 'backlog').id;
+		linkTasks(t.ctx, { id: a, type: 'causedBy', target: c });
+
+		const report = readTaskLinks(t.ctx, { id: a });
+
+		expect(report.links.causedBy.map(x => x.id)).toEqual([c]);
+		expect(report.links.blockedBy).toEqual([]);
+		expect(report.dangling).toEqual([
+			{ relation: 'blockedBy', targetId: b, fix: `task unlink ${a} blockedBy ${b}` },
+		]);
+		expect(report.warnings).toEqual([
+			`task "${a}" has a blockedBy link to "${b}", which does not exist. Fix with: task unlink ${a} blockedBy ${b}`,
+		]);
+	});
+
+	it('readTaskLinks of a consistent task has no dangling entry and no warning', () => {
+		const report = readTaskLinks(t.ctx, { id: t.ctx.store.create('d', 'backlog').id });
+		expect(report.dangling).toEqual([]);
+		expect(report.warnings).toEqual([]);
 	});
 
 	it('unlink removes it by the full id of the vanished task, and emits the event', () => {

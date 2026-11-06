@@ -4,7 +4,7 @@
 //
 // Incident 2026-10-24/25: a repo-built bundle ran `cli update` against the REAL config dir and the REAL global npm;
 // the `npm install -g` was killed halfway and the global CLI vanished.
-import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
+import { spawn, spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -206,4 +206,68 @@ export function spawnIsolated(
 		timeout: opts.timeout ?? 30_000,
 		encoding: 'utf-8',
 	});
+}
+
+export interface IsolatedRunResult {
+	status: number | null;
+	signal: NodeJS.Signals | null;
+	stdout: string;
+	stderr: string;
+	/** True when the timeout killed the child. */
+	timedOut: boolean;
+}
+
+/** A started child of {@link startIsolated}: the process plus a promise of its collected result. */
+export interface IsolatedChild {
+	pid: number;
+	/** Resolves when the child has exited (never rejects: a timeout is reported in the result). */
+	done: Promise<IsolatedRunResult>;
+	/** Output collected so far. */
+	output(): { stdout: string; stderr: string };
+}
+
+/**
+ * Asynchronous spawn of a node script inside the isolated tree, same guarantees as {@link spawnIsolated}. For tests whose
+ * test process must keep answering while the child runs (a fake registry in the test process, a child killed midway).
+ */
+export function startIsolated(
+	script: string,
+	args: string[],
+	iso: IsolatedCliEnv,
+	opts: { timeout?: number } = {}
+): IsolatedChild {
+	assertIsolatedEnv(iso.env);
+	const child = spawn(process.execPath, [script, ...args], {
+		env: iso.env,
+		cwd: iso.root,
+		windowsHide: true,
+		stdio: ['ignore', 'pipe', 'pipe'],
+	});
+	if (child.pid === undefined) throw new Error(`could not spawn ${script}`);
+	let stdout = '';
+	let stderr = '';
+	child.stdout.setEncoding('utf8').on('data', (chunk: string) => (stdout += chunk));
+	child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk));
+	let timedOut = false;
+	const timer = setTimeout(() => {
+		timedOut = true;
+		child.kill();
+	}, opts.timeout ?? 60_000);
+	const done = new Promise<IsolatedRunResult>(resolve => {
+		child.on('close', (status, signal) => {
+			clearTimeout(timer);
+			resolve({ status, signal, stdout, stderr, timedOut });
+		});
+	});
+	return { pid: child.pid, done, output: () => ({ stdout, stderr }) };
+}
+
+/** {@link startIsolated} awaited. */
+export function runIsolated(
+	script: string,
+	args: string[],
+	iso: IsolatedCliEnv,
+	opts: { timeout?: number } = {}
+): Promise<IsolatedRunResult> {
+	return startIsolated(script, args, iso, opts).done;
 }

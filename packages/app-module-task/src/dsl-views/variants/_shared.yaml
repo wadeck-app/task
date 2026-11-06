@@ -1,16 +1,17 @@
 # Reusable fragments of the task page variants, referenced anywhere in a variant as `{ $use: <name> }`.
 # Copied verbatim from the page as it was before the experiment (the `current` variant keeps its own inline copy; a test
 # fails when a fragment drifts from it). Each fragment is ONE node. Mutation feedback: `feedback.<x>` holds the error
-# and the "events not delivered" badges of one resultKey; every variant must show all six.
+# and the "events not delivered" notices of one resultKey; every variant must show all six. They are task:Notice, never
+# a Badge: a Badge keeps one line, and the replay text of an undelivered event (a command with a JSON payload) runs off the screen.
 feedback.status:
     $type: VerticalStack
     gap: gap-2
     items:
-        - $type: Badge
+        - $type: task:Notice
           $if: $ctx.statusResult.errorText
           label: $ctx.statusResult.errorText
           variant: danger
-        - $type: Badge
+        - $type: task:Notice
           $if: $ctx.statusResult.undeliveredText
           label: $ctx.statusResult.undeliveredText
           variant: warning
@@ -18,11 +19,11 @@ feedback.type:
     $type: VerticalStack
     gap: gap-2
     items:
-        - $type: Badge
+        - $type: task:Notice
           $if: $ctx.typeResult.errorText
           label: $ctx.typeResult.errorText
           variant: danger
-        - $type: Badge
+        - $type: task:Notice
           $if: $ctx.typeResult.undeliveredText
           label: $ctx.typeResult.undeliveredText
           variant: warning
@@ -30,11 +31,11 @@ feedback.label:
     $type: VerticalStack
     gap: gap-2
     items:
-        - $type: Badge
+        - $type: task:Notice
           $if: $ctx.labelResult.errorText
           label: $ctx.labelResult.errorText
           variant: danger
-        - $type: Badge
+        - $type: task:Notice
           $if: $ctx.labelResult.undeliveredText
           label: $ctx.labelResult.undeliveredText
           variant: warning
@@ -42,11 +43,11 @@ feedback.meta:
     $type: VerticalStack
     gap: gap-2
     items:
-        - $type: Badge
+        - $type: task:Notice
           $if: $ctx.metaResult.errorText
           label: $ctx.metaResult.errorText
           variant: danger
-        - $type: Badge
+        - $type: task:Notice
           $if: $ctx.metaResult.undeliveredText
           label: $ctx.metaResult.undeliveredText
           variant: warning
@@ -54,11 +55,11 @@ feedback.parent:
     $type: VerticalStack
     gap: gap-2
     items:
-        - $type: Badge
+        - $type: task:Notice
           $if: $ctx.parentResult.errorText
           label: $ctx.parentResult.errorText
           variant: danger
-        - $type: Badge
+        - $type: task:Notice
           $if: $ctx.parentResult.undeliveredText
           label: $ctx.parentResult.undeliveredText
           variant: warning
@@ -66,11 +67,11 @@ feedback.link:
     $type: VerticalStack
     gap: gap-2
     items:
-        - $type: Badge
+        - $type: task:Notice
           $if: $ctx.linkResult.errorText
           label: $ctx.linkResult.errorText
           variant: danger
-        - $type: Badge
+        - $type: task:Notice
           $if: $ctx.linkResult.undeliveredText
           label: $ctx.linkResult.undeliveredText
           variant: warning
@@ -215,80 +216,6 @@ form.removeLink:
         - $type: ButtonSave
           label: Remove link
 
-# Same six feedback blocks as feedback.*, drawn with task:Notice: the text WRAPS, for narrow columns (sidebars).
-feedback.wrapped.status:
-    $type: VerticalStack
-    gap: gap-2
-    items:
-        - $type: task:Notice
-          $if: $ctx.statusResult.errorText
-          label: $ctx.statusResult.errorText
-          variant: danger
-        - $type: task:Notice
-          $if: $ctx.statusResult.undeliveredText
-          label: $ctx.statusResult.undeliveredText
-          variant: warning
-feedback.wrapped.type:
-    $type: VerticalStack
-    gap: gap-2
-    items:
-        - $type: task:Notice
-          $if: $ctx.typeResult.errorText
-          label: $ctx.typeResult.errorText
-          variant: danger
-        - $type: task:Notice
-          $if: $ctx.typeResult.undeliveredText
-          label: $ctx.typeResult.undeliveredText
-          variant: warning
-feedback.wrapped.label:
-    $type: VerticalStack
-    gap: gap-2
-    items:
-        - $type: task:Notice
-          $if: $ctx.labelResult.errorText
-          label: $ctx.labelResult.errorText
-          variant: danger
-        - $type: task:Notice
-          $if: $ctx.labelResult.undeliveredText
-          label: $ctx.labelResult.undeliveredText
-          variant: warning
-feedback.wrapped.meta:
-    $type: VerticalStack
-    gap: gap-2
-    items:
-        - $type: task:Notice
-          $if: $ctx.metaResult.errorText
-          label: $ctx.metaResult.errorText
-          variant: danger
-        - $type: task:Notice
-          $if: $ctx.metaResult.undeliveredText
-          label: $ctx.metaResult.undeliveredText
-          variant: warning
-feedback.wrapped.parent:
-    $type: VerticalStack
-    gap: gap-2
-    items:
-        - $type: task:Notice
-          $if: $ctx.parentResult.errorText
-          label: $ctx.parentResult.errorText
-          variant: danger
-        - $type: task:Notice
-          $if: $ctx.parentResult.undeliveredText
-          label: $ctx.parentResult.undeliveredText
-          variant: warning
-feedback.wrapped.link:
-    $type: VerticalStack
-    gap: gap-2
-    items:
-        - $type: task:Notice
-          $if: $ctx.linkResult.errorText
-          label: $ctx.linkResult.errorText
-          variant: danger
-        - $type: task:Notice
-          $if: $ctx.linkResult.undeliveredText
-          label: $ctx.linkResult.undeliveredText
-          variant: warning
-
 # ---- github-a (GitHub issue page). Namespaced; used only by variants/github-a.yaml. -------------------------------------
 github-a.header:
     $type: VerticalStack
@@ -377,7 +304,7 @@ github-a.side:
                 params: &actionParams
                     id: $route.id
                     projectParam: $sources.detail.projectParam
-              - $use: feedback.wrapped.status
+              - $use: feedback.status
         - $type: task:PropertyRow
           label: Type
           items:
@@ -393,7 +320,7 @@ github-a.side:
                 params: *actionParams
               - $use: notice.noTypes
               - $use: form.typeFree
-              - $use: feedback.wrapped.type
+              - $use: feedback.type
         - $type: task:PropertyRow
           label: Labels
           items:
@@ -406,7 +333,7 @@ github-a.side:
                 labelParam: label
                 placeholder: Add a label
                 params: *actionParams
-              - $use: feedback.wrapped.label
+              - $use: feedback.label
         - $type: task:PropertyRow
           label: Parent
           items:
@@ -415,7 +342,7 @@ github-a.side:
                 label: $sources.detail.parentRow.titleText
                 href: $sources.detail.parentRow.href
                 variant: info
-              - $use: feedback.wrapped.parent
+              - $use: feedback.parent
               - $use: form.detachParent
         - $type: task:PropertyRow
           $if: $sources.detail.hasMeta
@@ -565,7 +492,7 @@ jira.details.core:
                 params: &jiraParams
                     id: $route.id
                     projectParam: $sources.detail.projectParam
-              - $use: feedback.wrapped.status
+              - $use: feedback.status
         - $type: task:PropertyRow
           label: Type
           items:
@@ -581,7 +508,7 @@ jira.details.core:
                 params: *jiraParams
               - $use: notice.noTypes
               - $use: form.typeFree
-              - $use: feedback.wrapped.type
+              - $use: feedback.type
         - $type: task:PropertyRow
           label: Labels
           items:
@@ -594,7 +521,7 @@ jira.details.core:
                 labelParam: label
                 placeholder: Add a label
                 params: *jiraParams
-              - $use: feedback.wrapped.label
+              - $use: feedback.label
         - $type: task:PropertyRow
           label: Parent
           items:
@@ -603,7 +530,7 @@ jira.details.core:
                 label: $sources.detail.parentRow.titleText
                 href: $sources.detail.parentRow.href
                 variant: info
-              - $use: feedback.wrapped.parent
+              - $use: feedback.parent
               - $use: form.detachParent
 # jira-b: the transition bar above already owns the status (and its feedback), so the Details panel has no Status row.
 jira-b.details.core:
@@ -628,7 +555,7 @@ jira-b.details.core:
                 params: *jiraParams
               - $use: notice.noTypes
               - $use: form.typeFree
-              - $use: feedback.wrapped.type
+              - $use: feedback.type
         - $type: task:PropertyRow
           label: Labels
           items:
@@ -641,7 +568,7 @@ jira-b.details.core:
                 labelParam: label
                 placeholder: Add a label
                 params: *jiraParams
-              - $use: feedback.wrapped.label
+              - $use: feedback.label
         - $type: task:PropertyRow
           label: Parent
           items:
@@ -650,7 +577,7 @@ jira-b.details.core:
                 label: $sources.detail.parentRow.titleText
                 href: $sources.detail.parentRow.href
                 variant: info
-              - $use: feedback.wrapped.parent
+              - $use: feedback.parent
               - $use: form.detachParent
 jira.details.more:
     $type: VerticalStack
@@ -659,8 +586,8 @@ jira.details.more:
         - $type: task:KeyValueList
           $if: $sources.detail.hasMeta
           entries: $sources.detail.metaList
-        - $use: feedback.wrapped.meta
-        - $use: feedback.wrapped.link
+        - $use: feedback.meta
+        - $use: feedback.link
         - $type: task:Panel
           title: Edit fields
           appearance: plain
@@ -951,7 +878,7 @@ linear-b.rail:
                       params: &linearBParams
                           id: $route.id
                           projectParam: $sources.detail.projectParam
-                    - $use: feedback.wrapped.status
+                    - $use: feedback.status
               - $type: task:PropertyRow
                 label: Type
                 items:
@@ -967,7 +894,7 @@ linear-b.rail:
                       params: *linearBParams
                     - $use: notice.noTypes
                     - $use: form.typeFree
-                    - $use: feedback.wrapped.type
+                    - $use: feedback.type
               - $type: task:PropertyRow
                 label: Labels
                 items:
@@ -981,7 +908,7 @@ linear-b.rail:
                       placeholder: Add a label
                       size: sm
                       params: *linearBParams
-                    - $use: feedback.wrapped.label
+                    - $use: feedback.label
               - $type: task:PropertyRow
                 label: Parent
                 items:
@@ -990,7 +917,7 @@ linear-b.rail:
                       label: $sources.detail.parentRow.titleText
                       href: $sources.detail.parentRow.href
                       variant: info
-                    - $use: feedback.wrapped.parent
+                    - $use: feedback.parent
                     - $use: form.detachParent
               - $type: task:PropertyRow
                 label: Project
@@ -1150,7 +1077,7 @@ notion.row.status:
           params:
               id: $route.id
               projectParam: $sources.detail.projectParam
-        - $use: feedback.wrapped.status
+        - $use: feedback.status
 notion.row.type:
     $type: task:PropertyRow
     label: Type
@@ -1169,7 +1096,7 @@ notion.row.type:
               projectParam: $sources.detail.projectParam
         - $use: notice.noTypes
         - $use: form.typeFree
-        - $use: feedback.wrapped.type
+        - $use: feedback.type
 notion.row.type.set:
     $type: task:PropertyRow
     $if: $sources.detail.hasType
@@ -1189,7 +1116,7 @@ notion.row.type.set:
               projectParam: $sources.detail.projectParam
         - $use: notice.noTypes
         - $use: form.typeFree
-        - $use: feedback.wrapped.type
+        - $use: feedback.type
 notion.row.labels:
     $type: task:PropertyRow
     label: Labels
@@ -1205,7 +1132,7 @@ notion.row.labels:
           params:
               id: $route.id
               projectParam: $sources.detail.projectParam
-        - $use: feedback.wrapped.label
+        - $use: feedback.label
 notion.row.labels.set:
     $type: task:PropertyRow
     $if: $sources.detail.hasLabels
@@ -1222,7 +1149,7 @@ notion.row.labels.set:
           params:
               id: $route.id
               projectParam: $sources.detail.projectParam
-        - $use: feedback.wrapped.label
+        - $use: feedback.label
 notion.row.parent:
     $type: task:PropertyRow
     label: Parent
@@ -1232,7 +1159,7 @@ notion.row.parent:
           label: $sources.detail.parentRow.titleText
           href: $sources.detail.parentRow.href
           variant: info
-        - $use: feedback.wrapped.parent
+        - $use: feedback.parent
         - $use: form.detachParent
 notion.row.parent.set:
     $type: task:PropertyRow
@@ -1243,7 +1170,7 @@ notion.row.parent.set:
           label: $sources.detail.parentRow.titleText
           href: $sources.detail.parentRow.href
           variant: info
-        - $use: feedback.wrapped.parent
+        - $use: feedback.parent
         - $use: form.detachParent
 # notion-b: the editors of an EMPTY property (once it has a value its row, above, takes over with the same feedback).
 notion.empty.type:
@@ -1270,7 +1197,7 @@ notion.empty.type:
                     projectParam: $sources.detail.projectParam
               - $use: notice.noTypes
               - $use: form.typeFree
-              - $use: feedback.wrapped.type
+              - $use: feedback.type
         - $type: task:PropertyRow
           $if: $sources.detail.noLabels
           label: Labels
@@ -1286,13 +1213,13 @@ notion.empty.type:
                 params:
                     id: $route.id
                     projectParam: $sources.detail.projectParam
-              - $use: feedback.wrapped.label
+              - $use: feedback.label
 notion.empty.parent:
     $type: VerticalStack
     $if: $sources.detail.noParent
     gap: gap-1
     items:
-        - $use: feedback.wrapped.parent
+        - $use: feedback.parent
 notion.row.project:
     $type: task:PropertyRow
     label: Project
@@ -1661,7 +1588,7 @@ gitlab.b.status:
           params: &gitlabActionParams
               id: $route.id
               projectParam: $sources.detail.projectParam
-        - $use: feedback.wrapped.status
+        - $use: feedback.status
 gitlab.b.type:
     $type: VerticalStack
     gap: gap-2
@@ -1678,7 +1605,7 @@ gitlab.b.type:
           params: *gitlabActionParams
         - $use: notice.noTypes
         - $use: form.typeFree
-        - $use: feedback.wrapped.type
+        - $use: feedback.type
 gitlab.b.labels:
     $type: VerticalStack
     gap: gap-2
@@ -1692,7 +1619,7 @@ gitlab.b.labels:
           labelParam: label
           placeholder: Add a label
           params: *gitlabActionParams
-        - $use: feedback.wrapped.label
+        - $use: feedback.label
 gitlab.b.parent:
     $type: VerticalStack
     gap: gap-2
@@ -1702,7 +1629,7 @@ gitlab.b.parent:
           label: $sources.detail.parentRow.titleText
           href: $sources.detail.parentRow.href
           variant: info
-        - $use: feedback.wrapped.parent
+        - $use: feedback.parent
         - $use: form.detachParent
         - $type: task:Panel
           title: Change parent
@@ -1718,7 +1645,7 @@ gitlab.b.meta:
         - $type: task:KeyValueList
           $if: $sources.detail.hasMeta
           entries: $sources.detail.metaList
-        - $use: feedback.wrapped.meta
+        - $use: feedback.meta
         - $type: task:Panel
           title: Set metadata
           appearance: plain
@@ -2024,7 +1951,7 @@ github-b.sidebar:
                 params: &githubBActionParams
                     id: $route.id
                     projectParam: $sources.detail.projectParam
-              - $use: feedback.wrapped.status
+              - $use: feedback.status
         - $type: task:PropertyRow
           label: Type
           items:
@@ -2040,7 +1967,7 @@ github-b.sidebar:
                 params: *githubBActionParams
               - $use: notice.noTypes
               - $use: form.typeFree
-              - $use: feedback.wrapped.type
+              - $use: feedback.type
         - $type: task:PropertyRow
           label: Labels
           items:
@@ -2053,7 +1980,7 @@ github-b.sidebar:
                 labelParam: label
                 placeholder: Add a label
                 params: *githubBActionParams
-              - $use: feedback.wrapped.label
+              - $use: feedback.label
         - $type: task:PropertyRow
           label: Parent
           items:
@@ -2062,7 +1989,7 @@ github-b.sidebar:
                 label: $sources.detail.parentRow.titleText
                 href: $sources.detail.parentRow.href
                 variant: info
-              - $use: feedback.wrapped.parent
+              - $use: feedback.parent
               - $use: form.detachParent
         - $type: task:PropertyRow
           $if: $sources.detail.hasMeta

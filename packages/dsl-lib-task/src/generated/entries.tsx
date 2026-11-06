@@ -229,7 +229,11 @@ export const TaskRowListEntry: ComponentRegistryEntry = {
 		const emptyText = coerceProp(resolveExpressionValue(node['emptyText'], ctx), 'TaskRowList.emptyText', 'string', false) as import('../components/TaskRowList.js').TaskRowListProps['emptyText']
 		const appearance = coerceProp(resolveExpressionValue(node['appearance'], ctx), 'TaskRowList.appearance', 'primitive', false) as import('../components/TaskRowList.js').TaskRowListProps['appearance']
 		const maxRows = coerceProp(resolveExpressionValue(node['maxRows'], ctx), 'TaskRowList.maxRows', 'primitive', false) as import('../components/TaskRowList.js').TaskRowListProps['maxRows']
-		return <TaskRowList rows={rows} density={density} showId={showId} showStatus={showStatus} emptyText={emptyText} appearance={appearance} maxRows={maxRows} />
+		const removeAction = coerceProp(resolveExpressionValue(node['removeAction'], ctx), 'TaskRowList.removeAction', 'string', false) as import('../components/TaskRowList.js').TaskRowListProps['removeAction']
+		const removeLabel = coerceProp(resolveExpressionValue(node['removeLabel'], ctx), 'TaskRowList.removeLabel', 'string', false) as import('../components/TaskRowList.js').TaskRowListProps['removeLabel']
+		const onAction = coerceProp(resolveExpressionValue(node['onAction'], ctx) ?? pageActionHandler(ctx), 'TaskRowList.onAction', 'function', false) as import('../components/TaskRowList.js').TaskRowListProps['onAction']
+		const actionPending = coerceProp(resolveExpressionValue(node['actionPending'], ctx) ?? ctx['$actionPending'], 'TaskRowList.actionPending', 'object', false) as import('../components/TaskRowList.js').TaskRowListProps['actionPending']
+		return <TaskRowList rows={rows} density={density} showId={showId} showStatus={showStatus} emptyText={emptyText} appearance={appearance} maxRows={maxRows} removeAction={removeAction} removeLabel={removeLabel} onAction={onAction} actionPending={actionPending} />
 	},
 }
 
@@ -302,7 +306,7 @@ SegmentedControlEntry.knownKeys = ["action","actionPending","appearance","ariaLa
 SplitLayoutEntry.knownKeys = ["gap","main","side","sidePosition","sideWidth","sticky"];
 StatusBadgeEntry.knownKeys = ["appearance","icon","label","size","tone"];
 TabPanelsEntry.knownKeys = ["counts","defaultTab","tabs"];
-TaskRowListEntry.knownKeys = ["appearance","density","emptyText","maxRows","rows","showId","showStatus"];
+TaskRowListEntry.knownKeys = ["actionPending","appearance","density","emptyText","maxRows","onAction","removeAction","removeLabel","rows","showId","showStatus"];
 TimelineEntry.knownKeys = ["emptyText","entries","groupByDay","order","showIcons"];
 VariantSwitcherEntry.mapSlots = {"variants":{"keys":["label","hint","view"],"nodeKey":"view"}};
 VariantSwitcherEntry.knownKeys = ["id","initial","label","variants"];

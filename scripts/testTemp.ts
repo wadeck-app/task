@@ -46,6 +46,7 @@ export const OWN_TEMP_PREFIXES: readonly string[] = [
 	'task-global-shared-',
 	'task-hierarchy-test-',
 	'task-index-test-',
+	'task-interrupted-bundle-',
 	'task-links-',
 	'task-links-cli-test-',
 	'task-manifest-',

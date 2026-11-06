@@ -200,6 +200,19 @@ export class TaskStore {
 
 	/** Outgoing links (by type) and their derived inverses (blocks, duplicates, causes) as summaries. */
 	getLinks(id: string): TaskLinks {
+		const { links, dangling } = this.getLinksLenient(id);
+		const first = dangling[0];
+		if (first) {
+			throw new Error(`Task index is corrupted: link target "${first.target}" of "${id}" not found`);
+		}
+		return links;
+	}
+
+	/**
+	 * Like {@link getLinks}, but a link whose target is not in the index (data edited outside task) is reported in
+	 * `dangling` instead of failing: the other links are still returned, so the task stays readable and repairable.
+	 */
+	getLinksLenient(id: string): { links: TaskLinks; dangling: TaskLink[] } {
 		const tasks = this.readIndex().tasks;
 		const byId = new Map(tasks.map(t => [t.id, t]));
 		if (!byId.has(id)) {
@@ -213,26 +226,29 @@ export class TaskStore {
 			causedBy: [],
 			causes: [],
 		};
+		const dangling: TaskLink[] = [];
 		for (const task of tasks) {
 			for (const link of task.links ?? []) {
 				if (task.id === id) {
 					const target = byId.get(link.target);
-					if (!target) {
-						throw new Error(`Task index is corrupted: link target "${link.target}" of "${id}" not found`);
+					if (target) {
+						result[link.type].push(target);
+					} else {
+						dangling.push(link);
 					}
-					result[link.type].push(target);
 				}
 				if (link.target === id) {
 					result[INVERSE_LINK_NAMES[link.type]].push(task);
 				}
 			}
 		}
-		return result;
+		return { links: result, dangling };
 	}
 
 	/** Direct blockers of a task that are not in a terminal status. */
 	getOpenBlockers(id: string, isTerminal: (status: TaskStatus) => boolean): TaskSummary[] {
-		return this.getLinks(id).blockedBy.filter(t => !isTerminal(t.status));
+		// A dangling blockedBy link blocks nothing (there is no task): it is skipped, not a failure.
+		return this.getLinksLenient(id).links.blockedBy.filter(t => !isTerminal(t.status));
 	}
 
 	/**

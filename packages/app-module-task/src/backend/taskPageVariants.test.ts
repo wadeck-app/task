@@ -221,7 +221,17 @@ describe('states without a task', () => {
 });
 
 describe('regression guard: "current" is the page as it was', () => {
-	const headSections = head.sections as Node[];
+	// The one change to the feedback of the old page: the error and undelivered-events badges of the action results
+	// became task:Notice (same label, same condition, but the text wraps instead of running off the screen).
+	const asNotices = (value: unknown): unknown => {
+		if (Array.isArray(value)) return value.map(asNotices);
+		if (!isNode(value)) return value;
+		const mapped = Object.fromEntries(Object.entries(value).map(([key, item]) => [key, asNotices(item)]));
+		const isResult =
+			typeof value.label === 'string' && /^\$ctx\.\w+Result\.(errorText|undeliveredText)$/.test(value.label);
+		return value.$type === 'Badge' && isResult ? { ...mapped, $type: 'task:Notice' } : mapped;
+	};
+	const headSections = asNotices(head.sections) as Node[];
 	// The five notices moved to the page root (above the page header, which is the one visible difference in error states).
 	const headNotices = headSections.slice(1, 6);
 	const headRest = [headSections[0], ...headSections.slice(6)];
@@ -240,7 +250,7 @@ describe('regression guard: "current" is the page as it was', () => {
 			Object.keys(actions)
 				.filter(n => !(n in oldActions))
 				.sort()
-		).toEqual(['addLabelTo', 'removeLabelChip', 'setStatusTo', 'setTypeTo']);
+		).toEqual(['addLabelTo', 'removeLabelChip', 'removeLinkRow', 'setStatusTo', 'setTypeTo']);
 	});
 
 	it('the notices are the old ones', () => {
@@ -307,7 +317,7 @@ describe('regression guard: "current" is the page as it was', () => {
 			['link', 'Links'],
 		] as const) {
 			const badges = section(title).filter(
-				n => n.$type === 'Badge' && String(n.$if).startsWith(`$ctx.${name}Result`)
+				n => n.$type === 'task:Notice' && String(n.$if).startsWith(`$ctx.${name}Result`)
 			);
 			expect((shared[`feedback.${name}`] as Node).items, `feedback.${name}`).toEqual(badges);
 		}
@@ -320,6 +330,20 @@ describe('sources', () => {
 		for (const name of ['detail', 'tree', 'links']) {
 			expect(sources[name]!.params?.query, name).toBe('$source.projects.projectQuery');
 		}
+	});
+});
+
+describe('the remove button of a link row', () => {
+	const actions = page.$actions as Record<string, { url: string; resultKey: string; reloadSources: boolean }>;
+
+	it('runs removeLinkRow: the ids come from the row (the shell substitutes nothing else), the answer goes to the link feedback', () => {
+		const action = actions['removeLinkRow']!;
+		// {target} is percent-encoded by the named handler (<key>Encoded): a vanished task id typed by hand may hold any character.
+		expect(action.url).toBe(
+			'DELETE /api/modules/task/tasks/{id}/links?project={projectParam}&type={type}&target={targetEncoded}&inlineErrors=true'
+		);
+		expect(action.resultKey).toBe('linkResult');
+		expect(action.reloadSources).toBe(true);
 	});
 });
 
@@ -446,6 +470,19 @@ describe.each(each)('variant combination %s', (id, tree) => {
 				}
 			}
 		}
+	});
+
+	it('shows what the queue did not receive, and the failure of an action, in a node that wraps (never a plain Badge)', () => {
+		// The replay text of an undelivered event is one long command with a JSON payload: a Badge keeps one line and
+		// runs off its column (seen in gitlab-a and, to the screen edge, in current).
+		const result = /^\$ctx\.\w+\.(undeliveredText|errorText)$/;
+		const plain = nodesOf(tree).filter(
+			n => n.$type !== 'task:Notice' && typeof n.label === 'string' && result.test(n.label)
+		);
+		expect(
+			plain.map(n => `${String(n.$type)} ${String(n.label)}`),
+			`${id}`
+		).toEqual([]);
 	});
 
 	it('only uses actions the page declares', () => {

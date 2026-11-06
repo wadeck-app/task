@@ -1,3 +1,5 @@
+import * as fs from 'node:fs';
+
 import { describeBlockers, summarizeChildren } from './taskProgress.js';
 import { createTestContext, type TestContext } from './testHelpers.js';
 
@@ -67,6 +69,20 @@ describe('describeBlockers', () => {
 			count: 1,
 			blockers: [{ id: blocker.id, title: 'blocker', status: 'in-progress' }],
 		});
+	});
+
+	it('does not fail on a dangling link: it only counts the blockers that exist', () => {
+		const blocked = t.ctx.store.create('blocked', 'backlog');
+		const gone = t.ctx.store.create('gone', 'backlog');
+		const open = t.ctx.store.create('open', 'backlog');
+		t.ctx.store.addLink(blocked.id, 'blockedBy', gone.id);
+		t.ctx.store.addLink(blocked.id, 'blockedBy', open.id);
+		const indexPath = `${t.rootDir}/data/task-index.json`;
+		const index = JSON.parse(fs.readFileSync(indexPath, 'utf8')) as { tasks: Array<{ id: string }> };
+		index.tasks = index.tasks.filter(x => x.id !== gone.id);
+		fs.writeFileSync(indexPath, JSON.stringify(index));
+
+		expect(describeBlockers(t.ctx, { id: blocked.id }).blockers.map(b => b.id)).toEqual([open.id]);
 	});
 
 	it('ignores a blocker that is closed', () => {

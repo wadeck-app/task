@@ -2119,6 +2119,7 @@ describe('GET /tasks/:id/links', () => {
 				statusTone: 'neutral',
 				isDone: false,
 				href: hrefOf(b),
+				removeParams: { id: a, projectParam: project, type: 'blockedBy', target: b },
 			},
 		]);
 		const fromB = await h.call('GET /tasks/:id/links', { params: { id: b }, query: { project } });
@@ -2135,6 +2136,7 @@ describe('GET /tasks/:id/links', () => {
 				statusTone: 'neutral',
 				isDone: false,
 				href: hrefOf(a),
+				removeParams: { id: b, projectParam: project, type: 'blocks', target: a },
 			},
 		]);
 		expect(fromB.body['links']['blocks'].map((t: { id: string }) => t.id)).toEqual([a]);
@@ -2144,6 +2146,41 @@ describe('GET /tasks/:id/links', () => {
 		const a = await createTask('a');
 		const answer = await h.call('GET /tasks/:id/links', { params: { id: a }, query: { project } });
 		expect(answer.body['rows']).toEqual([]);
+	});
+
+	// The relation is the title of the section: the rows given to the list do not repeat it as `meta`.
+	const withoutMeta = (rows: Array<Record<string, unknown>>): object[] =>
+		rows.map(({ meta: _meta, ...rest }) => rest);
+
+	// Each row carries what the remove button sends: the url of `removeLinkRow` takes `{id}` (this task), `{projectParam}`,
+	// `{type}` (the relation as the row shows it, inverse names included) and `{target}` (the other task).
+	it('gives every row the params of its own remove button', async () => {
+		const a = await createTask('a');
+		const b = await createTask('b');
+		const c = await createTask('c');
+		await h.call('POST /tasks/:id/links', {
+			params: { id: a },
+			query: { project },
+			body: { type: 'blockedBy', target: b },
+		});
+		await h.call('POST /tasks/:id/links', {
+			params: { id: c },
+			query: { project },
+			body: { type: 'blockedBy', target: a },
+		});
+		const answer = await h.call('GET /tasks/:id/links', { params: { id: a }, query: { project } });
+
+		const rows = (answer.body['groups'] as Array<{ rows: object[] }>).flatMap(g => g.rows);
+		expect(rows).toEqual([
+			expect.objectContaining({
+				id: b,
+				removeParams: { id: a, projectParam: project, type: 'blockedBy', target: b },
+			}),
+			expect.objectContaining({
+				id: c,
+				removeParams: { id: a, projectParam: project, type: 'blocks', target: c },
+			}),
+		]);
 	});
 
 	// `groups` is the data (relation, label, rows); `groupSections` is what the page renders, one Section per group (a view cannot loop).
@@ -2176,16 +2213,16 @@ describe('GET /tasks/:id/links', () => {
 					{
 						$type: 'Section',
 						title: 'Blocked by (2)',
+						// A row list, not a table: the title stays a link to the task and a button beside it removes the
+						// link (a DataTable with row actions has no row click, and a url action keeps `{id}` unsubstituted).
 						items: [
 							{
-								$type: 'DataTable',
-								rows: groups[0]!.rows,
-								navigateTo: '{href}',
-								columns: [
-									{ key: 'id', label: 'ID', mono: true, nowrap: true },
-									{ key: 'titleText', label: 'Title', truncate: true, title: '{title}' },
-									{ key: 'status', label: 'Status', nowrap: true },
-								],
+								$type: 'task:TaskRowList',
+								rows: withoutMeta(groups[0]!.rows),
+								appearance: 'table',
+								density: 'compact',
+								removeAction: 'removeLinkRow',
+								removeLabel: 'Remove link',
 							},
 						],
 					},
@@ -2194,9 +2231,9 @@ describe('GET /tasks/:id/links', () => {
 						title: 'Causes (1)',
 						items: [
 							expect.objectContaining({
-								$type: 'DataTable',
-								rows: groups[1]!.rows,
-								navigateTo: '{href}',
+								$type: 'task:TaskRowList',
+								rows: withoutMeta(groups[1]!.rows),
+								removeAction: 'removeLinkRow',
 							}),
 						],
 					},
@@ -4166,6 +4203,102 @@ describe('GET /tasks/:id/links presentation contract', () => {
 		const lone = await createTask('lone');
 		const empty = await h.call('GET /tasks/:id/links', { params: { id: lone }, query: { project } });
 		expect(empty.body).toMatchObject({ hasLinks: false, groups: [], rows: [] });
+	});
+});
+
+// A link to a task that vanished (data edited outside task) must not make the task unreachable: like a dangling parent,
+// the page loads with a warning that carries the fix, and the link can be removed from the page.
+describe('a dangling link', () => {
+	let holder: string;
+	let gone: string;
+	let other: string;
+	beforeEach(async () => {
+		holder = await createTask('holder');
+		gone = await createTask('gone');
+		other = await createTask('other');
+		for (const [type, target] of [
+			['blockedBy', gone],
+			['causedBy', other],
+		] as const) {
+			await h.call('POST /tasks/:id/links', {
+				params: { id: holder },
+				query: { project },
+				body: { type, target },
+			});
+		}
+		// The target leaves the index only: the holder keeps its link.
+		const indexPath = path.join(h.world.dataDirOf(project), 'task-index.json');
+		const index = JSON.parse(fs.readFileSync(indexPath, 'utf8')) as { tasks: Array<{ id: string }> };
+		index.tasks = index.tasks.filter(x => x.id !== gone);
+		fs.writeFileSync(indexPath, JSON.stringify(index));
+		h.sink.events.length = 0;
+	});
+
+	it('GET /tasks/:id still answers 200, with the warning and its fix, and the other links', async () => {
+		const answer = await h.call('GET /tasks/:id', { params: { id: holder }, query: { project } });
+
+		expect(answer.status).toBe(200);
+		expect(answer.body['task']).toMatchObject({ id: holder });
+		expect(answer.body['warnings']).toEqual([
+			`task "${holder}" has a blockedBy link to "${gone}", which does not exist. Fix with: task unlink ${holder} blockedBy ${gone}`,
+		]);
+		expect(answer.body['warningText']).toBe(answer.body['warnings'][0]);
+		expect(answer.body['links']['causedBy'].map((t: { id: string }) => t.id)).toEqual([other]);
+		expect(answer.body['hasLinks']).toBe(true);
+		expect(answer.body['linkCount']).toBe(2);
+		expect(answer.body['blockedText']).toBeNull();
+	});
+
+	it('GET /tasks/:id/links lists it in its relation group as a missing task with no link, keeping the others', async () => {
+		const answer = await h.call('GET /tasks/:id/links', { params: { id: holder }, query: { project } });
+
+		expect(answer.status).toBe(200);
+		expect(answer.body['hasLinks']).toBe(true);
+		const groups = answer.body['groups'] as Array<{ relation: string; rows: Array<Record<string, unknown>> }>;
+		expect(groups.map(g => g.relation)).toEqual(['blockedBy', 'causedBy']);
+		expect(groups[0]!.rows).toEqual([
+			expect.objectContaining({
+				id: gone,
+				title: `missing task ${gone}`,
+				titleText: `missing task ${gone}`,
+				status: 'missing',
+				tone: 'danger',
+				missing: true,
+				removeParams: { id: holder, projectParam: project, type: 'blockedBy', target: gone },
+			}),
+		]);
+		expect(groups[0]!.rows[0]).not.toHaveProperty('href');
+		expect(groups[1]!.rows[0]).toMatchObject({ id: other, href: expect.any(String) });
+		expect(answer.body['warnings']).toHaveLength(1);
+		expect(answer.body['dangling']).toEqual([
+			{ relation: 'blockedBy', targetId: gone, fix: `task unlink ${holder} blockedBy ${gone}` },
+		]);
+	});
+
+	it('a task whose only link dangles still shows its group (hasLinks, no "No links")', async () => {
+		await h.call('DELETE /tasks/:id/links', {
+			params: { id: holder },
+			query: { project, type: 'causedBy', target: other },
+		});
+
+		const answer = await h.call('GET /tasks/:id/links', { params: { id: holder }, query: { project } });
+
+		expect(answer.body['hasLinks']).toBe(true);
+		expect(answer.body['noLinks']).toBe(false);
+		expect(answer.body['groups']).toHaveLength(1);
+	});
+
+	it('DELETE removes it by the exact id of the vanished task (what the row button sends), delivering onTaskUnlinked', async () => {
+		const answer = await h.call('DELETE /tasks/:id/links', {
+			params: { id: holder },
+			query: { project, type: 'blockedBy', target: gone },
+		});
+
+		expect(answer.status).toBe(200);
+		expect(h.sink.events.map(e => e.name)).toEqual(['onTaskUnlinked']);
+		const after = await h.call('GET /tasks/:id', { params: { id: holder }, query: { project } });
+		expect(after.body['warnings']).toEqual([]);
+		expect(after.body['linkCount']).toBe(1);
 	});
 });
 

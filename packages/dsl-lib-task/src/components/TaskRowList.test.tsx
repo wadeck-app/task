@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it, vi } from 'vitest';
 import { TaskRowList } from './TaskRowList.js';
 
 const ROWS = [
@@ -75,5 +76,56 @@ describe('TaskRowList', () => {
 		render(<TaskRowList rows={[{ id: 'a', title: 'T', status: 'todo', meta: 'blocks 2' }]} />);
 
 		expect(screen.getByText('blocks 2')).toBeInTheDocument();
+	});
+
+	describe('removeAction (a button per row, beside the link, never inside it)', () => {
+		const withParams = [
+			{ ...ROWS[0]!, removeParams: { id: 'holder', type: 'blockedBy', target: 'ab12cd34' } },
+			{ id: 'gone0001', title: 'missing task gone0001', status: 'missing', removeParams: { target: 'gone0001' } },
+		];
+
+		it('draws no button without removeAction, whatever the rows carry', () => {
+			render(<TaskRowList rows={withParams} />);
+
+			expect(screen.queryAllByRole('button')).toHaveLength(0);
+		});
+
+		it('runs the action with the params of the clicked row, and keeps the task link a separate element', async () => {
+			const onAction = vi.fn().mockResolvedValue(undefined);
+			render(<TaskRowList rows={withParams} removeAction="removeLinkRow" onAction={onAction} />);
+
+			const buttons = screen.getAllByRole('button', { name: /^Remove link/ });
+			expect(buttons).toHaveLength(2);
+			expect(buttons[0]!.closest('a')).toBeNull();
+			await userEvent.click(buttons[0]!);
+
+			expect(onAction).toHaveBeenCalledTimes(1);
+			expect(onAction).toHaveBeenCalledWith('removeLinkRow', {
+				id: 'holder',
+				type: 'blockedBy',
+				target: 'ab12cd34',
+			});
+		});
+
+		it('names the row in the button label so a screen reader tells them apart', () => {
+			render(<TaskRowList rows={withParams} removeAction="removeLinkRow" onAction={vi.fn()} />);
+
+			expect(screen.getByRole('button', { name: 'Remove link ab12cd34' })).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'Remove link gone0001' })).toBeInTheDocument();
+		});
+
+		it('disables the buttons, with the reason, when no page provides onAction', () => {
+			render(<TaskRowList rows={withParams} removeAction="removeLinkRow" />);
+
+			const button = screen.getByRole('button', { name: 'Remove link ab12cd34' });
+			expect(button).toBeDisabled();
+			expect(button).toHaveAttribute('title', expect.stringContaining('must be rendered inside a page'));
+		});
+
+		it('omits the button of a row that has no removeParams', () => {
+			render(<TaskRowList rows={[ROWS[1]!, withParams[0]!]} removeAction="r" onAction={vi.fn()} />);
+
+			expect(screen.getAllByRole('button')).toHaveLength(1);
+		});
 	});
 });

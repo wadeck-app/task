@@ -100,7 +100,9 @@ function echoUpdaterLog(startPath: string, startSize: number): LogEntry[] {
 	// A run straddling midnight rolls over to a new file, which must be read from the start.
 	const offset = endPath === startPath ? startSize : 0;
 	if (!existsSync(endPath)) return [];
-	const appended = readFileSync(endPath, 'utf8').slice(offset);
+	// `offset` is a size in BYTES: slice the bytes, then decode (slicing the decoded string cut the first echoed line
+	// whenever the log held a multi-byte character, e.g. the arrow of "update available: a → b").
+	const appended = readFileSync(endPath).subarray(offset).toString('utf8');
 	const entries: LogEntry[] = [];
 	for (const line of appended.split('\n')) {
 		if (line.trim() === '') continue;
@@ -160,7 +162,9 @@ function reportOutcome(startedAt: number, logEntries: LogEntry[]): void {
 				status = `update failed -- ${state.error}`;
 				break;
 			case 'rolled-back':
-				status = `update rolled back to ${state.previousVersion} -- new version failed its self-check`;
+				// The journal holds the real reason (self-check failed, npm reported success but the files are wrong, an
+				// interrupted install that was repaired): a fixed "failed its self-check" misreported the last two.
+				status = `update rolled back to ${state.previousVersion} -- ${state.error ?? 'new version failed its self-check'}`;
 				break;
 			default:
 				// 'update-available' exists on UpdateState but is only written by the

@@ -102,3 +102,41 @@ export function getTaskLinks(ctx: TaskServiceContext, input: { id: string }): Ta
 	if (dangling) throw new DanglingLinkError(id, dangling.type, dangling.target);
 	return ctx.store.getLinks(id);
 }
+
+/** A stored link whose target task no longer exists, with the command that removes it. */
+export interface DanglingLink {
+	/** The stored link type held by the task (`blockedBy`...). */
+	relation: LinkType;
+	/** The exact id of the vanished task (what `unlink` takes). */
+	targetId: string;
+	/** The command that removes the link, e.g. `task unlink <id> blockedBy <target>`. */
+	fix: string;
+}
+
+export interface TaskLinksReport {
+	/** The links that resolve to a task: same shape as {@link getTaskLinks}. */
+	links: TaskLinks;
+	/** The links of the task that point to a vanished task; empty when the data is consistent. */
+	dangling: DanglingLink[];
+	/** One sentence per dangling link, with its fix, ready to show. */
+	warnings: string[];
+}
+
+/**
+ * Like {@link getTaskLinks}, but a link to a vanished task is reported (with its fix) instead of thrown: a task must
+ * stay readable to be repaired, as for a dangling parent. Callers that need the failure keep `getTaskLinks`.
+ */
+export function readTaskLinks(ctx: TaskServiceContext, input: { id: string }): TaskLinksReport {
+	const id = ctx.store.findByPrefix(input.id).id;
+	const { links, dangling } = ctx.store.getLinksLenient(id);
+	const errors = dangling.map(link => new DanglingLinkError(id, link.type, link.target));
+	return {
+		links,
+		dangling: dangling.map(link => ({
+			relation: link.type,
+			targetId: link.target,
+			fix: `task unlink ${id} ${link.type} ${link.target}`,
+		})),
+		warnings: errors.map(error => `${error.message}. ${error.hint}`),
+	};
+}

@@ -70,7 +70,7 @@ sections:
       $if: $ctx.created.lastProjectWarning
       label: $ctx.created.lastProjectWarning
       variant: warning
-    - $type: Badge
+    - $type: task:Notice
       $if: $ctx.created.undeliveredText
       label: $ctx.created.undeliveredText
       variant: warning

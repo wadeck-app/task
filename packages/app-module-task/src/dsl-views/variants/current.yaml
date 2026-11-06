@@ -42,11 +42,11 @@ view:
           $if: $sources.detail.task
           items:
               # Events the queue did not receive after a status change: the change itself is saved.
-              - $type: Badge
+              - $type: task:Notice
                 $if: $ctx.statusResult.errorText
                 label: $ctx.statusResult.errorText
                 variant: danger
-              - $type: Badge
+              - $type: task:Notice
                 $if: $ctx.statusResult.undeliveredText
                 label: $ctx.statusResult.undeliveredText
                 variant: warning
@@ -67,12 +67,12 @@ view:
           title: Type
           $if: $sources.detail.task
           items:
-              - $type: Badge
+              - $type: task:Notice
                 $if: $ctx.typeResult.errorText
                 label: $ctx.typeResult.errorText
                 variant: danger
               # Events the queue did not receive: the change itself is saved.
-              - $type: Badge
+              - $type: task:Notice
                 $if: $ctx.typeResult.undeliveredText
                 label: $ctx.typeResult.undeliveredText
                 variant: warning
@@ -110,12 +110,12 @@ view:
           title: Labels
           $if: $sources.detail.task
           items:
-              - $type: Badge
+              - $type: task:Notice
                 $if: $ctx.labelResult.errorText
                 label: $ctx.labelResult.errorText
                 variant: danger
               # Events the queue did not receive: the change itself is saved.
-              - $type: Badge
+              - $type: task:Notice
                 $if: $ctx.labelResult.undeliveredText
                 label: $ctx.labelResult.undeliveredText
                 variant: warning
@@ -155,12 +155,12 @@ view:
           title: Metadata
           $if: $sources.detail.task
           items:
-              - $type: Badge
+              - $type: task:Notice
                 $if: $ctx.metaResult.errorText
                 label: $ctx.metaResult.errorText
                 variant: danger
               # Events the queue did not receive: the change itself is saved.
-              - $type: Badge
+              - $type: task:Notice
                 $if: $ctx.metaResult.undeliveredText
                 label: $ctx.metaResult.undeliveredText
                 variant: warning
@@ -189,12 +189,12 @@ view:
           title: Hierarchy
           $if: $sources.detail.task
           items:
-              - $type: Badge
+              - $type: task:Notice
                 $if: $ctx.parentResult.errorText
                 label: $ctx.parentResult.errorText
                 variant: danger
               # Events the queue did not receive: the change itself is saved.
-              - $type: Badge
+              - $type: task:Notice
                 $if: $ctx.parentResult.undeliveredText
                 label: $ctx.parentResult.undeliveredText
                 variant: warning
@@ -234,12 +234,12 @@ view:
           title: Links
           $if: $sources.detail.task
           items:
-              - $type: Badge
+              - $type: task:Notice
                 $if: $ctx.linkResult.errorText
                 label: $ctx.linkResult.errorText
                 variant: danger
               # Events the queue did not receive after a link change: the change itself is saved.
-              - $type: Badge
+              - $type: task:Notice
                 $if: $ctx.linkResult.undeliveredText
                 label: $ctx.linkResult.undeliveredText
                 variant: warning

@@ -1028,7 +1028,8 @@ describe('manifest: the labels the breadcrumb shows (app-core-cli >= 2026.10.19-
 
 // A mutating route that produces queue events answers `undeliveredText`: the page that fires it must show it where the
 // user is looking (the answer is kept under the action's resultKey). A route that emits nothing is listed here, so a NEW
-// mutating action fails this test until it either shows the text or is declared event-free on purpose.
+// mutating action fails this test until it either shows the text or is declared event-free on purpose. The text is a
+// task:Notice, never a Badge: it wraps, where a Badge keeps one line and the replay command runs off the column.
 describe('views: every mutating action that produces queue events shows what the queue did not receive', () => {
 	const EVENT_FREE_URLS = [
 		// The delete preview deletes nothing.
@@ -1068,6 +1069,7 @@ describe('views: every mutating action that produces queue events shows what the
 			'task-page.yaml:removeLabel',
 			'task-page.yaml:removeLabelChip',
 			'task-page.yaml:removeLink',
+			'task-page.yaml:removeLinkRow',
 			'task-page.yaml:removeParent',
 			'task-page.yaml:setMeta',
 			'task-page.yaml:setParent',
@@ -1084,7 +1086,9 @@ describe('views: every mutating action that produces queue events shows what the
 			const text = view(action.page);
 			const bound = `$ctx.${action.key}.undeliveredText`.replace(/[$.]/g, String.raw`\$&`);
 			expect(text, `${action.page}: ${action.name}`).toMatch(
-				new RegExp(String.raw`- \$type: Badge\n\s+\$if: ${bound}\n\s+label: ${bound}\n\s+variant: warning`)
+				new RegExp(
+					String.raw`- \$type: task:Notice\n\s+\$if: ${bound}\n\s+label: ${bound}\n\s+variant: warning`
+				)
 			);
 		}
 	);

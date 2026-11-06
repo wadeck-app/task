@@ -36,7 +36,8 @@ export interface BlockerSummary {
  * blocker does not block; the tasks this one blocks (the derived `blocks` inverse) are not reported.
  */
 export function describeBlockers(ctx: TaskServiceContext, input: { id: string }): BlockerSummary {
-	const links = ctx.store.getLinks(ctx.store.findByPrefix(input.id).id);
+	// A dangling link blocks nothing and has no task to show: it is left out (the task page reports it).
+	const { links } = ctx.store.getLinksLenient(ctx.store.findByPrefix(input.id).id);
 	const blockers = links.blockedBy
 		.filter(task => !ctx.config.terminalStatuses.includes(task.status))
 		.map(task => ({ id: task.id, title: task.title, status: task.status }));

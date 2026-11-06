@@ -448,4 +448,38 @@ describe('TaskStore — task links', () => {
 			expect(store.get(a.id).links).toEqual([{ type: 'blockedBy', target: b.id }]);
 		});
 	});
+
+	describe('a link to a task missing from the index', () => {
+		function vanish(id: string): void {
+			const indexPath = path.join(rootDir, 'task-index.json');
+			const index = JSON.parse(fs.readFileSync(indexPath, 'utf8')) as { tasks: Array<{ id: string }> };
+			index.tasks = index.tasks.filter(t => t.id !== id);
+			fs.writeFileSync(indexPath, JSON.stringify(index));
+		}
+
+		it('getLinks still fails (callers that need the failure)', () => {
+			const a = make('a');
+			const b = make('b');
+			store.addLink(a.id, 'blockedBy', b.id);
+			vanish(b.id);
+
+			expect(() => store.getLinks(a.id)).toThrow(/link target .* not found/);
+		});
+
+		it('getLinksLenient reports it and keeps the links that resolve; getOpenBlockers ignores it', () => {
+			const a = make('a');
+			const b = make('b');
+			const c = make('c');
+			store.addLink(a.id, 'blockedBy', b.id);
+			store.addLink(a.id, 'causedBy', c.id);
+			vanish(b.id);
+
+			const { links, dangling } = store.getLinksLenient(a.id);
+
+			expect(dangling).toEqual([{ type: 'blockedBy', target: b.id }]);
+			expect(links.causedBy.map(t => t.id)).toEqual([c.id]);
+			expect(links.blockedBy).toEqual([]);
+			expect(store.getOpenBlockers(a.id, isTerminal)).toEqual([]);
+		});
+	});
 });

@@ -293,12 +293,12 @@ describe('update state "applying"', () => {
 		fs.rmSync(sandbox, { recursive: true, force: true });
 	});
 
-	it('`cli version` tells that an install was interrupted when the installer pid is dead', async () => {
+	it('`cli version` does not repeat the interrupted-install notice (printUpdateNotice prints it before every command)', async () => {
 		// Above any real pid range.
 		writeApplying(2147483646);
 		await runTaskCliVersion();
-		expect(written.join('')).toContain('interrupted');
-		expect(written.join('')).toContain('task cli update');
+		// End to end, once: updater.interrupted.integration.test.ts. The notice itself: cli/updateNotice.test.ts.
+		expect(written.join('')).not.toContain('interrupted');
 	});
 
 	it('`cli version` stays silent about the state while the installer is alive', async () => {
@@ -321,6 +321,8 @@ describe('update state "applying"', () => {
 		writeApplying(2147483646);
 		await expect(runTaskCliRollback({ resolveManifest: () => 'unused' })).rejects.toThrow('process.exit(1)');
 		expect(written.join('')).toContain('task cli update');
+		expect(written.join('')).toContain('interrupted');
+		expect(written.join('')).not.toMatch(/task cli update Run:/);
 		expect(cliRollbackCommand).not.toHaveBeenCalled();
 	});
 });

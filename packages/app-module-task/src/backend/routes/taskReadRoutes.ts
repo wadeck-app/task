@@ -2,7 +2,7 @@
 import {
 	getFullTree,
 	getTaskHistory,
-	getTaskLinks,
+	readTaskLinks,
 	listAncestors,
 	listChildren,
 	listForest,
@@ -61,12 +61,15 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 		const { detail, warnings } = showTaskWithRelations(ctx, { id: taskId(req) });
 		// The full id of the resolved task (the request may hold a prefix).
 		const id = detail['id'] as string;
+		// A link to a vanished task is a warning with its fix, not a failure: the task must stay reachable to be repaired.
+		const linkReport = readTaskLinks(ctx, { id });
 		return {
 			status: 200,
 			body: taskDetailBody(ctx, {
 				detail,
-				warnings,
-				links: getTaskLinks(ctx, { id }),
+				warnings: [...warnings, ...linkReport.warnings],
+				links: linkReport.links,
+				danglingLinks: linkReport.dangling,
 				types: listTypes(ctx),
 				// A dangling parent has no chain to show (its warning says so): the store would list a hole.
 				ancestors:
@@ -100,20 +103,24 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 	route('GET', '/tasks/:id/links', req => {
 		if (isBlankRequest(req.query)) return BLANK_ANSWER;
 		const ctx = open(req);
-		const links = getTaskLinks(ctx, { id: taskId(req) });
+		const { links, dangling, warnings } = readTaskLinks(ctx, { id: taskId(req) });
 		// The full id of the resolved task (the request may hold a prefix).
-		const resolvedId = showTask(ctx, { id: taskId(req) })['id'];
-		const hasLinks = Object.values(links).some(tasks => tasks.length > 0);
-		const groups = linkGroups(ctx.project, ctx.config, links);
+		const resolvedId = showTask(ctx, { id: taskId(req) })['id'] as string;
+		const holder = { taskId: resolvedId, dangling };
+		// A dangling link counts: the group shows it (missing, removable), so the page must not say "No links".
+		const hasLinks = dangling.length > 0 || Object.values(links).some(tasks => tasks.length > 0);
+		const groups = linkGroups(ctx.project, ctx.config, links, holder);
 		return {
 			status: 200,
 			body: {
 				project: ctx.project,
 				id: resolvedId,
 				links,
+				dangling,
+				warnings,
 				hasLinks,
 				noLinks: !hasLinks,
-				rows: linkRowViews(ctx.project, ctx.config, links),
+				rows: linkRowViews(ctx.project, ctx.config, links, holder),
 				groups,
 				// What the page renders: one Section per group (a view cannot loop; see dslNodes.ts).
 				groupSections: linkGroupSections(groups),

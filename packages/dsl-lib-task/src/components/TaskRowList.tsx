@@ -1,6 +1,9 @@
+import { X } from 'lucide-react';
 import React from 'react';
 import { StatusBadge } from './StatusBadge.js';
 import type { Tone } from '../tones.js';
+import { useAction } from '../useAction.js';
+import type { ActionHandler } from '../useAction.js';
 
 export interface TaskRowData {
 	id: string;
@@ -14,6 +17,11 @@ export interface TaskRowData {
 	href?: string;
 	/** A short note on the right, e.g. `blocks 2`. */
 	meta?: string;
+	/**
+	 * The `{placeholders}` of the `removeAction` url for THIS row (`id`, `projectParam`, ...), sent as the params of the
+	 * action. A row without them has no remove button.
+	 */
+	removeParams?: Record<string, unknown>;
 }
 
 export interface TaskRowListProps {
@@ -28,6 +36,23 @@ export interface TaskRowListProps {
 	appearance?: 'list' | 'table' | 'cards';
 	/** Show only the first rows and `+N more`. 0 = all. */
 	maxRows?: number;
+	/**
+	 * Name of the `$actions` entry run by the button at the end of each row that has `removeParams`. The button sits
+	 * BESIDE the row link, so pressing it never opens the task. Without it there is no button.
+	 */
+	removeAction?: string;
+	/** Tooltip and accessible name prefix of the button; the id of the row is appended. */
+	removeLabel?: string;
+	/**
+	 * Runs an action of the page's `$actions`. Defaults to the page's `ctx.onAction`.
+	 * @ctxDefault
+	 */
+	onAction?: ActionHandler;
+	/**
+	 * Actions currently running, by name. Defaults to the page's `$ctx.$actionPending`.
+	 * @ctxDefault $actionPending
+	 */
+	actionPending?: Record<string, boolean>;
 }
 
 // @formatter:off
@@ -50,7 +75,8 @@ const PADDING: Record<NonNullable<TaskRowListProps['density']>, string> = {
 /**
  * Tasks as navigable rows: short id, truncated title, status chip, optional note.
  *
- * IN SCOPE: a read-only list that links to the tasks. OUT OF SCOPE: sorting, selection, row actions.
+ * IN SCOPE: a list that links to the tasks, with an optional remove button per row (`removeAction`).
+ * OUT OF SCOPE: sorting, selection, any other row action.
  *
  * @registryCategory composite
  * @registryTags task rows list children links
@@ -63,7 +89,12 @@ export function TaskRowList({
 	emptyText = 'No tasks',
 	appearance = 'list',
 	maxRows = 0,
+	removeAction,
+	removeLabel = 'Remove link',
+	onAction,
+	actionPending,
 }: TaskRowListProps): React.ReactElement {
+	const remover = useAction('TaskRowList', removeAction, onAction, actionPending);
 	const all = Array.isArray(rows) ? rows : [];
 	if (all.length === 0) {
 		return (
@@ -92,9 +123,16 @@ export function TaskRowList({
 							{showStatus ? <StatusBadge label={row.status} tone={row.tone} /> : null}
 						</>
 					);
-					const rowClass = `flex items-center gap-3 ${PADDING[density]}`;
+					const canRemove =
+						removeAction !== undefined && removeAction !== '' && row.removeParams !== undefined;
+					// With a button the row link shares the line with it; it takes the room left.
+					const rowClass = `flex items-center gap-3 ${PADDING[density]}${canRemove ? ' min-w-0 flex-1' : ''}`;
 					return (
-						<li key={`${row.id}-${index}`} data-testid="task-row" className={ROW[appearance]}>
+						<li
+							key={`${row.id}-${index}`}
+							data-testid="task-row"
+							className={`${ROW[appearance]}${canRemove ? ' flex items-center gap-2' : ''}`}
+						>
 							{row.href ? (
 								<a href={row.href} className={`${rowClass} no-underline hover:bg-muted-bg`}>
 									{inner}
@@ -102,6 +140,18 @@ export function TaskRowList({
 							) : (
 								<div className={rowClass}>{inner}</div>
 							)}
+							{canRemove ? (
+								<button
+									type="button"
+									aria-label={`${removeLabel} ${row.id}`}
+									title={remover.unavailableReason ?? `${removeLabel} ${row.id}`}
+									disabled={!remover.available || remover.busy}
+									onClick={() => void remover.run(row.removeParams!)}
+									className="inline-flex shrink-0 rounded p-1 text-muted hover:text-danger focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-40"
+								>
+									<X size={14} aria-hidden="true" />
+								</button>
+							) : null}
 						</li>
 					);
 				})}

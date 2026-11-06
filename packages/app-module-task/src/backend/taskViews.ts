@@ -38,7 +38,7 @@
 // (labelKeys: label -> base64url key, labelOptions values are keys; a label may hold "/" or "%").
 import type { TaskLinks, TaskRecord, TaskSummary, TaskTreeNode } from '@wadeck-app/task-core';
 import { ALL_LINK_NAMES } from '@wadeck-app/task-service';
-import type { BlockerSummary, ChildrenSummary } from '@wadeck-app/task-service';
+import type { BlockerSummary, ChildrenSummary, DanglingLink } from '@wadeck-app/task-service';
 
 import { shortUtcTime } from './display.js';
 import { labelKey } from './labelKey.js';
@@ -105,6 +105,8 @@ export function taskDetailBody(
 		detail: Record<string, unknown>;
 		warnings: string[];
 		links: TaskLinks;
+		/** Links to a vanished task: counted, and reported in `warnings` by the route. */
+		danglingLinks: DanglingLink[];
 		types: string[];
 		/** Nearest first, as the store lists them (empty for a root task or a dangling parent). */
 		ancestors: Array<TaskSummary | undefined>;
@@ -120,7 +122,8 @@ export function taskDetailBody(
 	const description = (record.description ?? '').trim() === '' ? null : record.description;
 	const activity = activityEntries(config, record);
 	const ancestors = ancestorChips(project, config, data.ancestors);
-	const linkCount = Object.values(data.links).reduce((sum, tasks) => sum + tasks.length, 0);
+	const linkCount =
+		Object.values(data.links).reduce((sum, tasks) => sum + tasks.length, 0) + data.danglingLinks.length;
 	return {
 		project,
 		projectText: projectText(project),
