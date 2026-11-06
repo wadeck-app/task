@@ -10,9 +10,9 @@
 # A test fails when task-page.yaml is stale, so run the script after every edit here.
 #
 # Add a variant: create <name>.yaml here and add <name> to `variants` under `$experiment` below, then run the script.
-# Options of a variant: nested `task:VariantSwitcher` nodes inside its view, id `<variant>-<option>`, 2-3 choices.
+# Options of a variant: nested `AbTest` nodes inside its view, id `<variant>-<option>`, 2-3 choices.
 # Remove a variant: take its name out of `variants`, move its file out of the folder.
-# REMOVE THE EXPERIMENT (bake the winner): in this file keep $sources/$actions, replace the `task:VariantSwitcher` by the
+# REMOVE THE EXPERIMENT (bake the winner): in this file keep $sources/$actions, replace the `AbTest` by the
 # `view` of the chosen variant (expand its `$use`), delete the other fragments, the generator, `npm run views`,
 # taskPageVariants.test.ts and the fixture, then drop the presentation fields no remaining view reads (see taskViews.ts).
 #

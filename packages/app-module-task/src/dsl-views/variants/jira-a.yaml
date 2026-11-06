@@ -4,7 +4,7 @@ view:
     $type: VerticalStack
     gap: gap-4
     items:
-        - $type: task:VariantSwitcher
+        - $type: AbTest
           id: jira-a-ancestors
           label: Breadcrumb
           initial: shown
@@ -30,7 +30,7 @@ view:
                 gap: gap-4
                 items:
                     - $use: jira.content
-                    - $type: task:VariantSwitcher
+                    - $type: AbTest
                       id: jira-a-activity
                       label: Activity
                       initial: list
@@ -54,7 +54,7 @@ view:
                       title: Details
                       items:
                           - $use: jira.details.core
-                    - $type: task:VariantSwitcher
+                    - $type: AbTest
                       id: jira-a-details
                       label: Details groups
                       initial: open

@@ -5,7 +5,7 @@ view:
     gap: gap-4
     items:
         - $use: linear-b.header
-        - $type: task:VariantSwitcher
+        - $type: AbTest
           id: linear-b-rail
           label: Rail
           initial: left

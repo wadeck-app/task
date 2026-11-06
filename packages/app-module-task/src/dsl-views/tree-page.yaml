@@ -18,8 +18,8 @@
 # and sort in the browser; no variant has a source or an action of its own.
 #
 # Add a variant: create <name>.yaml here and add <name> to `variants` under `$experiment`, then run the script.
-# Options of a variant: nested `task:VariantSwitcher` nodes inside its view, id `<variant>-<option>`, 2-3 choices.
-# REMOVE THE EXPERIMENT (bake the winner): replace the `task:VariantSwitcher` of the generated page by the `view` of the
+# Options of a variant: nested `AbTest` nodes inside its view, id `<variant>-<option>`, 2-3 choices.
+# REMOVE THE EXPERIMENT (bake the winner): replace the `AbTest` of the generated page by the `view` of the
 # chosen variant (drop `$if` only if the winner also serves the per-project scope), delete the other fragments, the
 # generator, its call in `npm run views`, treeVariants.test.ts, the fixture tree-page.head.yaml, the components of the
 # losing designs in packages/dsl-lib-task and the `groups` of the route when `current` is not the winner.
@@ -102,7 +102,7 @@ sections:
     $if: $sources.tree.groups
     gap: gap-0
     items:
-      - $type: task:VariantSwitcher
+      - $type: AbTest
         id: task-tree-design
         label: Tree page
         initial: current
@@ -121,7 +121,7 @@ sections:
               $if: $sources.tree.overview
               gap: gap-0
               items:
-                - $type: task:VariantSwitcher
+                - $type: AbTest
                   id: accordion-open
                   label: Open at start
                   initial: last
@@ -155,7 +155,7 @@ sections:
               $if: $sources.tree.overview
               gap: gap-0
               items:
-                - $type: task:VariantSwitcher
+                - $type: AbTest
                   id: master-detail-list
                   label: List width
                   initial: normal
@@ -182,7 +182,7 @@ sections:
               $if: $sources.tree.overview
               gap: gap-0
               items:
-                - $type: task:VariantSwitcher
+                - $type: AbTest
                   id: picker-start
                   label: Start on
                   initial: overview
@@ -209,7 +209,7 @@ sections:
               $if: $sources.tree.overview
               gap: gap-0
               items:
-                - $type: task:VariantSwitcher
+                - $type: AbTest
                   id: cards-sort
                   label: Sort
                   initial: activity
@@ -243,7 +243,7 @@ sections:
               $if: $sources.tree.overview
               gap: gap-0
               items:
-                - $type: task:VariantSwitcher
+                - $type: AbTest
                   id: flat-cap
                   label: Rows per project
                   initial: rows-5

@@ -10,7 +10,7 @@ view:
           justify: justify-start
           align: items-start
           items:
-              - $type: task:VariantSwitcher
+              - $type: AbTest
                 id: jira-b-transitions
                 label: Transitions
                 initial: segmented
@@ -79,7 +79,7 @@ view:
                 gap: gap-4
                 items:
                     - $use: jira.content
-                    - $type: task:VariantSwitcher
+                    - $type: AbTest
                       id: jira-b-activity
                       label: Activity
                       initial: list
@@ -103,7 +103,7 @@ view:
                       title: Details
                       items:
                           - $use: jira-b.details.core
-                    - $type: task:VariantSwitcher
+                    - $type: AbTest
                       id: jira-b-details
                       label: Details groups
                       initial: collapsed

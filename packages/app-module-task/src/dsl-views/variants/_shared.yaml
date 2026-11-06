@@ -390,7 +390,7 @@ github-a.main:
           title: Linked tasks
           items:
               - $use: links.groups
-        - $type: task:VariantSwitcher
+        - $type: AbTest
           id: github-a-activity
           label: Activity
           initial: timeline
@@ -413,7 +413,7 @@ github-a.main:
                   view:
                       $type: VerticalStack
                       items: []
-        - $type: task:VariantSwitcher
+        - $type: AbTest
           id: github-a-forms
           label: Other fields
           initial: inline
@@ -979,7 +979,7 @@ linear-b.main:
                 total: $sources.detail.childrenSummary.total
                 text: $sources.detail.childrenSummary.text
                 appearance: segments
-              - $type: task:VariantSwitcher
+              - $type: AbTest
                 id: linear-b-subissues
                 label: Sub-issues
                 initial: list
@@ -1016,7 +1016,7 @@ linear-b.main:
           appearance: flush
           items:
               - $use: links.groups
-        - $type: task:VariantSwitcher
+        - $type: AbTest
           id: linear-b-activity
           label: Activity
           initial: timeline
@@ -1284,7 +1284,7 @@ notion-a.props:
     $type: VerticalStack
     gap: gap-2
     items:
-        - $type: task:VariantSwitcher
+        - $type: AbTest
           id: notion-a-properties
           label: Properties
           initial: all
@@ -1324,7 +1324,7 @@ notion-a.body:
         - $type: Markdown
           $if: $sources.detail.hasDescription
           text: $sources.detail.descriptionText
-        - $type: task:VariantSwitcher
+        - $type: AbTest
           id: notion-a-subitems
           label: Sub-items
           initial: table
@@ -1365,7 +1365,7 @@ notion-a.body:
           items:
               - $use: links.groups
 notion-a.page:
-    $type: task:VariantSwitcher
+    $type: AbTest
     id: notion-a-order
     label: Order
     initial: properties-first
@@ -1391,7 +1391,7 @@ notion-a.page:
 
 # notion-b
 notion-b.empty:
-    $type: task:VariantSwitcher
+    $type: AbTest
     id: notion-b-empty
     label: Empty properties
     initial: folded
@@ -1458,7 +1458,7 @@ notion-b.props:
     $type: VerticalStack
     gap: gap-3
     items:
-        - $type: task:VariantSwitcher
+        - $type: AbTest
           id: notion-b-layout
           label: Layout
           initial: single
@@ -2102,7 +2102,7 @@ github-b.activity:
           groupByDay: true
           order: oldest-first
 gitlab-a.main:
-    $type: task:VariantSwitcher
+    $type: AbTest
     id: gitlab-a-empty
     label: Empty sections
     initial: show
@@ -2118,7 +2118,7 @@ gitlab-a.main:
             view:
                 $use: gitlab.main.hide
 gitlab-a.side:
-    $type: task:VariantSwitcher
+    $type: AbTest
     id: gitlab-a-sections
     label: Sidebar sections
     initial: open
@@ -2134,7 +2134,7 @@ gitlab-a.side:
             view:
                 $use: gitlab.side.closed
 gitlab-b.main:
-    $type: task:VariantSwitcher
+    $type: AbTest
     id: gitlab-b-lower
     label: Below the description
     initial: tabs
@@ -2155,7 +2155,7 @@ gitlab-b.main:
             view:
                 $use: gitlab.main.show
 gitlab-b.side:
-    $type: task:VariantSwitcher
+    $type: AbTest
     id: gitlab-b-sections
     label: Sidebar sections
     initial: open
@@ -2175,7 +2175,7 @@ github-b.main:
     gap: gap-4
     items:
         - $use: github-b.body
-        - $type: task:VariantSwitcher
+        - $type: AbTest
           id: github-b-lists
           label: Lists
           initial: open

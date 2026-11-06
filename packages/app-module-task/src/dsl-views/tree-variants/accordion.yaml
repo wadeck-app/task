@@ -1,7 +1,7 @@
 label: Accordion
 hint: One collapsible section per project (name, open/total, mini bar), filter, expand/collapse all. Only the open ones draw rows.
 view:
-    $type: task:VariantSwitcher
+    $type: AbTest
     id: accordion-open
     label: Open at start
     initial: last

@@ -5,7 +5,7 @@ view:
     gap: gap-4
     items:
         - $use: github-a.header
-        - $type: task:VariantSwitcher
+        - $type: AbTest
           id: github-a-layout
           label: Sidebar
           initial: right

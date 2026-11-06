@@ -6,7 +6,7 @@ import { generateTreePage, treePageFile } from '../../../../scripts/generate-tre
 
 /*
  * The global Tree page is an experiment: tree-page.yaml is GENERATED from src/dsl-views/tree-variants/* and holds one
- * task:VariantSwitcher with the current page and five designs for dozens of projects. These tests are the contract of
+ * AbTest with the current page and five designs for dozens of projects. These tests are the contract of
  * every variant, for EVERY combination of its options. See tree-variants/_page.yaml.
  */
 
@@ -20,7 +20,7 @@ const sections = page.sections as Node[];
 // The switcher sits in a stack that carries the `$if`: an `$if` on the switcher itself looped ("Maximum update depth") when a
 // variant was chosen in the dev shell.
 const wrapper = sections.find(
-	s => s.$type === 'VerticalStack' && (s.items as Node[] | undefined)?.[0]?.$type === 'task:VariantSwitcher'
+	s => s.$type === 'VerticalStack' && (s.items as Node[] | undefined)?.[0]?.$type === 'AbTest'
 ) as Node;
 const switcher = (wrapper.items as Node[])[0]!;
 interface Fragment {
@@ -40,7 +40,7 @@ function alternatives(value: unknown): unknown[] {
 		);
 	}
 	if (!isNode(value)) return [value];
-	if (value.$type === 'task:VariantSwitcher') {
+	if (value.$type === 'AbTest') {
 		return Object.values(value.variants as Record<string, Fragment>).flatMap(choice => alternatives(choice.view));
 	}
 	return Object.entries(value).reduce<Node[]>(
@@ -96,10 +96,8 @@ describe('the generated tree-page.yaml', () => {
 });
 
 describe('the experiment', () => {
-	it('is ONE task:VariantSwitcher, initial "current", the five designs in the agreed order, only on the global scope', () => {
-		expect(
-			nodesOf(sections).filter(s => s.$type === 'task:VariantSwitcher' && s.id === 'task-tree-design')
-		).toHaveLength(1);
+	it('is ONE AbTest, initial "current", the five designs in the agreed order, only on the global scope', () => {
+		expect(nodesOf(sections).filter(s => s.$type === 'AbTest' && s.id === 'task-tree-design')).toHaveLength(1);
 		expect(switcher.id).toBe('task-tree-design');
 		expect(switcher.initial).toBe('current');
 		expect(wrapper.$if).toBe('$sources.tree.groups');
@@ -117,7 +115,7 @@ describe('the experiment', () => {
 	it('option switchers are nested in their variant, named <variant>-<option>, with unique ids and 2-3 choices', () => {
 		const ids = new Set<string>();
 		for (const name of designs) {
-			for (const node of nodesOf(variants[name]!.view).filter(n => n.$type === 'task:VariantSwitcher')) {
+			for (const node of nodesOf(variants[name]!.view).filter(n => n.$type === 'AbTest')) {
 				const id = String(node.id);
 				expect(id.startsWith(`${name}-`), id).toBe(true);
 				expect(ids.has(id), `duplicate id ${id}`).toBe(false);
@@ -144,9 +142,7 @@ describe('every design, for every combination of its options', () => {
 	it.each(combinations)(
 		'%s: uses its component on the capped overview, nothing else of the data',
 		(_label, name, tree) => {
-			const used = nodesOf(tree).filter(
-				n => String(n.$type).startsWith('task:') && n.$type !== 'task:VariantSwitcher'
-			);
+			const used = nodesOf(tree).filter(n => String(n.$type).startsWith('task:') && n.$type !== 'AbTest');
 			expect(used.map(n => n.$type)).toContain(COMPONENT[name]);
 			const main = used.find(n => n.$type === COMPONENT[name])!;
 			expect(main.projects).toBe('$sources.tree.overview.projects');

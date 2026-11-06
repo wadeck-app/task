@@ -5,7 +5,7 @@ view:
     gap: gap-4
     items:
         - $use: notion.header
-        - $type: task:VariantSwitcher
+        - $type: AbTest
           id: notion-b-order
           label: Order
           initial: properties-first

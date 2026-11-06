@@ -5,7 +5,7 @@ view:
     gap: gap-4
     items:
         - $use: github-b.header
-        - $type: task:VariantSwitcher
+        - $type: AbTest
           id: github-b-progress
           label: Progress
           initial: bar
@@ -25,7 +25,7 @@ view:
                   hint: A circle with the percentage and the sentence beside it.
                   view:
                       $use: github-b.progress.ring
-        - $type: task:VariantSwitcher
+        - $type: AbTest
           id: github-b-sidebar
           label: Sidebar
           initial: right

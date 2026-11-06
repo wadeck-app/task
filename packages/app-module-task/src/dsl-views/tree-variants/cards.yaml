@@ -1,7 +1,7 @@
 label: Cards
 hint: 'A responsive grid of project cards: progress, open/total, biggest parent tasks with child progress, last task added. A card opens the project tree.'
 view:
-    $type: task:VariantSwitcher
+    $type: AbTest
     id: cards-sort
     label: Sort
     initial: activity

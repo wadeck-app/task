@@ -26,7 +26,6 @@ import { StatusBadge } from '../components/StatusBadge.js'
 import { TabPanels } from '../components/TabPanels.js'
 import { TaskRowList } from '../components/TaskRowList.js'
 import { Timeline } from '../components/Timeline.js'
-import { VariantSwitcher } from '../components/VariantSwitcher.js'
 
 export const ActionSelectEntry: ComponentRegistryEntry = {
 	name: 'ActionSelect', category: 'atomic', tags: ["select","status","type","action","choice"],
@@ -306,19 +305,6 @@ export const TimelineEntry: ComponentRegistryEntry = {
 		return <Timeline entries={entries} groupByDay={groupByDay} order={order} emptyText={emptyText} showIcons={showIcons} />
 	},
 }
-
-export const VariantSwitcherEntry: ComponentRegistryEntry = {
-	name: 'VariantSwitcher', category: 'disposition', tags: ["layout","ab","experiment","variants"],
-	nodeSchema: null as never,
-	render: ({ node, registry, ctx }: RegistryRenderProps) => {
-		const id = coerceProp(resolveExpressionValue(node['id'], ctx), 'VariantSwitcher.id', 'string', true) as import('../components/VariantSwitcher.js').VariantSwitcherProps['id']
-		const label = coerceProp(resolveExpressionValue(node['label'], ctx), 'VariantSwitcher.label', 'string', true) as import('../components/VariantSwitcher.js').VariantSwitcherProps['label']
-		const initial = coerceProp(resolveExpressionValue(node['initial'], ctx), 'VariantSwitcher.initial', 'string', true) as import('../components/VariantSwitcher.js').VariantSwitcherProps['initial']
-		const variants = coerceProp(resolveExpressionValue(node['variants'], ctx), 'VariantSwitcher.variants', 'object', true) as import('../components/VariantSwitcher.js').VariantSwitcherProps['variants']
-		const renderNode = (n: unknown, extraCtx: Record<string, unknown>) => renderChildren([n], registry, { ...ctx, ...extraCtx })[0] ?? null
-		return <VariantSwitcher id={id} label={label} initial={initial} variants={variants} renderNode={renderNode} />
-	},
-}
 // ─── All entries ──────────────────────────────────────────────────────────────
 
 export const allEntries: ComponentRegistryEntry[] = [
@@ -343,7 +329,6 @@ export const allEntries: ComponentRegistryEntry[] = [
 	TabPanelsEntry,
 	TaskRowListEntry,
 	TimelineEntry,
-	VariantSwitcherEntry,
 ]
 
 // ─── Auto-detected metadata (allowedChildren, providesContext, requiresContext) ─
@@ -375,6 +360,3 @@ StatusBadgeEntry.knownKeys = ["appearance","icon","label","size","tone"];
 TabPanelsEntry.knownKeys = ["counts","defaultTab","tabs"];
 TaskRowListEntry.knownKeys = ["actionPending","appearance","density","emptyText","maxRows","onAction","removeAction","removeLabel","rows","showId","showStatus"];
 TimelineEntry.knownKeys = ["emptyText","entries","groupByDay","order","showIcons"];
-VariantSwitcherEntry.mapSlots = {"variants":{"keys":["label","hint","view"],"nodeKey":"view"}};
-VariantSwitcherEntry.knownKeys = ["id","initial","label","variants"];
-VariantSwitcherEntry.requiresContext = ["HostContext"];

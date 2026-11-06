@@ -11,7 +11,7 @@
 //   _shared.yaml   { name: node }, used as `{ $use: name }` anywhere in a fragment (nested uses allowed, cycles refused).
 //   <name>.yaml    { label, hint, view } per variant, in the order of `$experiment.variants`.
 //
-// To REMOVE the experiment later (bake the winner): replace the task:VariantSwitcher of the generated page by the chosen
+// To REMOVE the experiment later (bake the winner): replace the AbTest of the generated page by the chosen
 // variant's view, then delete tree-variants/, this script, its call in the `views` npm script, treeVariants.test.ts.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -146,7 +146,7 @@ export function generateTreePage(viewsDir = DEFAULT_VIEWS_DIR) {
 				gap: 'gap-0',
 				items: [
 					{
-						$type: 'task:VariantSwitcher',
+						$type: 'AbTest',
 						id: experiment.id,
 						label: experiment.label,
 						initial: experiment.initial,

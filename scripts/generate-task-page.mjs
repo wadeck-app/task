@@ -9,7 +9,7 @@
 //   _shared.yaml   { name: node }, used as `{ $use: name }` anywhere in a fragment (nested uses allowed, cycles refused).
 //   <name>.yaml    { label, hint, view } per variant, in the order of `$experiment.variants`.
 //
-// To REMOVE the experiment later (bake the winner): replace the task:VariantSwitcher of the generated page by the chosen
+// To REMOVE the experiment later (bake the winner): replace the AbTest of the generated page by the chosen
 // variant's view, then delete variants/, this script, the `views` npm script and taskPageVariants.test.ts.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -145,7 +145,7 @@ export function generateTaskPage(viewsDir = DEFAULT_VIEWS_DIR) {
 		sections: [
 			...expand(notices, shared, '$notices'),
 			{
-				$type: 'task:VariantSwitcher',
+				$type: 'AbTest',
 				id: experiment.id,
 				label: experiment.label,
 				initial: experiment.initial,

@@ -68,7 +68,7 @@ describe('the packaged dsl-lib', () => {
 	it('exports the library types and no dsl-ui entry', () => {
 		const names = entries.map(e => e.name);
 		expect(names).toContain('SplitLayout');
-		expect(names).toContain('VariantSwitcher');
+		expect(names).not.toContain('VariantSwitcher');
 		expect(names).not.toContain('Badge');
 	});
 

@@ -7,7 +7,7 @@ import { DEFAULT_VIEWS_DIR, generateTaskPage, taskPageFile } from '../../../../s
 
 /*
  * The task page is an experiment: task-page.yaml is GENERATED from src/dsl-views/variants/* and holds one
- * task:VariantSwitcher with the current page and ten design variants. These tests are the contract every variant keeps,
+ * AbTest with the current page and ten design variants. These tests are the contract every variant keeps,
  * for EVERY combination of its options, so that no design silently drops a feature of the page. See variants/_page.yaml.
  */
 
@@ -21,7 +21,7 @@ const head = parse(readFileSync(join(import.meta.dirname, '__fixtures__/task-pag
 
 const isNode = (value: unknown): value is Node => value !== null && typeof value === 'object' && !Array.isArray(value);
 const sections = page.sections as Node[];
-const switcher = sections.find(s => s.$type === 'task:VariantSwitcher') as Node;
+const switcher = sections.find(s => s.$type === 'AbTest') as Node;
 interface Fragment {
 	label: string;
 	hint: string;
@@ -41,7 +41,7 @@ function alternatives(value: unknown): unknown[] {
 	if (!isNode(value)) {
 		return [value];
 	}
-	if (value.$type === 'task:VariantSwitcher') {
+	if (value.$type === 'AbTest') {
 		return Object.values(value.variants as Record<string, Fragment>).flatMap(choice => alternatives(choice.view));
 	}
 	return Object.entries(value).reduce<Node[]>(
@@ -102,8 +102,8 @@ describe('the generated task-page.yaml', () => {
 });
 
 describe('the experiment', () => {
-	it('is ONE task:VariantSwitcher at the page root, initial is "current", in the agreed order', () => {
-		expect(sections.filter(s => s.$type === 'task:VariantSwitcher')).toHaveLength(1);
+	it('is ONE AbTest at the page root, initial is "current", in the agreed order', () => {
+		expect(sections.filter(s => s.$type === 'AbTest')).toHaveLength(1);
 		expect(sections[sections.length - 1]).toBe(switcher);
 		expect(switcher.id).toBe('task-design');
 		expect(switcher.initial).toBe('current');
@@ -128,7 +128,7 @@ describe('the experiment', () => {
 			expect(variants[name]!.hint, `${name} hint`).toMatch(/\S/);
 		}
 		walk(page, node => {
-			if (node.$type !== 'task:VariantSwitcher') return;
+			if (node.$type !== 'AbTest') return;
 			for (const [key, choice] of Object.entries(node.variants as Record<string, Fragment>)) {
 				expect(choice.label, `${String(node.id)}/${key} label`).toMatch(/\S/);
 				expect(choice.hint, `${String(node.id)}/${key} hint`).toMatch(/\S/);
@@ -145,7 +145,7 @@ describe('the experiment', () => {
 			// declaration is identical: the switcher shows one row for it. A different declaration under one id is a bug.
 			const byId = new Map<string, Node>();
 			walk(variants[name]!.view, node => {
-				if (node.$type !== 'task:VariantSwitcher') return;
+				if (node.$type !== 'AbTest') return;
 				const known = byId.get(String(node.id));
 				if (known)
 					expect(JSON.stringify(node), `option ${String(node.id)} declared twice differently`).toBe(
@@ -633,6 +633,8 @@ describe.each(each)('175 compatibility of %s', (id, tree) => {
 // Built-in node types the installed shell is known to render: the ones the pages already use plus those the design doc
 // (section 3) verified on 175. Adding a type here is a decision: check it in the installed shell first.
 const BUILTIN_175 = new Set([
+	// dsl-ui AbTest (dev dock; production renders the initial variant only).
+	'AbTest',
 	'PageContent',
 	'PageHeader',
 	'PageSection',
@@ -678,10 +680,9 @@ describe('node types', () => {
 	it('every $type is a built-in known to the installed shell or a task:<Name> the dsl-lib exports', () => {
 		expect(libExpected, 'packages/dsl-lib-task/test/libEntries.test.ts EXPECTED list not found').not.toBeNull();
 		const problems: string[] = [];
-		if (!libExpected!.includes('VariantSwitcher')) {
-			problems.push(
-				`page root: task:VariantSwitcher is not exported by dsl-lib-task (EXPECTED: ${libExpected!.join(', ')})`
-			);
+		// The fork task:VariantSwitcher is gone: the native dsl-ui AbTest is used, and the lib must not export a copy.
+		if (libExpected!.includes('VariantSwitcher')) {
+			problems.push('dsl-lib-task still exports VariantSwitcher: the native AbTest replaces it');
 		}
 		for (const { name, index, tree } of combinations) {
 			for (const node of nodesOf(tree)) {
@@ -723,7 +724,7 @@ describe('the generator reports what is wrong, with the fix', () => {
 		expect(out).toContain('$sources: {}');
 		expect(parse(out).sections).toEqual([
 			{
-				$type: 'task:VariantSwitcher',
+				$type: 'AbTest',
 				id: 't',
 				label: 'T',
 				initial: 'a',

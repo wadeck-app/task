@@ -1,7 +1,7 @@
 label: Flat list
 hint: 'ONE list with sticky project headers, project and status filters, the first rows per project then "N more", and a cap on projects drawn.'
 view:
-    $type: task:VariantSwitcher
+    $type: AbTest
     id: flat-cap
     label: Rows per project
     initial: rows-5

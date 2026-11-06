@@ -1,7 +1,7 @@
 label: Master-detail
 hint: Searchable project list on the left (counts, unreadable flagged), the tree of the selected project on the right. Selection kept in the URL and the browser.
 view:
-    $type: task:VariantSwitcher
+    $type: AbTest
     id: master-detail-list
     label: List width
     initial: normal

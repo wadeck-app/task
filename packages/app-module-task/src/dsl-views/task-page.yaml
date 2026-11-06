@@ -12,9 +12,9 @@
 # A test fails when task-page.yaml is stale, so run the script after every edit here.
 #
 # Add a variant: create <name>.yaml here and add <name> to `variants` under `$experiment` below, then run the script.
-# Options of a variant: nested `task:VariantSwitcher` nodes inside its view, id `<variant>-<option>`, 2-3 choices.
+# Options of a variant: nested `AbTest` nodes inside its view, id `<variant>-<option>`, 2-3 choices.
 # Remove a variant: take its name out of `variants`, move its file out of the folder.
-# REMOVE THE EXPERIMENT (bake the winner): in this file keep $sources/$actions, replace the `task:VariantSwitcher` by the
+# REMOVE THE EXPERIMENT (bake the winner): in this file keep $sources/$actions, replace the `AbTest` by the
 # `view` of the chosen variant (expand its `$use`), delete the other fragments, the generator, `npm run views`,
 # taskPageVariants.test.ts and the fixture, then drop the presentation fields no remaining view reads (see taskViews.ts).
 #
@@ -163,7 +163,7 @@ sections:
     $if: $sources.detail.warningText
     label: $sources.detail.warningText
     variant: warning
-  - $type: task:VariantSwitcher
+  - $type: AbTest
     id: task-design
     label: Task page
     initial: current
@@ -529,7 +529,7 @@ sections:
                           $if: $sources.detail.blockedText
                           label: $sources.detail.blockedText
                           variant: warning
-                - $type: task:VariantSwitcher
+                - $type: AbTest
                   id: github-a-layout
                   label: Sidebar
                   initial: right
@@ -578,7 +578,7 @@ sections:
                                   - $type: ExtensionSlot
                                     $if: $sources.links.hasLinks
                                     items: $sources.links.groupSections
-                              - $type: task:VariantSwitcher
+                              - $type: AbTest
                                 id: github-a-activity
                                 label: Activity
                                 initial: timeline
@@ -601,7 +601,7 @@ sections:
                                     view:
                                       $type: VerticalStack
                                       items: []
-                              - $type: task:VariantSwitcher
+                              - $type: AbTest
                                 id: github-a-forms
                                 label: Other fields
                                 initial: inline
@@ -988,7 +988,7 @@ sections:
                                   - $type: ExtensionSlot
                                     $if: $sources.links.hasLinks
                                     items: $sources.links.groupSections
-                              - $type: task:VariantSwitcher
+                              - $type: AbTest
                                 id: github-a-activity
                                 label: Activity
                                 initial: timeline
@@ -1011,7 +1011,7 @@ sections:
                                     view:
                                       $type: VerticalStack
                                       items: []
-                              - $type: task:VariantSwitcher
+                              - $type: AbTest
                                 id: github-a-forms
                                 label: Other fields
                                 initial: inline
@@ -1414,7 +1414,7 @@ sections:
                           $if: $sources.detail.blockedText
                           label: $sources.detail.blockedText
                           variant: warning
-                - $type: task:VariantSwitcher
+                - $type: AbTest
                   id: github-b-progress
                   label: Progress
                   initial: bar
@@ -1449,7 +1449,7 @@ sections:
                         total: $sources.detail.childrenSummary.total
                         text: $sources.detail.childrenSummary.text
                         appearance: ring
-                - $type: task:VariantSwitcher
+                - $type: AbTest
                   id: github-b-sidebar
                   label: Sidebar
                   initial: right
@@ -1471,7 +1471,7 @@ sections:
                                 items:
                                   - $type: Markdown
                                     text: $sources.detail.descriptionText
-                              - $type: task:VariantSwitcher
+                              - $type: AbTest
                                 id: github-b-lists
                                 label: Lists
                                 initial: open
@@ -1926,7 +1926,7 @@ sections:
                                 items:
                                   - $type: Markdown
                                     text: $sources.detail.descriptionText
-                              - $type: task:VariantSwitcher
+                              - $type: AbTest
                                 id: github-b-lists
                                 label: Lists
                                 initial: open
@@ -2164,7 +2164,7 @@ sections:
                           label: Delete
                           variant: danger-outline
                           to: $sources.detail.taskHrefs.deleteTasks
-                - $type: task:VariantSwitcher
+                - $type: AbTest
                   id: gitlab-a-sidebar
                   label: Sidebar
                   initial: right
@@ -2176,7 +2176,7 @@ sections:
                         $type: task:SplitLayout
                         sidePosition: right
                         main:
-                          - $type: task:VariantSwitcher
+                          - $type: AbTest
                             id: gitlab-a-empty
                             label: Empty sections
                             initial: show
@@ -2403,7 +2403,7 @@ sections:
                                           groupByDay: true
                                           order: newest-first
                         side:
-                          - $type: task:VariantSwitcher
+                          - $type: AbTest
                             id: gitlab-a-sections
                             label: Sidebar sections
                             initial: open
@@ -2831,7 +2831,7 @@ sections:
                         $type: task:SplitLayout
                         sidePosition: left
                         main:
-                          - $type: task:VariantSwitcher
+                          - $type: AbTest
                             id: gitlab-a-empty
                             label: Empty sections
                             initial: show
@@ -3058,7 +3058,7 @@ sections:
                                           groupByDay: true
                                           order: newest-first
                         side:
-                          - $type: task:VariantSwitcher
+                          - $type: AbTest
                             id: gitlab-a-sections
                             label: Sidebar sections
                             initial: open
@@ -3542,7 +3542,7 @@ sections:
                           label: Delete
                           variant: danger-outline
                           to: $sources.detail.taskHrefs.deleteTasks
-                - $type: task:VariantSwitcher
+                - $type: AbTest
                   id: gitlab-b-sidebar
                   label: Sidebar
                   initial: right
@@ -3554,7 +3554,7 @@ sections:
                         $type: task:SplitLayout
                         sidePosition: right
                         main:
-                          - $type: task:VariantSwitcher
+                          - $type: AbTest
                             id: gitlab-b-lower
                             label: Below the description
                             initial: tabs
@@ -3891,7 +3891,7 @@ sections:
                                           groupByDay: true
                                           order: newest-first
                         side:
-                          - $type: task:VariantSwitcher
+                          - $type: AbTest
                             id: gitlab-b-sections
                             label: Sidebar sections
                             initial: open
@@ -4319,7 +4319,7 @@ sections:
                         $type: task:SplitLayout
                         sidePosition: left
                         main:
-                          - $type: task:VariantSwitcher
+                          - $type: AbTest
                             id: gitlab-b-lower
                             label: Below the description
                             initial: tabs
@@ -4656,7 +4656,7 @@ sections:
                                           groupByDay: true
                                           order: newest-first
                         side:
-                          - $type: task:VariantSwitcher
+                          - $type: AbTest
                             id: gitlab-b-sections
                             label: Sidebar sections
                             initial: open
@@ -5088,7 +5088,7 @@ sections:
             - $type: VerticalStack
               gap: gap-4
               items:
-                - $type: task:VariantSwitcher
+                - $type: AbTest
                   id: jira-a-ancestors
                   label: Breadcrumb
                   initial: shown
@@ -5180,7 +5180,7 @@ sections:
                                 - $type: ExtensionSlot
                                   $if: $sources.links.hasLinks
                                   items: $sources.links.groupSections
-                        - $type: task:VariantSwitcher
+                        - $type: AbTest
                           id: jira-a-activity
                           label: Activity
                           initial: list
@@ -5337,7 +5337,7 @@ sections:
                                           label: Detach from its parent
                                           variant: secondary
                                           type: submit
-                        - $type: task:VariantSwitcher
+                        - $type: AbTest
                           id: jira-a-details
                           label: Details groups
                           initial: open
@@ -5593,7 +5593,7 @@ sections:
                   justify: justify-start
                   align: items-start
                   items:
-                    - $type: task:VariantSwitcher
+                    - $type: AbTest
                       id: jira-b-transitions
                       label: Transitions
                       initial: segmented
@@ -5742,7 +5742,7 @@ sections:
                                 - $type: ExtensionSlot
                                   $if: $sources.links.hasLinks
                                   items: $sources.links.groupSections
-                        - $type: task:VariantSwitcher
+                        - $type: AbTest
                           id: jira-b-activity
                           label: Activity
                           initial: list
@@ -5874,7 +5874,7 @@ sections:
                                           label: Detach from its parent
                                           variant: secondary
                                           type: submit
-                        - $type: task:VariantSwitcher
+                        - $type: AbTest
                           id: jira-b-details
                           label: Details groups
                           initial: collapsed
@@ -6239,7 +6239,7 @@ sections:
                               $if: $ctx.linkResult.undeliveredText
                               label: $ctx.linkResult.undeliveredText
                               variant: warning
-                    - $type: task:VariantSwitcher
+                    - $type: AbTest
                       id: linear-a-chips
                       label: Other properties
                       initial: popovers
@@ -6419,7 +6419,7 @@ sections:
                 - $type: Markdown
                   $if: $sources.detail.hasDescription
                   text: $sources.detail.descriptionText
-                - $type: task:VariantSwitcher
+                - $type: AbTest
                   id: linear-a-subissues
                   label: Sub-issues
                   initial: shown
@@ -6468,7 +6468,7 @@ sections:
                       view:
                         $type: VerticalStack
                         items: []
-                - $type: task:VariantSwitcher
+                - $type: AbTest
                   id: linear-a-activity
                   label: Activity
                   initial: collapsed
@@ -6555,7 +6555,7 @@ sections:
                           label: Delete
                           variant: danger-outline
                           to: $sources.detail.taskHrefs.deleteTasks
-                - $type: task:VariantSwitcher
+                - $type: AbTest
                   id: linear-b-rail
                   label: Rail
                   initial: left
@@ -6583,7 +6583,7 @@ sections:
                                     total: $sources.detail.childrenSummary.total
                                     text: $sources.detail.childrenSummary.text
                                     appearance: segments
-                                  - $type: task:VariantSwitcher
+                                  - $type: AbTest
                                     id: linear-b-subissues
                                     label: Sub-issues
                                     initial: list
@@ -6628,7 +6628,7 @@ sections:
                                   - $type: ExtensionSlot
                                     $if: $sources.links.hasLinks
                                     items: $sources.links.groupSections
-                              - $type: task:VariantSwitcher
+                              - $type: AbTest
                                 id: linear-b-activity
                                 label: Activity
                                 initial: timeline
@@ -6914,7 +6914,7 @@ sections:
                                     total: $sources.detail.childrenSummary.total
                                     text: $sources.detail.childrenSummary.text
                                     appearance: segments
-                                  - $type: task:VariantSwitcher
+                                  - $type: AbTest
                                     id: linear-b-subissues
                                     label: Sub-issues
                                     initial: list
@@ -6959,7 +6959,7 @@ sections:
                                   - $type: ExtensionSlot
                                     $if: $sources.links.hasLinks
                                     items: $sources.links.groupSections
-                              - $type: task:VariantSwitcher
+                              - $type: AbTest
                                 id: linear-b-activity
                                 label: Activity
                                 initial: timeline
@@ -7257,7 +7257,7 @@ sections:
                           label: Delete
                           variant: danger-outline
                           to: $sources.detail.taskHrefs.deleteTasks
-                - $type: task:VariantSwitcher
+                - $type: AbTest
                   id: notion-a-order
                   label: Order
                   initial: properties-first
@@ -7272,7 +7272,7 @@ sections:
                           - $type: VerticalStack
                             gap: gap-2
                             items:
-                              - $type: task:VariantSwitcher
+                              - $type: AbTest
                                 id: notion-a-properties
                                 label: Properties
                                 initial: all
@@ -7682,7 +7682,7 @@ sections:
                               - $type: Markdown
                                 $if: $sources.detail.hasDescription
                                 text: $sources.detail.descriptionText
-                              - $type: task:VariantSwitcher
+                              - $type: AbTest
                                 id: notion-a-subitems
                                 label: Sub-items
                                 initial: table
@@ -7744,7 +7744,7 @@ sections:
                               - $type: Markdown
                                 $if: $sources.detail.hasDescription
                                 text: $sources.detail.descriptionText
-                              - $type: task:VariantSwitcher
+                              - $type: AbTest
                                 id: notion-a-subitems
                                 label: Sub-items
                                 initial: table
@@ -7795,7 +7795,7 @@ sections:
                           - $type: VerticalStack
                             gap: gap-2
                             items:
-                              - $type: task:VariantSwitcher
+                              - $type: AbTest
                                 id: notion-a-properties
                                 label: Properties
                                 initial: all
@@ -8233,7 +8233,7 @@ sections:
                           label: Delete
                           variant: danger-outline
                           to: $sources.detail.taskHrefs.deleteTasks
-                - $type: task:VariantSwitcher
+                - $type: AbTest
                   id: notion-b-order
                   label: Order
                   initial: properties-first
@@ -8248,7 +8248,7 @@ sections:
                           - $type: VerticalStack
                             gap: gap-3
                             items:
-                              - $type: task:VariantSwitcher
+                              - $type: AbTest
                                 id: notion-b-layout
                                 label: Layout
                                 initial: single
@@ -8577,7 +8577,7 @@ sections:
                                                   items:
                                                     - $type: task:KeyValueList
                                                       entries: $sources.detail.metaList
-                              - $type: task:VariantSwitcher
+                              - $type: AbTest
                                 id: notion-b-empty
                                 label: Empty properties
                                 initial: folded
@@ -9040,7 +9040,7 @@ sections:
                           - $type: VerticalStack
                             gap: gap-3
                             items:
-                              - $type: task:VariantSwitcher
+                              - $type: AbTest
                                 id: notion-b-layout
                                 label: Layout
                                 initial: single
@@ -9369,7 +9369,7 @@ sections:
                                                   items:
                                                     - $type: task:KeyValueList
                                                       entries: $sources.detail.metaList
-                              - $type: task:VariantSwitcher
+                              - $type: AbTest
                                 id: notion-b-empty
                                 label: Empty properties
                                 initial: folded

@@ -32,7 +32,6 @@ const EXPECTED = [
 	'TabPanels',
 	'TaskRowList',
 	'Timeline',
-	'VariantSwitcher',
 ];
 // @formatter:on
 

@@ -1,7 +1,7 @@
 label: Picker
 hint: 'A searchable project combobox above ONE tree; "All projects" shows compact summary rows. Deep link with ?treePicked=<id>.'
 view:
-    $type: task:VariantSwitcher
+    $type: AbTest
     id: picker-start
     label: Start on
     initial: overview

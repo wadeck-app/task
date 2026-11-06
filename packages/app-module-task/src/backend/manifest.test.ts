@@ -496,7 +496,7 @@ describe('tree page: global forest without ?project (src/dsl-views/tree-page.yam
 		expect(page).toMatch(/\$type: ExtensionSlot\n\s+items: \$sources\.tree\.groups\n/);
 		// The `$if` sits on a stack around the switcher: on the switcher itself it looped in the dev shell (treeVariants.test.ts).
 		expect(page).toMatch(
-			/\$type: VerticalStack\n\s+\$if: \$sources\.tree\.groups\n\s+gap: gap-0\n\s+items:\n\s+- \$type: task:VariantSwitcher/
+			/\$type: VerticalStack\n\s+\$if: \$sources\.tree\.groups\n\s+gap: gap-0\n\s+items:\n\s+- \$type: AbTest/
 		);
 		expect(page).not.toContain('$if: $sources.tree.scopeText\n      rows');
 	});

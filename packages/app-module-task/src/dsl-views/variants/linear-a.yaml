@@ -10,7 +10,7 @@ view:
           items:
               - $use: linear-a.chips.core
               - $use: linear-a.feedback
-              - $type: task:VariantSwitcher
+              - $type: AbTest
                 id: linear-a-chips
                 label: Other properties
                 initial: popovers
@@ -26,7 +26,7 @@ view:
                         view:
                             $use: linear-a.edit.collapsed
         - $use: linear-a.description
-        - $type: task:VariantSwitcher
+        - $type: AbTest
           id: linear-a-subissues
           label: Sub-issues
           initial: shown
@@ -48,7 +48,7 @@ view:
                   view:
                       $type: VerticalStack
                       items: []
-        - $type: task:VariantSwitcher
+        - $type: AbTest
           id: linear-a-activity
           label: Activity
           initial: collapsed
