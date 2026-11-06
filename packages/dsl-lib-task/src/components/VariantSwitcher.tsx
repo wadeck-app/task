@@ -182,7 +182,7 @@ function Bar({
 		const observer = new ResizeObserver(() => onHeight(element.offsetHeight));
 		observer.observe(element);
 		return () => observer.disconnect();
-	}, [hasRows, state, hint, rows.length, onHeight]);
+	}, [hasRows, state, rows.length, onHeight]);
 	if (rows.length === 0 || typeof document === 'undefined') {
 		return null;
 	}
@@ -216,53 +216,62 @@ function Bar({
 					setState('collapsed');
 				}
 			}}
-			className={`${BAR_POSITION} flex max-h-[80vh] w-max max-w-[calc(100vw-1rem)] flex-col gap-2 overflow-y-auto rounded-2xl border border-border bg-surface p-3 shadow-2xl`}
+			className={`${BAR_POSITION} w-max max-w-[calc(100vw-1rem)]`}
 		>
-			<button
-				type="button"
-				aria-label="Fold the A/B tests"
-				title="Fold the bar into a small pill (Escape does the same). Every choice stays applied."
-				onClick={() => setState('collapsed')}
-				className="absolute right-2 top-1 flex cursor-pointer items-center rounded-full p-1 text-muted hover:text-content"
+			<div
+				data-testid="variant-panel"
+				className="relative flex max-h-[80vh] flex-col gap-2 overflow-y-auto rounded-2xl border border-border bg-surface p-3 shadow-2xl"
 			>
-				<ChevronDown size={16} aria-hidden="true" />
-			</button>
-			{rows.map(row => (
-				<div key={row.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 pr-6">
-					<span className="min-w-[6rem] text-xs font-semibold uppercase tracking-wide text-muted">
-						{row.label}
-					</span>
-					<div role="radiogroup" aria-label={row.label} className="flex flex-wrap gap-1.5">
-						{row.choices.map(choice => (
-							<label
-								key={choice.id}
-								title={choice.title}
-								onMouseOver={() => setHint(choice.title)}
-								onMouseOut={() => setHint(null)}
-								onFocus={() => setHint(choice.title)}
-								onBlur={() => setHint(null)}
-								className={`cursor-pointer select-none rounded-lg border px-4 py-2 text-sm font-medium transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-primary ${
-									choice.id === row.value
-										? 'border-primary bg-primary text-white'
-										: 'border-border bg-surface text-content hover:bg-muted-bg'
-								}`}
-							>
-								<input
-									type="radio"
-									className="sr-only"
-									name={`ab-${row.id}`}
-									value={choice.id}
-									checked={choice.id === row.value}
-									onChange={() => row.onSelect(choice.id)}
-								/>
-								{choice.label}
-							</label>
-						))}
+				<button
+					type="button"
+					aria-label="Fold the A/B tests"
+					title="Fold the bar into a small pill (Escape does the same). Every choice stays applied."
+					onClick={() => setState('collapsed')}
+					className="absolute right-2 top-1 flex cursor-pointer items-center rounded-full p-1 text-muted hover:text-content"
+				>
+					<ChevronDown size={16} aria-hidden="true" />
+				</button>
+				{rows.map(row => (
+					<div key={row.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 pr-6">
+						<span className="min-w-[6rem] text-xs font-semibold uppercase tracking-wide text-muted">
+							{row.label}
+						</span>
+						<div role="radiogroup" aria-label={row.label} className="flex flex-wrap gap-1.5">
+							{row.choices.map(choice => (
+								<label
+									key={choice.id}
+									title={choice.title}
+									onMouseEnter={() => setHint(choice.title)}
+									onMouseLeave={() => setHint(null)}
+									onFocus={() => setHint(choice.title)}
+									onBlur={() => setHint(null)}
+									className={`cursor-pointer select-none rounded-lg border px-4 py-2 text-sm font-medium transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-primary ${
+										choice.id === row.value
+											? 'border-primary bg-primary text-white'
+											: 'border-border bg-surface text-content hover:bg-muted-bg'
+									}`}
+								>
+									<input
+										type="radio"
+										className="sr-only"
+										name={`ab-${row.id}`}
+										value={choice.id}
+										checked={choice.id === row.value}
+										onChange={() => row.onSelect(choice.id)}
+									/>
+									{choice.label}
+								</label>
+							))}
+						</div>
 					</div>
-				</div>
-			))}
+				))}
+			</div>
 			{hint ? (
-				<p data-testid="variant-hint" className="border-t border-border pt-2 text-sm text-muted">
+				// An overlay above the bar: in the flow it would resize the bottom-anchored bar, move the hovered choice from under the pointer and loop (hover, grow, mouseout, shrink, hover).
+				<p
+					data-testid="variant-hint"
+					className="pointer-events-none absolute bottom-full left-1/2 mb-2 w-max min-w-[16rem] max-w-[min(32rem,calc(100vw-1rem))] -translate-x-1/2 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-content shadow-2xl"
+				>
 					{hint}
 				</p>
 			) : null}
@@ -409,8 +418,8 @@ function Root(props: VariantSwitcherProps & { enabled: boolean }): React.ReactEl
  *   without a host, `isDev()`. Disabled: renders the `initial` view only, never reads the storage nor the URL, draws
  *   no bar. A production build therefore shows the reference view to everyone.
  * - Why not AbTest: dsl-ui's dock (`rounded-[1.75rem] p-1.5`, `text-xs` rows, fixed bottom centre) is not
- *   configurable by a module and is too small to compare many variants. This bar has 14 px choices, a hint line and
- *   wraps on narrow screens. When dsl-ui offers a size option, delete this component.
+ *   configurable by a module and is too small to compare many variants. This bar has 14 px choices, a hint overlay
+ *   (out of the layout: it never resizes the bar) and wraps on narrow screens. When dsl-ui offers a size option, delete this component.
  * - A bad declaration (unknown `initial`, bad id, a second different test with the same id) renders an alert, never a
  *   guessed variant.
  *

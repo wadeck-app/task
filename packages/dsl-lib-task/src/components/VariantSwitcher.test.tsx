@@ -168,6 +168,55 @@ describe('VariantSwitcher, experiments on', () => {
 		);
 	});
 
+	it('draws the hint as an overlay outside the layout, so hovering never resizes the bar', async () => {
+		render(on(switcher()));
+		await userEvent.setup().hover(screen.getByRole('radio', { name: 'Variant B' }));
+
+		const hint = screen.getByTestId('variant-hint');
+		expect(hint.className).toContain('absolute');
+		expect(hint.className).toContain('pointer-events-none');
+		// An overflow container would clip an overlay, and the panel it sits in would grow with it.
+		expect(hint.closest('[data-testid="variant-panel"]')).toBeNull();
+		expect(hint.parentElement!.className).not.toMatch(/overflow/);
+	});
+
+	it('leaves the in-flow content of the panel identical with and without a hint', async () => {
+		render(on(switcher()));
+		const user = userEvent.setup();
+		const panel = screen.getByTestId('variant-panel');
+		const before = panel.innerHTML;
+
+		await user.hover(screen.getByRole('radio', { name: 'Variant B' }));
+		expect(screen.getByTestId('variant-hint')).toBeInTheDocument();
+		expect(panel.innerHTML).toBe(before);
+
+		await user.unhover(screen.getByRole('radio', { name: 'Variant B' }));
+		expect(screen.queryByTestId('variant-hint')).toBeNull();
+		expect(panel.innerHTML).toBe(before);
+	});
+
+	it('shows the hint on keyboard focus and hides it on blur', () => {
+		render(on(switcher()));
+		const radio = screen.getByRole('radio', { name: 'Variant A' });
+
+		act(() => radio.focus());
+		expect(screen.getByTestId('variant-hint')).toHaveTextContent('Changes A.');
+
+		act(() => radio.blur());
+		expect(screen.queryByTestId('variant-hint')).toBeNull();
+	});
+
+	it('hides the hint when the pointer leaves the choice', async () => {
+		render(on(switcher()));
+		const user = userEvent.setup();
+		await user.hover(screen.getByRole('radio', { name: 'Variant B' }));
+		expect(screen.getByTestId('variant-hint')).toBeInTheDocument();
+
+		await user.unhover(screen.getByRole('radio', { name: 'Variant B' }));
+
+		expect(screen.queryByTestId('variant-hint')).toBeNull();
+	});
+
 	it('calls renderNode with the view and an empty context, like AbTest', () => {
 		const spy = vi.fn(renderNode);
 
