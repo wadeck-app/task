@@ -283,6 +283,26 @@ describe('queue events — onTaskLinked / onTaskUnlinked', () => {
 		expect(events[0]!.payload).toMatchObject({ taskId: a.id, linkType: 'causedBy', targetId: b.id });
 	});
 
+	it('unlink of a link to a vanished task (exact id) pushes the same onTaskUnlinked as a normal unlink', async () => {
+		const a = await newTask('a');
+		const b = await newTask('b');
+		await runTaskCommand(['link', a.id, 'blockedBy', b.id], tmpDir);
+		// b leaves the index only (data edited outside task): a keeps its link to it.
+		const indexPath = path.join(project.storage.dataDir, 'task-index.json');
+		const index = JSON.parse(fs.readFileSync(indexPath, 'utf8')) as { tasks: Array<{ id: string }> };
+		index.tasks = index.tasks.filter(x => x.id !== b.id);
+		fs.writeFileSync(indexPath, JSON.stringify(index));
+		publishMock.mockClear();
+
+		const result = await runTaskCommand(['unlink', a.id, 'blockedBy', b.id], tmpDir);
+
+		expect(result.exitCode, result.output).toBe(0);
+		const events = pushedEvents();
+		expect(events).toHaveLength(1);
+		expect(events[0]!.event).toBe('onTaskUnlinked');
+		expect(events[0]!.payload).toMatchObject({ taskId: a.id, linkType: 'blockedBy', targetId: b.id });
+	});
+
 	it('pushes nothing when the link is rejected (cycle) or the unlink fails', async () => {
 		const a = await newTask('a');
 		const b = await newTask('b');

@@ -3,14 +3,14 @@ import {
 	createStatusFilter,
 	getFullTree,
 	getTaskHistory,
-	getTaskLinks,
 	listAncestors,
 	listChildren,
 	listForest,
 	listTasks,
+	readTaskLinks,
 	showTask,
 } from '@wadeck-app/task-service';
-import type { TaskHistory } from '@wadeck-app/task-service';
+import type { TaskHistory, TaskLinksReport } from '@wadeck-app/task-service';
 
 import type { ProjectCommand } from '../cli/env.js';
 import { runTaskHistoryFollow, runTaskListFollow } from '../cli/follow.js';
@@ -18,6 +18,11 @@ import { errorOutput, failure, jsonResult, runJson } from '../cli/output.js';
 
 const LIST_USAGE = 'Usage: task list [--all] [--parent <id>] [--tree] [--follow|-f]';
 const SHOW_USAGE = 'Usage: task show <id> [--with-parent] [--with-children]';
+
+/** One stderr line per link to a vanished task, with its fix (stdout stays the JSON answer; the exit code stays 0). */
+function warnDangling(report: TaskLinksReport): void {
+	for (const warning of report.warnings) process.stderr.write(`Warning: ${warning}\n`);
+}
 
 export const runList: ProjectCommand = async (rest, { jsonMode, ctx }) => {
 	let showAll = false;
@@ -77,7 +82,13 @@ export const runShow: ProjectCommand = (rest, { jsonMode, ctx }) => {
 		return errorOutput(jsonMode, 'missing id', SHOW_USAGE);
 	}
 	const taskId = id;
-	return runJson(jsonMode, () => showTask(ctx, { id: taskId, withParent, withChildren }));
+	return runJson(jsonMode, () => {
+		const detail = showTask(ctx, { id: taskId, withParent, withChildren });
+		// A link to a vanished task is marked in the answer and warned about, never a failure: the task must stay readable.
+		const report = readTaskLinks(ctx, { id: taskId });
+		warnDangling(report);
+		return report.dangling.length > 0 ? { ...detail, dangling: report.dangling } : detail;
+	});
 };
 
 export const runHistory: ProjectCommand = async (rest, { jsonMode, ctx }) => {
@@ -103,7 +114,12 @@ export const runLinks: ProjectCommand = (rest, { jsonMode, ctx }) => {
 	if (!id) {
 		return errorOutput(jsonMode, 'missing id', 'Usage: task links <id>');
 	}
-	return runJson(jsonMode, () => getTaskLinks(ctx, { id }));
+	return runJson(jsonMode, () => {
+		const report = readTaskLinks(ctx, { id });
+		warnDangling(report);
+		// The six relations as before; `dangling` (relation, targetId, fix) only when a link points to a vanished task.
+		return report.dangling.length > 0 ? { ...report.links, dangling: report.dangling } : report.links;
+	});
 };
 
 export const runChildren: ProjectCommand = (rest, { jsonMode, ctx }) => {
