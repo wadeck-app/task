@@ -1,9 +1,10 @@
 // View models of the all-projects views (dashboard widget, Tasks page without ?project) over the task-service overview.
-import type { TaskTreeNode } from '@wadeck-app/task-core';
 import type { ProjectOverview, TasksAcrossProjects } from '@wadeck-app/task-service';
 
 import { shortTitle, shortUtcTime } from './display.js';
 import type { AcrossProjects } from './acrossProjects.js';
+import { buildTreeOverview } from './treeOverview.js';
+import type { OverviewReadable } from './treeOverview.js';
 import {
 	allProjectsPageHref,
 	allProjectsTasksHref,
@@ -115,8 +116,9 @@ export function allTasksBody(found: TasksAcrossProjects, showAll: boolean): Reco
  * the sections are DSL nodes built here and rendered as is by the view (see dslNodes.ts).
  */
 export function allForestBody(
-	found: AcrossProjects<{ forest: TaskTreeNode[]; terminalStatuses: readonly string[] }>,
-	showAll: boolean
+	found: AcrossProjects<OverviewReadable['value']>,
+	showAll: boolean,
+	rowCap: number
 ): Record<string, unknown> {
 	let taskTotal = 0;
 	let closedKept = 0;
@@ -143,6 +145,8 @@ export function allForestBody(
 			: { label: 'Show closed tasks', href: allProjectsPageHref('tree', true) },
 		...skippedFields(found.unreadable),
 		groups,
+		// What the Tree page variants read (components fold and filter it in the browser): capped, see treeOverview.ts.
+		overview: buildTreeOverview(found, { rowCap }),
 	};
 }
 

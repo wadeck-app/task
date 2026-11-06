@@ -13,6 +13,7 @@ import {
 	showTaskWithRelations,
 	describeBlockers,
 	summarizeChildren,
+	summarizeProject,
 } from '@wadeck-app/task-service';
 
 import { readAcrossProjects } from '../acrossProjects.js';
@@ -27,6 +28,7 @@ import {
 	optionalQueryValue,
 	showAllFlag,
 } from '../request.js';
+import { newestCreatedAt, parseRowCap } from '../treeOverview.js';
 import { withRowLinks } from '../rowViews.js';
 import { linkGroupSections, linkGroups, linkRowViews } from '../taskPresentation.js';
 import { childrenBody, forestBody, taskDetailBody, taskTreeBody, tasksListBody } from '../taskViews.js';
@@ -142,11 +144,14 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 				}
 			}
 			const showAll = showAllFlag(req.query);
+			const rowCap = parseRowCap(optionalQueryValue(req.query, 'rowCap'));
 			const found = readAcrossProjects(ctx => ({
 				forest: listForest(ctx, { showAll }),
 				terminalStatuses: ctx.config.terminalStatuses,
+				figures: summarizeProject(ctx),
+				lastAddedAt: newestCreatedAt(ctx.store.list()),
 			}));
-			return { status: 200, body: allForestBody(found, showAll) };
+			return { status: 200, body: allForestBody(found, showAll, rowCap) };
 		}
 		const ctx = open(req);
 		const rootOf = optionalQueryValue(req.query, 'id');

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resetReported } from '../reportOnce.js';
@@ -120,6 +120,21 @@ describe('LabelChips', () => {
 		await user.tab();
 
 		expect(onAction).toHaveBeenCalledWith('a', { label: 'late' });
+	});
+
+	it('does not add the label a second time when the field loses focus while the first add runs', async () => {
+		// The browser blurs a field that becomes disabled; the shell then logs 'action ... is already running'.
+		let finish: () => void = () => {};
+		const onAction = vi.fn(() => new Promise<void>(resolve => (finish = resolve)));
+		render(<LabelChips labels={[]} addAction="a" onAction={onAction} />);
+		const user = userEvent.setup();
+
+		await user.type(screen.getByRole('textbox'), 'once{Enter}');
+		fireEvent.blur(screen.getByRole('textbox'));
+
+		expect(onAction).toHaveBeenCalledTimes(1);
+		finish();
+		await waitFor(() => expect(screen.getByRole('textbox')).toHaveValue(''));
 	});
 
 	it('ignores an empty entry and a label the task already has, and says so', async () => {

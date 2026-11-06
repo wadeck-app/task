@@ -1,0 +1,131 @@
+# ============================================================================================================
+# TREE PAGE VARIANTS - how this page is built (read this before editing tree-page.yaml: it is GENERATED)
+#
+# `src/dsl-views/tree-page.yaml` is assembled by `npm run views --workspace=packages/app-module-task` (script:
+# scripts/generate-tree-page.mjs at the repository root) from the files of this folder:
+#   _page.yaml     this file: the sources, the nodes above the experiment (`$before`), the experiment, the nodes below it
+#                  (`$after`). Everything up to the line `$type: PageContent` is copied verbatim (comments included).
+#   _shared.yaml   named fragments, used anywhere as `{ $use: <name> }` (one node each; no other key next to $use).
+#   <variant>.yaml one file per variant with exactly three keys: `label`, `hint` (shown by the switcher), `view` (ONE node).
+# A test fails when tree-page.yaml is stale, so run the script after every edit here.
+#
+# The experiment replaces ONLY the global forest (the `groups` slot, one section per project): the notices, the header
+# and the per-project table stay outside it, so every variant inherits the error, empty-registry, unknown-project and
+# unreadable-project messages. `current` is that slot as shipped (initial: what production renders). The other five read
+# `overview` of GET /tree?allProjects=true (capped rows, see treeOverview.ts) through task: components that fold, filter
+# and sort in the browser; no variant has a source or an action of its own.
+#
+# Add a variant: create <name>.yaml here and add <name> to `variants` under `$experiment`, then run the script.
+# Options of a variant: nested `task:VariantSwitcher` nodes inside its view, id `<variant>-<option>`, 2-3 choices.
+# REMOVE THE EXPERIMENT (bake the winner): replace the `task:VariantSwitcher` of the generated page by the `view` of the
+# chosen variant (drop `$if` only if the winner also serves the per-project scope), delete the other fragments, the
+# generator, its call in `npm run views`, treeVariants.test.ts, the fixture tree-page.head.yaml, the components of the
+# losing designs in packages/dsl-lib-task and the `groups` of the route when `current` is not the winner.
+# ============================================================================================================
+
+# Hierarchy of the tasks (nav /tree, per project /tree/p/:project = $route.project; /tree also shows the only registered project): the
+# forest of that project, children indented under their parent. on /tree with several projects registered:
+# the global forest, one section per project (title, link to its own tree) whose table holds that project's forest, a
+# child indented under its parent by a label prefix (the table cannot style rows).
+# ?showAll=true includes the closed tasks, ?parent=<id> restricts to the descendants of a task, ?id=<id> shows the one
+# tree containing a task (project scope only). A row click opens the detail page.
+# TreeView is not used: its selection is a callback, which YAML cannot express, so rows could not navigate.
+# The sources that wait for `projects` also name a $urlParam (`reload`, empty in practice): see tasks-page.yaml.
+# One `tree` source for every scope, fed by `scopeQuery` (project, global, or `blank=true` for an unknown or unreadable
+# project, which replaces the rows of the previous scope): see tasks-page.yaml.
+# A header with actions shows no subtitle: the project is named by `projectText` below it.
+# inlineErrors on every source: one failing source discards the answers of all the others (the page stays blank), so a
+# failure is answered as data (`errorText`) and shown by a badge.
+$sources:
+    projects:
+        url: GET /api/modules/task/projects
+        params:
+            project: $route.project
+            showAll: $urlParam.showAll
+            parent: $urlParam.parent
+            id: $urlParam.id
+    tree:
+        url: GET /api/modules/task/tree?{query}&inlineErrors=true
+        params:
+            query: $source.projects.scopeQuery
+            reload: $urlParam.reload
+    # The contributions of other modules to the slot task:project-header (declared in manifest.json `expose`).
+    projectHeader:
+        url: GET /api/slots/task:project-header
+
+$type: PageContent
+
+$before:
+    - $type: PageHeader
+      title: Tree
+      headerActions:
+          - $type: ButtonLink
+            $if: $sources.tree.showAllToggle
+            label: $sources.tree.showAllToggle.label
+            to: $sources.tree.showAllToggle.href
+    # Extension point task:project-header (see tasks-page.yaml): per-project address only, empty slot draws nothing.
+    - $type: task:ChipRow
+      $if: $route.project
+      items:
+          - $type: ExtensionSlot
+            $if: $sources.projectHeader
+            items: $sources.projectHeader
+    # Nothing registered yet: the welcome text of the route (the exact next step) instead of a blank page.
+    - $type: Badge
+      $if: $sources.projects.noProjects
+      label: $sources.projects.noProjectsText
+      variant: info
+    - $type: Badge
+      $if: $sources.tree.projectText
+      label: $sources.tree.projectText
+      variant: info
+    # The selected project cannot be read (not initialized, corrupt config...): the reason and the fix, not a blank page.
+    - $type: Badge
+      $if: $sources.projects.selectedProblem
+      label: $sources.projects.selectedProblem
+      variant: danger
+    - $type: Badge
+      $if: $sources.tree.errorText
+      label: $sources.tree.errorText
+      variant: danger
+    # The address names a project the registry does not know: said, with the next step, not a blank page.
+    - $type: Badge
+      $if: $sources.projects.unknownProjectText
+      label: $sources.projects.unknownProjectText
+      variant: danger
+    # Global forest: what it covers, the projects it could not read (never dropped).
+    - $type: Badge
+      $if: $sources.tree.scopeText
+      label: $sources.tree.scopeText
+      variant: info
+    - $type: Badge
+      $if: $sources.tree.warning
+      label: $sources.tree.warning
+      variant: warning
+
+# `if`: the switcher exists on the global scope only (`groups` is absent from the answer of a project).
+# `guard`: what the five designs need; without the overview (blank or failed answer) they draw nothing.
+$experiment:
+    id: task-tree-design
+    label: Tree page
+    initial: current
+    if: $sources.tree.groups
+    guard: $sources.tree.overview
+    variants:
+        - current
+        - accordion
+        - master-detail
+        - picker
+        - cards
+        - flat
+
+$after:
+    - $type: DataTable
+      $if: $sources.tree.project
+      rows: $sources.tree.rows
+      navigateTo: '{href}'
+      emptyMessage: No open tasks yet. Create one from the Tasks page ("Show closed tasks" includes the closed ones)
+      columns:
+          - { key: 'label', label: 'Task' }
+          - { key: 'id', label: 'ID', mono: true, nowrap: true }
+          - { key: 'status', label: 'Status', nowrap: true }

@@ -115,7 +115,7 @@ $actions:
     # placeholders, so nothing is retyped. {targetEncoded} is the named handler's percent-encoded copy of `target`.
     removeLinkRow:
         url: DELETE /api/modules/task/tasks/{id}/links?project={projectParam}&type={type}&target={targetEncoded}&inlineErrors=true
-        resultKey: linkResult
+        resultKey: linkRowResult
         reloadSources: true
 
     # Quick actions for the task: components (ActionSelect, SegmentedControl, LabelChips): the value is in the URL path,

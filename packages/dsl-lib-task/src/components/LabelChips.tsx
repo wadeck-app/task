@@ -1,5 +1,5 @@
 import { Plus, X } from 'lucide-react';
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { CHIP_PALETTE, TONE_PILL, hashIndex, isTone } from '../tones.js';
 import { useAction } from '../useAction.js';
 import type { ActionHandler } from '../useAction.js';
@@ -96,7 +96,13 @@ export function LabelChips({
 	const list = Array.isArray(labels) ? labels : [];
 	const busy = adder.busy || remover.busy;
 
+	// Enter disables the field, the browser then blurs it: without this guard the blur adds the same label again.
+	const adding = useRef(false);
+
 	const add = async (): Promise<void> => {
+		if (adding.current) {
+			return;
+		}
 		const text = draft.trim();
 		if (text === '') {
 			setProblem(null);
@@ -107,8 +113,13 @@ export function LabelChips({
 			return;
 		}
 		setProblem(null);
-		if (await adder.run({ ...(params ?? {}), [labelParam]: text })) {
-			setDraft('');
+		adding.current = true;
+		try {
+			if (await adder.run({ ...(params ?? {}), [labelParam]: text })) {
+				setDraft('');
+			}
+		} finally {
+			adding.current = false;
 		}
 	};
 

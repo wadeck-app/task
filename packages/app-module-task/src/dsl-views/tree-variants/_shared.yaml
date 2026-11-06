@@ -1,0 +1,2 @@
+# Reusable fragments of the tree page variants, referenced as `{ $use: <name> }`. Each fragment is ONE node.
+# The prop every design reads: the capped overview of the global forest (see treeOverview.ts).

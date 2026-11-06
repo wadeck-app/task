@@ -1,0 +1,29 @@
+label: Flat list
+hint: 'ONE list with sticky project headers, project and status filters, the first rows per project then "N more", and a cap on projects drawn.'
+view:
+    $type: task:VariantSwitcher
+    id: flat-cap
+    label: Rows per project
+    initial: rows-5
+    variants:
+        rows-5:
+            label: 5 rows
+            hint: Five rows per project
+            view:
+                $type: task:ProjectFlatTree
+                projects: $sources.tree.overview.projects
+                rowsPerProject: 5
+        rows-15:
+            label: 15 rows
+            hint: Fifteen rows per project
+            view:
+                $type: task:ProjectFlatTree
+                projects: $sources.tree.overview.projects
+                rowsPerProject: 15
+        rows-40:
+            label: 40 rows
+            hint: Forty rows per project
+            view:
+                $type: task:ProjectFlatTree
+                projects: $sources.tree.overview.projects
+                rowsPerProject: 40

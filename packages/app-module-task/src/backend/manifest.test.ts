@@ -492,8 +492,11 @@ describe('tree page: global forest without ?project (src/dsl-views/tree-page.yam
 	// The DataTable has no row styling or grouping in the installed shell: a project header row looks like any task
 	// row. The route builds one Section per project (name, link, table) and the view renders that list as is.
 	it('renders the global forest as the sections the route built, one per project (ExtensionSlot), not as one flat table', () => {
+		// Inside the `current` variant of the tree experiment (tree-variants/current.yaml), shown on the global scope only.
+		expect(page).toMatch(/\$type: ExtensionSlot\n\s+items: \$sources\.tree\.groups\n/);
+		// The `$if` sits on a stack around the switcher: on the switcher itself it looped in the dev shell (treeVariants.test.ts).
 		expect(page).toMatch(
-			/- \$type: ExtensionSlot\n {6}\$if: \$sources\.tree\.groups\n {6}items: \$sources\.tree\.groups\n/
+			/\$type: VerticalStack\n\s+\$if: \$sources\.tree\.groups\n\s+gap: gap-0\n\s+items:\n\s+- \$type: task:VariantSwitcher/
 		);
 		expect(page).not.toContain('$if: $sources.tree.scopeText\n      rows');
 	});

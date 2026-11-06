@@ -278,11 +278,24 @@ describe('regression guard: "current" is the page as it was', () => {
 		const items = section.items as Node[];
 		const flat = headLinks.findIndex(n => n.$type === 'DataTable');
 		expect(items.slice(0, flat)).toEqual(headLinks.slice(0, flat));
-		expect(items.slice(flat, flat + 2)).toEqual([
+		// The answer of the x of a row (removeLinkRow, own result key) is shown right above the groups.
+		expect(items.slice(flat, flat + 4)).toEqual([
+			{
+				$type: 'task:Notice',
+				$if: '$ctx.linkRowResult.errorText',
+				label: '$ctx.linkRowResult.errorText',
+				variant: 'danger',
+			},
+			{
+				$type: 'task:Notice',
+				$if: '$ctx.linkRowResult.undeliveredText',
+				label: '$ctx.linkRowResult.undeliveredText',
+				variant: 'warning',
+			},
 			{ $type: 'ExtensionSlot', $if: '$sources.links.hasLinks', items: '$sources.links.groupSections' },
 			{ $type: 'Badge', $if: '$sources.links.noLinks', label: 'No links', variant: 'info' },
 		]);
-		expect(items.slice(flat + 2)).toEqual(headLinks.slice(flat + 1));
+		expect(items.slice(flat + 4)).toEqual(headLinks.slice(flat + 1));
 	});
 
 	it('no variant lists the links as one flat table or row list any more: every one renders the relation groups', () => {
@@ -342,7 +355,8 @@ describe('the remove button of a link row', () => {
 		expect(action.url).toBe(
 			'DELETE /api/modules/task/tasks/{id}/links?project={projectParam}&type={type}&target={targetEncoded}&inlineErrors=true'
 		);
-		expect(action.resultKey).toBe('linkResult');
+		// Its own key: the link forms may be folded away (their feedback with them), the groups never are.
+		expect(action.resultKey).toBe('linkRowResult');
 		expect(action.reloadSources).toBe(true);
 	});
 });
@@ -408,6 +422,7 @@ const NAVIGATION: Record<string, string> = {
 };
 // The page as shipped has no way to the delete page; the variants add it.
 const NAVIGATION_EXEMPT: Record<string, string[]> = { current: ['delete entry'] };
+// linkResult: the add / remove link forms. linkRowResult (the x of a link row) is checked next to the groups it belongs to, below.
 const RESULT_KEYS = ['statusResult', 'typeResult', 'labelResult', 'metaResult', 'parentResult', 'linkResult'];
 
 describe.each(each)('variant combination %s', (id, tree) => {
@@ -469,6 +484,46 @@ describe.each(each)('variant combination %s', (id, tree) => {
 					).toBe(true);
 				}
 			}
+		}
+	});
+
+	it('shows the feedback of a link row removal next to the link groups: never folded, never hidden with the groups, only when set', () => {
+		const slots: Array<{ node: Node; ancestors: Node[] }> = [];
+		walk(tree, (node, ancestors) => {
+			if (node.$type === 'ExtensionSlot' && node.items === '$sources.links.groupSections')
+				slots.push({ node, ancestors });
+		});
+		expect(slots.length, `${id}: the link groups are drawn at most once`).toBeLessThanOrEqual(1);
+		// No groups (linear-a with its relations hidden): no x to press, nothing to report.
+		if (slots.length === 0) return;
+		const slot = slots[0]!;
+		const hiddenWhenFolded = (a: Node): boolean =>
+			a.$type === 'Form' || a.collapsible === true || a.defaultOpen === false;
+		for (const field of ['errorText', 'undeliveredText']) {
+			const label = `$ctx.linkRowResult.${field}`;
+			const found: Array<{ node: Node; ancestors: Node[] }> = [];
+			walk(tree, (node, ancestors) => {
+				if (node.$type === 'task:Notice' && node.label === label) found.push({ node, ancestors });
+			});
+			expect(found, `${id}: one Notice for ${label}`).toHaveLength(1);
+			const notice = found[0]!;
+			// An empty block never shows: the Notice itself is the conditional node.
+			expect(notice.node.$if, `${id}: ${label} shows only when the answer holds it`).toBe(label);
+			// A fold the groups share (a collapsible 'Linked items' panel) hides both together; any other fold hides only the Notice.
+			expect(
+				notice.ancestors.filter(a => hiddenWhenFolded(a) && !slot.ancestors.includes(a)),
+				`${id}: ${label} sits in a folded container the link groups are not in`
+			).toEqual([]);
+			expect(
+				notice.ancestors.filter(a => String(a.$if ?? '').includes('$sources.links.')),
+				`${id}: ${label} vanishes with the groups (last link removed)`
+			).toEqual([]);
+			// Same container as the groups: the parent of the Notice holds the groups slot.
+			const parent = notice.ancestors[notice.ancestors.length - 1]!;
+			expect(
+				nodesOf(parent).includes(slot.node),
+				`${id}: ${label} is not in the container of the link groups`
+			).toBe(true);
 		}
 	});
 

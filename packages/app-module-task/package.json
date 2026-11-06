@@ -9,7 +9,7 @@
 	"scripts": {
 		"build": "tsc -p tsconfig.json --noEmit",
 		"check": "app-core-cli check .",
-		"views": "node ../../scripts/generate-task-page.mjs",
+		"views": "node ../../scripts/generate-task-page.mjs && node ../../scripts/generate-tree-page.mjs",
 		"css": "npm run css --workspace=@wadeck-app/dsl-lib-task",
 		"bundle": "npm run views && npm run css && app-core-cli package .",
 		"pretest": "cd ../task-service && npm run build",

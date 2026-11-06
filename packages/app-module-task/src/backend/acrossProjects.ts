@@ -13,6 +13,8 @@ export interface AcrossProjects<T> {
 	entries: ProjectRead<T>[];
 	/** The projects that could not be read, with why. */
 	unreadable: SkippedProject[];
+	/** The same projects with their id and name (the page variants list them by name). */
+	unreadableProjects: Array<{ id: string; name: string; path: string; error: string }>;
 	/** Why the shared registry could not be read (then no project is listed); null when it was. */
 	registryProblem: string | null;
 }
@@ -30,14 +32,17 @@ export function readAcrossProjects<T>(read: (ctx: TaskServiceContext) => T): Acr
 	const { entries: inspected, registryProblem } = inspectKnownProjects();
 	const entries: ProjectRead<T>[] = [];
 	const unreadable: SkippedProject[] = [];
+	const unreadableProjects: AcrossProjects<T>['unreadableProjects'] = [];
 	for (const { known, health, context } of inspected) {
 		if (context === null) {
-			unreadable.push({ path: health.path, error: health.error ?? 'unreadable' });
+			const error = health.error ?? 'unreadable';
+			unreadable.push({ path: health.path, error });
+			unreadableProjects.push({ id: known.id, name: known.name, path: known.path, error });
 			continue;
 		}
 		entries.push({ project: { id: known.id, name: context.project.name, path: known.path }, value: read(context) });
 	}
 	if (inspected.length > 0 && entries.length === 0) throw new NoReadableProjectsError(unreadable);
 	entries.sort((a, b) => compareText(a.project.name, b.project.name) || compareText(a.project.path, b.project.path));
-	return { entries, unreadable, registryProblem };
+	return { entries, unreadable, unreadableProjects, registryProblem };
 }

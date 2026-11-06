@@ -19,6 +19,11 @@ import {
 	TaskRowListEntry,
 	TimelineEntry,
 	VariantSwitcherEntry,
+	ProjectAccordionEntry,
+	ProjectCardsEntry,
+	ProjectFlatTreeEntry,
+	ProjectMasterDetailEntry,
+	ProjectPickerEntry,
 } from './generated/entries.js';
 
 export interface TaskLibConfig {
@@ -54,6 +59,11 @@ export function createTaskLibEntries(config: TaskLibConfig): ComponentRegistryEn
 		TaskRowListEntry,
 		TimelineEntry,
 		VariantSwitcherEntry,
+		ProjectAccordionEntry,
+		ProjectCardsEntry,
+		ProjectFlatTreeEntry,
+		ProjectMasterDetailEntry,
+		ProjectPickerEntry,
 	]);
 	return Object.values(registry);
 }

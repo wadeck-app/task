@@ -383,6 +383,8 @@ github-a.main:
               - $type: task:TaskRowList
                 rows: $sources.detail.children
                 appearance: list
+        - $use: links.removeError
+        - $use: links.removeUndelivered
         - $type: task:Panel
           $if: $sources.links.hasLinks
           title: Linked tasks
@@ -648,6 +650,8 @@ jira.content:
                 rows: $sources.detail.children
                 appearance: table
                 density: compact
+        - $use: links.removeError
+        - $use: links.removeUndelivered
         - $type: task:Panel
           $if: $sources.links.hasLinks
           title: Linked issues
@@ -1004,6 +1008,8 @@ linear-b.main:
                                 - $type: task:TaskRowList
                                   rows: $sources.detail.children
                                   appearance: cards
+        - $use: links.removeError
+        - $use: links.removeUndelivered
         - $type: task:Panel
           $if: $sources.links.hasLinks
           title: Relations
@@ -1350,6 +1356,8 @@ notion-a.body:
                   view:
                       $type: VerticalStack
                       items: []
+        - $use: links.removeError
+        - $use: links.removeUndelivered
         - $type: task:Panel
           $if: $sources.links.hasLinks
           title: Relations
@@ -1501,6 +1509,8 @@ notion-b.body:
               - $type: task:TaskRowList
                 rows: $sources.detail.children
                 appearance: list
+        - $use: links.removeError
+        - $use: links.removeUndelivered
         - $type: task:Panel
           $if: $sources.links.hasLinks
           title: Relations
@@ -1750,6 +1760,8 @@ gitlab.c.links:
     $type: VerticalStack
     gap: gap-3
     items:
+        - $use: links.removeError
+        - $use: links.removeUndelivered
         - $use: links.groups
         - $type: Badge
           $if: $sources.links.noLinks
@@ -2009,6 +2021,8 @@ github-b.lists:
               - $type: task:TaskRowList
                 rows: $sources.detail.children
                 appearance: list
+        - $use: links.removeError
+        - $use: links.removeUndelivered
         - $type: task:Panel
           $if: $sources.links.hasLinks
           title: Linked
@@ -2029,6 +2043,8 @@ github-b.lists.folded:
               - $type: task:TaskRowList
                 rows: $sources.detail.children
                 appearance: list
+        - $use: links.removeError
+        - $use: links.removeUndelivered
         - $type: task:Panel
           $if: $sources.links.hasLinks
           title: Linked
@@ -2183,3 +2199,18 @@ links.groups:
     $type: ExtensionSlot
     $if: $sources.links.hasLinks
     items: $sources.links.groupSections
+
+# The answer of the x of a link row (removeLinkRow, result key linkRowResult), drawn as two SIBLINGS of the link groups,
+# outside their `$if` and outside every folded block: the add / remove link forms may be folded away (their feedback,
+# linkResult, with them) and the groups vanish with the last link, but a failed or undelivered removal must stay readable.
+# Two fragments, not one stack: a Notice is conditional by itself, so nothing is drawn (no empty block) until the answer holds a message.
+links.removeError:
+    $type: task:Notice
+    $if: $ctx.linkRowResult.errorText
+    label: $ctx.linkRowResult.errorText
+    variant: danger
+links.removeUndelivered:
+    $type: task:Notice
+    $if: $ctx.linkRowResult.undeliveredText
+    label: $ctx.linkRowResult.undeliveredText
+    variant: warning

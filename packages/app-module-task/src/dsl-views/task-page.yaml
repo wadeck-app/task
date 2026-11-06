@@ -117,7 +117,7 @@ $actions:
     # placeholders, so nothing is retyped. {targetEncoded} is the named handler's percent-encoded copy of `target`.
     removeLinkRow:
         url: DELETE /api/modules/task/tasks/{id}/links?project={projectParam}&type={type}&target={targetEncoded}&inlineErrors=true
-        resultKey: linkResult
+        resultKey: linkRowResult
         reloadSources: true
 
     # Quick actions for the task: components (ActionSelect, SegmentedControl, LabelChips): the value is in the URL path,
@@ -404,6 +404,14 @@ sections:
                   $if: $ctx.linkResult.undeliveredText
                   label: $ctx.linkResult.undeliveredText
                   variant: warning
+                - $type: task:Notice
+                  $if: $ctx.linkRowResult.errorText
+                  label: $ctx.linkRowResult.errorText
+                  variant: danger
+                - $type: task:Notice
+                  $if: $ctx.linkRowResult.undeliveredText
+                  label: $ctx.linkRowResult.undeliveredText
+                  variant: warning
                 - $type: ExtensionSlot
                   $if: $sources.links.hasLinks
                   items: $sources.links.groupSections
@@ -555,6 +563,14 @@ sections:
                                   - $type: task:TaskRowList
                                     rows: $sources.detail.children
                                     appearance: list
+                              - $type: task:Notice
+                                $if: $ctx.linkRowResult.errorText
+                                label: $ctx.linkRowResult.errorText
+                                variant: danger
+                              - $type: task:Notice
+                                $if: $ctx.linkRowResult.undeliveredText
+                                label: $ctx.linkRowResult.undeliveredText
+                                variant: warning
                               - $type: task:Panel
                                 $if: $sources.links.hasLinks
                                 title: Linked tasks
@@ -957,6 +973,14 @@ sections:
                                   - $type: task:TaskRowList
                                     rows: $sources.detail.children
                                     appearance: list
+                              - $type: task:Notice
+                                $if: $ctx.linkRowResult.errorText
+                                label: $ctx.linkRowResult.errorText
+                                variant: danger
+                              - $type: task:Notice
+                                $if: $ctx.linkRowResult.undeliveredText
+                                label: $ctx.linkRowResult.undeliveredText
+                                variant: warning
                               - $type: task:Panel
                                 $if: $sources.links.hasLinks
                                 title: Linked tasks
@@ -1467,6 +1491,14 @@ sections:
                                             - $type: task:TaskRowList
                                               rows: $sources.detail.children
                                               appearance: list
+                                        - $type: task:Notice
+                                          $if: $ctx.linkRowResult.errorText
+                                          label: $ctx.linkRowResult.errorText
+                                          variant: danger
+                                        - $type: task:Notice
+                                          $if: $ctx.linkRowResult.undeliveredText
+                                          label: $ctx.linkRowResult.undeliveredText
+                                          variant: warning
                                         - $type: task:Panel
                                           $if: $sources.links.hasLinks
                                           title: Linked
@@ -1492,6 +1524,14 @@ sections:
                                             - $type: task:TaskRowList
                                               rows: $sources.detail.children
                                               appearance: list
+                                        - $type: task:Notice
+                                          $if: $ctx.linkRowResult.errorText
+                                          label: $ctx.linkRowResult.errorText
+                                          variant: danger
+                                        - $type: task:Notice
+                                          $if: $ctx.linkRowResult.undeliveredText
+                                          label: $ctx.linkRowResult.undeliveredText
+                                          variant: warning
                                         - $type: task:Panel
                                           $if: $sources.links.hasLinks
                                           title: Linked
@@ -1906,6 +1946,14 @@ sections:
                                             - $type: task:TaskRowList
                                               rows: $sources.detail.children
                                               appearance: list
+                                        - $type: task:Notice
+                                          $if: $ctx.linkRowResult.errorText
+                                          label: $ctx.linkRowResult.errorText
+                                          variant: danger
+                                        - $type: task:Notice
+                                          $if: $ctx.linkRowResult.undeliveredText
+                                          label: $ctx.linkRowResult.undeliveredText
+                                          variant: warning
                                         - $type: task:Panel
                                           $if: $sources.links.hasLinks
                                           title: Linked
@@ -1931,6 +1979,14 @@ sections:
                                             - $type: task:TaskRowList
                                               rows: $sources.detail.children
                                               appearance: list
+                                        - $type: task:Notice
+                                          $if: $ctx.linkRowResult.errorText
+                                          label: $ctx.linkRowResult.errorText
+                                          variant: danger
+                                        - $type: task:Notice
+                                          $if: $ctx.linkRowResult.undeliveredText
+                                          label: $ctx.linkRowResult.undeliveredText
+                                          variant: warning
                                         - $type: task:Panel
                                           $if: $sources.links.hasLinks
                                           title: Linked
@@ -2164,6 +2220,14 @@ sections:
                                         - $type: VerticalStack
                                           gap: gap-3
                                           items:
+                                            - $type: task:Notice
+                                              $if: $ctx.linkRowResult.errorText
+                                              label: $ctx.linkRowResult.errorText
+                                              variant: danger
+                                            - $type: task:Notice
+                                              $if: $ctx.linkRowResult.undeliveredText
+                                              label: $ctx.linkRowResult.undeliveredText
+                                              variant: warning
                                             - $type: ExtensionSlot
                                               $if: $sources.links.hasLinks
                                               items: $sources.links.groupSections
@@ -2267,6 +2331,14 @@ sections:
                                         - $type: VerticalStack
                                           gap: gap-3
                                           items:
+                                            - $type: task:Notice
+                                              $if: $ctx.linkRowResult.errorText
+                                              label: $ctx.linkRowResult.errorText
+                                              variant: danger
+                                            - $type: task:Notice
+                                              $if: $ctx.linkRowResult.undeliveredText
+                                              label: $ctx.linkRowResult.undeliveredText
+                                              variant: warning
                                             - $type: ExtensionSlot
                                               $if: $sources.links.hasLinks
                                               items: $sources.links.groupSections
@@ -2803,6 +2875,14 @@ sections:
                                         - $type: VerticalStack
                                           gap: gap-3
                                           items:
+                                            - $type: task:Notice
+                                              $if: $ctx.linkRowResult.errorText
+                                              label: $ctx.linkRowResult.errorText
+                                              variant: danger
+                                            - $type: task:Notice
+                                              $if: $ctx.linkRowResult.undeliveredText
+                                              label: $ctx.linkRowResult.undeliveredText
+                                              variant: warning
                                             - $type: ExtensionSlot
                                               $if: $sources.links.hasLinks
                                               items: $sources.links.groupSections
@@ -2906,6 +2986,14 @@ sections:
                                         - $type: VerticalStack
                                           gap: gap-3
                                           items:
+                                            - $type: task:Notice
+                                              $if: $ctx.linkRowResult.errorText
+                                              label: $ctx.linkRowResult.errorText
+                                              variant: danger
+                                            - $type: task:Notice
+                                              $if: $ctx.linkRowResult.undeliveredText
+                                              label: $ctx.linkRowResult.undeliveredText
+                                              variant: warning
                                             - $type: ExtensionSlot
                                               $if: $sources.links.hasLinks
                                               items: $sources.links.groupSections
@@ -3511,6 +3599,14 @@ sections:
                                             - $type: VerticalStack
                                               gap: gap-3
                                               items:
+                                                - $type: task:Notice
+                                                  $if: $ctx.linkRowResult.errorText
+                                                  label: $ctx.linkRowResult.errorText
+                                                  variant: danger
+                                                - $type: task:Notice
+                                                  $if: $ctx.linkRowResult.undeliveredText
+                                                  label: $ctx.linkRowResult.undeliveredText
+                                                  variant: warning
                                                 - $type: ExtensionSlot
                                                   $if: $sources.links.hasLinks
                                                   items: $sources.links.groupSections
@@ -3614,6 +3710,14 @@ sections:
                                             - $type: VerticalStack
                                               gap: gap-3
                                               items:
+                                                - $type: task:Notice
+                                                  $if: $ctx.linkRowResult.errorText
+                                                  label: $ctx.linkRowResult.errorText
+                                                  variant: danger
+                                                - $type: task:Notice
+                                                  $if: $ctx.linkRowResult.undeliveredText
+                                                  label: $ctx.linkRowResult.undeliveredText
+                                                  variant: warning
                                                 - $type: ExtensionSlot
                                                   $if: $sources.links.hasLinks
                                                   items: $sources.links.groupSections
@@ -3715,6 +3819,14 @@ sections:
                                         - $type: VerticalStack
                                           gap: gap-3
                                           items:
+                                            - $type: task:Notice
+                                              $if: $ctx.linkRowResult.errorText
+                                              label: $ctx.linkRowResult.errorText
+                                              variant: danger
+                                            - $type: task:Notice
+                                              $if: $ctx.linkRowResult.undeliveredText
+                                              label: $ctx.linkRowResult.undeliveredText
+                                              variant: warning
                                             - $type: ExtensionSlot
                                               $if: $sources.links.hasLinks
                                               items: $sources.links.groupSections
@@ -4252,6 +4364,14 @@ sections:
                                             - $type: VerticalStack
                                               gap: gap-3
                                               items:
+                                                - $type: task:Notice
+                                                  $if: $ctx.linkRowResult.errorText
+                                                  label: $ctx.linkRowResult.errorText
+                                                  variant: danger
+                                                - $type: task:Notice
+                                                  $if: $ctx.linkRowResult.undeliveredText
+                                                  label: $ctx.linkRowResult.undeliveredText
+                                                  variant: warning
                                                 - $type: ExtensionSlot
                                                   $if: $sources.links.hasLinks
                                                   items: $sources.links.groupSections
@@ -4355,6 +4475,14 @@ sections:
                                             - $type: VerticalStack
                                               gap: gap-3
                                               items:
+                                                - $type: task:Notice
+                                                  $if: $ctx.linkRowResult.errorText
+                                                  label: $ctx.linkRowResult.errorText
+                                                  variant: danger
+                                                - $type: task:Notice
+                                                  $if: $ctx.linkRowResult.undeliveredText
+                                                  label: $ctx.linkRowResult.undeliveredText
+                                                  variant: warning
                                                 - $type: ExtensionSlot
                                                   $if: $sources.links.hasLinks
                                                   items: $sources.links.groupSections
@@ -4456,6 +4584,14 @@ sections:
                                         - $type: VerticalStack
                                           gap: gap-3
                                           items:
+                                            - $type: task:Notice
+                                              $if: $ctx.linkRowResult.errorText
+                                              label: $ctx.linkRowResult.errorText
+                                              variant: danger
+                                            - $type: task:Notice
+                                              $if: $ctx.linkRowResult.undeliveredText
+                                              label: $ctx.linkRowResult.undeliveredText
+                                              variant: warning
                                             - $type: ExtensionSlot
                                               $if: $sources.links.hasLinks
                                               items: $sources.links.groupSections
@@ -5028,6 +5164,14 @@ sections:
                                   rows: $sources.detail.children
                                   appearance: table
                                   density: compact
+                            - $type: task:Notice
+                              $if: $ctx.linkRowResult.errorText
+                              label: $ctx.linkRowResult.errorText
+                              variant: danger
+                            - $type: task:Notice
+                              $if: $ctx.linkRowResult.undeliveredText
+                              label: $ctx.linkRowResult.undeliveredText
+                              variant: warning
                             - $type: task:Panel
                               $if: $sources.links.hasLinks
                               title: Linked issues
@@ -5582,6 +5726,14 @@ sections:
                                   rows: $sources.detail.children
                                   appearance: table
                                   density: compact
+                            - $type: task:Notice
+                              $if: $ctx.linkRowResult.errorText
+                              label: $ctx.linkRowResult.errorText
+                              variant: danger
+                            - $type: task:Notice
+                              $if: $ctx.linkRowResult.undeliveredText
+                              label: $ctx.linkRowResult.undeliveredText
+                              variant: warning
                             - $type: task:Panel
                               $if: $sources.links.hasLinks
                               title: Linked issues
@@ -6294,6 +6446,14 @@ sections:
                                 rows: $sources.detail.children
                                 appearance: list
                                 density: compact
+                          - $type: task:Notice
+                            $if: $ctx.linkRowResult.errorText
+                            label: $ctx.linkRowResult.errorText
+                            variant: danger
+                          - $type: task:Notice
+                            $if: $ctx.linkRowResult.undeliveredText
+                            label: $ctx.linkRowResult.undeliveredText
+                            variant: warning
                           - $type: task:Panel
                             $if: $sources.links.hasLinks
                             title: Relations
@@ -6452,6 +6612,14 @@ sections:
                                             - $type: task:TaskRowList
                                               rows: $sources.detail.children
                                               appearance: cards
+                              - $type: task:Notice
+                                $if: $ctx.linkRowResult.errorText
+                                label: $ctx.linkRowResult.errorText
+                                variant: danger
+                              - $type: task:Notice
+                                $if: $ctx.linkRowResult.undeliveredText
+                                label: $ctx.linkRowResult.undeliveredText
+                                variant: warning
                               - $type: task:Panel
                                 $if: $sources.links.hasLinks
                                 title: Relations
@@ -6775,6 +6943,14 @@ sections:
                                             - $type: task:TaskRowList
                                               rows: $sources.detail.children
                                               appearance: cards
+                              - $type: task:Notice
+                                $if: $ctx.linkRowResult.errorText
+                                label: $ctx.linkRowResult.errorText
+                                variant: danger
+                              - $type: task:Notice
+                                $if: $ctx.linkRowResult.undeliveredText
+                                label: $ctx.linkRowResult.undeliveredText
+                                variant: warning
                               - $type: task:Panel
                                 $if: $sources.links.hasLinks
                                 title: Relations
@@ -7538,6 +7714,14 @@ sections:
                                     view:
                                       $type: VerticalStack
                                       items: []
+                              - $type: task:Notice
+                                $if: $ctx.linkRowResult.errorText
+                                label: $ctx.linkRowResult.errorText
+                                variant: danger
+                              - $type: task:Notice
+                                $if: $ctx.linkRowResult.undeliveredText
+                                label: $ctx.linkRowResult.undeliveredText
+                                variant: warning
                               - $type: task:Panel
                                 $if: $sources.links.hasLinks
                                 title: Relations
@@ -7592,6 +7776,14 @@ sections:
                                     view:
                                       $type: VerticalStack
                                       items: []
+                              - $type: task:Notice
+                                $if: $ctx.linkRowResult.errorText
+                                label: $ctx.linkRowResult.errorText
+                                variant: danger
+                              - $type: task:Notice
+                                $if: $ctx.linkRowResult.undeliveredText
+                                label: $ctx.linkRowResult.undeliveredText
+                                variant: warning
                               - $type: task:Panel
                                 $if: $sources.links.hasLinks
                                 title: Relations
@@ -8764,6 +8956,14 @@ sections:
                                   - $type: task:TaskRowList
                                     rows: $sources.detail.children
                                     appearance: list
+                              - $type: task:Notice
+                                $if: $ctx.linkRowResult.errorText
+                                label: $ctx.linkRowResult.errorText
+                                variant: danger
+                              - $type: task:Notice
+                                $if: $ctx.linkRowResult.undeliveredText
+                                label: $ctx.linkRowResult.undeliveredText
+                                variant: warning
                               - $type: task:Panel
                                 $if: $sources.links.hasLinks
                                 title: Relations
@@ -8810,6 +9010,14 @@ sections:
                                   - $type: task:TaskRowList
                                     rows: $sources.detail.children
                                     appearance: list
+                              - $type: task:Notice
+                                $if: $ctx.linkRowResult.errorText
+                                label: $ctx.linkRowResult.errorText
+                                variant: danger
+                              - $type: task:Notice
+                                $if: $ctx.linkRowResult.undeliveredText
+                                label: $ctx.linkRowResult.undeliveredText
+                                variant: warning
                               - $type: task:Panel
                                 $if: $sources.links.hasLinks
                                 title: Relations

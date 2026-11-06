@@ -39,6 +39,8 @@ view:
                       gap: gap-4
                       items:
                           - $use: linear-a.subissues
+                          - $use: links.removeError
+                          - $use: links.removeUndelivered
                           - $use: linear-a.relations
               hidden:
                   label: Hidden

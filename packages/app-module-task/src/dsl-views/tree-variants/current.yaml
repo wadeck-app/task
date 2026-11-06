@@ -1,0 +1,9 @@
+# The global forest as shipped before the experiment, unchanged: one section per project, each with its whole forest as a
+# table. The reference every design is compared with, and the one rendered whenever experiments are off (production).
+# A test keeps the page around it equal to the page at the commit that introduced the experiment
+# (src/backend/__fixtures__/tree-page.head.yaml). The `$if: $sources.tree.groups` lives on the switcher.
+label: Current
+hint: One full table per project, stacked (today's page). Unreadable beyond a few projects.
+view:
+    $type: ExtensionSlot
+    items: $sources.tree.groups
