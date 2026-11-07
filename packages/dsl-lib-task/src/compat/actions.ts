@@ -31,15 +31,24 @@ export function pageActionHandler(ctx: Ctx): ActionHandler | undefined {
 	if (!onAction && !hasNamed) {
 		return undefined;
 	}
-	return async (action, params) => {
+	return async (action, params, options) => {
 		const named = ctx[action];
+		// A body travels through ctx.onAction (dsl-ui >= 318: sends it as JSON, publishes the resultKey, reloads).
+		if (options?.body !== undefined && onAction) {
+			return onAction(action, params, options);
+		}
 		if (typeof named === 'function' && action !== 'onAction') {
-			await (named as NamedHandler)(withEncodedCopies(params));
-			return;
+			const body = options?.body;
+			const merged =
+				typeof body === 'object' && body !== null
+					? { ...withEncodedCopies(params), ...body }
+					: withEncodedCopies(params);
+			await (named as NamedHandler)(merged);
+			return undefined;
 		}
 		if (!onAction) {
 			throw new Error(`the page has no action "${action}" (declare it under $actions)`);
 		}
-		await onAction(action, params);
+		return options === undefined ? onAction(action, params) : onAction(action, params, options);
 	};
 }

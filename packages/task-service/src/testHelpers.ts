@@ -79,3 +79,36 @@ export function createSharedRegistrySandbox(): SharedRegistrySandbox {
 		cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
 	};
 }
+
+/**
+ * Writes `count` task files and their index straight to disk (a store.create per task rewrites the growing index every
+ * time, far too slow for 1 000 tasks). Task `n` is titled `Task n about topic k`, carries the labels `common`, `group-k`
+ * and `solo-n` (k = n % 20), and every 10th task has a parent (the previous task).
+ */
+export function seedTasks(t: TestContext, count: number): string[] {
+	const tasksDir = path.join(t.rootDir, 'data', 'tasks');
+	fs.mkdirSync(tasksDir, { recursive: true });
+	const ids: string[] = [];
+	const index: Array<Record<string, unknown>> = [];
+	const createdAt = new Date().toISOString();
+	for (let n = 0; n < count; n++) {
+		const id = `s${n.toString(36).padStart(7, '0')}`;
+		const parentId = n % 10 === 9 ? ids[n - 1] : undefined;
+		const title = `Task ${n} about topic ${n % 20}`;
+		const record = {
+			id,
+			title,
+			status: 'backlog',
+			...(parentId !== undefined && { parentId }),
+			labels: ['common', `group-${n % 20}`, `solo-${n}`],
+			createdAt,
+			updatedAt: createdAt,
+			history: [{ status: 'backlog', timestamp: createdAt }],
+		};
+		fs.writeFileSync(path.join(tasksDir, `${id}.json`), JSON.stringify(record, null, 2));
+		index.push({ id, title, status: 'backlog', createdAt, ...(parentId !== undefined && { parentId }) });
+		ids.push(id);
+	}
+	fs.writeFileSync(path.join(t.rootDir, 'data', 'task-index.json'), JSON.stringify({ tasks: index }, null, 2));
+	return ids;
+}

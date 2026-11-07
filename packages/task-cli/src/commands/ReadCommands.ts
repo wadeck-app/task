@@ -6,15 +6,18 @@ import {
 	listAncestors,
 	listChildren,
 	listForest,
+	listLabels,
 	listTasks,
 	readTaskLinks,
+	SEARCH_MAX_LIMIT,
+	searchTasks,
 	showTask,
 } from '@wadeck-app/task-service';
 import type { TaskHistory, TaskLinksReport } from '@wadeck-app/task-service';
 
 import type { ProjectCommand } from '../cli/env.js';
 import { runTaskHistoryFollow, runTaskListFollow } from '../cli/follow.js';
-import { errorOutput, failure, jsonResult, runJson } from '../cli/output.js';
+import { errorOutput, failure, jsonResult, runJson, taskLine } from '../cli/output.js';
 
 const LIST_USAGE = 'Usage: task list [--all] [--parent <id>] [--tree] [--follow|-f]';
 const SHOW_USAGE = 'Usage: task show <id> [--with-parent] [--with-children]';
@@ -144,4 +147,72 @@ export const runTree: ProjectCommand = (rest, { jsonMode, ctx }) => {
 		return errorOutput(jsonMode, 'missing id', 'Usage: task tree <id>');
 	}
 	return runJson(jsonMode, () => getFullTree(ctx, { id }));
+};
+
+const FIND_USAGE = 'Usage: task find <query> [--limit N] [--json]';
+
+/** `task find`: tasks whose id starts with, or whose title contains, the query (best match first; reads the index only). */
+export const runFind: ProjectCommand = (rest, { jsonMode, ctx }) => {
+	const words: string[] = [];
+	let limit: number | undefined;
+	for (let i = 0; i < rest.length; i++) {
+		const arg = rest[i]!;
+		if (arg === '--limit') {
+			const value = rest[i + 1];
+			if (value === undefined) {
+				return errorOutput(jsonMode, '--limit requires a number', FIND_USAGE);
+			}
+			limit = /^\d+$/.test(value) ? Number(value) : NaN;
+			if (!(limit >= 1 && limit <= SEARCH_MAX_LIMIT)) {
+				return errorOutput(
+					jsonMode,
+					`--limit must be an integer from 1 to ${SEARCH_MAX_LIMIT}, got "${value}"`,
+					FIND_USAGE
+				);
+			}
+			i++;
+		} else if (arg.startsWith('--')) {
+			return errorOutput(jsonMode, `unknown flag: ${arg}`, FIND_USAGE);
+		} else {
+			words.push(arg);
+		}
+	}
+	const query = words.join(' ').trim();
+	if (query === '') {
+		return errorOutput(jsonMode, 'missing query', FIND_USAGE);
+	}
+	try {
+		const hits = searchTasks(ctx, { q: query, limit });
+		if (jsonMode) {
+			return jsonResult(hits);
+		}
+		if (hits.length === 0) {
+			process.stderr.write(`No task matches "${query}".\n`);
+		}
+		return {
+			exitCode: 0,
+			output: hits.map(hit => taskLine({ id: hit.id, title: hit.headline, status: hit.status })).join('\n'),
+		};
+	} catch (error) {
+		return failure(jsonMode, error);
+	}
+};
+
+/** `task labels`: the labels in use with the number of tasks carrying each, most used first. */
+export const runLabels: ProjectCommand = (rest, { jsonMode, ctx }) => {
+	if (rest.length > 0) {
+		return errorOutput(jsonMode, `unexpected argument: ${rest[0]}`, 'Usage: task labels [--json]');
+	}
+	try {
+		const labels = listLabels(ctx);
+		if (jsonMode) {
+			return jsonResult(labels);
+		}
+		if (labels.length === 0) {
+			process.stderr.write('No label in use in this project. Add one with: task add-label <id> <label>\n');
+		}
+		return { exitCode: 0, output: labels.map(({ label, count }) => `  ${count}  ${label}`).join('\n') };
+	} catch (error) {
+		return failure(jsonMode, error);
+	}
 };

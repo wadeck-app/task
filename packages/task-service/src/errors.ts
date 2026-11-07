@@ -55,6 +55,9 @@ export class InvalidTaskTypeError extends TaskServiceError {
 	}
 }
 
+/** A task title or description is missing or blank where one is required. */
+export class InvalidTaskTextError extends TaskServiceError {}
+
 /** A `--filter <field>=<value>` expression is malformed or targets a non-filterable field. */
 export class InvalidDeleteFilterError extends TaskServiceError {
 	constructor(

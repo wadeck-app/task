@@ -6,7 +6,10 @@ import {
 	listAncestors,
 	listChildren,
 	listForest,
+	listLabels,
 	listTasks,
+	searchTasks,
+	SEARCH_MAX_LIMIT,
 	listTasksAcrossProjects,
 	listTypes,
 	showTask,
@@ -20,19 +23,28 @@ import { readAcrossProjects } from '../acrossProjects.js';
 import { allForestBody, allTasksBody } from '../allProjectsViews.js';
 import { shortUtcTime } from '../display.js';
 import { RequestError } from '../errors.js';
+import { detailHref } from '../hrefs.js';
+import { countDescendants, listMetaKeys } from '../projectVocabulary.js';
 import {
 	allProjectsFlag,
 	BLANK_ANSWER,
 	booleanFlag,
+	boundedIntegerQuery,
 	isBlankRequest,
 	optionalQueryValue,
+	queryValue,
 	showAllFlag,
 } from '../request.js';
 import { withRowLinks } from '../rowViews.js';
-import { linkGroupSections, linkGroups, linkRowViews } from '../taskPresentation.js';
+import { linkGroupSections, linkGroups, linkRowViews, statusTone } from '../taskPresentation.js';
 import { childrenBody, forestBody, taskDetailBody, taskTreeBody, tasksListBody } from '../taskViews.js';
 import { taskId } from './routeKit.js';
 import type { RouteKit } from './routeKit.js';
+
+/** `{ name: value }`, or nothing when the value is absent (an optional property under exactOptionalPropertyTypes). */
+function optionalField(name: string, value: string | undefined): Record<string, string> {
+	return value === undefined ? {} : { [name]: value };
+}
 
 export function registerTaskReadRoutes(kit: RouteKit): void {
 	const { route, open } = kit;
@@ -56,6 +68,40 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 		};
 	});
 
+	// A picker's search (parent, links): the index only, never a task file. Registered before `/tasks/:id`, which would take
+	// "search" for an id. `limit` above the maximum is refused (a picker never needs more; no silent clamping).
+	route('GET', '/tasks/search', req => {
+		const ctx = open(req);
+		const limit = boundedIntegerQuery(req.query, 'limit', SEARCH_MAX_LIMIT);
+		const exclude = (queryValue(req.query, 'exclude') ?? '')
+			.split(',')
+			.map(id => id.trim())
+			.filter(id => id !== '');
+		const hits = searchTasks(ctx, {
+			q: queryValue(req.query, 'q') ?? '',
+			...(limit === undefined ? {} : { limit }),
+			exclude,
+			...optionalField('excludeDescendantsOf', optionalQueryValue(req.query, 'excludeDescendantsOf')),
+		});
+		return {
+			status: 200,
+			body: hits.map(hit => ({
+				id: hit.id,
+				headline: hit.headline,
+				status: hit.status,
+				statusText: hit.status,
+				tone: statusTone(ctx.config, hit.status),
+				href: detailHref(ctx.project, hit.id),
+			})),
+		};
+	});
+
+	// The labels in use in the project with their count (the suggestions of a label picker).
+	route('GET', '/labels', req => ({ status: 200, body: listLabels(open(req)) }));
+
+	// The metadata keys in use in the project (the suggestions of the key field), read when the field is opened.
+	route('GET', '/meta-keys', req => ({ status: 200, body: listMetaKeys(open(req)) }));
+
 	route('GET', '/tasks/:id', req => {
 		if (isBlankRequest(req.query)) return BLANK_ANSWER;
 		const ctx = open(req);
@@ -77,6 +123,7 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 					detail['parent'] === null && detail['parentId'] !== undefined ? [] : listAncestors(ctx, { id }),
 				childrenSummary: summarizeChildren(ctx, { id }),
 				blockers: describeBlockers(ctx, { id }),
+				descendantCount: countDescendants(ctx, id),
 			}),
 		};
 	});

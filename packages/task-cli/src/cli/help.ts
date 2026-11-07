@@ -5,7 +5,8 @@ export function taskHelp(): string {
 	return `task ${VERSION} - task tracker CLI
 
 Concepts:
-  task        A work item with id, description, status, type, labels, and metadata
+  task        A work item with id, title, status, type, labels, and metadata; its description is stored only when it differs from the title
+              (a text longer than 90 characters given to 'task new' becomes a headline as title plus the full text as description)
   parent      Optional parentId on a task; hierarchy depth is unlimited (delete a parent: children become roots, or --cascade-delete)
   link        Typed, directional, acyclic relation between two tasks: blockedBy, duplicateOf, causedBy (inverses blocks, duplicates, causes are derived)
   project     A project of the shared project registry (managed by the 'project' CLI): id (8 hex), name, aliases, paths. Selected with -p, TASK_PROJECT or the cwd.
@@ -16,7 +17,16 @@ Concepts:
   id          Short prefix of the task UUID - any unambiguous prefix is accepted
 
 Usage:
-  task new <description> [--parent <id>]     Create a new task (optionally under a parent); prints full task JSON
+  task new <text> [--description <text> | --description-file <path|->] [--parent <id>]
+                                             Create a new task (optionally under a parent); prints full task JSON. <text> is the title;
+                                             over 90 characters (and without a description) it is cut to a headline (first line, else first
+                                             sentence, else a word boundary + "...") and the full text becomes the description.
+                                             --description-file reads the body from a file, or from standard input with -
+  task set-title <id> <text>                 Change the title (the index and 'task list' follow)
+  task set-description <id> <text>           Change the description; an empty text clears it (the body is the title again)
+  task find <query> [--limit N] [--json]     Find tasks by id prefix or title text, best match first (id prefix, title word prefix, substring);
+                                             N from 1 to 20 (default 8); text lines "id  headline  [status]", --json: [{id, headline, status}]
+  task labels [--json]                       Labels in use with the number of tasks carrying each, most used first
   task list [--json] [--all] [--follow|-f]   List tasks as JSON array (hides terminal statuses unless --all)
   task list --parent <id>                    List only the direct children of a task
   task list --tree                           List tasks as a nested forest (kept: matching tasks + the ancestors leading to them)
@@ -29,6 +39,7 @@ Usage:
   task set-status <id> <status>              Update task status (valid values: task status list)
   task status list [--json]                  List the valid statuses of the project in order, marking the default (initial status of a new task) and the terminal ones
   task set-type <id> <type>                  Update task type (validated if types configured)
+  task unset-type <id>                       Clear the task type
   task type list                             List valid types for this project
   task type add <name>                       Add a valid type
   task type remove <name>                    Remove a valid type
@@ -43,6 +54,7 @@ Usage:
   task add-label <id> <label>               Add a label to a task
   task remove-label <id> <label>            Remove a label from a task
   task set-meta <id> <key> <value>          Set a metadata key/value on a task
+  task unset-meta <id> <key>                 Remove a metadata key (an absent key changes nothing)
   task delete <id>[,<id2>,...]              Delete task(s) by ID (comma-separated)
   task delete --all                          Delete all tasks
   task delete --filter <field>=<value>       Delete tasks matching a filter (fields: id, title, status, parentId; glob * allowed)
@@ -69,18 +81,19 @@ Global flags:
 How the project was resolved is in 'task cli logs'.
 
 Events (pushed to queue through @wadeck-app/queue-sdk after the change is saved, with the project directory as cwd so its .queue/subscribers.yml is used):
-  onTaskCreated        new                              taskId, status, description, parentId, type, labels
+  onTaskCreated        new                              taskId, status, description (the full text), parentId, type, labels
   onStatusChange       set-status                       taskId, oldStatus, newStatus, status (= newStatus), type, labels
   onTaskLinked         link                             taskId, linkType, targetId
   onTaskUnlinked       unlink                           taskId, linkType, targetId
   onTaskUnblocked      set-status, last blocker closed  taskId (the unblocked task), blockerId, status, type, labels
-  onTaskTypeChanged    set-type                         taskId, oldType, newType
+  onTaskTypeChanged    set-type, unset-type             taskId, oldType, newType (absent after unset-type)
   onTaskLabelAdded     add-label                        taskId, label
   onTaskLabelRemoved   remove-label                     taskId, label
-  onTaskMetaChanged    set-meta                         taskId, key, oldValue, newValue
+  onTaskMetaChanged    set-meta, unset-meta             taskId, key, oldValue, newValue (absent after unset-meta)
+  onTaskTextChanged    set-title, set-description       taskId, field (title|description), oldValue, newValue (empty when the description was cleared)
   onTaskParentChanged  set-parent, remove-parent        taskId, oldParentId, newParentId
-  onTaskDeleted        delete                           taskId, description, status, parentId, orphanedChildIds, removedLinkCount
-  Absent fields are omitted (no oldType for a first type, no oldValue for a new key, no oldParentId / newParentId for a root task).
+  onTaskDeleted        delete                           taskId, description (the full text), status, parentId, orphanedChildIds, removedLinkCount
+  Absent fields are omitted (no oldType for a first type, no oldValue for a new key or a description the task did not have, no oldParentId / newParentId for a root task).
   Nothing fires when nothing changed (same type, label already there or absent, same meta value, same parent) or when the command fails.
   delete fires one onTaskDeleted per deleted task, after the deletion; never for --dry-run. With --cascade-delete the order is
   leaves before parents (deepest first).
@@ -96,7 +109,8 @@ Events (pushed to queue through @wadeck-app/queue-sdk after the change is saved,
     sent, then the connection broke or timed out: the event MAY be recorded and is never retried; check 'queue history'
     first, then 'queue replay <eventId>' if it is listed (or the push above if it is absent)
 
-Output: all commands output JSON (tasks are JSON objects with id, description, status, type, labels, meta)
+Output: commands output JSON (tasks are JSON objects with id, title, status, type, labels, meta; "description" only when stored),
+  except 'find' and 'labels', which print text lines unless --json is given
 
 Exit codes:
   0  success

@@ -1,4 +1,5 @@
-// Task commands that change a task: new, set-status, link/unlink, set-type, add-label, remove-label, set-parent, remove-parent, set-meta.
+// Task commands that change a task: new, set-status, link/unlink, set-type, unset-type, add-label, remove-label, set-parent, remove-parent,
+// set-meta, unset-meta, set-title, set-description.
 import {
 	ALL_LINK_NAMES,
 	addLabel,
@@ -10,8 +11,11 @@ import {
 	setMeta,
 	setParent,
 	setStatus,
+	setTaskText,
 	setType,
 	unlinkTasks,
+	unsetMeta,
+	unsetType,
 } from '@wadeck-app/task-service';
 import type {
 	CreateTaskResult,
@@ -25,11 +29,16 @@ import type {
 import type { ProjectCommand } from '../cli/env.js';
 import { errorOutput, failure, jsonResult, taskLine } from '../cli/output.js';
 import type { CommandResult } from '../cli/output.js';
+import { readTextSource } from '../cli/readText.js';
 
-const NEW_USAGE = 'Usage: task new <description> [--parent <id>]';
+const NEW_USAGE =
+	'Usage: task new <text> [--description <text> | --description-file <path|->] [--parent <id>]\n' +
+	'<text> is the title; a text longer than 90 characters becomes a headline (title) plus the full text (description) unless a description is given.';
 
 export const runNew: ProjectCommand = async (rest, { jsonMode, ctx, eventSink }) => {
+	let title: string | undefined;
 	let description: string | undefined;
+	let descriptionFile: string | undefined;
 	let parentArg: string | undefined;
 	for (let i = 0; i < rest.length; i++) {
 		const arg = rest[i]!;
@@ -39,18 +48,41 @@ export const runNew: ProjectCommand = async (rest, { jsonMode, ctx, eventSink })
 				return errorOutput(jsonMode, '--parent requires a task id', NEW_USAGE);
 			}
 			i++;
+		} else if (arg === '--description') {
+			description = rest[i + 1];
+			if (!description) {
+				return errorOutput(jsonMode, '--description requires a text', NEW_USAGE);
+			}
+			i++;
+		} else if (arg === '--description-file') {
+			descriptionFile = rest[i + 1];
+			if (!descriptionFile) {
+				return errorOutput(jsonMode, '--description-file requires a path (or - for standard input)', NEW_USAGE);
+			}
+			i++;
 		} else if (arg.startsWith('--')) {
 			return errorOutput(jsonMode, `unknown flag: ${arg}`, NEW_USAGE);
-		} else if (description === undefined) {
-			description = arg;
+		} else if (title === undefined) {
+			title = arg;
 		}
 	}
-	if (!description) {
+	if (description !== undefined && descriptionFile !== undefined) {
+		return errorOutput(jsonMode, '--description and --description-file cannot be combined', NEW_USAGE);
+	}
+	if (descriptionFile !== undefined) {
+		try {
+			description = readTextSource(descriptionFile);
+		} catch (error) {
+			// Relative paths are read from the current directory: the usage line is the hint.
+			return errorOutput(jsonMode, error instanceof Error ? error.message : String(error), NEW_USAGE);
+		}
+	}
+	if (!title && !description) {
 		return errorOutput(jsonMode, 'missing description', NEW_USAGE);
 	}
 	let created: CreateTaskResult;
 	try {
-		created = createTask(ctx, { description, parent: parentArg });
+		created = createTask(ctx, { title, description, parent: parentArg });
 	} catch (error) {
 		return failure(jsonMode, error);
 	}
@@ -168,3 +200,37 @@ export const runSetMeta: ProjectCommand = async (rest, { jsonMode, ctx, eventSin
 	}
 	return changeOutput(jsonMode, eventSink, () => setMeta(ctx, { id, key, value }));
 };
+
+export const runUnsetMeta = twoArgsChangeCommand('Usage: task unset-meta <id> <key>', (ctx, id, key) =>
+	unsetMeta(ctx, { id, key })
+);
+
+export const runUnsetType: ProjectCommand = (rest, { jsonMode, ctx, eventSink }) => {
+	const id = rest[0];
+	if (!id) {
+		return errorOutput(jsonMode, 'missing id', 'Usage: task unset-type <id>');
+	}
+	return changeOutput(jsonMode, eventSink, () => unsetType(ctx, { id }));
+};
+
+/** `task set-title` / `task set-description`: an id and ONE text argument (quoted); a description may be empty to clear it. */
+function textChangeCommand(command: 'set-title' | 'set-description', field: 'title' | 'description'): ProjectCommand {
+	const usage = `Usage: task ${command} <id> <text>`;
+	return (rest, { jsonMode, ctx, eventSink }) => {
+		const [id, text] = rest;
+		if (!id || text === undefined) {
+			return errorOutput(jsonMode, 'missing arguments', usage);
+		}
+		if (rest.length > 2) {
+			return errorOutput(
+				jsonMode,
+				`too many arguments: ${rest.length - 1} texts given`,
+				`Quote the text: task ${command} ${id} "<text>"`
+			);
+		}
+		return changeOutput(jsonMode, eventSink, () => setTaskText(ctx, { id, [field]: text }));
+	};
+}
+
+export const runSetTitle = textChangeCommand('set-title', 'title');
+export const runSetDescription = textChangeCommand('set-description', 'description');

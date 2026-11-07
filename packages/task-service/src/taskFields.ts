@@ -83,3 +83,40 @@ export function setMeta(ctx: TaskServiceContext, input: { id: string; key: strin
 				];
 	return { task, events };
 }
+
+/** Removes a metadata key. `onTaskMetaChanged` (`newValue` absent) only when the key existed. */
+export function unsetMeta(ctx: TaskServiceContext, input: { id: string; key: string }): TaskChangeResult {
+	const before = ctx.store.findByPrefix(input.id);
+	if (!Object.hasOwn(before.meta ?? {}, input.key)) {
+		return { task: before, events: [] };
+	}
+	const oldValue = before.meta![input.key];
+	const task = ctx.store.removeMeta(before.id, input.key);
+	return {
+		task,
+		events: [
+			{
+				name: 'onTaskMetaChanged',
+				payload: { taskId: task.id, key: input.key, oldValue, newValue: undefined, ...projectEnv(ctx) },
+			},
+		],
+	};
+}
+
+/** Clears the type of a task. `onTaskTypeChanged` (`newType` absent) only when the task had one. */
+export function unsetType(ctx: TaskServiceContext, input: { id: string }): TaskChangeResult {
+	const before = ctx.store.findByPrefix(input.id);
+	if (before.type === undefined) {
+		return { task: before, events: [] };
+	}
+	const task = ctx.store.clearType(before.id);
+	return {
+		task,
+		events: [
+			{
+				name: 'onTaskTypeChanged',
+				payload: { taskId: task.id, oldType: before.type, newType: undefined, ...projectEnv(ctx) },
+			},
+		],
+	};
+}

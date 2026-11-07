@@ -1,5 +1,6 @@
 import { Plus, X } from 'lucide-react';
 import React, { useRef, useState } from 'react';
+import { pathKeyOf } from '../pathKey.js';
 import { CHIP_PALETTE, TONE_PILL, hashIndex, isTone } from '../tones.js';
 import { useAction } from '../useAction.js';
 import type { ActionHandler } from '../useAction.js';
@@ -45,11 +46,7 @@ export interface LabelChipsProps {
 
 /** base64url (no padding) of the UTF-8 bytes of a label: the same key the task module computes. */
 export function labelKeyOf(label: string): string {
-	let binary = '';
-	for (const byte of new TextEncoder().encode(label)) {
-		binary += String.fromCharCode(byte);
-	}
-	return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+	return pathKeyOf(label);
 }
 
 // @formatter:off

@@ -1,8 +1,31 @@
 import { useEffect, useRef, useState } from 'react';
 import { reportOnce } from './reportOnce.js';
 
-/** The handler a page gives to its components (`ctx.onAction`): runs an entry of the view's `$actions`. */
-export type ActionHandler = (action: string, params: Record<string, unknown>) => Promise<void> | void;
+/** Extra arguments of a run: the JSON body (dsl-ui >= 318 `ctx.onAction(name, params, { body })`). */
+export interface ActionOptions {
+	body?: unknown;
+}
+
+/**
+ * The handler a page gives to its components (`ctx.onAction`): runs an entry of the view's `$actions`. It may resolve
+ * the answer the shell published (an object with `error` when the request failed: the shell does not reject then).
+ */
+export type ActionHandler = (
+	action: string,
+	params: Record<string, unknown>,
+	options?: ActionOptions
+) => Promise<unknown> | unknown;
+
+/** The shell publishes a failed request as `{ error, status }` and resolves; a handler may also resolve `false`. */
+function isErrorAnswer(answer: unknown): boolean {
+	return (
+		answer === false ||
+		(typeof answer === 'object' &&
+			answer !== null &&
+			'error' in answer &&
+			Boolean((answer as { error: unknown }).error))
+	);
+}
 
 export const NO_PAGE_HINT = 'This control must be rendered inside a page: there is no action to run';
 
@@ -13,8 +36,11 @@ export interface ActionRunner {
 	busy: boolean;
 	/** Why the control is disabled when it is not `available`, else undefined. */
 	unavailableReason: string | undefined;
-	/** Runs the action; resolves true when the handler did not reject. Never throws. */
-	run: (params: Record<string, unknown>) => Promise<boolean>;
+	/**
+	 * Runs the action, with a JSON body when one is given; resolves true when the handler neither rejected nor
+	 * answered with an error. Never throws.
+	 */
+	run: (params: Record<string, unknown>, body?: unknown) => Promise<boolean>;
 }
 
 /**
@@ -46,14 +72,15 @@ export function useAction(
 		}
 	}, [who, action, hasAction, wired]);
 
-	const run = async (params: Record<string, unknown>): Promise<boolean> => {
+	const run = async (params: Record<string, unknown>, body?: unknown): Promise<boolean> => {
 		if (!hasAction || !onAction) {
 			return false;
 		}
 		setLocal(true);
 		try {
-			await onAction(action, params);
-			return true;
+			const answer =
+				body === undefined ? await onAction(action, params) : await onAction(action, params, { body });
+			return !isErrorAnswer(answer);
 		} catch (error) {
 			console.error(
 				`[${who}] action "${action}" failed: ${error instanceof Error ? error.message : String(error)}`

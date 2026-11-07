@@ -798,6 +798,7 @@ describe('queue events — the task events are declared to the queue (registerEv
 			'onTaskLinked',
 			'onTaskMetaChanged',
 			'onTaskParentChanged',
+			'onTaskTextChanged',
 			'onTaskTypeChanged',
 			'onTaskUnblocked',
 			'onTaskUnlinked',
@@ -999,5 +1000,99 @@ describe('queue events — taskProjectId', () => {
 		expect(payload['taskProjectPath']).toBe(path.resolve(registeredDir));
 		expect((publishMock.mock.calls[0]![2] as { cwd?: string }).cwd).toBe(path.resolve(registeredDir));
 		fs.rmSync(registeredDir, { recursive: true, force: true });
+	});
+});
+
+describe('queue events — text, metadata removal, type clearing, split at creation', () => {
+	it('new with a long text pushes onTaskCreated whose description is the FULL text (the title is the headline)', async () => {
+		const prompt = `Review the importer\n\n${'Check every code path. '.repeat(12)}`;
+
+		const created = JSON.parse((await runTaskCommand(['new', prompt], tmpDir)).output) as {
+			title: string;
+			description: string;
+		};
+
+		expect(created.title).toBe('Review the importer');
+		expect(pushedEvents()[0]!.payload['description']).toBe(prompt);
+		expect('title' in pushedEvents()[0]!.payload).toBe(false);
+	});
+
+	it('new "title" --description pushes the description as the body', async () => {
+		await runTaskCommand(['new', 'Short', '--description', 'The body'], tmpDir);
+
+		expect(pushedEvents()[0]!.payload['description']).toBe('The body');
+	});
+
+	it('set-title and set-description push onTaskTextChanged (oldValue absent for a first description)', async () => {
+		const task = await newTask('Old');
+		publishMock.mockClear();
+
+		await runTaskCommand(['set-title', task.id.slice(0, 4), 'New'], tmpDir);
+		await runTaskCommand(['set-description', task.id, 'Body'], tmpDir);
+		await runTaskCommand(['set-description', task.id, ''], tmpDir);
+
+		const events = pushedEvents();
+		expect(events.map(e => e.event)).toEqual(['onTaskTextChanged', 'onTaskTextChanged', 'onTaskTextChanged']);
+		expect(events[0]!.payload).toMatchObject({ taskId: task.id, field: 'title', oldValue: 'Old', newValue: 'New' });
+		expect(events[1]!.payload).toMatchObject({ field: 'description', newValue: 'Body' });
+		expect('oldValue' in events[1]!.payload).toBe(false);
+		expect(events[2]!.payload).toMatchObject({ field: 'description', oldValue: 'Body', newValue: '' });
+		expect(events[0]!.payload['taskProjectPath']).toBe(tmpDir);
+	});
+
+	it('pushes nothing when the text does not change, or the title is blank', async () => {
+		const task = await newTask('Same');
+		publishMock.mockClear();
+
+		await runTaskCommand(['set-title', task.id, 'Same'], tmpDir);
+		const blank = await runTaskCommand(['set-title', task.id, ' '], tmpDir);
+
+		expect(blank.exitCode).toBe(1);
+		expect(pushedEvents()).toEqual([]);
+	});
+
+	it('unset-meta pushes onTaskMetaChanged with oldValue and no newValue, and nothing for an absent key', async () => {
+		const task = await newTask('task');
+		await runTaskCommand(['set-meta', task.id, 'owner', 'ann'], tmpDir);
+		publishMock.mockClear();
+
+		await runTaskCommand(['unset-meta', task.id, 'owner'], tmpDir);
+		await runTaskCommand(['unset-meta', task.id, 'owner'], tmpDir);
+
+		const events = pushedEvents();
+		expect(events).toHaveLength(1);
+		expect(events[0]!.event).toBe('onTaskMetaChanged');
+		expect(events[0]!.payload).toMatchObject({ taskId: task.id, key: 'owner', oldValue: 'ann' });
+		expect('newValue' in events[0]!.payload).toBe(false);
+	});
+
+	it('unset-type pushes onTaskTypeChanged with oldType and no newType, and nothing without a type', async () => {
+		const task = await newTask('task');
+		await runTaskCommand(['set-type', task.id, 'bug'], tmpDir);
+		publishMock.mockClear();
+
+		await runTaskCommand(['unset-type', task.id], tmpDir);
+		await runTaskCommand(['unset-type', task.id], tmpDir);
+
+		const events = pushedEvents();
+		expect(events).toHaveLength(1);
+		expect(events[0]!.payload).toMatchObject({ taskId: task.id, oldType: 'bug' });
+		expect('newType' in events[0]!.payload).toBe(false);
+	});
+
+	it('an undelivered onTaskTextChanged is reported like the others (exit 0, stderr with the replay command)', async () => {
+		const task = await newTask('Old');
+		publishMock.mockImplementation(() => Promise.resolve({ status: 'dropped', reason: 'no queue' }));
+		const stderr: string[] = [];
+		vi.spyOn(process.stderr, 'write').mockImplementation(chunk => {
+			stderr.push(String(chunk));
+			return true;
+		});
+
+		const result = await runTaskCommand(['set-title', task.id, 'New'], tmpDir);
+
+		expect(result.exitCode).toBe(0);
+		expect(stderr.join('')).toContain(`'onTaskTextChanged' for task ${task.id} not delivered: no queue`);
+		expect(stderr.join('')).toContain('task cli logs');
 	});
 });

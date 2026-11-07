@@ -8,8 +8,11 @@ import {
 	setMeta,
 	setParent,
 	setStatus,
+	setTaskText,
 	setType,
 	unlinkTasks,
+	unsetMeta,
+	unsetType,
 } from '@wadeck-app/task-service';
 import type { TaskChangeResult } from '@wadeck-app/task-service';
 
@@ -17,13 +20,19 @@ import { RequestError } from '../errors.js';
 import { detailHref } from '../hrefs.js';
 import { labelFromKey } from '../labelKey.js';
 import { rememberLastProject } from '../lastProject.js';
+import { metaKeyFromKey } from '../metaKey.js';
 import { bodyObject, optionalString, queryValue, requiredString } from '../request.js';
 import type { RouteAnswer, RouteRequest } from '../request.js';
 import { undeliveredFields } from '../undelivered.js';
 import { taskId } from './routeKit.js';
 import type { RouteKit } from './routeKit.js';
 
-const CREATE_USAGE = 'Send a JSON body { "description": string, "parent"?: string (task id or prefix) }.';
+const CREATE_USAGE =
+	'Send a JSON body { "title"?: string, "description"?: string, "parent"?: string (task id or prefix) } with at least a title or a description (a long text alone is split into a headline and a description).';
+const TEXT_USAGE =
+	'Send a JSON body { "title"?: string, "description"?: string } with at least one of them; an empty description clears it.';
+const META_VALUE_USAGE =
+	'Send a JSON body { "value": string } or give ?value=<text> (an empty value is allowed); the key is in the path.';
 const STATUS_USAGE = 'Send a JSON body { "status": string } (one of the project statuses).';
 const LABEL_USAGE = 'Send a JSON body { "label": string }.';
 const PARENT_USAGE = 'Send a JSON body { "parent": string } (task id or prefix).';
@@ -32,6 +41,8 @@ const PATH_LABEL_USAGE = 'Use POST /tasks/<id>/labels/<label> with a non-blank l
 const PATH_STATUS_USAGE = 'Use POST /tasks/<id>/status/<status> with one of the project statuses in the path.';
 const PATH_TYPE_USAGE = 'Use POST /tasks/<id>/type/<type> with a non-blank type in the path.';
 const META_USAGE = 'Send a JSON body { "key": string, "value": string }.';
+const META_KEY_USAGE =
+	'Use /tasks/<id>/meta/<key> with a non-blank key in the path (a key holding "/" or "%": /tasks/<id>/meta-keys/<base64url key>).';
 const LINK_USAGE =
 	'Send { "type": string, "target": string } (type: blockedBy, duplicateOf, causedBy, blocks, duplicates, causes), as a JSON body or, for DELETE, as query parameters.';
 
@@ -47,6 +58,26 @@ function linkInput(req: RouteRequest, allowQuery: boolean): { id: string; type: 
 		type: requiredString(source, 'type', LINK_USAGE),
 		target: requiredString(source, 'target', LINK_USAGE),
 	};
+}
+
+/** A text field that may be absent or empty (a form sends an empty description); anything but a string is a 400. */
+function optionalText(source: Record<string, unknown>, field: string, usage: string): string | undefined {
+	const value = source[field];
+	if (value === undefined) return undefined;
+	if (typeof value !== 'string') {
+		throw new RequestError(400, `${field} must be a string when given`, usage);
+	}
+	return value;
+}
+
+/** The value of `PUT /tasks/:id/meta/:key`: the JSON body, else `?value=` (the installed shell sends no body). May be empty. */
+function metaValue(req: RouteRequest): string {
+	const hasBody = req.body !== undefined && req.body !== null;
+	const value = hasBody ? bodyObject(req.body, META_VALUE_USAGE)['value'] : queryValue(req.query, 'value');
+	if (typeof value !== 'string') {
+		throw new RequestError(400, 'value must be a string (it may be empty)', META_VALUE_USAGE);
+	}
+	return value;
 }
 
 /** A value of the request path (already decoded once by the server); blank is refused like an empty body field. */
@@ -70,13 +101,15 @@ export function registerTaskWriteRoutes(kit: RouteKit): void {
 	route('POST', '/tasks', async req => {
 		const ctx = open(req);
 		const body = bodyObject(req.body, CREATE_USAGE);
-		const description = requiredString(body, 'description', CREATE_USAGE);
-		// A blank description would make a task with an empty title (the CLI accepts it too; the form should not).
-		if (description.trim() === '') {
-			throw new RequestError(400, 'description must not be blank', CREATE_USAGE);
+		const title = optionalText(body, 'title', CREATE_USAGE);
+		const description = optionalText(body, 'description', CREATE_USAGE);
+		// Nothing to make a title of (the form must not create a task with an empty title).
+		if ((title ?? '').trim() === '' && (description ?? '').trim() === '') {
+			throw new RequestError(400, 'a title or a description is required, and neither may be blank', CREATE_USAGE);
 		}
 		const input = {
-			description,
+			...(title === undefined ? {} : { title }),
+			...(description === undefined ? {} : { description }),
 			// A form sends an empty parent when none is chosen.
 			parent: body['parent'] === '' ? undefined : optionalString(body, 'parent', CREATE_USAGE),
 		};
@@ -165,6 +198,35 @@ export function registerTaskWriteRoutes(kit: RouteKit): void {
 			throw new RequestError(400, 'value must be a string (it may be empty)', META_USAGE);
 		}
 		return answerChange(setMeta(ctx, { id: taskId(req), key, value }));
+	});
+
+	// A metadata key given in the path. Blank is refused like an empty body field; the key-based twin below carries keys
+	// holding "/" or "%".
+	const putMeta = (req: RouteRequest, key: string) =>
+		answerChange(setMeta(open(req), { id: taskId(req), key, value: metaValue(req) }));
+	const deleteMeta = (req: RouteRequest, key: string) => answerChange(unsetMeta(open(req), { id: taskId(req), key }));
+
+	route('PUT', '/tasks/:id/meta/:key', req => putMeta(req, pathValue(req, 'key', META_KEY_USAGE)));
+	route('DELETE', '/tasks/:id/meta/:key', req => deleteMeta(req, pathValue(req, 'key', META_KEY_USAGE)));
+	route('PUT', '/tasks/:id/meta-keys/:key', req => putMeta(req, metaKeyFromKey(req.params?.['key'] ?? '')));
+	route('DELETE', '/tasks/:id/meta-keys/:key', req => deleteMeta(req, metaKeyFromKey(req.params?.['key'] ?? '')));
+
+	// Clears the type ("none" in the type picker).
+	route('DELETE', '/tasks/:id/type', req => answerChange(unsetType(open(req), { id: taskId(req) })));
+
+	// Edits the headline and/or the description (one onTaskTextChanged per field that changed).
+	route('PATCH', '/tasks/:id', req => {
+		const ctx = open(req);
+		const body = bodyObject(req.body, TEXT_USAGE);
+		const title = optionalText(body, 'title', TEXT_USAGE);
+		const description = optionalText(body, 'description', TEXT_USAGE);
+		return answerChange(
+			setTaskText(ctx, {
+				id: taskId(req),
+				...(title === undefined ? {} : { title }),
+				...(description === undefined ? {} : { description }),
+			})
+		);
 	});
 
 	route('POST', '/tasks/:id/links', async req => {

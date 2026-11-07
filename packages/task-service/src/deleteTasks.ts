@@ -3,6 +3,7 @@ import type { TaskSummary } from '@wadeck-app/task-core';
 import { projectEnv, type TaskServiceContext } from './context.js';
 import { AmbiguousDeletePrefixError, InvalidDeleteFilterError, PartialDeleteError } from './errors.js';
 import type { TaskEvent } from './events.js';
+import { taskDescription } from './taskText.js';
 import { matchGlob } from './text.js';
 
 export const DELETE_FILTER_FIELDS = ['id', 'title', 'status', 'parentId'] as const;
@@ -123,6 +124,18 @@ function depthOf(id: string, parentOf: ReadonlyMap<string, string | undefined>):
 }
 
 /**
+ * The text the event reports: the full description (as onTaskCreated), read before the file goes away.
+ * The index only has the title; if the file cannot be read the title is reported (the deletion itself does not need the file).
+ */
+function fullTextOf(ctx: TaskServiceContext, task: TaskSummary): string {
+	try {
+		return taskDescription(ctx.store.get(task.id));
+	} catch {
+		return task.title;
+	}
+}
+
+/**
  * Deletes the planned tasks, deepest first (a cascade removes leaves before their parents; tasks of the same depth keep
  * the plan order). Each deleted task yields an `onTaskDeleted` carrying what it was and what its deletion did: the
  * children that became root tasks, and the links held by the tasks still present that pointed to it (a holder deleted
@@ -148,6 +161,7 @@ export function executeDelete(ctx: TaskServiceContext, plan: DeletePlan): Execut
 			.filter(t => t.id !== task.id)
 			.flatMap(t => t.links ?? [])
 			.filter(link => link.target === task.id).length;
+		const description = fullTextOf(ctx, task);
 		let removed: boolean;
 		try {
 			removed = ctx.store.deleteTask(task.id);
@@ -161,7 +175,7 @@ export function executeDelete(ctx: TaskServiceContext, plan: DeletePlan): Execut
 				name: 'onTaskDeleted',
 				payload: {
 					taskId: task.id,
-					description: task.title,
+					description,
 					status: task.status,
 					parentId: task.parentId,
 					orphanedChildIds,

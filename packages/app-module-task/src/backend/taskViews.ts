@@ -13,9 +13,17 @@
 // | projectParam            | string                                 | encoded project id: `params` of the quick actions                    | actions  |
 // | createdAt, updatedAt    | ISO string                             | raw dates (RelativeDate)                                             | all      |
 // | createdText, updatedText| "2026-10-19 19:37"                     | UTC minute display of the dates                                      | all      |
-// | titleShort, hasShortTitle | string, boolean                     | headline of a title that is a whole description: first sentence, <= 90 characters (`firstSentence`); false when the title is already that short | title treatment "short" |
-// | descriptionText         | string or null                         | the description; null when blank                                     | Markdown |
-// | hasDescription          | boolean                                | `descriptionText !== null`                                           | $if      |
+// | headline                | string                                 | the title as a heading: task-service `headlineOf(title)`, <= 90 chars (an old task whose title is a whole prompt is cut; a new task's title already is a headline) | H1, pickers |
+// | body, bodyAddsInfo      | string, boolean                        | the full text (`description`, else the title) and whether it says more than the headline (`bodyAddsInfo`): show the body panel only then | body panel |
+// | titleShort, hasShortTitle | string, boolean                     | TEMPORARY (old yaml of dsl-views, WP5): `titleShort` = `headline`, `hasShortTitle` = the title is longer than its headline. Removal: delete both fields here and in the contract test once dsl-views/** no longer binds them | title treatment "short" |
+// | descriptionText, hasDescription | string or null, boolean        | the body when it adds information, else null / false (the old Description panel no longer repeats the title) | Markdown, $if |
+// | statusOptions           | [{value,label,tone,terminal}]          | the statuses of the merged config (the one `set-status` validates against), config order | pickers |
+// | typeOptions             | [{value,label}]                        | "None" (value '') then the configured types; [] when the project has none (free text) | pickers |
+// The detail answer never scans the project's task files: label suggestions come from GET /labels and metadata key
+// suggestions from GET /meta-keys, both fetched on demand by the pickers.
+// | metaEntries             | [{key,value,keyId}]                    | the metadata with `keyId`, the base64url key of `PUT/DELETE /tasks/:id/meta-keys/:key` (a key may hold "/" or "%") | MetaEditor |
+// | deleteImpact            | {childCount,descendantCount,linkCount,blocksCount} | what a deletion touches: direct children (become roots), all descendants (a cascade), links counted both ways (removed), tasks it blocks | delete dialog |
+// | pills                   | [{key,label,text,tone,empty}]          | status, type, labels, parent (+ `blocked`, tone danger, only while open blockers exist); text "none" when empty | pill row |
 // | statusChoices           | [{value,label,tone,isDefault,isTerminal}] | statuses in config order; tone success (closed), neutral (initial), info (others) | ActionSelect, SegmentedControl |
 // | statusTone, isTerminal, isOpen | tone, boolean, boolean          | of the task's current status; isOpen = not terminal (the DSL has no negation) | badges   |
 // | typeChoices             | [{value,label}]                        | configured types; [] when the project has none (free text)           | ActionSelect |
@@ -38,11 +46,12 @@
 // /tasks/:id/status/:status, /tasks/:id/type/:type, /tasks/:id/labels/:label; a label is removed by key: DELETE /tasks/:id/label-keys/:key
 // (labelKeys: label -> base64url key, labelOptions values are keys; a label may hold "/" or "%").
 import type { TaskLinks, TaskRecord, TaskSummary, TaskTreeNode } from '@wadeck-app/task-core';
-import { ALL_LINK_NAMES } from '@wadeck-app/task-service';
+import { ALL_LINK_NAMES, bodyAddsInfo, headlineOf, taskDescription } from '@wadeck-app/task-service';
 import type { BlockerSummary, ChildrenSummary, DanglingLink } from '@wadeck-app/task-service';
 
-import { firstSentence, shortUtcTime } from './display.js';
+import { shortUtcTime } from './display.js';
 import { labelKey } from './labelKey.js';
+import { metaKey } from './metaKey.js';
 import { detailHref, encodedProject, historyHref, pageHrefs, pageLink, projectText, showAllToggle } from './hrefs.js';
 import type { OpenedProject } from './projects.js';
 import { flattenTree, withRowLinks, withTreeLinks } from './rowViews.js';
@@ -52,8 +61,11 @@ import {
 	blockedText,
 	blockerRows,
 	childrenSummaryView,
+	propertyPills,
 	statusChoices,
+	statusOptionRows,
 	statusTone,
+	typeOptionRows,
 	withTones,
 } from './taskPresentation.js';
 
@@ -113,6 +125,8 @@ export function taskDetailBody(
 		ancestors: Array<TaskSummary | undefined>;
 		childrenSummary: ChildrenSummary;
 		blockers: BlockerSummary;
+		/** All tasks below this one (children, grandchildren...). */
+		descendantCount: number;
 	}
 ): Record<string, unknown> {
 	const { project, config } = ctx;
@@ -120,8 +134,12 @@ export function taskDetailBody(
 	const record = task as unknown as TaskRecord;
 	const labels = record.labels ?? [];
 	const meta = Object.entries(record.meta ?? {}).map(([key, value]) => ({ key, value }));
-	const description = (record.description ?? '').trim() === '' ? null : record.description;
-	const headline = firstSentence(record.title);
+	const headline = headlineOf(record.title);
+	// A blank stored description is no description: the body is the title again.
+	const stored = taskDescription(record);
+	const body = stored.trim() === '' ? record.title : stored;
+	const addsInfo = bodyAddsInfo(headline, body);
+	const description = addsInfo ? body : null;
 	const activity = activityEntries(config, record);
 	const ancestors = ancestorChips(project, config, data.ancestors);
 	const linkCount =
@@ -130,8 +148,26 @@ export function taskDetailBody(
 		project,
 		projectText: projectText(project),
 		task,
+		headline,
+		body,
+		bodyAddsInfo: addsInfo,
+		// TEMPORARY, see the contract above: removed with the old yaml (WP5).
 		titleShort: headline,
 		hasShortTitle: headline !== record.title.trim(),
+		metaEntries: meta.map(entry => ({ ...entry, keyId: metaKey(entry.key) })),
+		deleteImpact: {
+			childCount: (children as unknown[]).length,
+			descendantCount: data.descendantCount,
+			linkCount,
+			blocksCount: data.links.blocks?.length ?? 0,
+		},
+		pills: propertyPills({
+			config,
+			record,
+			parent:
+				ancestors.length === 0 ? null : (ancestors[ancestors.length - 1] as { id: string; titleText: string }),
+			blockerCount: data.blockers.count,
+		}),
 		createdAt: record.createdAt,
 		updatedAt: record.updatedAt,
 		createdText: shortUtcTime(record.createdAt),
@@ -166,8 +202,8 @@ export function taskDetailBody(
 		// Rows for the tables of the detail page (a table shows lists of objects).
 		labelRows: labels.map(label => ({ label })),
 		metaRows: meta,
-		statusOptions: ctx.config.statuses.map(status => ({ value: status, label: status })),
-		typeOptions: data.types.map(type => ({ value: type, label: type })),
+		statusOptions: statusOptionRows(config),
+		typeOptions: typeOptionRows(data.types),
 		hasTypes: data.types.length > 0,
 		noTypes: data.types.length === 0,
 		hasLabels: labels.length > 0,

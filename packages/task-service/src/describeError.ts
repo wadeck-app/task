@@ -14,6 +14,7 @@ import {
 	InvalidLinkTypeError,
 	InvalidStatusError,
 	InvalidDeleteFilterError,
+	InvalidTaskTextError,
 	InvalidTaskTypeError,
 	DanglingLinkError,
 	DanglingParentError,
@@ -72,7 +73,11 @@ export function describeError(error: unknown): ErrorDescription {
 	if (error instanceof InvalidLinkTypeError) {
 		return describe('invalid', error, error.hint, { validTypes: error.validTypes, suggestions: error.suggestions });
 	}
-	if (error instanceof InvalidTaskTypeError || error instanceof InvalidDeleteFilterError) {
+	if (
+		error instanceof InvalidTaskTypeError ||
+		error instanceof InvalidTaskTextError ||
+		error instanceof InvalidDeleteFilterError
+	) {
 		return describe('invalid', error, error.hint);
 	}
 	if (error instanceof NoReadableProjectsError) {

@@ -13,20 +13,24 @@ import {
 	type QueueEventDeclaration,
 	type RegisterEventsOutcome,
 } from '@wadeck-app/task-service';
-import type { ModuleContext, ModuleRouteHandler } from '@wadeck-app/app-core-sdk';
 
 import backend from './index.js';
 import { openProject } from './projects.js';
 import teardown from './teardown.js';
-import { registerTaskRoutes, type TaskModuleInstance, type TaskRoutesOptions } from './routes.js';
-import { createRecordingSink, createTestWorld, type RecordingSink, type TestWorld } from './testHelpers.js';
+import { registerTaskRoutes, type TaskModuleInstance } from './routes.js';
+import { collectRoutes, setup, STATUSES_YML, writeLegacyTitleIn, type Answer, type Harness } from './routeHarness.js';
+import { createTestWorld, type TestWorld } from './testHelpers.js';
 
 const EXPECTED_ROUTES = [
 	'GET /projects',
 	'GET /summary',
 	'GET /related/project/:projectId',
 	'GET /tasks',
+	'GET /tasks/search',
+	'GET /labels',
+	'GET /meta-keys',
 	'GET /tasks/:id',
+	'PATCH /tasks/:id',
 	'GET /tasks/:id/history',
 	'GET /tasks/:id/children',
 	'GET /tasks/:id/ancestors',
@@ -47,89 +51,16 @@ const EXPECTED_ROUTES = [
 	'POST /tasks/:id/type',
 	'POST /tasks/:id/type/:type',
 	'POST /tasks/:id/meta',
+	'PUT /tasks/:id/meta/:key',
+	'DELETE /tasks/:id/meta/:key',
+	'PUT /tasks/:id/meta-keys/:key',
+	'DELETE /tasks/:id/meta-keys/:key',
+	'DELETE /tasks/:id/type',
 	'POST /types',
 	'DELETE /types/:name',
 	'POST /tasks/delete/plan',
 	'POST /tasks/delete',
 ];
-
-interface Answer {
-	status: number;
-	body: Record<string, any>;
-}
-
-interface Harness {
-	instance: TaskModuleInstance;
-	world: TestWorld;
-	sink: RecordingSink;
-	routes: Map<string, ModuleRouteHandler>;
-	call(
-		route: string,
-		request?: { params?: Record<string, string>; query?: Record<string, unknown>; body?: unknown }
-	): Promise<Answer>;
-}
-
-function collectRoutes(dataDir: string): { routes: Map<string, ModuleRouteHandler>; ctx: ModuleContext } {
-	const routes = new Map<string, ModuleRouteHandler>();
-	const ctx: ModuleContext = {
-		dataDir,
-		setInterval: vi.fn(),
-		setTimeout: vi.fn(),
-		clearInterval: vi.fn(),
-		clearTimeout: vi.fn(),
-		on: vi.fn(),
-		off: vi.fn(),
-		emit: vi.fn(),
-		registerRoute: (method, subPath, handler) => routes.set(`${method} ${subPath}`, handler),
-		dispose: vi.fn(),
-	};
-	return { routes, ctx };
-}
-
-// `'default'` registers the routes WITHOUT an injected sink, so that the real queue sink (and `extra.createPublisher`) is used.
-function setup(eventSink?: EventSink | 'default', extra: Partial<TaskRoutesOptions> = {}): Harness {
-	const world = createTestWorld();
-	const sink = createRecordingSink();
-	// The module's own persistent folder (ctx.dataDir): per world, so a test never sees the state of another.
-	const { routes, ctx } = collectRoutes(path.join(world.root, 'module-data'));
-	const injected = eventSink === 'default' ? {} : { eventSink: eventSink ?? sink };
-	const instance = registerTaskRoutes(ctx, { configDir: world.configDir, ...injected, ...extra });
-	return {
-		instance,
-		world,
-		sink,
-		routes,
-		async call(route, request = {}) {
-			const handler = routes.get(route);
-			if (!handler) throw new Error(`route not registered: ${route}`);
-			let status = 0;
-			let body: unknown;
-			// The routes only call reply.code(n).send(body).
-			const reply = {
-				code: (n: number) => {
-					status = n;
-					return {
-						send: (payload: unknown) => {
-							body = payload;
-							return payload;
-						},
-					};
-				},
-			};
-			await handler(
-				{ params: request.params ?? {}, query: request.query ?? {}, body: request.body } as never,
-				reply as never
-			);
-			if (status === 0) throw new Error(`route ${route} answered nothing`);
-			return { status, body: body as Record<string, any> };
-		},
-	};
-}
-
-// `done` is terminal; the default config.yml of a project has no terminal status.
-const STATUSES_YML = ['statuses:', '  - backlog', '  - in-progress', '  - name: done', '    terminal: true', ''].join(
-	'\n'
-);
 
 let h: Harness;
 // The registry id of the project `alpha` (what `?project=` and the page addresses take) and its folder.
@@ -148,6 +79,11 @@ async function createTask(description: string, extra: Record<string, unknown> = 
 	expect(answer.status).toBe(201);
 	h.sink.events.length = 0;
 	return answer.body['task'].id as string;
+}
+
+/** Rewrites a task as an OLD file holds it (the whole text as title AND description), in its file and in the index. */
+function writeLegacyTitle(id: string, text: string): void {
+	writeLegacyTitleIn(h.world.dataDirOf(project), id, text);
 }
 
 describe('route table', () => {
@@ -231,6 +167,15 @@ describe('project selection', () => {
 			['GET /tree', {}, undefined],
 			['GET /types', {}, undefined],
 			['GET /summary', {}, undefined],
+			['GET /tasks/search', {}, undefined],
+			['GET /labels', {}, undefined],
+			['GET /meta-keys', {}, undefined],
+			['PATCH /tasks/:id', { id: 'x' }, { title: 't' }],
+			['PUT /tasks/:id/meta/:key', { id: 'x', key: 'k' }, { value: 'v' }],
+			['DELETE /tasks/:id/meta/:key', { id: 'x', key: 'k' }, undefined],
+			['PUT /tasks/:id/meta-keys/:key', { id: 'x', key: 'aw' }, { value: 'v' }],
+			['DELETE /tasks/:id/meta-keys/:key', { id: 'x', key: 'aw' }, undefined],
+			['DELETE /tasks/:id/type', { id: 'x' }, undefined],
 			['POST /tasks/:id/parent', { id: 'x' }, { parent: 'y' }],
 			['DELETE /tasks/:id/parent', { id: 'x' }, undefined],
 			['POST /tasks/:id/type', { id: 'x' }, { type: 'bug' }],
@@ -336,7 +281,9 @@ describe('GET /tasks/:id', () => {
 		const child = await createTask('child', { parent });
 		const answer = await h.call('GET /tasks/:id', { params: { id: child.slice(0, 8) }, query: { project } });
 		expect(answer.status).toBe(200);
-		expect(answer.body['task']).toMatchObject({ id: child, description: 'child', parentId: parent });
+		expect(answer.body['task']).toMatchObject({ id: child, title: 'child', parentId: parent });
+		// A short text is only the title: no description of its own is stored.
+		expect(answer.body['task']).not.toHaveProperty('description');
 		expect(answer.body['parent']).toMatchObject({ id: parent });
 		expect(answer.body['children']).toEqual([]);
 		expect(answer.body['links']).toMatchObject({ blockedBy: [], blocks: [] });
@@ -812,7 +759,8 @@ describe('POST /tasks', () => {
 	it('creates the task (201) and delivers onTaskCreated to the sink', async () => {
 		const answer = await h.call('POST /tasks', { query: { project }, body: { description: 'write docs' } });
 		expect(answer.status).toBe(201);
-		expect(answer.body['task']).toMatchObject({ description: 'write docs', status: 'backlog' });
+		expect(answer.body['task']).toMatchObject({ title: 'write docs', status: 'backlog' });
+		expect(answer.body['task']).not.toHaveProperty('description');
 		expect(h.sink.events).toHaveLength(1);
 		expect(h.sink.events[0]).toMatchObject({
 			name: 'onTaskCreated',
@@ -2735,11 +2683,15 @@ describe('GET /tasks/:id (form options)', () => {
 		await h.call('POST /types', { query: { project }, body: { name: 'bug' } });
 		const answer = await h.call('GET /tasks/:id', { params: { id }, query: { project } });
 		expect(answer.body['statusOptions']).toEqual([
-			{ value: 'backlog', label: 'backlog' },
-			{ value: 'in-progress', label: 'in-progress' },
-			{ value: 'done', label: 'done' },
+			{ value: 'backlog', label: 'backlog', tone: 'neutral', terminal: false },
+			{ value: 'in-progress', label: 'in-progress', tone: 'info', terminal: false },
+			{ value: 'done', label: 'done', tone: 'success', terminal: true },
 		]);
-		expect(answer.body['typeOptions']).toEqual([{ value: 'bug', label: 'bug' }]);
+		// First entry: "none" (clears the type through DELETE /tasks/:id/type); the value is empty.
+		expect(answer.body['typeOptions']).toEqual([
+			{ value: '', label: 'None' },
+			{ value: 'bug', label: 'bug' },
+		]);
 		expect(answer.body['projectParam']).toBe(encodeURIComponent(project));
 	});
 });
@@ -3089,7 +3041,7 @@ describe('inline errors (?inlineErrors=true): the views cannot read a failed req
 		const answer = await h.call('POST /tasks', { query: projectQuery(), body: { description: '   ' } });
 		expect(answer.status).toBe(200);
 		expect(answer.body['hint']).toContain('Send a JSON body');
-		expect(answer.body['errorText']).toBe('description must not be blank');
+		expect(answer.body['errorText']).toBe('a title or a description is required, and neither may be blank');
 	});
 
 	it('without the flag the same failure keeps its HTTP status (API callers, the CLI-like contract)', async () => {
@@ -3179,15 +3131,27 @@ describe('selected project that cannot be read', () => {
 });
 
 describe('display text of dates and titles (the views cannot format a column)', () => {
-	it('task rows carry a short UTC "created" text and a truncated titleText, the title stays whole', async () => {
+	it('a long text is split at creation: the row title is the headline (at most 90 characters), the full text is the description', async () => {
 		const long = `word ${'long '.repeat(40)}end`;
-		await createTask(long);
+		const id = await createTask(long);
+		const answer = await h.call('GET /tasks', { query: { project } });
+		const row = answer.body['tasks'][0];
+		expect(row['title'].length).toBeLessThanOrEqual(90);
+		expect(row['title'].endsWith('\u2026')).toBe(true);
+		expect(row['titleText']).toBe(row['title']);
+		expect(row['created']).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d$/);
+		const detail = await h.call('GET /tasks/:id', { params: { id }, query: { project } });
+		expect(detail.body['task']['description']).toBe(long);
+	});
+
+	it('a legacy task whose stored title is the whole long text shows its headline in the row (title stays whole)', async () => {
+		const long = `word ${'long '.repeat(40)}end`;
+		writeLegacyTitle(await createTask('seed'), long);
 		const answer = await h.call('GET /tasks', { query: { project } });
 		const row = answer.body['tasks'][0];
 		expect(row['title']).toBe(long);
 		expect(row['titleText'].length).toBeLessThanOrEqual(90);
 		expect(row['titleText'].endsWith('\u2026')).toBe(true);
-		expect(row['created']).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d$/);
 	});
 
 	it('a short title is shown as is', async () => {
@@ -3196,12 +3160,19 @@ describe('display text of dates and titles (the views cannot format a column)', 
 		expect(answer.body['tasks'][0]['titleText']).toBe('short');
 	});
 
-	it('tree rows truncate the label, not the title', async () => {
+	it('tree rows of a legacy long title truncate the label, not the title', async () => {
 		const long = `x${' y'.repeat(100)}`;
-		await createTask(long);
+		writeLegacyTitle(await createTask('seed'), long);
 		const answer = await h.call('GET /tree', { query: { project } });
 		expect(answer.body['rows'][0]['title']).toBe(long);
 		expect(answer.body['rows'][0]['label'].length).toBeLessThanOrEqual(90);
+	});
+
+	it('tree rows of a task created from a long text are labelled by its headline', async () => {
+		await createTask(`x${' y'.repeat(100)}`);
+		const answer = await h.call('GET /tree', { query: { project } });
+		expect(answer.body['rows'][0]['title'].length).toBeLessThanOrEqual(90);
+		expect(answer.body['rows'][0]['label']).toBe(answer.body['rows'][0]['title']);
 	});
 
 	it('the history has rows with a short UTC time', async () => {
@@ -3934,15 +3905,52 @@ describe('GET /tasks/:id presentation contract', () => {
 		expect(body['updatedAt']).toBe(body['task']['updatedAt']);
 		expect(body['createdText']).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d$/);
 		expect(body['updatedText']).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d$/);
-		expect(body['descriptionText']).toBe('plain');
+		// A title-only task: the body is the title, it adds nothing to the headline.
+		expect(body['headline']).toBe('plain');
+		expect(body['body']).toBe('plain');
+		expect(body['bodyAddsInfo']).toBe(false);
+		expect(body['descriptionText']).toBeNull();
+		expect(body['hasDescription']).toBe(false);
+	});
+
+	it('a task with its own description: headline = title, body = the description, bodyAddsInfo true, descriptionText set', async () => {
+		const id = await createTask('Fix login');
+		await h.call('PATCH /tasks/:id', {
+			params: { id },
+			query: { project },
+			body: { description: 'Steps:\n1. open' },
+		});
+		const { body } = await detail(id);
+		expect(body['headline']).toBe('Fix login');
+		expect(body['body']).toBe('Steps:\n1. open');
+		expect(body['bodyAddsInfo']).toBe(true);
+		expect(body['descriptionText']).toBe('Steps:\n1. open');
 		expect(body['hasDescription']).toBe(true);
 	});
 
-	it('gives titleShort (the first sentence, at most 90 characters) and hasShortTitle for a long title', async () => {
+	it('a long text created through the module: headline = the stored title, body = the whole text, bodyAddsInfo true', async () => {
 		const long =
 			'Add a Dashboard page as the new home page. Server: a GET /dashboard endpoint aggregating the number of books and the todos per status, with the tags.';
 		const id = await createTask(long);
 		const { body } = await detail(id);
+		expect(body['headline']).toBe('Add a Dashboard page as the new home page.');
+		expect(body['task']['title']).toBe('Add a Dashboard page as the new home page.');
+		expect(body['body']).toBe(long);
+		expect(body['bodyAddsInfo']).toBe(true);
+		// Temporary old fields (see taskViews.ts): the title is already the headline here.
+		expect(body['titleShort']).toBe('Add a Dashboard page as the new home page.');
+		expect(body['hasShortTitle']).toBe(false);
+	});
+
+	it('a legacy task (title = description = long text): headline is cut from the title, body is the whole text, old fields agree', async () => {
+		const long =
+			'Add a Dashboard page as the new home page. Server: a GET /dashboard endpoint aggregating the number of books and the todos per status, with the tags.';
+		const id = await createTask('seed');
+		writeLegacyTitle(id, long);
+		const { body } = await detail(id);
+		expect(body['headline']).toBe('Add a Dashboard page as the new home page.');
+		expect(body['body']).toBe(long);
+		expect(body['bodyAddsInfo']).toBe(true);
 		expect(body['titleShort']).toBe('Add a Dashboard page as the new home page.');
 		expect(body['hasShortTitle']).toBe(true);
 	});

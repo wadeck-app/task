@@ -8,6 +8,7 @@ export {
 	InvalidStatusError,
 	InvalidLinkTypeError,
 	InvalidTaskTypeError,
+	InvalidTaskTextError,
 	InvalidDeleteFilterError,
 	AmbiguousDeletePrefixError,
 	PartialDeleteError,
@@ -52,7 +53,15 @@ export { setStatus } from './setStatus.js';
 export type { DanglingLink, LinkTasksInput, LinkTasksResult, TaskLinksReport } from './links.js';
 export { ALL_LINK_NAMES, linkTasks, unlinkTasks, getTaskLinks, readTaskLinks } from './links.js';
 export type { TaskChangeResult } from './taskFields.js';
-export { setType, addLabel, removeLabel, setMeta } from './taskFields.js';
+export { setType, addLabel, removeLabel, setMeta, unsetMeta, unsetType } from './taskFields.js';
+export type { SetTaskTextInput } from './setTaskText.js';
+export { setTaskText } from './setTaskText.js';
+export type { SplitText } from './taskText.js';
+export { HEADLINE_MAX_LENGTH, bodyAddsInfo, headlineOf, splitHeadline, taskDescription } from './taskText.js';
+export type { SearchTasksInput, TaskSearchHit } from './searchTasks.js';
+export { SEARCH_DEFAULT_LIMIT, SEARCH_MAX_LIMIT, searchTasks } from './searchTasks.js';
+export type { LabelCount } from './listLabels.js';
+export { listLabels } from './listLabels.js';
 export { setParent, removeParent, listChildren, listAncestors, getFullTree } from './hierarchy.js';
 export type {
 	DeleteFilterField,

@@ -12,7 +12,8 @@ import {
 	queueEventDeclarationsHash,
 } from './queueEventDeclarations.js';
 import { setStatus } from './setStatus.js';
-import { addLabel, removeLabel, setMeta, setType } from './taskFields.js';
+import { setTaskText } from './setTaskText.js';
+import { addLabel, removeLabel, setMeta, setType, unsetMeta, unsetType } from './taskFields.js';
 import { createTestContext, type TestContext } from './testHelpers.js';
 
 function declaration(name: string) {
@@ -43,6 +44,7 @@ describe('queueEventDeclarations', () => {
 			'onTaskLinked',
 			'onTaskMetaChanged',
 			'onTaskParentChanged',
+			'onTaskTextChanged',
 			'onTaskTypeChanged',
 			'onTaskUnblocked',
 			'onTaskUnlinked',
@@ -236,6 +238,34 @@ describe('queueEventDeclarations', () => {
 			expectConform(setType(t.ctx, { id: task.id, type: 'feature' }).events);
 		});
 
+		it('onTaskTypeChanged with newType absent (type cleared)', () => {
+			const task = createTask(t.ctx, { description: 'a' }).task;
+			setType(t.ctx, { id: task.id, type: 'bug' });
+			const cleared = unsetType(t.ctx, { id: task.id });
+			expect(throughJson(cleared.events[0]!.payload)).not.toHaveProperty('newType');
+			expectConform(cleared.events);
+		});
+
+		it('onTaskMetaChanged with newValue absent (key removed)', () => {
+			const task = createTask(t.ctx, { description: 'a' }).task;
+			setMeta(t.ctx, { id: task.id, key: 'owner', value: 'ann' });
+			setMeta(t.ctx, { id: task.id, key: 'blank', value: '' });
+			const removed = unsetMeta(t.ctx, { id: task.id, key: 'owner' });
+			expect(throughJson(removed.events[0]!.payload)).not.toHaveProperty('newValue');
+			expectConform(removed.events);
+			expectConform(unsetMeta(t.ctx, { id: task.id, key: 'blank' }).events);
+		});
+
+		it('onTaskTextChanged, for the title, a first description, a changed one and a cleared one', () => {
+			const task = createTask(t.ctx, { description: 'a' }).task;
+			expectConform(setTaskText(t.ctx, { id: task.id, title: 'b' }).events);
+			const first = setTaskText(t.ctx, { id: task.id, description: 'body' });
+			expect(throughJson(first.events[0]!.payload)).not.toHaveProperty('oldValue');
+			expectConform(first.events);
+			expectConform(setTaskText(t.ctx, { id: task.id, description: 'other' }).events);
+			expectConform(setTaskText(t.ctx, { id: task.id, description: '' }).events);
+		});
+
 		it('onTaskDeleted, for a root task, a child with orphans and links, and a cascade', () => {
 			const parent = createTask(t.ctx, { description: 'parent' }).task;
 			createTask(t.ctx, { description: 'child', parent: parent.id });
@@ -280,6 +310,31 @@ describe('queueEventDeclarations', () => {
 			const task = createTask(t.ctx, { description: 'a' }).task;
 			expectConform(addLabel(t.ctx, { id: task.id, label: 'urgent' }).events);
 			expectConform(removeLabel(t.ctx, { id: task.id, label: 'urgent' }).events);
+		});
+	});
+
+	describe('onTaskTextChanged declaration', () => {
+		it('says what fires it and what does not, within the daemon limit, correlated on taskId', () => {
+			const entry = declaration('onTaskTextChanged');
+			expect(entry.description).toMatch(/title/);
+			expect(entry.description).toMatch(/description/);
+			expect(entry.description).toMatch(/Does NOT fire/);
+			expect(entry.terminal ?? false).toBe(false);
+			expect(entry.schema['required']).toEqual(expect.arrayContaining(['taskId', 'field', 'newValue']));
+			expect(entry.schema['required']).not.toContain('oldValue');
+			expect(checkAgainstSchema(entry.schema, { ...(entry.example as object), field: 'author' })).not.toEqual([]);
+		});
+
+		it('onTaskMetaChanged and onTaskTypeChanged do not require the new value (removals), and say so', () => {
+			expect(declaration('onTaskMetaChanged').schema['required']).not.toContain('newValue');
+			expect(declaration('onTaskMetaChanged').description).toMatch(/removed/i);
+			expect(declaration('onTaskTypeChanged').schema['required']).not.toContain('newType');
+			expect(declaration('onTaskTypeChanged').description).toMatch(/cleared/i);
+		});
+
+		it('onTaskCreated and onTaskDeleted say description is the full text', () => {
+			expect(declaration('onTaskCreated').description).toMatch(/full text/i);
+			expect(JSON.stringify(declaration('onTaskDeleted').schema)).toMatch(/full text/i);
 		});
 	});
 

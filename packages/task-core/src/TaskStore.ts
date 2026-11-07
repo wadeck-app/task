@@ -53,7 +53,9 @@ export type TaskLinks = Record<LinkType | InverseLinkName, TaskSummary[]>;
 export interface TaskRecord {
 	id: string;
 	title: string;
-	description: string;
+	// Stored only when it differs from `title` (a task without body has none); read it as `description ?? title`.
+	// Files written before this rule hold the title twice and stay valid.
+	description?: string;
 	status: TaskStatus;
 	// Outgoing links only; absent when empty. Acyclic per link type (enforced by addLink()).
 	links?: TaskLink[];
@@ -90,7 +92,8 @@ export class TaskStore {
 
 	private readonly writeFile: (file: string, content: string) => void;
 
-	create(title: string, initialStatus: TaskStatus, parentId?: string): TaskRecord {
+	/** @param description stored only when it differs from `title`. */
+	create(title: string, initialStatus: TaskStatus, parentId?: string, description?: string): TaskRecord {
 		if (parentId !== undefined) {
 			this.requireParent(parentId);
 		}
@@ -102,7 +105,7 @@ export class TaskStore {
 		const record: TaskRecord = {
 			id,
 			title,
-			description: title,
+			...(description !== undefined && description !== title && { description }),
 			status: initialStatus,
 			...(parentId !== undefined && { parentId }),
 			createdAt: now,
@@ -469,6 +472,61 @@ export class TaskStore {
 	removeLabel(id: string, label: string): TaskRecord {
 		const record = this.get(id);
 		record.labels = (record.labels ?? []).filter(l => l !== label);
+		record.updatedAt = new Date().toISOString();
+		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+		return record;
+	}
+
+	/** Replaces the title (file and index). A stored description that now equals it is dropped (it would be the title twice). */
+	setTitle(id: string, title: string): TaskRecord {
+		const record = this.get(id);
+		record.title = title;
+		if (record.description === title) {
+			delete record.description;
+		}
+		record.updatedAt = new Date().toISOString();
+		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+		const index = this.readIndex();
+		const entry = index.tasks.find(t => t.id === id);
+		if (!entry) {
+			throw new Error(`Task index out of sync: entry for "${id}" not found. The index may be corrupted.`);
+		}
+		entry.title = title;
+		this.writeIndex(index);
+		return record;
+	}
+
+	/** Replaces the description. An empty one, or one equal to the title, removes the key (the body is the title again). */
+	setDescription(id: string, description: string): TaskRecord {
+		const record = this.get(id);
+		if (description === '' || description === record.title) {
+			delete record.description;
+		} else {
+			record.description = description;
+		}
+		record.updatedAt = new Date().toISOString();
+		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+		return record;
+	}
+
+	/** Clears the type (the task has none afterwards). */
+	clearType(id: string): TaskRecord {
+		const record = this.get(id);
+		delete record.type;
+		record.updatedAt = new Date().toISOString();
+		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+		return record;
+	}
+
+	/** Removes a metadata key (an absent key changes nothing but `updatedAt`, like removeLabel); the object goes with its last key. */
+	removeMeta(id: string, key: string): TaskRecord {
+		const record = this.get(id);
+		if (record.meta !== undefined && Object.hasOwn(record.meta, key)) {
+			delete record.meta[key];
+			if (Object.keys(record.meta).length === 0) {
+				delete record.meta;
+			}
+		}
 		record.updatedAt = new Date().toISOString();
 		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
 		return record;

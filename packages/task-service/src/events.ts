@@ -57,7 +57,12 @@ export interface TaskUnblockedEvent {
 
 export interface TaskTypeChangedEvent {
 	name: 'onTaskTypeChanged';
-	payload: { taskId: string; oldType: string | undefined; newType: string } & TaskProjectEnv;
+	payload: {
+		taskId: string;
+		oldType: string | undefined;
+		/** Absent when the type was cleared (`unset-type`). */
+		newType: string | undefined;
+	} & TaskProjectEnv;
 }
 
 export interface TaskLabelAddedEvent {
@@ -76,6 +81,19 @@ export interface TaskMetaChangedEvent {
 		taskId: string;
 		key: string;
 		oldValue: string | undefined;
+		/** Absent when the key was removed (`unset-meta`). */
+		newValue: string | undefined;
+	} & TaskProjectEnv;
+}
+
+export interface TaskTextChangedEvent {
+	name: 'onTaskTextChanged';
+	payload: {
+		taskId: string;
+		field: 'title' | 'description';
+		/** Absent for a description the task did not have (its body was its title). */
+		oldValue: string | undefined;
+		/** Empty when the description was cleared (the body is the title again). */
 		newValue: string;
 	} & TaskProjectEnv;
 }
@@ -115,6 +133,7 @@ export type TaskEvent =
 	| TaskLabelAddedEvent
 	| TaskLabelRemovedEvent
 	| TaskMetaChangedEvent
+	| TaskTextChangedEvent
 	| TaskParentChangedEvent
 	| TaskDeletedEvent;
 

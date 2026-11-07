@@ -1,56 +1,45 @@
 import { describe, expect, it } from 'vitest';
-import { firstSentence, shortTitle } from './display.js';
+import { shortTitle, shortUtcTime } from './display.js';
 
-describe('firstSentence', () => {
+describe('shortTitle (the label of a list row, a tree row, a picker hit)', () => {
 	it('keeps a short title as it is', () => {
-		expect(firstSentence('Fix login redirect')).toBe('Fix login redirect');
+		expect(shortTitle('Fix login redirect')).toBe('Fix login redirect');
 	});
 
-	it('cuts a long description after its first sentence', () => {
+	it('is the headline of a long text: its first sentence when it fits', () => {
 		const text =
 			'Add a Dashboard page as the new home page of the frontend. Server: a GET /dashboard endpoint aggregating the number of books.';
-		expect(firstSentence(text)).toBe('Add a Dashboard page as the new home page of the frontend.');
+		expect(shortTitle(text)).toBe('Add a Dashboard page as the new home page of the frontend.');
 	});
 
-	it('does not take a dot inside a word or a path for the end of a sentence', () => {
-		expect(firstSentence('Rename config.yml to settings.yml in v1.2 of the docs, then ship it. Later.')).toBe(
-			'Rename config.yml to settings.yml in v1.2 of the docs, then ship it.'
-		);
+	it('is the first line of a multi-line long text', () => {
+		expect(shortTitle(`Title line\n${'detail '.repeat(40)}`)).toBe('Title line');
 	});
 
-	it('keeps the question or exclamation mark', () => {
-		expect(firstSentence('Why does the build fail? Because of the cache.')).toBe('Why does the build fail?');
-	});
-
-	it('uses the first line only', () => {
-		expect(firstSentence('Title line\nSecond line with the details.')).toBe('Title line');
-	});
-
-	it('cuts at a word boundary with an ellipsis when the first sentence is longer than the limit', () => {
-		const words = 'word '.repeat(60).trim();
-		const short = firstSentence(words, 90);
+	it('cuts a 700-character text without sentence at a word boundary, at most 90 characters, with an ellipsis', () => {
+		const short = shortTitle('word '.repeat(140).trim());
 		expect(short.length).toBeLessThanOrEqual(90);
 		expect(short.endsWith('…')).toBe(true);
 		expect(short).not.toMatch(/\s…$/);
-		expect(words.startsWith(short.slice(0, -1))).toBe(true);
 	});
 
-	it('cuts one unbroken word hard at the limit', () => {
-		const short = firstSentence('x'.repeat(300), 90);
-		expect(short).toBe(`${'x'.repeat(89)}…`);
+	it('cuts further when the caller wants less', () => {
+		const short = shortTitle('a'.repeat(120), 60);
+		expect(short.length).toBe(60);
+		expect(short.endsWith('…')).toBe(true);
 	});
 
-	it('trims the surrounding whitespace', () => {
-		expect(firstSentence('  Padded title.  ')).toBe('Padded title.');
-	});
-
-	it('returns an empty string for a blank title', () => {
-		expect(firstSentence('   ')).toBe('');
+	it('cuts one unbroken word hard at 90 characters', () => {
+		expect(shortTitle('x'.repeat(300)).length).toBe(90);
 	});
 });
 
-describe('shortTitle (table cells) is unchanged', () => {
-	it('still cuts at 90 characters', () => {
-		expect(shortTitle('a'.repeat(120)).length).toBe(90);
+describe('shortUtcTime', () => {
+	it('shows the UTC date and minute of an ISO timestamp', () => {
+		expect(shortUtcTime('2026-10-19T19:37:12.000Z')).toBe('2026-10-19 19:37');
+	});
+
+	it('returns a value that is not a timestamp as it is', () => {
+		expect(shortUtcTime('yesterday')).toBe('yesterday');
 	});
 });

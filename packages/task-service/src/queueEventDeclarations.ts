@@ -41,6 +41,7 @@ export const TASK_EVENT_NAMES: Record<TaskEvent['name'], true> = {
 	onTaskLabelAdded: true,
 	onTaskLabelRemoved: true,
 	onTaskMetaChanged: true,
+	onTaskTextChanged: true,
 	onTaskParentChanged: true,
 	onTaskDeleted: true,
 };
@@ -106,14 +107,17 @@ export const queueEventDeclarations: readonly QueueEventDeclaration[] = [
 		name: 'onTaskCreated',
 		description:
 			'A task was created (task new, or the Task page of the app-core UI). Fires once per task, after it is saved. ' +
-			'taskId is the new task, status its initial status. Does NOT fire for later changes of status, type, labels, ' +
-			'links or parent, nor for a deletion.',
+			'taskId is the new task, status its initial status, description the full text (the title when there is none ' +
+			'of its own). Does NOT fire for later changes of status, type, labels, links, parent or text, nor for a deletion.',
 		schema: {
 			type: 'object',
 			properties: {
 				taskId: string,
 				status: { type: 'string', description: 'Initial status (the configured default).' },
-				description: string,
+				description: {
+					type: 'string',
+					description: 'The full text of the task (its title when it has no description of its own).',
+				},
 				parentId: { type: 'string', description: 'Absent for a root task.' },
 				type: { type: 'string', description: 'Absent when the task has no type.' },
 				labels,
@@ -223,18 +227,19 @@ export const queueEventDeclarations: readonly QueueEventDeclaration[] = [
 	{
 		name: 'onTaskTypeChanged',
 		description:
-			'The type of a task changed (task set-type, or the app-core UI). Fires once per change, after it is saved, with ' +
-			'oldType (absent when the task had no type) and newType. Does NOT fire when the type is set to its current value, ' +
-			'when the request is refused (unknown type), at creation, or when the list of project types is edited.',
+			'The type of a task changed (task set-type / unset-type, or the app-core UI). Fires once per change, after it is ' +
+			'saved, with oldType (absent when the task had no type) and newType (absent when the type was cleared). Does NOT fire ' +
+			'when the type is set to its current value or cleared on a task without one, when the request is refused, at ' +
+			'creation, or when the list of project types is edited.',
 		schema: {
 			type: 'object',
 			properties: {
 				taskId: string,
 				oldType: { type: 'string', description: 'Absent when the task had no type.' },
-				newType: string,
+				newType: { type: 'string', description: 'Absent when the type was cleared.' },
 				...projectProperties,
 			},
-			required: ['taskId', 'newType', ...projectRequired],
+			required: ['taskId', ...projectRequired],
 			additionalProperties: false,
 		},
 		example: {
@@ -268,19 +273,20 @@ export const queueEventDeclarations: readonly QueueEventDeclaration[] = [
 	{
 		name: 'onTaskMetaChanged',
 		description:
-			'A metadata key of a task was set (task set-meta, or the app-core UI). Fires once per change, after it is saved, ' +
-			'with key, newValue and oldValue (absent when the key is new; an existing empty value is ""). Does NOT fire when ' +
-			'the key already holds that value, when the request is refused, or at creation.',
+			'A metadata key of a task was set or removed (task set-meta / unset-meta, or the app-core UI). Fires once per ' +
+			'change, after it is saved, with key, newValue (absent when the key was removed) and oldValue (absent when the key is ' +
+			'new; an existing empty value is ""). Does NOT fire when the key already holds that value or is already absent, ' +
+			'when the request is refused, or at creation.',
 		schema: {
 			type: 'object',
 			properties: {
 				taskId: string,
 				key: string,
 				oldValue: { type: 'string', description: 'Absent when the key did not exist before.' },
-				newValue: { type: 'string', description: 'May be empty.' },
+				newValue: { type: 'string', description: 'May be empty. Absent when the key was removed.' },
 				...projectProperties,
 			},
-			required: ['taskId', 'key', 'newValue', ...projectRequired],
+			required: ['taskId', 'key', ...projectRequired],
 			additionalProperties: false,
 		},
 		example: {
@@ -288,6 +294,37 @@ export const queueEventDeclarations: readonly QueueEventDeclaration[] = [
 			key: 'owner',
 			oldValue: 'ann',
 			newValue: 'bob',
+			...projectExample,
+		},
+		correlationKey: 'payload.taskId',
+	},
+	{
+		name: 'onTaskTextChanged',
+		description:
+			'The title or the description of a task was edited (task set-title / set-description, or the app-core UI). Fires ' +
+			'once per field that changed, title first, after it is saved. field says which; oldValue is absent for a description ' +
+			'the task did not have; newValue is empty when the description was cleared. Does NOT fire at creation (onTaskCreated), ' +
+			'when the text is unchanged, or when the request is refused.',
+		schema: {
+			type: 'object',
+			properties: {
+				taskId: string,
+				field: { enum: ['title', 'description'], description: 'Which text changed.' },
+				oldValue: { type: 'string', description: 'Absent for a description the task did not have.' },
+				newValue: {
+					type: 'string',
+					description: 'Empty when the description was cleared (the body is the title again).',
+				},
+				...projectProperties,
+			},
+			required: ['taskId', 'field', 'newValue', ...projectRequired],
+			additionalProperties: false,
+		},
+		example: {
+			taskId: '3f2a9c1e-0000-4000-8000-000000000001',
+			field: 'title',
+			oldValue: 'Fix login',
+			newValue: 'Fix the login redirect loop',
 			...projectExample,
 		},
 		correlationKey: 'payload.taskId',
@@ -327,7 +364,10 @@ export const queueEventDeclarations: readonly QueueEventDeclaration[] = [
 			type: 'object',
 			properties: {
 				taskId: { type: 'string', description: 'The deleted task (it no longer exists).' },
-				description: { type: 'string', description: 'The description (title) the task had.' },
+				description: {
+					type: 'string',
+					description: 'The full text the task had (its title when it had no description of its own).',
+				},
 				status: { type: 'string', description: 'The status the task had.' },
 				parentId: { type: 'string', description: 'Absent when the task was a root task.' },
 				orphanedChildIds: {

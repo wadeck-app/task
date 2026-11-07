@@ -31,6 +31,24 @@ export function optionalQueryValue(query: RouteRequest['query'], name: string): 
 	return value === '' ? undefined : value;
 }
 
+/**
+ * A positive integer query parameter in 1..`max`; absent or empty is undefined (a cleared field). Anything else is a 400
+ * naming the bound: a value beyond it is refused, never clamped silently.
+ */
+export function boundedIntegerQuery(query: RouteRequest['query'], name: string, max: number): number | undefined {
+	const value = optionalQueryValue(query, name);
+	if (value === undefined) return undefined;
+	const hint = `Use ?${name}=<a whole number from 1 to ${max}>.`;
+	if (!/^\d+$/.test(value)) {
+		throw new RequestError(400, `${name} must be a whole number from 1 to ${max}, got "${value}"`, hint);
+	}
+	const number = Number(value);
+	if (number < 1 || number > max) {
+		throw new RequestError(400, `${name} must be from 1 to ${max}, got ${value}`, hint);
+	}
+	return number;
+}
+
 /** A boolean query parameter ("true" / "false"; absent or empty is false). */
 export function booleanFlag(query: RouteRequest['query'], name: string, hint: string): boolean {
 	const value = optionalQueryValue(query, name);

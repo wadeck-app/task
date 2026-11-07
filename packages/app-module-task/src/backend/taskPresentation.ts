@@ -103,6 +103,72 @@ export function activityEntries(config: StatusConfig, record: TaskRecord): Array
 	return [created, ...changes];
 }
 
+/** The statuses with what a picker needs: value, label, tone, terminal (config order; the same config `set-status` validates against). */
+export function statusOptionRows(
+	config: StatusConfig
+): Array<{ value: string; label: string; tone: Tone; terminal: boolean }> {
+	return config.statuses.map(status => ({
+		value: status,
+		label: status,
+		tone: statusTone(config, status),
+		terminal: config.terminalStatuses.includes(status),
+	}));
+}
+
+/**
+ * The types of a picker: a "None" entry (empty value, clears the type) then the configured types. No configured type means
+ * any text is accepted, so there is nothing to pick from: an empty list.
+ */
+export function typeOptionRows(types: string[]): Array<{ value: string; label: string }> {
+	return types.length === 0
+		? []
+		: [{ value: '', label: 'None' }, ...types.map(type => ({ value: type, label: type }))];
+}
+
+/** A property pill of the task header: one per property, "none" when empty; only the blocked pill is conditional. */
+export interface PropertyPill {
+	key: 'status' | 'type' | 'labels' | 'parent' | 'blocked';
+	label: string;
+	text: string;
+	tone: Tone | 'danger';
+	empty: boolean;
+}
+
+const EMPTY_PILL_TEXT = 'none';
+
+export function propertyPills(input: {
+	config: StatusConfig;
+	record: TaskRecord;
+	/** The direct parent as {@link ancestorChips} gives it (id and cut title), if any. */
+	parent: { id: string; titleText: string } | null;
+	blockerCount: number;
+}): PropertyPill[] {
+	const { config, record, parent, blockerCount } = input;
+	const labels = record.labels ?? [];
+	const pills: PropertyPill[] = [
+		{ key: 'status', label: 'Status', text: record.status, tone: statusTone(config, record.status), empty: false },
+		{ key: 'type', label: 'Type', text: record.type ?? EMPTY_PILL_TEXT, tone: 'neutral', empty: !record.type },
+		{
+			key: 'labels',
+			label: 'Labels',
+			text: labels.length === 0 ? EMPTY_PILL_TEXT : labels.join(', '),
+			tone: 'neutral',
+			empty: labels.length === 0,
+		},
+		{
+			key: 'parent',
+			label: 'Parent',
+			text: parent === null ? EMPTY_PILL_TEXT : `${parent.id} ${parent.titleText}`,
+			tone: 'neutral',
+			empty: parent === null,
+		},
+	];
+	if (blockerCount > 0) {
+		pills.push({ key: 'blocked', label: 'Blocked by', text: `${blockerCount} open`, tone: 'danger', empty: false });
+	}
+	return pills;
+}
+
 /** "2 of 5 done" and the figures of a progress bar; the counts come from task-service (`summarizeChildren`). */
 export function childrenSummaryView(summary: ChildrenSummary): Record<string, unknown> {
 	return {
