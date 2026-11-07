@@ -13,6 +13,7 @@
 // | projectParam            | string                                 | encoded project id: `params` of the quick actions                    | actions  |
 // | createdAt, updatedAt    | ISO string                             | raw dates (RelativeDate)                                             | all      |
 // | createdText, updatedText| "2026-10-19 19:37"                     | UTC minute display of the dates                                      | all      |
+// | titleShort, hasShortTitle | string, boolean                     | headline of a title that is a whole description: first sentence, <= 90 characters (`firstSentence`); false when the title is already that short | title treatment "short" |
 // | descriptionText         | string or null                         | the description; null when blank                                     | Markdown |
 // | hasDescription          | boolean                                | `descriptionText !== null`                                           | $if      |
 // | statusChoices           | [{value,label,tone,isDefault,isTerminal}] | statuses in config order; tone success (closed), neutral (initial), info (others) | ActionSelect, SegmentedControl |
@@ -40,7 +41,7 @@ import type { TaskLinks, TaskRecord, TaskSummary, TaskTreeNode } from '@wadeck-a
 import { ALL_LINK_NAMES } from '@wadeck-app/task-service';
 import type { BlockerSummary, ChildrenSummary, DanglingLink } from '@wadeck-app/task-service';
 
-import { shortUtcTime } from './display.js';
+import { firstSentence, shortUtcTime } from './display.js';
 import { labelKey } from './labelKey.js';
 import { detailHref, encodedProject, historyHref, pageHrefs, pageLink, projectText, showAllToggle } from './hrefs.js';
 import type { OpenedProject } from './projects.js';
@@ -120,6 +121,7 @@ export function taskDetailBody(
 	const labels = record.labels ?? [];
 	const meta = Object.entries(record.meta ?? {}).map(([key, value]) => ({ key, value }));
 	const description = (record.description ?? '').trim() === '' ? null : record.description;
+	const headline = firstSentence(record.title);
 	const activity = activityEntries(config, record);
 	const ancestors = ancestorChips(project, config, data.ancestors);
 	const linkCount =
@@ -128,6 +130,8 @@ export function taskDetailBody(
 		project,
 		projectText: projectText(project),
 		task,
+		titleShort: headline,
+		hasShortTitle: headline !== record.title.trim(),
 		createdAt: record.createdAt,
 		updatedAt: record.updatedAt,
 		createdText: shortUtcTime(record.createdAt),

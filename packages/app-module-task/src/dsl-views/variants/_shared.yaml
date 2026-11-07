@@ -227,23 +227,8 @@ github-a.header:
           separator: slash
           maxItems: 4
           currentLabel: $sources.detail.task.id
-        - $type: PageHeader
-          title: $sources.detail.task.title
-          headerActions:
-              - $type: ButtonLink
-                $if: $sources.detail.taskHrefs
-                label: History
-                to: $sources.detail.taskHrefs.history
-              - $type: ButtonLink
-                $if: $sources.detail.taskHrefs
-                label: Children
-                to: $sources.detail.taskHrefs.childrenList
-              - $type: ButtonLink
-                $if: $sources.detail.taskHrefs
-                label: Delete
-                variant: danger-outline
-                to: $sources.detail.taskHrefs.deleteTasks
-        - $type: HorizontalStack
+        - $use: dim.header
+        - $type: task:ChipRow
           gap: gap-2
           items:
               - $type: task:StatusBadge
@@ -342,6 +327,10 @@ github-a.side:
                 label: $sources.detail.parentRow.titleText
                 href: $sources.detail.parentRow.href
                 variant: info
+              - $type: Badge
+                $if: $sources.detail.noParent
+                label: No parent
+                variant: default
               - $use: feedback.parent
               - $use: form.detachParent
         - $type: task:PropertyRow
@@ -450,22 +439,7 @@ github-a.main:
                           - $use: github-a.rare.parent
                           - $use: github-a.rare.links
 jira.title:
-    $type: PageHeader
-    title: $sources.detail.task.title
-    headerActions:
-        - $type: ButtonLink
-          $if: $sources.detail.taskHrefs
-          label: History
-          to: $sources.detail.taskHrefs.history
-        - $type: ButtonLink
-          $if: $sources.detail.taskHrefs
-          label: Children
-          to: $sources.detail.taskHrefs.childrenList
-        - $type: ButtonLink
-          $if: $sources.detail.taskHrefs
-          label: Delete
-          variant: danger-outline
-          to: $sources.detail.taskHrefs.deleteTasks
+    $use: dim.header
 jira.breadcrumb:
     $type: task:BreadcrumbTrail
     $if: $sources.detail.hasAncestors
@@ -532,6 +506,10 @@ jira.details.core:
                 label: $sources.detail.parentRow.titleText
                 href: $sources.detail.parentRow.href
                 variant: info
+              - $type: Badge
+                $if: $sources.detail.noParent
+                label: No parent
+                variant: default
               - $use: feedback.parent
               - $use: form.detachParent
 # jira-b: the transition bar above already owns the status (and its feedback), so the Details panel has no Status row.
@@ -579,6 +557,10 @@ jira-b.details.core:
                 label: $sources.detail.parentRow.titleText
                 href: $sources.detail.parentRow.href
                 variant: info
+              - $type: Badge
+                $if: $sources.detail.noParent
+                label: No parent
+                variant: default
               - $use: feedback.parent
               - $use: form.detachParent
 jira.details.more:
@@ -669,22 +651,7 @@ jira.activity:
           groupByDay: false
           order: newest-first
 linear-a.title:
-    $type: PageHeader
-    title: $sources.detail.task.title
-    headerActions:
-        - $type: ButtonLink
-          $if: $sources.detail.taskHrefs
-          label: History
-          to: $sources.detail.taskHrefs.history
-        - $type: ButtonLink
-          $if: $sources.detail.taskHrefs
-          label: Children
-          to: $sources.detail.taskHrefs.childrenList
-        - $type: ButtonLink
-          $if: $sources.detail.taskHrefs
-          label: Delete
-          variant: danger-outline
-          to: $sources.detail.taskHrefs.deleteTasks
+    $use: dim.header
 linear-a.chips.core:
     $type: task:ChipRow
     gap: gap-2
@@ -725,6 +692,10 @@ linear-a.chips.core:
           label: $sources.detail.parentRow.titleText
           href: $sources.detail.parentRow.href
           variant: info
+        - $type: Badge
+          $if: $sources.detail.noParent
+          label: No parent
+          variant: default
         - $type: Badge
           $if: $sources.detail.blockedText
           label: $sources.detail.blockedText
@@ -829,9 +800,9 @@ linear-b.header:
           items: $sources.detail.ancestors
           separator: chevron
           maxItems: 4
-        - $type: HorizontalStack
+        - $type: task:ChipRow
           gap: gap-3
-          align: items-center
+          align: center
           items:
               - $type: FieldReadOnly
                 label: Identifier
@@ -842,22 +813,7 @@ linear-b.header:
                 $if: $sources.detail.blockedText
                 label: $sources.detail.blockedText
                 variant: warning
-        - $type: PageHeader
-          title: $sources.detail.task.title
-          headerActions:
-              - $type: ButtonLink
-                $if: $sources.detail.taskHrefs
-                label: History
-                to: $sources.detail.taskHrefs.history
-              - $type: ButtonLink
-                $if: $sources.detail.taskHrefs
-                label: Children
-                to: $sources.detail.taskHrefs.childrenList
-              - $type: ButtonLink
-                $if: $sources.detail.taskHrefs
-                label: Delete
-                variant: danger-outline
-                to: $sources.detail.taskHrefs.deleteTasks
+        - $use: dim.header
 linear-b.rail:
     $type: task:Panel
     title: Properties
@@ -921,6 +877,10 @@ linear-b.rail:
                       label: $sources.detail.parentRow.titleText
                       href: $sources.detail.parentRow.href
                       variant: info
+                    - $type: Badge
+                      $if: $sources.detail.noParent
+                      label: No parent
+                      variant: default
                     - $use: feedback.parent
                     - $use: form.detachParent
               - $type: task:PropertyRow
@@ -1052,22 +1012,7 @@ notion.header:
           items: $sources.detail.ancestors
           separator: chevron
           maxItems: 4
-        - $type: PageHeader
-          title: $sources.detail.task.title
-          headerActions:
-              - $type: ButtonLink
-                $if: $sources.detail.taskHrefs
-                label: History
-                to: $sources.detail.taskHrefs.history
-              - $type: ButtonLink
-                $if: $sources.detail.taskHrefs
-                label: Children
-                to: $sources.detail.taskHrefs.childrenList
-              - $type: ButtonLink
-                $if: $sources.detail.taskHrefs
-                label: Delete
-                variant: danger-outline
-                to: $sources.detail.taskHrefs.deleteTasks
+        - $use: dim.header
 notion.row.status:
     $type: task:PropertyRow
     label: Status
@@ -1165,6 +1110,10 @@ notion.row.parent:
           label: $sources.detail.parentRow.titleText
           href: $sources.detail.parentRow.href
           variant: info
+        - $type: Badge
+          $if: $sources.detail.noParent
+          label: No parent
+          variant: default
         - $use: feedback.parent
         - $use: form.detachParent
 notion.row.parent.set:
@@ -1540,7 +1489,7 @@ gitlab.header:
           separator: chevron
           maxItems: 4
           currentLabel: $sources.detail.task.id
-        - $type: HorizontalStack
+        - $type: task:ChipRow
           gap: gap-2
           items:
               - $type: task:StatusBadge
@@ -1567,22 +1516,7 @@ gitlab.header:
                 $if: $sources.detail.blockedText
                 label: $sources.detail.blockedText
                 variant: warning
-        - $type: PageHeader
-          title: $sources.detail.task.title
-          headerActions:
-              - $type: ButtonLink
-                $if: $sources.detail.taskHrefs
-                label: History
-                to: $sources.detail.taskHrefs.history
-              - $type: ButtonLink
-                $if: $sources.detail.taskHrefs
-                label: Children
-                to: $sources.detail.taskHrefs.childrenList
-              - $type: ButtonLink
-                $if: $sources.detail.taskHrefs
-                label: Delete
-                variant: danger-outline
-                to: $sources.detail.taskHrefs.deleteTasks
+        - $use: dim.header
 gitlab.b.status:
     $type: VerticalStack
     gap: gap-2
@@ -1639,6 +1573,10 @@ gitlab.b.parent:
           label: $sources.detail.parentRow.titleText
           href: $sources.detail.parentRow.href
           variant: info
+        - $type: Badge
+          $if: $sources.detail.noParent
+          label: No parent
+          variant: default
         - $use: feedback.parent
         - $use: form.detachParent
         - $type: task:Panel
@@ -1883,23 +1821,8 @@ github-b.header:
           separator: slash
           maxItems: 5
           currentLabel: $sources.detail.task.id
-        - $type: PageHeader
-          title: $sources.detail.task.title
-          headerActions:
-              - $type: ButtonLink
-                $if: $sources.detail.taskHrefs
-                label: History
-                to: $sources.detail.taskHrefs.history
-              - $type: ButtonLink
-                $if: $sources.detail.taskHrefs
-                label: Children
-                to: $sources.detail.taskHrefs.childrenList
-              - $type: ButtonLink
-                $if: $sources.detail.taskHrefs
-                label: Delete
-                variant: danger-outline
-                to: $sources.detail.taskHrefs.deleteTasks
-        - $type: HorizontalStack
+        - $use: dim.header
+        - $type: task:ChipRow
           gap: gap-2
           items:
               - $type: task:StatusBadge
@@ -2001,6 +1924,10 @@ github-b.sidebar:
                 label: $sources.detail.parentRow.titleText
                 href: $sources.detail.parentRow.href
                 variant: info
+              - $type: Badge
+                $if: $sources.detail.noParent
+                label: No parent
+                variant: default
               - $use: feedback.parent
               - $use: form.detachParent
         - $type: task:PropertyRow
@@ -2214,3 +2141,190 @@ links.removeUndelivered:
     $if: $ctx.linkRowResult.undeliveredText
     label: $ctx.linkRowResult.undeliveredText
     variant: warning
+
+# ---- Dimensions shared by EVERY design (and `current`): title, header. Width is task:WidthFrame (see _page.yaml `$wrap`);
+# the controls dimension (task-controls) is built by the generator around each status / type control (see _page.yaml). ------
+# Option ids and labels are the contract of the switcher rows `task-title` and `task-header`; the one of today is always an option.
+dim.title:
+    $type: AbTest
+    id: task-title
+    label: Title
+    initial: clamp2
+    variants:
+        clamp2:
+            label: Clamp 2 lines
+            hint: Moderate heading (text-xl), at most 2 lines, "Show more" unfolds the whole text; an unbroken word wraps instead of leaving the column.
+            view:
+                $type: task:TitleText
+                text: $sources.detail.task.title
+                size: xl
+                lines: 2
+                expandable: true
+        oneline:
+            label: One line + tooltip
+            hint: A single line (text-lg) ending in an ellipsis; the whole text is the tooltip of the heading.
+            view:
+                $type: task:TitleText
+                text: $sources.detail.task.title
+                size: lg
+                lines: 1
+                tooltip: true
+        short:
+            label: Short title
+            hint: The first sentence (90 characters at most) as the heading; the whole text stays one click away in a folded Full title panel.
+            view:
+                $type: VerticalStack
+                gap: gap-2
+                items:
+                    - $type: task:TitleText
+                      text: $sources.detail.titleShort
+                      size: xl
+                      lines: 2
+                    - $type: task:Panel
+                      $if: $sources.detail.hasShortTitle
+                      title: Full title
+                      collapsible: true
+                      defaultOpen: false
+                      items:
+                          - $type: task:TitleText
+                            text: $sources.detail.task.title
+                            size: sm
+                            lines: 0
+        large:
+            label: Large (today)
+            hint: The whole title in the page heading size (text-2xl), however many lines it takes.
+            view:
+                $type: task:TitleText
+                text: $sources.detail.task.title
+                size: 2xl
+                lines: 0
+dim.header.chips:
+    $type: task:ChipRow
+    gap: gap-2
+    items:
+        - $type: Badge
+          label: $sources.detail.task.id
+          variant: default
+        - $type: Badge
+          $if: $sources.detail.task.type
+          label: $sources.detail.task.type
+          variant: info
+dim.header.actions:
+    $type: task:ChipRow
+    gap: gap-2
+    items:
+        - $type: ButtonLink
+          $if: $sources.detail.taskHrefs
+          label: History
+          size: sm
+          to: $sources.detail.taskHrefs.history
+        - $type: ButtonLink
+          $if: $sources.detail.taskHrefs
+          label: Children
+          size: sm
+          to: $sources.detail.taskHrefs.childrenList
+        - $type: ButtonLink
+          $if: $sources.detail.taskHrefs
+          label: Delete
+          variant: danger-outline
+          size: sm
+          to: $sources.detail.taskHrefs.deleteTasks
+dim.header.actions.menu:
+    $type: task:ChipRow
+    gap: gap-2
+    items:
+        - $type: ButtonLink
+          $if: $sources.detail.taskHrefs
+          label: History
+          size: sm
+          to: $sources.detail.taskHrefs.history
+        - $type: ButtonLink
+          $if: $sources.detail.taskHrefs
+          label: Children
+          size: sm
+          to: $sources.detail.taskHrefs.childrenList
+        - $type: Popover
+          $if: $sources.detail.taskHrefs
+          align: end
+          trigger:
+              - $type: Badge
+                label: More actions
+                variant: default
+          items:
+              - $type: ButtonLink
+                label: Delete this task
+                variant: danger-outline
+                size: sm
+                to: $sources.detail.taskHrefs.deleteTasks
+dim.header:
+    $type: AbTest
+    id: task-header
+    label: Header
+    initial: bar
+    variants:
+        bar:
+            label: Compact bar
+            hint: The id, the type and the actions (History, Children, Delete) on one row, the title under it.
+            view:
+                $type: VerticalStack
+                gap: gap-2
+                items:
+                    - $type: task:ChipRow
+                      gap: gap-3
+                      justify: between
+                      items:
+                          - $use: dim.header.chips
+                          - $use: dim.header.actions
+                    - $use: dim.title
+        menu:
+            label: Actions in a menu
+            hint: Like the compact bar, but Delete hides behind a "More actions" popover (reachable, not prominent).
+            view:
+                $type: VerticalStack
+                gap: gap-2
+                items:
+                    - $type: task:ChipRow
+                      gap: gap-3
+                      justify: between
+                      items:
+                          - $use: dim.header.chips
+                          - $use: dim.header.actions.menu
+                    - $use: dim.title
+        beside:
+            label: Beside the title (today)
+            hint: The title on the left, the actions on its right on the same row, as the page header was.
+            view:
+                $type: task:ChipRow
+                gap: gap-4
+                align: start
+                justify: between
+                items:
+                    - $use: dim.title
+                    - $use: dim.header.actions
+# The select `current` shows for its Status and Type (the "Inline" option of the task-controls row there). The generator wraps it
+# in the task-controls AbTest as `ctl.status` / `ctl.type`; the other designs' own controls are wrapped the same way.
+ctl.status.default:
+    $type: task:ActionSelect
+    $if: $sources.detail.forms
+    appearance: pill
+    ariaLabel: Status
+    options: $sources.detail.statusChoices
+    value: $sources.detail.task.status
+    action: setStatusTo
+    valueParam: status
+    params:
+        id: $route.id
+        projectParam: $sources.detail.projectParam
+ctl.type.default:
+    $type: task:ActionSelect
+    $if: $sources.detail.hasTypes
+    appearance: field
+    ariaLabel: Type
+    options: $sources.detail.typeChoices
+    value: $sources.detail.forms.type.type
+    placeholder: No type
+    action: setTypeTo
+    valueParam: type
+    params:
+        id: $route.id
+        projectParam: $sources.detail.projectParam

@@ -5,7 +5,7 @@ import type { ModuleContext, ModuleRouteHandler } from '@wadeck-app/app-core-sdk
 import { registerTaskRoutes } from './routes.js';
 import { createRecordingSink, createTestWorld, type TestWorld } from './testHelpers.js';
 
-// GET /tree?allProjects=true: `groups` (the page as shipped) plus `overview` (what the Tree page variants read).
+// GET /tree?allProjects=true: `projects`, what the accordion of the global Tree page reads (one entry per project, readable or not).
 const STATUSES_YML = ['statuses:', '  - backlog', '  - name: done', '    terminal: true', ''].join('\n');
 
 let world: TestWorld;
@@ -52,8 +52,8 @@ async function addTask(project: string, description: string, parent?: string): P
 	return answer.body['task'].id as string;
 }
 
-describe('GET /tree?allProjects=true overview', () => {
-	it('keeps groups and adds one overview entry per project with figures, capped rows and a tree link', async () => {
+describe('GET /tree?allProjects=true projects', () => {
+	it('answers one entry per project with figures, rows and a tree link, and nothing of the removed designs', async () => {
 		const alpha = await world.createProject('alpha', { configYml: STATUSES_YML });
 		await world.createProject('empty', { configYml: STATUSES_YML });
 		const parent = await addTask(alpha, 'parent');
@@ -61,54 +61,47 @@ describe('GET /tree?allProjects=true overview', () => {
 		await addTask(alpha, 'second');
 		const answer = await call('GET /tree', { allProjects: 'true' });
 		expect(answer.status).toBe(200);
-		expect(answer.body['groups']).toHaveLength(2);
-		const { overview } = answer.body;
-		expect(overview.projects.map((p: any) => p.name)).toEqual(['alpha', 'empty']);
-		expect(overview.projects[0]).toMatchObject({
+		for (const gone of ['groups', 'overview', 'rows']) expect(answer.body, gone).not.toHaveProperty(gone);
+		const { projects } = answer.body;
+		expect(projects.map((p: any) => p.name)).toEqual(['alpha', 'empty']);
+		expect(projects[0]).toMatchObject({
 			id: alpha,
 			readable: true,
 			open: 3,
 			total: 3,
-			rowCount: 3,
 			hiddenCount: 0,
 			treeHref: `/modules/task/tree/p/${alpha}`,
 		});
-		expect(overview.projects[0].roots).toMatchObject([{ id: parent, done: 0, total: 1 }]);
-		expect(overview.projects[0].rows.map((r: any) => [r.id, r.depth])).toContainEqual([child, 1]);
-		expect(overview.projects[1]).toMatchObject({ empty: true, summaryText: 'No tasks', rows: [] });
-		expect(overview.totals).toMatchObject({ projects: 2, readable: 2, unreadable: 0, open: 3, total: 3 });
+		expect(projects[0].rows.map((r: any) => [r.id, r.depth])).toContainEqual([child, 1]);
+		expect(projects[1]).toMatchObject({ empty: true, summaryText: 'No tasks', rows: [] });
+		expect(answer.body['scopeText']).toBe('All projects: 2 projects, 3 open tasks.');
 	});
 
-	it('?rowCap cuts the rows of each project and says how many are left out', async () => {
+	it('ignores ?rowCap (the parameter went with the designs that needed it)', async () => {
 		const alpha = await world.createProject('alpha', { configYml: STATUSES_YML });
-		for (let i = 0; i < 5; i++) await addTask(alpha, `task ${i}`);
-		const { body } = await call('GET /tree', { allProjects: 'true', rowCap: '2' });
-		expect(body['overview'].rowCap).toBe(2);
-		expect(body['overview'].projects[0]).toMatchObject({ hiddenCount: 3, rowCount: 5 });
-		expect(body['overview'].projects[0].rows).toHaveLength(2);
+		for (let i = 0; i < 3; i++) await addTask(alpha, `task ${i}`);
+		const { status, body } = await call('GET /tree', { allProjects: 'true', rowCap: '1' });
+		expect(status).toBe(200);
+		expect(body['projects'][0].rows).toHaveLength(3);
 	});
 
-	it('an invalid rowCap is a 400 naming the parameter (not clamped)', async () => {
-		await world.createProject('alpha', { configYml: STATUSES_YML });
-		const bad = await call('GET /tree', { allProjects: 'true', rowCap: '0' });
-		expect(bad.status).toBe(400);
-		expect(bad.body['error']).toContain('rowCap');
-	});
-
-	it('lists an unreadable project with its name and reason next to the readable ones', async () => {
+	it('lists an unreadable project with its name and reason, and says so in ONE line without paths', async () => {
 		await world.createProject('alpha', { configYml: STATUSES_YML });
 		const broken = await world.createProject('broken');
 		world.breakConfig(broken);
 		const { body } = await call('GET /tree', { allProjects: 'true' });
-		const entry = body['overview'].projects.find((p: any) => p.id === broken);
+		const entry = body['projects'].find((p: any) => p.id === broken);
 		expect(entry).toMatchObject({ name: 'broken', readable: false, treeHref: `/modules/task/tree/p/${broken}` });
 		expect(entry.problemText).toContain('not valid YAML');
-		expect(body['overview'].totals).toMatchObject({ readable: 1, unreadable: 1 });
+		expect(body['warning']).toBe(
+			'1 project cannot be read: broken. Open it in the list below for its reason and fix.'
+		);
+		expect(body['skippedCount']).toBe(1);
 	});
 
-	it('a registry without project answers an empty overview, not an error', async () => {
+	it('a registry without project answers an empty list, not an error', async () => {
 		const { status, body } = await call('GET /tree', { allProjects: 'true' });
 		expect(status).toBe(200);
-		expect(body['overview'].projects).toEqual([]);
+		expect(body['projects']).toEqual([]);
 	});
 });

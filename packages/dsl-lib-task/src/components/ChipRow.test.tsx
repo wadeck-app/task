@@ -23,3 +23,17 @@ describe('ChipRow', () => {
 		expect(row).toHaveClass('gap-4', 'items-start', 'min-w-0');
 	});
 });
+
+describe('ChipRow justify', () => {
+	it('pushes the groups apart with justify between, and still wraps when they do not fit', () => {
+		render(<ChipRow items={[<span key="a">left</span>, <span key="b">right</span>]} justify="between" />);
+
+		expect(screen.getByTestId('chip-row')).toHaveClass('justify-between', 'flex-wrap');
+	});
+
+	it('packs at the start by default', () => {
+		render(<ChipRow items={<span>one</span>} />);
+
+		expect(screen.getByTestId('chip-row')).not.toHaveClass('justify-between');
+	});
+});

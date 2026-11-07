@@ -1,5 +1,7 @@
 # Global Tree page: 5 variants for dozens of projects (A/B experiment)
 
+> Outcome (2026-11-07): the accordion won; the experiment is baked and removed (the sections below are the history). Current contract: CLAUDE.md "Tree page".
+
 Page: `/modules/task/tree` without `?project` and with several projects (`GET /tree?allProjects=true`, `tree-page.yaml`). Per-project `/tree/p/:project` is unchanged.
 
 ## 1. What is wrong today (seen in a browser)

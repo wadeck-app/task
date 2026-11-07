@@ -1,34 +1,10 @@
-# GENERATED - edit src/dsl-views/tree-variants/*.yaml and run: npm run views --workspace=packages/app-module-task
-# (scripts/generate-tree-page.mjs). The comments below come from tree-variants/_page.yaml.
-# ============================================================================================================
-# TREE PAGE VARIANTS - how this page is built (read this before editing tree-page.yaml: it is GENERATED)
-#
-# `src/dsl-views/tree-page.yaml` is assembled by `npm run views --workspace=packages/app-module-task` (script:
-# scripts/generate-tree-page.mjs at the repository root) from the files of this folder:
-#   _page.yaml     this file: the sources, the nodes above the experiment (`$before`), the experiment, the nodes below it
-#                  (`$after`). Everything up to the line `$type: PageContent` is copied verbatim (comments included).
-#   _shared.yaml   named fragments, used anywhere as `{ $use: <name> }` (one node each; no other key next to $use).
-#   <variant>.yaml one file per variant with exactly three keys: `label`, `hint` (shown by the switcher), `view` (ONE node).
-# A test fails when tree-page.yaml is stale, so run the script after every edit here.
-#
-# The experiment replaces ONLY the global forest (the `groups` slot, one section per project): the notices, the header
-# and the per-project table stay outside it, so every variant inherits the error, empty-registry, unknown-project and
-# unreadable-project messages. `current` is that slot as shipped (initial: what production renders). The other five read
-# `overview` of GET /tree?allProjects=true (capped rows, see treeOverview.ts) through task: components that fold, filter
-# and sort in the browser; no variant has a source or an action of its own.
-#
-# Add a variant: create <name>.yaml here and add <name> to `variants` under `$experiment`, then run the script.
-# Options of a variant: nested `AbTest` nodes inside its view, id `<variant>-<option>`, 2-3 choices.
-# REMOVE THE EXPERIMENT (bake the winner): replace the `AbTest` of the generated page by the `view` of the
-# chosen variant (drop `$if` only if the winner also serves the per-project scope), delete the other fragments, the
-# generator, its call in `npm run views`, treeVariants.test.ts, the fixture tree-page.head.yaml, the components of the
-# losing designs in packages/dsl-lib-task and the `groups` of the route when `current` is not the winner.
-# ============================================================================================================
-
-# Hierarchy of the tasks (nav /tree, per project /tree/p/:project = $route.project; /tree also shows the only registered project): the
-# forest of that project, children indented under their parent. on /tree with several projects registered:
-# the global forest, one section per project (title, link to its own tree) whose table holds that project's forest, a
-# child indented under its parent by a label prefix (the table cannot style rows).
+# Hierarchy of the tasks (nav /tree, per project /tree/p/:project = $route.project; /tree also shows the only registered project).
+# Per project: the forest of that project as a table, children indented under their parent by a label prefix (the table
+# cannot style rows). On /tree with several projects registered: an accordion (task:ProjectAccordion), one collapsible
+# line per project (name, open/total, mini progress), filter, expand/collapse all. Nothing starts open except the project
+# opened last time (remembered by the component). An empty project is one "No tasks" line; a project that cannot be read
+# is a flagged line whose body gives the reason and the fix. The route caps the rows of each project (60) and links the
+# rest to the project's own tree page.
 # ?showAll=true includes the closed tasks, ?parent=<id> restricts to the descendants of a task, ?id=<id> shows the one
 # tree containing a task (project scope only). A row click opens the detail page.
 # TreeView is not used: its selection is a callback, which YAML cannot express, so rows could not navigate.
@@ -56,231 +32,69 @@ $sources:
         url: GET /api/slots/task:project-header
 
 $type: PageContent
+
 sections:
-  - $type: PageHeader
-    title: Tree
-    headerActions:
-      - $type: ButtonLink
-        $if: $sources.tree.showAllToggle
-        label: $sources.tree.showAllToggle.label
-        to: $sources.tree.showAllToggle.href
-  - $type: task:ChipRow
-    $if: $route.project
-    items:
-      - $type: ExtensionSlot
-        $if: $sources.projectHeader
-        items: $sources.projectHeader
-  - $type: Badge
-    $if: $sources.projects.noProjects
-    label: $sources.projects.noProjectsText
-    variant: info
-  - $type: Badge
-    $if: $sources.tree.projectText
-    label: $sources.tree.projectText
-    variant: info
-  - $type: Badge
-    $if: $sources.projects.selectedProblem
-    label: $sources.projects.selectedProblem
-    variant: danger
-  - $type: Badge
-    $if: $sources.tree.errorText
-    label: $sources.tree.errorText
-    variant: danger
-  - $type: Badge
-    $if: $sources.projects.unknownProjectText
-    label: $sources.projects.unknownProjectText
-    variant: danger
-  - $type: Badge
-    $if: $sources.tree.scopeText
-    label: $sources.tree.scopeText
-    variant: info
-  - $type: Badge
-    $if: $sources.tree.warning
-    label: $sources.tree.warning
-    variant: warning
-  - $type: VerticalStack
-    $if: $sources.tree.groups
-    gap: gap-0
-    items:
-      - $type: AbTest
-        id: task-tree-design
-        label: Tree page
-        initial: current
-        variants:
-          current:
-            label: Current
-            hint: One full table per project, stacked (today's page). Unreadable beyond a few projects.
-            view:
-              $type: ExtensionSlot
-              items: $sources.tree.groups
-          accordion:
-            label: Accordion
-            hint: One collapsible section per project (name, open/total, mini bar), filter, expand/collapse all. Only the open ones draw rows.
-            view:
-              $type: VerticalStack
-              $if: $sources.tree.overview
-              gap: gap-0
-              items:
-                - $type: AbTest
-                  id: accordion-open
-                  label: Open at start
-                  initial: last
-                  variants:
-                    last:
-                      label: Last used
-                      hint: The project opened last time (else the first)
-                      view:
-                        $type: task:ProjectAccordion
-                        projects: $sources.tree.overview.projects
-                        defaultOpen: last
-                    first:
-                      label: First
-                      hint: Only the first project
-                      view:
-                        $type: task:ProjectAccordion
-                        projects: $sources.tree.overview.projects
-                        defaultOpen: first
-                    none:
-                      label: None
-                      hint: Everything collapsed
-                      view:
-                        $type: task:ProjectAccordion
-                        projects: $sources.tree.overview.projects
-                        defaultOpen: none
-          master-detail:
-            label: Master-detail
-            hint: Searchable project list on the left (counts, unreadable flagged), the tree of the selected project on the right. Selection kept in the URL and the browser.
-            view:
-              $type: VerticalStack
-              $if: $sources.tree.overview
-              gap: gap-0
-              items:
-                - $type: AbTest
-                  id: master-detail-list
-                  label: List width
-                  initial: normal
-                  variants:
-                    normal:
-                      label: Normal
-                      hint: About 18 rem
-                      view:
-                        $type: task:ProjectMasterDetail
-                        projects: $sources.tree.overview.projects
-                        listWidth: normal
-                    wide:
-                      label: Wide
-                      hint: About 24 rem, longer names
-                      view:
-                        $type: task:ProjectMasterDetail
-                        projects: $sources.tree.overview.projects
-                        listWidth: wide
-          picker:
-            label: Picker
-            hint: A searchable project combobox above ONE tree; "All projects" shows compact summary rows. Deep link with ?treePicked=<id>.
-            view:
-              $type: VerticalStack
-              $if: $sources.tree.overview
-              gap: gap-0
-              items:
-                - $type: AbTest
-                  id: picker-start
-                  label: Start on
-                  initial: overview
-                  variants:
-                    overview:
-                      label: Overview
-                      hint: All projects as summary rows
-                      view:
-                        $type: task:ProjectPicker
-                        projects: $sources.tree.overview.projects
-                        start: overview
-                    first:
-                      label: First project
-                      hint: The first readable project
-                      view:
-                        $type: task:ProjectPicker
-                        projects: $sources.tree.overview.projects
-                        start: first
-          cards:
-            label: Cards
-            hint: 'A responsive grid of project cards: progress, open/total, biggest parent tasks with child progress, last task added. A card opens the project tree.'
-            view:
-              $type: VerticalStack
-              $if: $sources.tree.overview
-              gap: gap-0
-              items:
-                - $type: AbTest
-                  id: cards-sort
-                  label: Sort
-                  initial: activity
-                  variants:
-                    activity:
-                      label: Last added
-                      hint: Newest activity first
-                      view:
-                        $type: task:ProjectCards
-                        projects: $sources.tree.overview.projects
-                        sort: activity
-                    name:
-                      label: Name
-                      hint: Alphabetical
-                      view:
-                        $type: task:ProjectCards
-                        projects: $sources.tree.overview.projects
-                        sort: name
-                    open:
-                      label: Open tasks
-                      hint: Most open tasks first
-                      view:
-                        $type: task:ProjectCards
-                        projects: $sources.tree.overview.projects
-                        sort: open
-          flat:
-            label: Flat list
-            hint: ONE list with sticky project headers, project and status filters, the first rows per project then "N more", and a cap on projects drawn.
-            view:
-              $type: VerticalStack
-              $if: $sources.tree.overview
-              gap: gap-0
-              items:
-                - $type: AbTest
-                  id: flat-cap
-                  label: Rows per project
-                  initial: rows-5
-                  variants:
-                    rows-5:
-                      label: 5 rows
-                      hint: Five rows per project
-                      view:
-                        $type: task:ProjectFlatTree
-                        projects: $sources.tree.overview.projects
-                        rowsPerProject: 5
-                    rows-15:
-                      label: 15 rows
-                      hint: Fifteen rows per project
-                      view:
-                        $type: task:ProjectFlatTree
-                        projects: $sources.tree.overview.projects
-                        rowsPerProject: 15
-                    rows-40:
-                      label: 40 rows
-                      hint: Forty rows per project
-                      view:
-                        $type: task:ProjectFlatTree
-                        projects: $sources.tree.overview.projects
-                        rowsPerProject: 40
-  - $type: DataTable
-    $if: $sources.tree.project
-    rows: $sources.tree.rows
-    navigateTo: '{href}'
-    emptyMessage: No open tasks yet. Create one from the Tasks page ("Show closed tasks" includes the closed ones)
-    columns:
-      - key: label
-        label: Task
-      - key: id
-        label: ID
-        mono: true
-        nowrap: true
-      - key: status
-        label: Status
-        nowrap: true
+    - $type: PageHeader
+      title: Tree
+      headerActions:
+          - $type: ButtonLink
+            $if: $sources.tree.showAllToggle
+            label: $sources.tree.showAllToggle.label
+            to: $sources.tree.showAllToggle.href
+    # Extension point task:project-header (see tasks-page.yaml): per-project address only, empty slot draws nothing.
+    - $type: task:ChipRow
+      $if: $route.project
+      items:
+          - $type: ExtensionSlot
+            $if: $sources.projectHeader
+            items: $sources.projectHeader
+    # Nothing registered yet: the welcome text of the route (the exact next step) instead of a blank page.
+    - $type: Badge
+      $if: $sources.projects.noProjects
+      label: $sources.projects.noProjectsText
+      variant: info
+    - $type: Badge
+      $if: $sources.tree.projectText
+      label: $sources.tree.projectText
+      variant: info
+    # The selected project cannot be read (not initialized, corrupt config...): the reason and the fix, not a blank page.
+    - $type: Badge
+      $if: $sources.projects.selectedProblem
+      label: $sources.projects.selectedProblem
+      variant: danger
+    - $type: Badge
+      $if: $sources.tree.errorText
+      label: $sources.tree.errorText
+      variant: danger
+    # The address names a project the registry does not know: said, with the next step, not a blank page.
+    - $type: Badge
+      $if: $sources.projects.unknownProjectText
+      label: $sources.projects.unknownProjectText
+      variant: danger
+    # Global forest: what it covers.
+    - $type: Badge
+      $if: $sources.tree.scopeText
+      label: $sources.tree.scopeText
+      variant: info
+    # The projects that could not be read: ONE line (how many, which). The reason and the fix of each are on its flagged
+    # line of the accordion below, so raw paths and YAML errors never lead the page.
+    - $type: Badge
+      $if: $sources.tree.warning
+      label: $sources.tree.warning
+      variant: warning
+    # Global scope only: `projects` is absent from the answer of a project. The `$if` sits on a stack around the component.
+    - $type: VerticalStack
+      $if: $sources.tree.projects
+      gap: gap-0
+      items:
+          - $type: task:ProjectAccordion
+            projects: $sources.tree.projects
+    - $type: DataTable
+      $if: $sources.tree.project
+      rows: $sources.tree.rows
+      navigateTo: '{href}'
+      emptyMessage: No open tasks yet. Create one from the Tasks page ("Show closed tasks" includes the closed ones)
+      columns:
+          - { key: 'label', label: 'Task' }
+          - { key: 'id', label: 'ID', mono: true, nowrap: true }
+          - { key: 'status', label: 'Status', nowrap: true }

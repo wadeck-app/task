@@ -116,7 +116,7 @@ export function TaskRowList({
 									{row.id}
 								</span>
 							) : null}
-							<span title={row.title} className="min-w-0 flex-1 truncate text-sm text-content">
+							<span title={row.title} className="min-w-[6rem] flex-1 truncate text-sm text-content">
 								{row.titleText ?? row.title}
 							</span>
 							{row.meta ? <span className="shrink-0 text-xs text-muted">{row.meta}</span> : null}
@@ -126,7 +126,7 @@ export function TaskRowList({
 					const canRemove =
 						removeAction !== undefined && removeAction !== '' && row.removeParams !== undefined;
 					// With a button the row link shares the line with it; it takes the room left.
-					const rowClass = `flex items-center gap-3 ${PADDING[density]}${canRemove ? ' min-w-0 flex-1' : ''}`;
+					const rowClass = `flex flex-wrap items-center gap-x-3 gap-y-1 ${PADDING[density]}${canRemove ? ' min-w-0 flex-1' : ''}`;
 					return (
 						<li
 							key={`${row.id}-${index}`}

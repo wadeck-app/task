@@ -14,10 +14,6 @@ import { Notice } from '../components/Notice.js'
 import { Panel } from '../components/Panel.js'
 import { ProgressSummary } from '../components/ProgressSummary.js'
 import { ProjectAccordion } from '../components/ProjectAccordion.js'
-import { ProjectCards } from '../components/ProjectCards.js'
-import { ProjectFlatTree } from '../components/ProjectFlatTree.js'
-import { ProjectMasterDetail } from '../components/ProjectMasterDetail.js'
-import { ProjectPicker } from '../components/ProjectPicker.js'
 import { PropertyList } from '../components/PropertyList.js'
 import { PropertyRow } from '../components/PropertyRow.js'
 import { SegmentedControl } from '../components/SegmentedControl.js'
@@ -26,6 +22,8 @@ import { StatusBadge } from '../components/StatusBadge.js'
 import { TabPanels } from '../components/TabPanels.js'
 import { TaskRowList } from '../components/TaskRowList.js'
 import { Timeline } from '../components/Timeline.js'
+import { TitleText } from '../components/TitleText.js'
+import { WidthFrame } from '../components/WidthFrame.js'
 
 export const ActionSelectEntry: ComponentRegistryEntry = {
 	name: 'ActionSelect', category: 'atomic', tags: ["select","status","type","action","choice"],
@@ -66,7 +64,8 @@ export const ChipRowEntry: ComponentRegistryEntry = {
 		const items = node['items'] as unknown[] | undefined
 		const gap = coerceProp(resolveExpressionValue(node['gap'], ctx), 'ChipRow.gap', 'primitive', false) as import('../components/ChipRow.js').ChipRowProps['gap']
 		const align = coerceProp(resolveExpressionValue(node['align'], ctx), 'ChipRow.align', 'primitive', false) as import('../components/ChipRow.js').ChipRowProps['align']
-		return <ChipRow items={items ? renderChildren(items, registry, ctx) : null} gap={gap} align={align} />
+		const justify = coerceProp(resolveExpressionValue(node['justify'], ctx), 'ChipRow.justify', 'primitive', false) as import('../components/ChipRow.js').ChipRowProps['justify']
+		return <ChipRow items={items ? renderChildren(items, registry, ctx) : null} gap={gap} align={align} justify={justify} />
 	},
 }
 
@@ -145,50 +144,7 @@ export const ProjectAccordionEntry: ComponentRegistryEntry = {
 	nodeSchema: null as never,
 	render: ({ node, ctx }: RegistryRenderProps) => {
 		const projects = coerceProp(resolveExpressionValue(node['projects'], ctx), 'ProjectAccordion.projects', 'array', true) as import('../components/ProjectAccordion.js').ProjectAccordionProps['projects']
-		const defaultOpen = coerceProp(resolveExpressionValue(node['defaultOpen'], ctx), 'ProjectAccordion.defaultOpen', 'primitive', false) as import('../components/ProjectAccordion.js').ProjectAccordionProps['defaultOpen']
-		const intro = coerceProp(resolveExpressionValue(node['intro'], ctx), 'ProjectAccordion.intro', 'string', false) as import('../components/ProjectAccordion.js').ProjectAccordionProps['intro']
-		return <ProjectAccordion projects={projects} defaultOpen={defaultOpen} intro={intro} />
-	},
-}
-
-export const ProjectCardsEntry: ComponentRegistryEntry = {
-	name: 'ProjectCards', category: 'composite', tags: ["tree","projects","cards","grid","overview"],
-	nodeSchema: null as never,
-	render: ({ node, ctx }: RegistryRenderProps) => {
-		const projects = coerceProp(resolveExpressionValue(node['projects'], ctx), 'ProjectCards.projects', 'array', true) as import('../components/ProjectCards.js').ProjectCardsProps['projects']
-		const sort = (resolveExpressionValue(node['sort'], ctx)) as import('../components/ProjectCards.js').ProjectCardsProps['sort']
-		return <ProjectCards projects={projects} sort={sort} />
-	},
-}
-
-export const ProjectFlatTreeEntry: ComponentRegistryEntry = {
-	name: 'ProjectFlatTree', category: 'composite', tags: ["tree","projects","flat","table","grouped","filter"],
-	nodeSchema: null as never,
-	render: ({ node, ctx }: RegistryRenderProps) => {
-		const projects = coerceProp(resolveExpressionValue(node['projects'], ctx), 'ProjectFlatTree.projects', 'array', true) as import('../components/ProjectFlatTree.js').ProjectFlatTreeProps['projects']
-		const rowsPerProject = coerceProp(resolveExpressionValue(node['rowsPerProject'], ctx), 'ProjectFlatTree.rowsPerProject', 'primitive', false) as import('../components/ProjectFlatTree.js').ProjectFlatTreeProps['rowsPerProject']
-		const projectsPerPage = coerceProp(resolveExpressionValue(node['projectsPerPage'], ctx), 'ProjectFlatTree.projectsPerPage', 'primitive', false) as import('../components/ProjectFlatTree.js').ProjectFlatTreeProps['projectsPerPage']
-		return <ProjectFlatTree projects={projects} rowsPerProject={rowsPerProject} projectsPerPage={projectsPerPage} />
-	},
-}
-
-export const ProjectMasterDetailEntry: ComponentRegistryEntry = {
-	name: 'ProjectMasterDetail', category: 'composite', tags: ["tree","projects","master","detail","list"],
-	nodeSchema: null as never,
-	render: ({ node, ctx }: RegistryRenderProps) => {
-		const projects = coerceProp(resolveExpressionValue(node['projects'], ctx), 'ProjectMasterDetail.projects', 'array', true) as import('../components/ProjectMasterDetail.js').ProjectMasterDetailProps['projects']
-		const listWidth = coerceProp(resolveExpressionValue(node['listWidth'], ctx), 'ProjectMasterDetail.listWidth', 'primitive', false) as import('../components/ProjectMasterDetail.js').ProjectMasterDetailProps['listWidth']
-		return <ProjectMasterDetail projects={projects} listWidth={listWidth} />
-	},
-}
-
-export const ProjectPickerEntry: ComponentRegistryEntry = {
-	name: 'ProjectPicker', category: 'composite', tags: ["tree","projects","picker","combobox","overview"],
-	nodeSchema: null as never,
-	render: ({ node, ctx }: RegistryRenderProps) => {
-		const projects = coerceProp(resolveExpressionValue(node['projects'], ctx), 'ProjectPicker.projects', 'array', true) as import('../components/ProjectPicker.js').ProjectPickerProps['projects']
-		const start = coerceProp(resolveExpressionValue(node['start'], ctx), 'ProjectPicker.start', 'primitive', false) as import('../components/ProjectPicker.js').ProjectPickerProps['start']
-		return <ProjectPicker projects={projects} start={start} />
+		return <ProjectAccordion projects={projects} />
 	},
 }
 
@@ -305,6 +261,28 @@ export const TimelineEntry: ComponentRegistryEntry = {
 		return <Timeline entries={entries} groupByDay={groupByDay} order={order} emptyText={emptyText} showIcons={showIcons} />
 	},
 }
+
+export const TitleTextEntry: ComponentRegistryEntry = {
+	name: 'TitleText', category: 'atomic', tags: ["title","heading","text","clamp","truncate","long"],
+	nodeSchema: null as never,
+	render: ({ node, ctx }: RegistryRenderProps) => {
+		const text = coerceProp(resolveExpressionValue(node['text'], ctx), 'TitleText.text', 'string', true) as import('../components/TitleText.js').TitleTextProps['text']
+		const size = coerceProp(resolveExpressionValue(node['size'], ctx), 'TitleText.size', 'primitive', false) as import('../components/TitleText.js').TitleTextProps['size']
+		const lines = coerceProp(resolveExpressionValue(node['lines'], ctx), 'TitleText.lines', 'primitive', false) as import('../components/TitleText.js').TitleTextProps['lines']
+		const tooltip = coerceProp(resolveExpressionValue(node['tooltip'], ctx), 'TitleText.tooltip', 'primitive', false) as import('../components/TitleText.js').TitleTextProps['tooltip']
+		const expandable = coerceProp(resolveExpressionValue(node['expandable'], ctx), 'TitleText.expandable', 'primitive', false) as import('../components/TitleText.js').TitleTextProps['expandable']
+		return <TitleText text={text} size={size} lines={lines} tooltip={tooltip} expandable={expandable} />
+	},
+}
+
+export const WidthFrameEntry: ComponentRegistryEntry = {
+	name: 'WidthFrame', category: 'disposition', tags: ["layout","width","page","frame","experiment"],
+	nodeSchema: null as never,
+	render: ({ node, registry, ctx }: RegistryRenderProps) => {
+		const items = node['items'] as unknown[] | undefined
+		return <WidthFrame items={items ? renderChildren(items, registry, ctx) : null} />
+	},
+}
 // ─── All entries ──────────────────────────────────────────────────────────────
 
 export const allEntries: ComponentRegistryEntry[] = [
@@ -317,10 +295,6 @@ export const allEntries: ComponentRegistryEntry[] = [
 	PanelEntry,
 	ProgressSummaryEntry,
 	ProjectAccordionEntry,
-	ProjectCardsEntry,
-	ProjectFlatTreeEntry,
-	ProjectMasterDetailEntry,
-	ProjectPickerEntry,
 	PropertyListEntry,
 	PropertyRowEntry,
 	SegmentedControlEntry,
@@ -329,6 +303,8 @@ export const allEntries: ComponentRegistryEntry[] = [
 	TabPanelsEntry,
 	TaskRowListEntry,
 	TimelineEntry,
+	TitleTextEntry,
+	WidthFrameEntry,
 ]
 
 // ─── Auto-detected metadata (allowedChildren, providesContext, requiresContext) ─
@@ -336,18 +312,14 @@ export const allEntries: ComponentRegistryEntry[] = [
 ActionSelectEntry.knownKeys = ["action","actionPending","allowEmpty","appearance","ariaLabel","disabled","onAction","options","params","placeholder","value","valueParam"];
 BreadcrumbTrailEntry.knownKeys = ["currentLabel","items","maxItems","separator"];
 ChipRowEntry.allowedChildren = {"items":["atomic","composite","display"]};
-ChipRowEntry.knownKeys = ["align","gap","items"];
+ChipRowEntry.knownKeys = ["align","gap","items","justify"];
 KeyValueListEntry.knownKeys = ["density","emptyText","entries"];
 LabelChipsEntry.knownKeys = ["actionPending","addAction","colors","emptyText","labelKeys","labelParam","labels","onAction","params","placeholder","readOnly","removeAction","size"];
 NoticeEntry.knownKeys = ["label","variant"];
 PanelEntry.allowedChildren = {"actions":["layout","display","composite","atomic"],"items":["layout","table","form","display","composite","atomic"]};
 PanelEntry.knownKeys = ["actions","appearance","collapsible","count","defaultOpen","items","title"];
 ProgressSummaryEntry.knownKeys = ["appearance","done","text","tone","total"];
-ProjectAccordionEntry.knownKeys = ["defaultOpen","intro","projects"];
-ProjectCardsEntry.knownKeys = ["projects","sort"];
-ProjectFlatTreeEntry.knownKeys = ["projects","projectsPerPage","rowsPerProject"];
-ProjectMasterDetailEntry.knownKeys = ["listWidth","projects"];
-ProjectPickerEntry.knownKeys = ["projects","start"];
+ProjectAccordionEntry.knownKeys = ["projects"];
 PropertyListEntry.allowedChildren = {"items":["composite"]};
 PropertyListEntry.knownKeys = ["density","dividers","items","labelPlacement","labelWidth"];
 PropertyListEntry.providesContext = ["PropertyLayoutContext"];
@@ -360,3 +332,6 @@ StatusBadgeEntry.knownKeys = ["appearance","icon","label","size","tone"];
 TabPanelsEntry.knownKeys = ["counts","defaultTab","tabs"];
 TaskRowListEntry.knownKeys = ["actionPending","appearance","density","emptyText","maxRows","onAction","removeAction","removeLabel","rows","showId","showStatus"];
 TimelineEntry.knownKeys = ["emptyText","entries","groupByDay","order","showIcons"];
+TitleTextEntry.knownKeys = ["expandable","lines","size","text","tooltip"];
+WidthFrameEntry.allowedChildren = {"items":["layout","table","form","display","composite","atomic"]};
+WidthFrameEntry.knownKeys = ["items"];

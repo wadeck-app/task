@@ -3,18 +3,9 @@ import type { ProjectOverview, TasksAcrossProjects } from '@wadeck-app/task-serv
 
 import { shortTitle, shortUtcTime } from './display.js';
 import type { AcrossProjects } from './acrossProjects.js';
-import { buildTreeOverview } from './treeOverview.js';
-import type { OverviewReadable } from './treeOverview.js';
-import {
-	allProjectsPageHref,
-	allProjectsTasksHref,
-	detailHref,
-	encodedProject,
-	pageLink,
-	tasksPageHref,
-} from './hrefs.js';
-import { projectTasksSection } from './dslNodes.js';
-import { flattenTree } from './rowViews.js';
+import { buildTreeProjects, countForest, unreadableSummary } from './treeProjects.js';
+import type { TreeProjectReadable } from './treeProjects.js';
+import { allProjectsPageHref, allProjectsTasksHref, detailHref, encodedProject, tasksPageHref } from './hrefs.js';
 
 const NO_TYPE_TEXT = '(none configured: any text is accepted)';
 
@@ -111,31 +102,23 @@ export function allTasksBody(found: TasksAcrossProjects, showAll: boolean): Reco
 }
 
 /**
- * The Tree page without ?project: one section per project (its name and count, a link to its own tree, its forest as
- * a table). The DataTable has no row styling nor grouping, so a project header row could not be told from a task row:
- * the sections are DSL nodes built here and rendered as is by the view (see dslNodes.ts).
+ * The Tree page without ?project: `projects`, one entry per registered project (figures, capped rows, link to its own
+ * tree; an unreadable one with its reason and fix) that `task:ProjectAccordion` folds and filters in the browser.
+ * `warning` is ONE line naming the unreadable projects: their reasons (paths, YAML errors) sit on their own lines of the
+ * list, never above it.
  */
 export function allForestBody(
-	found: AcrossProjects<OverviewReadable['value']>,
-	showAll: boolean,
-	rowCap: number
+	found: AcrossProjects<TreeProjectReadable['value']>,
+	showAll: boolean
 ): Record<string, unknown> {
 	let taskTotal = 0;
 	let closedKept = 0;
-	const groups = found.entries.map(({ project, value }) => {
-		const rows = flattenTree(project, value.forest);
-		taskTotal += rows.length;
+	for (const { value } of found.entries) {
+		const counts = countForest(value.forest, value.terminalStatuses);
+		taskTotal += counts.tasks;
 		// Without showAll, a closed task in the forest is a parent kept above an open one: it is not an open task.
-		if (!showAll) closedKept += rows.filter(row => value.terminalStatuses.includes(row.status)).length;
-		return projectTasksSection({
-			title: `${project.name} (${plural(rows.length, 'task')})`,
-			linkLabel: `Open the tree of ${project.name}`,
-			linkTo: pageLink(project, 'tree'),
-			rows,
-			// An empty project says so: without it the section would read as a project the page forgot.
-			emptyMessage: showAll ? 'No tasks' : 'No open tasks',
-		});
-	});
+		if (!showAll) closedKept += counts.closed;
+	}
 	return {
 		scope: 'all',
 		projectCount: found.entries.length,
@@ -144,9 +127,8 @@ export function allForestBody(
 			? { label: 'Hide closed tasks', href: allProjectsPageHref('tree') }
 			: { label: 'Show closed tasks', href: allProjectsPageHref('tree', true) },
 		...skippedFields(found.unreadable),
-		groups,
-		// What the Tree page variants read (components fold and filter it in the browser): capped, see treeOverview.ts.
-		overview: buildTreeOverview(found, { rowCap }),
+		warning: unreadableSummary(found.unreadableProjects),
+		projects: buildTreeProjects(found),
 	};
 }
 

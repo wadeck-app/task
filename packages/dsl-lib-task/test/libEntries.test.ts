@@ -20,10 +20,6 @@ const EXPECTED = [
 	'Panel',
 	'ProgressSummary',
 	'ProjectAccordion',
-	'ProjectCards',
-	'ProjectFlatTree',
-	'ProjectMasterDetail',
-	'ProjectPicker',
 	'PropertyList',
 	'PropertyRow',
 	'SegmentedControl',
@@ -32,6 +28,8 @@ const EXPECTED = [
 	'TabPanels',
 	'TaskRowList',
 	'Timeline',
+	'TitleText',
+	'WidthFrame',
 ];
 // @formatter:on
 

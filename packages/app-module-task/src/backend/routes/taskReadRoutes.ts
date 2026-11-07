@@ -28,7 +28,6 @@ import {
 	optionalQueryValue,
 	showAllFlag,
 } from '../request.js';
-import { newestCreatedAt, parseRowCap } from '../treeOverview.js';
 import { withRowLinks } from '../rowViews.js';
 import { linkGroupSections, linkGroups, linkRowViews } from '../taskPresentation.js';
 import { childrenBody, forestBody, taskDetailBody, taskTreeBody, tasksListBody } from '../taskViews.js';
@@ -144,14 +143,12 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 				}
 			}
 			const showAll = showAllFlag(req.query);
-			const rowCap = parseRowCap(optionalQueryValue(req.query, 'rowCap'));
 			const found = readAcrossProjects(ctx => ({
 				forest: listForest(ctx, { showAll }),
 				terminalStatuses: ctx.config.terminalStatuses,
 				figures: summarizeProject(ctx),
-				lastAddedAt: newestCreatedAt(ctx.store.list()),
 			}));
-			return { status: 200, body: allForestBody(found, showAll, rowCap) };
+			return { status: 200, body: allForestBody(found, showAll) };
 		}
 		const ctx = open(req);
 		const rootOf = optionalQueryValue(req.query, 'id');

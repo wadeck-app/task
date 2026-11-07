@@ -16,6 +16,14 @@
 # `view` of the chosen variant (expand its `$use`), delete the other fragments, the generator, `npm run views`,
 # taskPageVariants.test.ts and the fixture, then drop the presentation fields no remaining view reads (see taskViews.ts).
 #
+# DIMENSIONS shared by every design and `current` (temporary, same experiment dock; the one of today is always an option):
+#   task-title     Title     { $use: dim.title }  clamp 2 lines (default) / one line + tooltip / short (first sentence) / large (today)
+#   task-header    Header    { $use: dim.header } compact bar (default) / actions in a menu / beside the title (today); replaces the PageHeader
+#   task-controls  Controls  built by the GENERATOR around every status / type task:ActionSelect of a design (inline, on change = the
+#                  design's own, default) / select field / form with Save (old page); `current` uses { $use: ctl.status } / ctl.type
+#   task-width     Width     the task:WidthFrame component (see `$wrap` at the end of this file), not an AbTest
+# A design therefore writes `$use: dim.header` where it had its PageHeader and keeps its own ActionSelects; nothing else.
+#
 # Conventions for the components that run actions (the installed shell, dsl-ui 175, sends NO body from onAction):
 #   params: { id: $route.id, projectParam: $sources.detail.projectParam }   plus the value, which the component adds
 #   quick actions (below): setStatusTo / setTypeTo / addLabelTo carry the value in the URL path; removeLabel already does.
@@ -186,3 +194,10 @@ $experiment:
         - linear-b
         - notion-a
         - notion-b
+# The page is wrapped in task:WidthFrame (the "Width" row: left 72rem, centered 72rem, full, reading 56rem), which owns the
+# width: the PageContent is told `maxWidth: full`, else its own 72rem centred column would cap every choice. The frame is a
+# component, not an AbTest, because it wraps the WHOLE page (an AbTest would repeat every design once per width).
+$page:
+    maxWidth: full
+$wrap:
+    $type: task:WidthFrame

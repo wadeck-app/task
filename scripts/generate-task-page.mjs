@@ -64,6 +64,60 @@ function expand(value, shared, where, chain = []) {
 	return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, expand(item, shared, where, chain)]));
 }
 
+const CONTROLS_ID = 'task-controls';
+
+/**
+ * The task-controls switcher around ONE status or type control: the control as the design draws it (`inline`, the
+ * default), the same as a bordered field, and the labelled select with a Save button the page had before. Needs the
+ * fragments `form.status` / `form.type` of _shared.yaml.
+ */
+function controlsTest(kind, inline, shared) {
+	const form = shared[kind === 'status' ? 'form.status' : 'form.type'];
+	return {
+		$type: 'AbTest',
+		id: CONTROLS_ID,
+		label: 'Controls',
+		initial: 'inline',
+		variants: {
+			inline: {
+				label: 'Inline, on change',
+				hint: 'A compact select that applies the change as soon as it is picked: no Save button. The look is that of the design.',
+				view: inline,
+			},
+			field: {
+				label: 'Select field, on change',
+				hint: 'A bordered select field that applies the change as soon as it is picked.',
+				view: { ...structuredClone(inline), appearance: 'field' },
+			},
+			form: {
+				label: 'Form with Save (old page)',
+				hint: 'A labelled select and a Save button, as the page was before the experiment.',
+				view: structuredClone(form),
+			},
+		},
+	};
+}
+
+const isControl = node =>
+	node.$type === 'task:ActionSelect' && (node.action === 'setStatusTo' || node.action === 'setTypeTo');
+
+/** Wraps every status / type ActionSelect of a design in the task-controls switcher (the ones already wrapped are kept). */
+function wrapControls(value, shared) {
+	if (Array.isArray(value)) {
+		return value.map(item => wrapControls(item, shared));
+	}
+	if (value === null || typeof value !== 'object') {
+		return value;
+	}
+	if (value.$type === 'AbTest' && value.id === CONTROLS_ID) {
+		return value;
+	}
+	if (isControl(value)) {
+		return controlsTest(value.action === 'setStatusTo' ? 'status' : 'type', value, shared);
+	}
+	return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, wrapControls(item, shared)]));
+}
+
 /** The content of task-page.yaml for the fragments in `viewsDir`, nothing written. */
 export function generateTaskPage(viewsDir = DEFAULT_VIEWS_DIR) {
 	const dir = path.join(viewsDir, 'variants');
@@ -78,7 +132,7 @@ export function generateTaskPage(viewsDir = DEFAULT_VIEWS_DIR) {
 	}
 	const head = pageText.slice(0, marker);
 	const rest = yaml.load(pageText.slice(marker));
-	const { $notices: notices, $experiment: experiment } = rest ?? {};
+	const { $notices: notices, $experiment: experiment, $wrap: wrap, $page: pageProps } = rest ?? {};
 	if (!Array.isArray(notices)) {
 		fail(`${pageFile}: $notices must be a list of nodes.`);
 	}
@@ -103,6 +157,17 @@ export function generateTaskPage(viewsDir = DEFAULT_VIEWS_DIR) {
 	}
 
 	const shared = readYaml(path.join(dir, '_shared.yaml'), '_shared.yaml') ?? {};
+	// The task-controls dimension exists when _shared.yaml has its fragments (the scratch folders of the tests have none).
+	const withControls = 'ctl.status.default' in shared && 'form.status' in shared && 'form.type' in shared;
+	if (withControls) {
+		for (const kind of ['status', 'type']) {
+			shared[`ctl.${kind}`] = controlsTest(
+				kind,
+				expand(structuredClone(shared[`ctl.${kind}.default`]), shared, `ctl.${kind}.default`),
+				shared
+			);
+		}
+	}
 	const variants = {};
 	for (const name of names) {
 		const file = path.join(dir, `${name}.yaml`);
@@ -115,7 +180,9 @@ export function generateTaskPage(viewsDir = DEFAULT_VIEWS_DIR) {
 				`${file}: a variant has exactly label, hint and view (missing: ${missing.join(', ') || 'none'}; unexpected: ${unknown.join(', ') || 'none'}).`
 			);
 		}
-		const expanded = expand(fragment, shared, `${name}.yaml`);
+		const expanded = withControls
+			? wrapControls(expand(fragment, shared, `${name}.yaml`), shared)
+			: expand(fragment, shared, `${name}.yaml`);
 		// The reference variant is the page as shipped, untouched. Every other variant draws nothing until the task is loaded:
 		// with an unknown, unreadable or virtual project the notices above the switcher say why, and the empty frames of a
 		// design ("Created: undefined") would only add noise.
@@ -140,18 +207,20 @@ export function generateTaskPage(viewsDir = DEFAULT_VIEWS_DIR) {
 		);
 	}
 
+	const experimentNode = {
+		$type: 'AbTest',
+		id: experiment.id,
+		label: experiment.label,
+		initial: experiment.initial,
+		variants,
+	};
+	// `$wrap`: a node with an `items` slot that holds the experiment (task:WidthFrame, the width dimension).
+	// `$page`: extra props of the PageContent (maxWidth: full, so the frame decides the width).
+	const wrapped = wrap === undefined ? experimentNode : { ...expand(wrap, shared, '$wrap'), items: [experimentNode] };
 	const body = {
 		$type: 'PageContent',
-		sections: [
-			...expand(notices, shared, '$notices'),
-			{
-				$type: 'AbTest',
-				id: experiment.id,
-				label: experiment.label,
-				initial: experiment.initial,
-				variants,
-			},
-		],
+		...(pageProps === undefined ? {} : expand(pageProps, shared, '$page')),
+		sections: [...expand(notices, shared, '$notices'), wrapped],
 	};
 	const banner =
 		'# GENERATED - edit src/dsl-views/variants/*.yaml and run: npm run views --workspace=packages/app-module-task\n' +

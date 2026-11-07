@@ -18,6 +18,8 @@ export interface ChipRowProps {
 	/** Space between the chips, horizontally and once wrapped, vertically. */
 	gap?: Gap;
 	align?: Align;
+	/** `between`: with two groups, the first stays at the start and the second goes to the end; on a narrow column they wrap. */
+	justify?: 'start' | 'between';
 }
 
 /**
@@ -29,9 +31,17 @@ export interface ChipRowProps {
  * @registryCategory disposition
  * @registryTags layout chips wrap row
  */
-export function ChipRow({ items, gap = 'gap-2', align = 'center' }: ChipRowProps): React.ReactElement {
+export function ChipRow({
+	items,
+	gap = 'gap-2',
+	align = 'center',
+	justify = 'start',
+}: ChipRowProps): React.ReactElement {
 	return (
-		<div data-testid="chip-row" className={`flex min-w-0 flex-wrap ${gap} ${ALIGN_CLASSES[align]}`}>
+		<div
+			data-testid="chip-row"
+			className={`flex min-w-0 flex-wrap ${gap} ${ALIGN_CLASSES[align]}${justify === 'between' ? ' justify-between' : ''}`}
+		>
 			{items}
 		</div>
 	);

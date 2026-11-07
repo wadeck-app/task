@@ -21,7 +21,9 @@ const head = parse(readFileSync(join(import.meta.dirname, '__fixtures__/task-pag
 
 const isNode = (value: unknown): value is Node => value !== null && typeof value === 'object' && !Array.isArray(value);
 const sections = page.sections as Node[];
-const switcher = sections.find(s => s.$type === 'AbTest') as Node;
+// The experiment sits in task:WidthFrame (the width dimension), the last section of the PageContent.
+const frame = sections[sections.length - 1] as Node;
+const switcher = (frame.items as Node[])[0] as Node;
 interface Fragment {
 	label: string;
 	hint: string;
@@ -30,11 +32,16 @@ interface Fragment {
 const variants = switcher.variants as Record<string, Fragment>;
 const variantNames = Object.keys(variants);
 
-// Every combination of the options of a node: a nested switcher is replaced by the view of each of its choices.
-function alternatives(value: unknown): unknown[] {
+// The dimensions shared by every design (see variants/_page.yaml). They appear in every design, some of them in several places,
+// so their combinations are pinned instead of multiplied: see `pins` below.
+const DIMENSIONS = ['task-title', 'task-header', 'task-controls'];
+
+// Every combination of the options of a node: a nested switcher is replaced by the view of each of its choices. A switcher
+// of a shared dimension is replaced by ONE choice: the one in `pins`, else its initial one.
+function alternatives(value: unknown, pins: Record<string, string> = {}): unknown[] {
 	if (Array.isArray(value)) {
 		return value.reduce<unknown[][]>(
-			(acc, item) => acc.flatMap(prefix => alternatives(item).map(alt => [...prefix, alt])),
+			(acc, item) => acc.flatMap(prefix => alternatives(item, pins).map(alt => [...prefix, alt])),
 			[[]]
 		);
 	}
@@ -42,10 +49,15 @@ function alternatives(value: unknown): unknown[] {
 		return [value];
 	}
 	if (value.$type === 'AbTest') {
-		return Object.values(value.variants as Record<string, Fragment>).flatMap(choice => alternatives(choice.view));
+		const choices = value.variants as Record<string, Fragment>;
+		if (DIMENSIONS.includes(String(value.id))) {
+			const chosen = pins[String(value.id)] ?? String(value.initial);
+			return alternatives(choices[chosen]!.view, pins);
+		}
+		return Object.values(choices).flatMap(choice => alternatives(choice.view, pins));
 	}
 	return Object.entries(value).reduce<Node[]>(
-		(acc, [key, item]) => acc.flatMap(prefix => alternatives(item).map(alt => ({ ...prefix, [key]: alt }))),
+		(acc, [key, item]) => acc.flatMap(prefix => alternatives(item, pins).map(alt => ({ ...prefix, [key]: alt }))),
 		[{}]
 	);
 }
@@ -75,10 +87,54 @@ const stringsOf = (tree: unknown): string[] => {
 	return found;
 };
 
-/** Variant -> every resolved combination of its options. */
-const combinations: Array<{ name: string; index: number; tree: unknown }> = variantNames.flatMap(name =>
+/** Every option of every shared dimension, read from the first variant that declares it (the declarations are checked identical). */
+const dimensionChoices = (() => {
+	const found: Record<string, string[]> = {};
+	for (const name of variantNames) {
+		walk(variants[name]!.view, node => {
+			if (node.$type === 'AbTest' && DIMENSIONS.includes(String(node.id)) && !found[String(node.id)]) {
+				found[String(node.id)] = Object.keys(node.variants as object);
+			}
+		});
+	}
+	return found;
+})();
+const dimensionInitial: Record<string, string> = {};
+walk(page, node => {
+	if (node.$type === 'AbTest' && DIMENSIONS.includes(String(node.id)))
+		dimensionInitial[String(node.id)] = String(node.initial);
+});
+/**
+ * The pinned choices tried per design: every non-default option of every dimension alone, then all dimensions on their last and on
+ * their second option. Each is combined with the design's FIRST own combination only (own options x dimensions would
+ * multiply: the product is checked by parts, which is as strong because the dimensions touch other nodes than the options do).
+ */
+const pinSets: Array<{ label: string; pins: Record<string, string> }> = [
+	...DIMENSIONS.flatMap(dim =>
+		(dimensionChoices[dim] ?? [])
+			.filter(c => c !== dimensionInitial[dim])
+			.map(c => ({ label: `${dim}=${c}`, pins: { [dim]: c } }))
+	),
+	{ label: 'all-last', pins: Object.fromEntries(DIMENSIONS.map(d => [d, dimensionChoices[d]!.at(-1)!])) },
+	{ label: 'all-second', pins: Object.fromEntries(DIMENSIONS.map(d => [d, dimensionChoices[d]![1]!])) },
+];
+
+/** Variant -> every resolved combination of its own options, the dimensions on their default. */
+const baseCombinations: Array<{ name: string; index: number; tree: unknown }> = variantNames.flatMap(name =>
 	alternatives(variants[name]!.view).map((tree, index) => ({ name, index, tree }))
 );
+/** Variant -> its first combination with the dimensions pinned (see `pinSets`). */
+const dimensionCombinations = variantNames.flatMap(name =>
+	pinSets.map(({ label, pins }) => ({
+		name,
+		index: label as unknown as number,
+		tree: alternatives(variants[name]!.view, pins)[0],
+	}))
+);
+const combinations: Array<{ name: string; index: number | string; tree: unknown }> = [
+	...baseCombinations,
+	...dimensionCombinations,
+];
 // A variant whose hint is still the placeholder 'TODO' has not been written yet: it is listed (skipped, visible in the run)
 // instead of failing, and the contract applies the moment its hint is real.
 const PENDING = variantNames.filter(n => variants[n]!.hint === 'TODO');
@@ -102,9 +158,13 @@ describe('the generated task-page.yaml', () => {
 });
 
 describe('the experiment', () => {
-	it('is ONE AbTest at the page root, initial is "current", in the agreed order', () => {
-		expect(sections.filter(s => s.$type === 'AbTest')).toHaveLength(1);
-		expect(sections[sections.length - 1]).toBe(switcher);
+	it('is ONE AbTest at the page root, inside the width frame, initial is "current", in the agreed order', () => {
+		expect(sections.filter(s => s.$type === 'AbTest')).toHaveLength(0);
+		expect(frame.$type).toBe('task:WidthFrame');
+		expect(frame.items).toEqual([switcher]);
+		// The frame owns the width: the PageContent must not cap it at its own 72rem centred column.
+		expect(page.maxWidth).toBe('full');
+		expect(switcher.$type).toBe('AbTest');
 		expect(switcher.id).toBe('task-design');
 		expect(switcher.initial).toBe('current');
 		expect(variantNames).toEqual([
@@ -139,13 +199,13 @@ describe('the experiment', () => {
 	});
 
 	it('nests at most 3 options per variant, each with 2 or 3 choices, ids unique and prefixed with the variant', () => {
-		const ids = new Set<string>(['task-design']);
+		const ids = new Set<string>(['task-design', ...DIMENSIONS, 'task-width']);
 		for (const name of variantNames) {
 			// The same option may appear in several places of a variant (e.g. in both layouts of a sidebar option) as long as the
 			// declaration is identical: the switcher shows one row for it. A different declaration under one id is a bug.
 			const byId = new Map<string, Node>();
 			walk(variants[name]!.view, node => {
-				if (node.$type !== 'AbTest') return;
+				if (node.$type !== 'AbTest' || DIMENSIONS.includes(String(node.id))) return;
 				const known = byId.get(String(node.id));
 				if (known)
 					expect(JSON.stringify(node), `option ${String(node.id)} declared twice differently`).toBe(
@@ -166,9 +226,11 @@ describe('the experiment', () => {
 				expect(choices, `${id} choices`).toBeLessThanOrEqual(3);
 			}
 		}
-		expect(combinations.filter(c => c.name === 'current')).toHaveLength(1);
+		expect(baseCombinations.filter(c => c.name === 'current')).toHaveLength(1);
 		for (const name of variantNames) {
-			expect(combinations.filter(c => c.name === name).length, `${name} combinations`).toBeLessThanOrEqual(27);
+			expect(baseCombinations.filter(c => c.name === name).length, `${name} combinations`).toBeLessThanOrEqual(
+				27
+			);
 		}
 	});
 
@@ -220,6 +282,217 @@ describe('states without a task', () => {
 	});
 });
 
+// The four dimensions every design shares (title, header, controls here; the width is task:WidthFrame). Each is a row of the
+// same switcher in every design, with the option of today kept next to the proposals.
+describe('the shared dimensions', () => {
+	const declared = (id: string): Array<{ design: string; node: Node }> =>
+		variantNames.flatMap(design => {
+			const found: Node[] = [];
+			walk(variants[design]!.view, node => {
+				if (node.$type === 'AbTest' && node.id === id) found.push(node);
+			});
+			return found.map(node => ({ design, node }));
+		});
+	const choicesOf = (node: Node): Record<string, Fragment> => node.variants as Record<string, Fragment>;
+	// What the dock shows of a row: the same in every design, or one design would silently have another row under the same id.
+	const rowOf = (node: Node): unknown => ({
+		label: node.label,
+		initial: node.initial,
+		choices: Object.entries(choicesOf(node)).map(([key, c]) => [key, c.label, c.hint]),
+	});
+
+	it.each(DIMENSIONS)('%s is in every design, and `current`, with one and the same row', id => {
+		for (const design of variantNames) {
+			expect(
+				declared(id).filter(d => d.design === design),
+				`${design} has no ${id}`
+			).not.toEqual([]);
+		}
+		const [first, ...rest] = declared(id);
+		for (const other of rest) expect(rowOf(other.node), `${id} in ${other.design}`).toEqual(rowOf(first!.node));
+	});
+
+	it.each([
+		['task-title', 'clamp2', 'large', 4],
+		['task-header', 'bar', 'beside', 3],
+		['task-controls', 'inline', 'form', 3],
+	])('%s: a compact default, the option of today kept, %i options', (id, initial, today, count) => {
+		const node = declared(id)[0]!.node;
+		expect(node.initial).toBe(initial);
+		expect(Object.keys(choicesOf(node))).toContain(today);
+		expect(Object.keys(choicesOf(node)).length).toBe(count);
+		expect(node.initial, 'the default is a proposal, not the old behaviour').not.toBe(today);
+	});
+
+	it('task-title: no option prints a title bigger than text-2xl, and only the one of today shows the whole text unclamped', () => {
+		const title = choicesOf(declared('task-title')[0]!.node);
+		const texts = (choice: string): Node[] =>
+			nodesOf(title[choice]!.view).filter(n => n.$type === 'task:TitleText');
+		for (const [key, choice] of Object.entries(title)) {
+			for (const t of nodesOf(choice.view).filter(n => n.$type === 'task:TitleText')) {
+				expect(['sm', 'lg', 'xl', '2xl'], `${key}: size ${String(t.size)}`).toContain(t.size);
+			}
+		}
+		expect(texts('clamp2')[0]).toMatchObject({
+			text: '$sources.detail.task.title',
+			size: 'xl',
+			lines: 2,
+			expandable: true,
+		});
+		expect(texts('oneline')[0]).toMatchObject({ lines: 1, tooltip: true });
+		expect(texts('large')[0]).toMatchObject({ text: '$sources.detail.task.title', size: '2xl', lines: 0 });
+		// short: the headline from the route, the whole title one fold away.
+		expect(texts('short')[0]).toMatchObject({ text: '$sources.detail.titleShort' });
+		const panel = nodesOf(title.short!.view).find(n => n.$type === 'task:Panel')!;
+		expect(panel).toMatchObject({ $if: '$sources.detail.hasShortTitle', collapsible: true, defaultOpen: false });
+		expect(nodesOf(panel).some(n => n.text === '$sources.detail.task.title')).toBe(true);
+	});
+
+	it('task-header: History and Children are always buttons, Delete stays reachable and is danger-outline, never the primary look', () => {
+		const header = choicesOf(declared('task-header')[0]!.node);
+		for (const [key, choice] of Object.entries(header)) {
+			const links = nodesOf(choice.view).filter(n => n.$type === 'ButtonLink');
+			const to = links.map(n => n.to);
+			expect(to, key).toContain('$sources.detail.taskHrefs.history');
+			expect(to, key).toContain('$sources.detail.taskHrefs.childrenList');
+			const del = links.find(n => n.to === '$sources.detail.taskHrefs.deleteTasks');
+			expect(del, `${key}: no way to the delete page`).toBeDefined();
+			expect(del!.variant, key).toBe('danger-outline');
+		}
+		// Actions in a menu: Delete is inside the popover, the two others stay on the bar.
+		const menu = header.menu!.view as Node;
+		const popover = nodesOf(menu).find(n => n.$type === 'Popover')!;
+		expect(nodesOf(popover).some(n => n.to === '$sources.detail.taskHrefs.deleteTasks')).toBe(true);
+		const outside = nodesOf(menu).filter(n => n.$type === 'ButtonLink' && !nodesOf(popover).includes(n));
+		expect(outside.map(n => n.to)).toEqual([
+			'$sources.detail.taskHrefs.history',
+			'$sources.detail.taskHrefs.childrenList',
+		]);
+	});
+
+	it('task-header: the title sits in every option (the title dimension applies whatever the header)', () => {
+		for (const [key, choice] of Object.entries(choicesOf(declared('task-header')[0]!.node))) {
+			expect(
+				nodesOf(choice.view).some(n => n.$type === 'AbTest' && n.id === 'task-title'),
+				key
+			).toBe(true);
+		}
+	});
+
+	it('no design draws a PageHeader of its own for the title any more (it would be big and ignore the title row)', () => {
+		for (const { name, index, tree } of combinations) {
+			expect(
+				nodesOf(tree).filter(n => n.$type === 'PageHeader'),
+				`${name}#${index}`
+			).toEqual([]);
+		}
+	});
+
+	it('task-controls: wraps every status and type select; the old form is one option, the design own select the default', () => {
+		const shared = parse(readFileSync(join(viewsDir, 'variants/_shared.yaml'), 'utf8'));
+		for (const design of variantNames) {
+			const tests = declared('task-controls').filter(d => d.design === design);
+			expect(tests.length, design).toBeGreaterThan(0);
+			for (const t of tests) {
+				const choices = choicesOf(t.node);
+				const inline = choices.inline!.view as Node;
+				expect(inline.$type, design).toBe('task:ActionSelect');
+				expect(choices.field!.view).toEqual({ ...inline, appearance: 'field' });
+				const kind = inline.action === 'setStatusTo' ? 'status' : 'type';
+				expect(choices.form!.view, `${design} ${kind}`).toEqual(shared[`form.${kind}`]);
+			}
+		}
+		// No status or type select escapes the switcher.
+		const bare: string[] = [];
+		for (const design of variantNames) {
+			const walkBare = (value: unknown, inside: boolean): void => {
+				if (Array.isArray(value)) return value.forEach(v => walkBare(v, inside));
+				if (!isNode(value)) return;
+				const here = inside || (value.$type === 'AbTest' && value.id === 'task-controls');
+				if (
+					value.$type === 'task:ActionSelect' &&
+					['setStatusTo', 'setTypeTo'].includes(String(value.action)) &&
+					!inside
+				) {
+					bare.push(design);
+				}
+				Object.values(value).forEach(v => walkBare(v, here));
+			};
+			walkBare(variants[design]!.view, false);
+		}
+		expect(bare).toEqual([]);
+	});
+
+	it('the width is the task:WidthFrame component: no props but the page, the PageContent does not cap it', () => {
+		expect(Object.keys(frame).sort()).toEqual(['$type', 'items']);
+		expect(page.maxWidth).toBe('full');
+	});
+
+	it('is checked by parts: every option of every dimension alone, then all on their last and second option, per design', () => {
+		const names = new Set(dimensionCombinations.map(c => String(c.index)));
+		for (const dim of DIMENSIONS) {
+			for (const choice of dimensionChoices[dim]!.filter(c => c !== dimensionInitial[dim])) {
+				expect(names, `${dim}=${choice}`).toContain(`${dim}=${choice}`);
+			}
+		}
+		expect(names).toContain('all-last');
+		expect(names).toContain('all-second');
+		expect(dimensionCombinations.every(c => c.tree !== undefined)).toBe(true);
+	});
+});
+
+// Seen in github-b / github-a (sidebar): the PARENT label of a root task stood over nothing, as if the page had not loaded.
+describe('a property row never stands empty', () => {
+	it('every Parent row says "No parent" for a root task (or is only drawn when there is a parent)', () => {
+		const rows: Array<{ id: string; row: Node }> = [];
+		for (const { name, index, tree } of combinations) {
+			for (const row of nodesOf(tree)) {
+				if (row.$type === 'task:PropertyRow' && row.label === 'Parent')
+					rows.push({ id: `${name}#${index}`, row });
+			}
+		}
+		expect(rows.length).toBeGreaterThan(0);
+		for (const { id, row } of rows) {
+			const says = nodesOf(row.items).some(n => n.$if === '$sources.detail.noParent' && n.label === 'No parent');
+			expect(says || row.$if === '$sources.detail.hasParent', `${id}: an empty Parent row for a root task`).toBe(
+				true
+			);
+		}
+	});
+});
+
+// Seen at 390 px in github-b: a 600-character title or description without a space ran thousands of pixels wide.
+describe('long text cannot widen a design', () => {
+	it('no design prints the task title through a component that does not break long words', () => {
+		for (const { name, index, tree } of combinations) {
+			for (const node of nodesOf(tree)) {
+				// Raw titles go through task:TitleText (wraps anywhere); the page-wide frame also sets overflow-wrap.
+				expect(node.$type, `${name}#${index}: title in ${String(node.$type)}`).not.toBe('PageHeader');
+				if (node.title === '$sources.detail.task.title') {
+					expect(['task:TitleText'], `${name}#${index}`).toContain(node.$type);
+				}
+			}
+		}
+	});
+});
+
+// Seen at 390 px in github-b: the status / project / date / blocked chips sat in a HorizontalStack, which never wraps, so each was
+// squeezed to a few letters and the page grew wider than the screen. A row of several chips is a task:ChipRow.
+describe('chips wrap', () => {
+	it('no HorizontalStack holds several chips: a row of chips is a task:ChipRow', () => {
+		const CHIPS = ['Badge', 'task:StatusBadge', 'RelativeDate', 'Tag'];
+		for (const { name, index, tree } of combinations) {
+			for (const node of nodesOf(tree)) {
+				if (node.$type !== 'HorizontalStack' || !Array.isArray(node.items)) continue;
+				const chips = (node.items as Node[]).filter(item => CHIPS.includes(String(item.$type)));
+				expect(chips.length, `${name}#${index}: HorizontalStack of ${chips.length} chips`).toBeLessThanOrEqual(
+					1
+				);
+			}
+		}
+	});
+});
+
 describe('regression guard: "current" is the page as it was', () => {
 	// The one change to the feedback of the old page: the error and undelivered-events badges of the action results
 	// became task:Notice (same label, same condition, but the text wraps instead of running off the screen).
@@ -261,13 +534,34 @@ describe('regression guard: "current" is the page as it was', () => {
 		const current = variants.current!.view as Node;
 		expect(current.$type).toBe('VerticalStack');
 		expect(current.gap).toBe('gap-4');
-		// The one deliberate change since the head: the flat Links table became the relation groups (next test).
-		const expected = structuredClone(headRest) as Node[];
+		// The deliberate changes since the head: the flat Links table became the relation groups (next test), and the three
+		// dimensions replaced the page header and the Status / Type forms (compared by the tests of 'the shared dimensions').
+		const isDimension = (n: Node): boolean => n.$type === 'AbTest' && DIMENSIONS.includes(String(n.id));
+		const withoutDimensions = (items: Node[]): Node[] =>
+			items
+				.filter(n => n.$type !== 'PageHeader' && !(n.$type === 'AbTest' && n.id === 'task-header'))
+				.map(n =>
+					n.title === 'Status' || n.title === 'Type'
+						? {
+								...n,
+								items: (n.items as Node[]).filter(
+									i =>
+										!isDimension(i) &&
+										!(
+											i.$type === 'Form' &&
+											(i.onSubmit === '$ctx.setStatus' || i.$if === '$sources.detail.hasTypes')
+										)
+								),
+							}
+						: n
+				);
+		// The chips row of the old page is a task:ChipRow now (a HorizontalStack never wraps: see 'chips wrap').
+		const wrapping = (n: Node): Node => (n.$type === 'HorizontalStack' ? { ...n, $type: 'task:ChipRow' } : n);
+		const expected = withoutDimensions(structuredClone(headRest) as Node[]).map(wrapping);
 		const links = expected.find(n => n.title === 'Links') as Node;
 		links.items = (links.items as Node[]).filter(n => n.$type !== 'DataTable');
-		expect(current.items).toEqual(
-			expected.map(n => (n.title === 'Links' ? (current.items as Node[]).find(c => c.title === 'Links') : n))
-		);
+		const actual = withoutDimensions(current.items as Node[]);
+		expect(actual).toEqual(expected.map(n => (n.title === 'Links' ? actual.find(c => c.title === 'Links') : n)));
 		expect(page.$type).toBe(head.$type);
 	});
 
@@ -731,6 +1025,57 @@ describe('the generator reports what is wrong, with the fix', () => {
 				variants: { a: { label: 'A', hint: 'h', view: { $type: 'Badge', label: 'x' } } },
 			},
 		]);
+	});
+
+	it('puts the experiment in the `items` of $wrap and merges $page into the PageContent', () => {
+		const out = parse(
+			generateTaskPage(
+				scratch({
+					'_page.yaml':
+						'$type: PageContent\n$page: { maxWidth: full }\n$wrap: { $type: task:WidthFrame }\n$notices: []\n$experiment: { id: t, label: T, initial: a, variants: [a] }\n',
+				})
+			)
+		);
+		expect(out.maxWidth).toBe('full');
+		const [wrapper] = out.sections as Node[];
+		expect(wrapper).toMatchObject({ $type: 'task:WidthFrame' });
+		expect((wrapper!.items as Node[]).map(n => n.$type)).toEqual(['AbTest']);
+	});
+
+	it('wraps every status / type task:ActionSelect of a design in the task-controls switcher, the design own one as default', () => {
+		const select = (action: string): string =>
+			`{ $type: task:ActionSelect, action: ${action}, appearance: pill, options: o, value: v }`;
+		const out = parse(
+			generateTaskPage(
+				scratch({
+					'_shared.yaml': [
+						'x: { $type: Badge, label: x }',
+						'form.status: { $type: Form, onSubmit: $ctx.setStatus }',
+						'form.type: { $type: Form, onSubmit: $ctx.setType }',
+						`ctl.status.default: ${select('setStatusTo')}`,
+						`ctl.type.default: ${select('setTypeTo')}`,
+					].join('\n'),
+					'a.yaml': `label: A\nhint: h\nview: { $type: VerticalStack, items: [${select('setStatusTo')}, ${select('setTypeTo')}, { $use: ctl.status }, { $type: task:ActionSelect, action: other }] }\n`,
+				})
+			)
+		);
+		const view = (out.sections as Node[])[0] as Node;
+		const items = ((view.variants as Record<string, Fragment>).a!.view as Node).items as Node[];
+		expect(items.map(n => [n.$type, n.id])).toEqual([
+			['AbTest', 'task-controls'],
+			['AbTest', 'task-controls'],
+			// An explicit $use: ctl.status is the same switcher, not wrapped twice.
+			['AbTest', 'task-controls'],
+			['task:ActionSelect', undefined],
+		]);
+		const status = items[0]!.variants as Record<string, Fragment>;
+		expect(Object.keys(status)).toEqual(['inline', 'field', 'form']);
+		expect(items[0]!.initial).toBe('inline');
+		expect(status.inline!.view).toMatchObject({ action: 'setStatusTo', appearance: 'pill' });
+		expect(status.field!.view).toMatchObject({ action: 'setStatusTo', appearance: 'field' });
+		expect(status.form!.view).toEqual({ $type: 'Form', onSubmit: '$ctx.setStatus' });
+		expect(((items[1]!.variants as Record<string, Fragment>).form!.view as Node).onSubmit).toBe('$ctx.setType');
+		expect(((items[2]!.variants as Record<string, Fragment>).inline!.view as Node).action).toBe('setStatusTo');
 	});
 
 	it.each([

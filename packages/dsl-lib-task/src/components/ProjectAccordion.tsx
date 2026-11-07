@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
 import React, { useState } from 'react';
 import {
 	matchesProject,
@@ -12,30 +12,33 @@ import {
 import type { ProjectData } from '../projectTree.js';
 
 export interface ProjectAccordionProps {
-	/** The projects of the overview (`overview.projects` of the Tree route). */
+	/** The projects of the Tree route (`projects` of GET /tree?allProjects=true), readable or not, in name order. */
 	projects: ProjectData[];
-	/** Which projects start open: the one opened last time (else the first), the first, or none. */
-	defaultOpen?: 'last' | 'first' | 'none';
-	/** Text above the list, e.g. what the figures count. */
-	intro?: string;
 }
 
 const LAST_KEY = 'task.tree.accordion.last';
 
-function initialOpen(
-	projects: ProjectData[],
-	mode: NonNullable<ProjectAccordionProps['defaultOpen']>,
-	last: string
-): Set<string> {
-	if (mode === 'none' || projects.length === 0) return new Set();
-	const first = projects.find(p => p.readable) ?? projects[0]!;
-	const remembered = mode === 'last' ? projects.find(p => p.id === last) : undefined;
-	return new Set([(remembered ?? first).id]);
+const BUTTON =
+	'rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-content hover:bg-muted-bg focus-visible:ring-2 focus-visible:ring-primary';
+
+/**
+ * The projects open at the first render: only the one opened last time, when it is still listed. Nothing else is opened
+ * by guess: dozens of projects must start as a compact index, not as the rows of whichever project comes first.
+ */
+function initialOpen(projects: ProjectData[], last: string): Set<string> {
+	return new Set(projects.some(project => project.id === last) ? [last] : []);
+}
+
+/** A project with no task: a project has nothing to unfold, so its line is not a button. */
+function isEmpty(project: ProjectData): boolean {
+	return project.readable && (project.empty === true || (project.rows ?? []).length === 0);
 }
 
 /**
  * One collapsible section per project: name, summary and a mini progress bar in the header, the capped task rows inside,
  * a name filter and expand / collapse all. Only open projects render their rows, so dozens of projects stay light.
+ * An empty project is one plain line ("No tasks"); a project that cannot be read is a flagged line whose body gives
+ * the reason and the fix (never dropped, never a block of raw paths above the list).
  *
  * IN SCOPE: browsing the global forest project by project. OUT OF SCOPE: editing tasks, the full tree of a project
  * (a link leads to its page).
@@ -43,16 +46,10 @@ function initialOpen(
  * @registryCategory composite
  * @registryTags tree projects accordion collapsible
  */
-export function ProjectAccordion({ projects, defaultOpen = 'last', intro }: ProjectAccordionProps): React.ReactElement {
+export function ProjectAccordion({ projects }: ProjectAccordionProps): React.ReactElement {
 	const list = projectList('ProjectAccordion', projects);
 	const [last, remember] = useRemembered(LAST_KEY);
-	const [open, setOpen] = useState<Set<string>>(() => initialOpen(list, defaultOpen, last));
-	// A new `defaultOpen` (the experiment's option switched) starts over; the user's clicks keep standing otherwise.
-	const [appliedMode, setAppliedMode] = useState(defaultOpen);
-	if (appliedMode !== defaultOpen) {
-		setAppliedMode(defaultOpen);
-		setOpen(initialOpen(list, defaultOpen, last));
-	}
+	const [open, setOpen] = useState<Set<string>>(() => initialOpen(list, last));
 	const [filter, setFilter] = useState('');
 	if (list.length === 0) {
 		return (
@@ -74,7 +71,6 @@ export function ProjectAccordion({ projects, defaultOpen = 'last', intro }: Proj
 	};
 	return (
 		<div data-testid="project-accordion" className="flex flex-col gap-3">
-			{intro ? <p className="text-sm text-muted">{intro}</p> : null}
 			<div className="flex flex-wrap items-center gap-2">
 				<input
 					type="search"
@@ -82,24 +78,20 @@ export function ProjectAccordion({ projects, defaultOpen = 'last', intro }: Proj
 					placeholder="Filter projects"
 					value={filter}
 					onChange={event => setFilter(event.target.value)}
-					className="min-w-0 flex-1 rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-content focus-visible:ring-2 focus-visible:ring-primary"
+					className="min-w-48 flex-1 rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-content focus-visible:ring-2 focus-visible:ring-primary"
 				/>
 				<button
 					type="button"
-					onClick={() => setOpen(new Set(shown.map(p => p.id)))}
-					className="rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-content hover:bg-muted-bg"
+					onClick={() => setOpen(new Set(shown.filter(project => !isEmpty(project)).map(p => p.id)))}
+					className={BUTTON}
 				>
 					Expand all
 				</button>
-				<button
-					type="button"
-					onClick={() => setOpen(new Set())}
-					className="rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-content hover:bg-muted-bg"
-				>
+				<button type="button" onClick={() => setOpen(new Set())} className={BUTTON}>
 					Collapse all
 				</button>
 			</div>
-			<p className="text-xs text-muted">{`${shown.length} of ${list.length} projects`}</p>
+			<p className="m-0 text-xs text-muted">{`${shown.length} of ${list.length} projects`}</p>
 			{shown.length === 0 ? (
 				<p data-testid="accordion-no-match" className="text-sm text-muted">
 					{`No project matches "${filter}".`}
@@ -107,13 +99,36 @@ export function ProjectAccordion({ projects, defaultOpen = 'last', intro }: Proj
 			) : (
 				<ul className="m-0 flex list-none flex-col gap-2 p-0">
 					{shown.map(project => {
+						if (isEmpty(project)) {
+							return (
+								<li
+									key={project.id}
+									data-testid="accordion-item"
+									data-kind="empty"
+									className="flex items-center gap-3 rounded-lg border border-border bg-surface px-3 py-2"
+								>
+									<span className="w-4 shrink-0" aria-hidden="true" />
+									<span
+										className="min-w-0 flex-1 truncate text-sm font-medium text-muted"
+										title={project.name}
+									>
+										{project.name}
+									</span>
+									<span className="shrink-0 whitespace-nowrap text-xs text-muted">
+										{projectSummary(project)}
+									</span>
+								</li>
+							);
+						}
 						const isOpen = open.has(project.id);
 						const bodyId = `accordion-body-${project.id}`;
+						const flagged = !project.readable;
 						return (
 							<li
 								key={project.id}
 								data-testid="accordion-item"
-								className="rounded-lg border border-border bg-surface"
+								data-kind={flagged ? 'flagged' : 'normal'}
+								className={`rounded-lg border border-border ${flagged ? 'bg-warning-bg' : 'bg-surface'}`}
 							>
 								<button
 									type="button"
@@ -124,9 +139,9 @@ export function ProjectAccordion({ projects, defaultOpen = 'last', intro }: Proj
 									className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left hover:bg-muted-bg focus-visible:ring-2 focus-visible:ring-primary"
 								>
 									{isOpen ? (
-										<ChevronDown size={16} aria-hidden="true" />
+										<ChevronDown size={16} className="shrink-0" aria-hidden="true" />
 									) : (
-										<ChevronRight size={16} aria-hidden="true" />
+										<ChevronRight size={16} className="shrink-0" aria-hidden="true" />
 									)}
 									<span
 										className="min-w-0 flex-1 truncate text-sm font-medium text-content"
@@ -134,10 +149,19 @@ export function ProjectAccordion({ projects, defaultOpen = 'last', intro }: Proj
 									>
 										{project.name}
 									</span>{' '}
-									<span className="shrink-0 whitespace-nowrap text-xs text-muted">
+									{flagged ? (
+										<AlertTriangle
+											size={14}
+											className="shrink-0 text-warning-text"
+											aria-hidden="true"
+										/>
+									) : null}
+									<span
+										className={`shrink-0 whitespace-nowrap text-xs ${flagged ? 'text-warning-text' : 'text-muted'}`}
+									>
 										{projectSummary(project)}
 									</span>
-									{project.readable && !project.empty ? (
+									{project.readable ? (
 										<span className="hidden w-24 shrink-0 sm:block">
 											<ProgressBar
 												decorative

@@ -7,18 +7,8 @@ view:
     $type: VerticalStack
     gap: gap-4
     items:
-        - $type: PageHeader
-          title: $sources.detail.task.title
-          headerActions:
-              - $type: ButtonLink
-                $if: $sources.detail.taskHrefs
-                label: History
-                to: $sources.detail.taskHrefs.history
-              - $type: ButtonLink
-                $if: $sources.detail.taskHrefs
-                label: Children
-                to: $sources.detail.taskHrefs.childrenList
-        - $type: HorizontalStack
+        - $use: dim.header
+        - $type: task:ChipRow
           gap: gap-3
           $if: $sources.detail.task
           items:
@@ -50,18 +40,8 @@ view:
                 $if: $ctx.statusResult.undeliveredText
                 label: $ctx.statusResult.undeliveredText
                 variant: warning
-              - $type: Form
-                $if: $sources.detail.forms
-                onSubmit: $ctx.setStatus
-                initialData: $sources.detail.forms.status
-                fields:
-                    - $type: FieldSelect
-                      label: Status
-                      bind: status
-                      options: $sources.detail.statusOptions
-                actions:
-                    - $type: ButtonSave
-                      label: Change status
+              # task-controls: inline select (default), select field, or the form with Save of the old page.
+              - $use: ctl.status
 
         - $type: Section
           title: Type
@@ -77,19 +57,8 @@ view:
                 label: $ctx.typeResult.undeliveredText
                 variant: warning
               # With configured types the choice is restricted; without any, every string is accepted.
-              - $type: Form
-                $if: $sources.detail.hasTypes
-                onSubmit: $ctx.setType
-                initialData: $sources.detail.forms.type
-                fields:
-                    - $type: FieldSelect
-                      label: Type
-                      bind: type
-                      options: $sources.detail.typeOptions
-                      placeholder: No type
-                actions:
-                    - $type: ButtonSave
-                      label: Set type
+              # task-controls: inline select (default), select field, or the form with Save of the old page.
+              - $use: ctl.type
               - $type: Badge
                 $if: $sources.detail.noTypes
                 label: No type is configured for this project (any text is accepted). Add some on the Types page.

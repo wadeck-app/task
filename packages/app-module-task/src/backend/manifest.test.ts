@@ -489,16 +489,12 @@ describe('tree page: global forest without ?project (src/dsl-views/tree-page.yam
 		expect(page).toContain('$if: $sources.tree.project');
 	});
 
-	// The DataTable has no row styling or grouping in the installed shell: a project header row looks like any task
-	// row. The route builds one Section per project (name, link, table) and the view renders that list as is.
-	it('renders the global forest as the sections the route built, one per project (ExtensionSlot), not as one flat table', () => {
-		// Inside the `current` variant of the tree experiment (tree-variants/current.yaml), shown on the global scope only.
-		expect(page).toMatch(/\$type: ExtensionSlot\n\s+items: \$sources\.tree\.groups\n/);
-		// The `$if` sits on a stack around the switcher: on the switcher itself it looped in the dev shell (treeVariants.test.ts).
-		expect(page).toMatch(
-			/\$type: VerticalStack\n\s+\$if: \$sources\.tree\.groups\n\s+gap: gap-0\n\s+items:\n\s+- \$type: AbTest/
-		);
-		expect(page).not.toContain('$if: $sources.tree.scopeText\n      rows');
+	// The global forest is an accordion component fed with the `projects` the route built (treePage.test.ts holds the
+	// invariants of the page); the old per-project Sections (groups) are gone.
+	it('renders the global forest as the accordion over `projects`, not as the sections of the old design', () => {
+		expect(page).toMatch(/\$type: task:ProjectAccordion\n\s+projects: \$sources\.tree\.projects\n/);
+		expect(page).not.toContain('$sources.tree.groups');
+		expect(page).not.toContain('AbTest');
 	});
 });
 
@@ -962,6 +958,8 @@ describe('views: no link whose purpose is going back (the breadcrumb carries the
 			{ label: 'History', to: '$sources.detail.taskHrefs.history' },
 			{ label: 'Children', to: '$sources.detail.taskHrefs.childrenList' },
 			{ label: 'Delete', to: '$sources.detail.taskHrefs.deleteTasks' },
+			// The same feature behind the "More actions" popover of the header option "Actions in a menu".
+			{ label: 'Delete this task', to: '$sources.detail.taskHrefs.deleteTasks' },
 		],
 		'tasks-page.yaml': [
 			{ label: 'New task', to: '$sources.tasks.hrefs.newTask' },

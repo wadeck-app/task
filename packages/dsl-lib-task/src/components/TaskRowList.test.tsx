@@ -129,3 +129,22 @@ describe('TaskRowList', () => {
 		});
 	});
 });
+
+describe('TaskRowList in a narrow column', () => {
+	const rows = [{ id: 'dyj503et', title: 'Fix login redirect', status: 'in-progress', href: '/x/dyj503et' }];
+
+	// Seen in the github-b design at 390 px: id, status chip and remove button took the whole row and the title was cut to "F".
+	it('wraps the row instead of squeezing the title: the title keeps a minimum width and the row may wrap', () => {
+		render(<TaskRowList rows={rows} />);
+
+		const row = screen.getByRole('link');
+		expect(row).toHaveClass('flex-wrap');
+		expect(screen.getByText('Fix login redirect')).toHaveClass('min-w-[6rem]');
+	});
+
+	it('keeps the title on one truncated line when it is long', () => {
+		render(<TaskRowList rows={rows} />);
+
+		expect(screen.getByText('Fix login redirect')).toHaveClass('truncate');
+	});
+});

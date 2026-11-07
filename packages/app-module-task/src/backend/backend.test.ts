@@ -3361,9 +3361,8 @@ describe('registered projects that cannot be used', () => {
 	});
 });
 
-describe('GET /tree?allProjects=true (the global forest, grouped by project)', () => {
+describe('GET /tree?allProjects=true (the global forest, one entry per project)', () => {
 	let beta: string;
-	const enc = encodeURIComponent;
 
 	async function createIn(dir: string, description: string, extra: Record<string, unknown> = {}): Promise<string> {
 		const answer = await h.call('POST /tasks', { query: { project: dir }, body: { description, ...extra } });
@@ -3378,59 +3377,46 @@ describe('GET /tree?allProjects=true (the global forest, grouped by project)', (
 		beta = await h.world.createProject('beta', { configYml: STATUSES_YML });
 	});
 
-	// The DataTable of the installed shell has no row styling or grouping: the global forest is a list of sections, one
-	// per project, built by the route as DSL nodes (the view renders them with an ExtensionSlot).
-	it('has one section per project: its name and count as the title, a link to its own tree, then its forest as a table', async () => {
+	// The page is an accordion component (task:ProjectAccordion) fed with plain data: no DSL nodes are built here.
+	it('has one entry per project: its figures, its rows depth first with a link to each task, a link to its own tree', async () => {
 		const parent = await createIn(project, 'parent');
 		const child = await createIn(project, 'child', { parent });
 		const other = await createIn(beta, 'in beta');
 		const answer = await global();
 		expect(answer.status).toBe(200);
 		expect(answer.body['scope']).toBe('all');
-		expect(answer.body).not.toHaveProperty('rows');
-		const groups = answer.body['groups'] as Array<Record<string, any>>;
-		expect(groups.map(g => [g['$type'], g['title']])).toEqual([
-			['Section', 'alpha (2 tasks)'],
-			['Section', 'beta (1 task)'],
+		for (const gone of ['rows', 'groups', 'overview']) expect(answer.body).not.toHaveProperty(gone);
+		const projects = answer.body['projects'] as Array<Record<string, any>>;
+		expect(projects.map(p => [p['name'], p['open'], p['total'], p['summaryText']])).toEqual([
+			['alpha', 2, 2, '2 open of 2'],
+			['beta', 1, 1, '1 open of 1'],
 		]);
-		const [link, table] = groups[0]!['items'] as Array<Record<string, any>>;
-		expect(link).toMatchObject({
-			$type: 'ButtonLink',
-			label: 'Open the tree of alpha',
-			to: `/modules/task/tree/p/${project}`,
-		});
-		expect(table).toMatchObject({ $type: 'DataTable', navigateTo: '{href}' });
-		const rows = table['rows'] as Array<Record<string, any>>;
-		expect(rows.map(r => [r['id'], r['depth']])).toEqual([
+		expect(projects[0]).toMatchObject({ id: project, treeHref: `/modules/task/tree/p/${project}` });
+		expect(projects[0]!['rows'].map((r: any) => [r.id, r.depth])).toEqual([
 			[parent, 0],
 			[child, 1],
 		]);
-		expect(rows[0]).toMatchObject({
-			label: 'parent',
+		expect(projects[0]!['rows'][0]).toMatchObject({
+			title: 'parent',
 			href: `/modules/task/tasks/p/${project}/${parent}`,
 		});
-		expect(rows[1]!['label']).toMatch(/child$/);
-		expect(rows[1]!['label']).not.toBe('child');
-		const betaTable = (groups[1]!['items'] as Array<Record<string, any>>)[1]!;
-		expect(betaTable['rows'].map((r: { id: string }) => r.id)).toEqual([other]);
+		expect(projects[1]!['rows'].map((r: { id: string }) => r.id)).toEqual([other]);
 		expect(answer.body['scopeText']).toBe('All projects: 2 projects, 3 open tasks.');
 	});
 
-	it('shows an empty project as a section with an explicit "no open tasks" table (not as a missing project)', async () => {
+	it('shows an empty project as a "No tasks" entry (not as a missing project)', async () => {
 		await createIn(project, 'x');
-		const groups = (await global()).body['groups'] as Array<Record<string, any>>;
-		expect(groups.map(g => g['title'])).toEqual(['alpha (1 task)', 'beta (0 tasks)']);
-		const betaTable = (groups[1]!['items'] as Array<Record<string, any>>)[1]!;
-		expect(betaTable['rows']).toEqual([]);
-		expect(betaTable['emptyMessage']).toBe('No open tasks');
+		const projects = (await global()).body['projects'] as Array<Record<string, any>>;
+		expect(projects.map(p => p['name'])).toEqual(['alpha', 'beta']);
+		expect(projects[1]).toMatchObject({ empty: true, summaryText: 'No tasks', rows: [], total: 0 });
 	});
 
 	it('hides closed tasks unless showAll, and the toggle keeps the global scope', async () => {
 		const done = await createIn(project, 'closed one');
 		await h.call('POST /tasks/:id/status', { params: { id: done }, query: { project }, body: { status: 'done' } });
 		const idsOf = (answer: Answer): string[] =>
-			(answer.body['groups'] as Array<Record<string, any>>).flatMap(g =>
-				(g['items'][1]['rows'] as Array<{ id: string }>).map(r => r.id)
+			(answer.body['projects'] as Array<Record<string, any>>).flatMap(p =>
+				(p['rows'] as Array<{ id: string }>).map(r => r.id)
 			);
 		const open = await global();
 		expect(idsOf(open)).toEqual([]);
@@ -3440,13 +3426,12 @@ describe('GET /tree?allProjects=true (the global forest, grouped by project)', (
 		});
 		const all = await global({ showAll: 'true' });
 		expect(idsOf(all)).toEqual([done]);
-		expect((all.body['groups'] as Array<Record<string, any>>)[1]!['items'][1]['emptyMessage']).toBe('No tasks');
 		expect(all.body['scopeText']).toBe('All projects: 2 projects, 1 task (closed ones included).');
 		expect(all.body['showAllToggle']).toEqual({ label: 'Hide closed tasks', href: '/modules/task/tree' });
 	});
 
-	// The table is the only place of the hierarchy in a section: the label carries the indentation, depth by depth.
-	it('indents every nested level in the table of its project, keeps a closed parent of an open task, and counts honestly', async () => {
+	// A task is a row with its depth (the component indents it), a closed parent of an open task is kept, and the count is honest.
+	it('gives every nested level its depth, keeps a closed parent of an open task, and counts honestly', async () => {
 		const epic = await createIn(project, 'epic');
 		const feature = await createIn(project, 'feature', { parent: epic });
 		const sub = await createIn(project, 'sub', { parent: feature });
@@ -3462,40 +3447,45 @@ describe('GET /tree?allProjects=true (the global forest, grouped by project)', (
 		await close(closedRoot);
 		const betaRoot = await createIn(beta, 'beta root');
 		const betaLeaf = await createIn(beta, 'beta child', { parent: betaRoot });
-		const em = String.fromCodePoint(0x2003);
-		const branch = String.fromCodePoint(0x2514);
-		const groups = (await global()).body['groups'] as Array<Record<string, any>>;
-		const alphaRows = groups[0]!['items'][1]['rows'] as Array<{ label: string; depth: number; id: string }>;
-		expect(alphaRows.map(r => [r.label, r.depth])).toEqual([
-			['epic', 0],
-			[`${branch} feature`, 1],
-			[`${em}${branch} sub`, 2],
-			[`${em}${em}${branch} deep`, 3],
-			[`${branch} closed parent`, 1],
-			[`${em}${branch} open under closed`, 2],
+		const answer = await global();
+		const projects = answer.body['projects'] as Array<Record<string, any>>;
+		expect(projects[0]!['rows'].map((r: any) => [r.title, r.depth, r.tone])).toEqual([
+			['epic', 0, 'neutral'],
+			['feature', 1, 'neutral'],
+			['sub', 2, 'neutral'],
+			['deep', 3, 'neutral'],
+			['closed parent', 1, 'success'],
+			['open under closed', 2, 'neutral'],
 		]);
-		const betaRows = groups[1]!['items'][1]['rows'] as Array<{ label: string; id: string }>;
-		expect(betaRows.map(r => [r.label, r.id === betaLeaf])).toEqual([
+		expect(projects[1]!['rows'].map((r: any) => [r.title, r.id === betaLeaf])).toEqual([
 			['beta root', false],
-			[`${branch} beta child`, true],
+			['beta child', true],
 		]);
-		expect(groups.map(g => g['title'])).toEqual(['alpha (6 tasks)', 'beta (2 tasks)']);
 		// 7 open tasks (alpha 5, beta 2): the closed parent kept above an open task is said, not counted as open.
-		expect((await global()).body['scopeText']).toBe(
+		expect(answer.body['scopeText']).toBe(
 			'All projects: 2 projects, 7 open tasks, plus 1 closed parent kept for context.'
 		);
 	});
 
-	it('reports an unreadable project in a warning besides the forests of the others, never dropped silently', async () => {
+	it('lists an unreadable project besides the others (flagged, with its reason), and warns in one line without a path', async () => {
 		await createIn(project, 'in alpha');
 		const broken = await h.world.createProject('broken');
 		h.world.breakConfig(broken);
 		const answer = await global();
 		expect(answer.status).toBe(200);
 		expect(answer.body['skippedCount']).toBe(1);
-		expect(answer.body['warning']).toContain('1 project not listed');
-		expect(answer.body['warning']).toContain(h.world.dirOf(broken));
-		expect(JSON.stringify(answer.body['groups'])).not.toContain('broken');
+		const projects = answer.body['projects'] as Array<Record<string, any>>;
+		expect(projects.map(p => [p['name'], p['readable']])).toEqual([
+			['alpha', true],
+			['beta', true],
+			['broken', false],
+		]);
+		expect(projects[2]!['problemText']).toContain('not valid YAML');
+		expect(answer.body['warning']).toBe(
+			'1 project cannot be read: broken. Open it in the list below for its reason and fix.'
+		);
+		expect(answer.body['warning']).not.toContain(h.world.dirOf(broken));
+		expect(answer.body['warning']).not.toContain('config.yml');
 		expect(answer.body['scopeText']).toBe('All projects: 2 projects, 1 open task.');
 	});
 
@@ -3946,6 +3936,22 @@ describe('GET /tasks/:id presentation contract', () => {
 		expect(body['updatedText']).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d$/);
 		expect(body['descriptionText']).toBe('plain');
 		expect(body['hasDescription']).toBe(true);
+	});
+
+	it('gives titleShort (the first sentence, at most 90 characters) and hasShortTitle for a long title', async () => {
+		const long =
+			'Add a Dashboard page as the new home page. Server: a GET /dashboard endpoint aggregating the number of books and the todos per status, with the tags.';
+		const id = await createTask(long);
+		const { body } = await detail(id);
+		expect(body['titleShort']).toBe('Add a Dashboard page as the new home page.');
+		expect(body['hasShortTitle']).toBe(true);
+	});
+
+	it('titleShort is the title itself and hasShortTitle false for a short title', async () => {
+		const id = await createTask('Fix login redirect');
+		const { body } = await detail(id);
+		expect(body['titleShort']).toBe('Fix login redirect');
+		expect(body['hasShortTitle']).toBe(false);
 	});
 
 	it('a task without a description has descriptionText null and hasDescription false', async () => {

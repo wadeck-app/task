@@ -1,6 +1,6 @@
-// Shared by the Tree page variants (ProjectAccordion, ProjectMasterDetail, ProjectPicker, ProjectCards, ProjectFlatTree).
-// Not a registry component: the types of the `overview` the module's GET /tree?allProjects=true answers, the filters, and
-// the small parts the variants have in common. Props only: no fetch, no storage except the remembered choice below.
+// Parts of ProjectAccordion (the global Tree page).
+// Not a registry component: the types of the `projects` list the module's GET /tree?allProjects=true answers, the name filter
+// and the small parts of the accordion. Props only: no fetch, no storage except the remembered choice below.
 import { AlertTriangle } from 'lucide-react';
 import React, { useState } from 'react';
 import { StatusBadge } from './components/StatusBadge.js';
@@ -18,18 +18,7 @@ export interface ProjectRowData {
 	href?: string;
 }
 
-export interface ProjectRootData {
-	id: string;
-	title: string;
-	titleText?: string;
-	status: string;
-	href?: string;
-	/** Finished descendants / all descendants. */
-	done: number;
-	total: number;
-}
-
-/** One project of the overview. An unreadable one has `readable: false`, `problemText` and no figures. */
+/** One project of the list. An unreadable one has `readable: false`, `problemText` and no figures. */
 export interface ProjectData {
 	id: string;
 	name: string;
@@ -45,13 +34,9 @@ export interface ProjectData {
 	empty?: boolean;
 	allDone?: boolean;
 	summaryText?: string;
-	lastAddedAt?: string | null;
-	lastAddedText?: string;
 	rows?: ProjectRowData[];
-	rowCount?: number;
 	hiddenCount?: number;
 	moreText?: string | null;
-	roots?: ProjectRootData[];
 }
 
 /** The list a component was given, or an empty one (a prop that is not an array is reported once, never thrown on). */
@@ -69,33 +54,14 @@ export function matchesProject(project: ProjectData, filter: string): boolean {
 	return text === '' || project.name.toLowerCase().includes(text);
 }
 
-export type ProjectSort = 'name' | 'open' | 'activity';
-
-/** A sorted copy. Unreadable projects go last whatever the order (they have nothing to sort on); ties fall back to the name. */
-export function sortProjects(projects: readonly ProjectData[], sort: ProjectSort): ProjectData[] {
-	const byName = (a: ProjectData, b: ProjectData): number =>
-		a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
-	const key = (project: ProjectData): number => {
-		if (sort === 'open') return project.open ?? 0;
-		if (sort === 'activity') return project.lastAddedAt ? Date.parse(project.lastAddedAt) : 0;
-		return 0;
-	};
-	return [...projects].sort((a, b) => {
-		if (a.readable !== b.readable) return a.readable ? -1 : 1;
-		if (sort === 'name') return byName(a, b);
-		return key(b) - key(a) || byName(a, b);
-	});
-}
-
 /**
- * A string remembered in localStorage under `key` (and optionally forced by `?urlParam=`). Unlike the experiment switcher
- * it is a user feature: it always reads and writes. A storage that refuses is reported once and the value lives in memory.
+ * A string remembered in localStorage under `key`. It is a user feature (no experiment gate): it always reads and writes.
+ * A storage that refuses is reported once and the value lives in memory.
  */
-export function useRemembered(key: string, urlParam?: string): [string, (value: string) => void] {
+export function useRemembered(key: string): [string, (value: string) => void] {
 	const [value, setValue] = useState<string>(() => {
 		try {
-			const fromUrl = urlParam ? new URLSearchParams(window.location.search).get(urlParam) : null;
-			return fromUrl ?? localStorage.getItem(key) ?? '';
+			return localStorage.getItem(key) ?? '';
 		} catch (error) {
 			reportOnce(`[task] cannot read "${key}": ${String(error)}. The choice is not remembered.`, 'warn');
 			return '';
@@ -105,11 +71,6 @@ export function useRemembered(key: string, urlParam?: string): [string, (value: 
 		setValue(next);
 		try {
 			localStorage.setItem(key, next);
-			if (urlParam) {
-				const url = new URL(window.location.href);
-				url.searchParams.set(urlParam, next);
-				window.history.replaceState(window.history.state, '', url);
-			}
 		} catch (error) {
 			reportOnce(`[task] cannot save "${key}": ${String(error)}. The choice is not remembered.`, 'warn');
 		}
@@ -138,41 +99,28 @@ export function ProgressBar({
 	);
 }
 
-/** Why a project is not readable, and the link to its tree page (which says it too). */
+/** Why a project is not readable (reason and fix, as the route words them). */
 export function ProjectProblem({ project }: { project: ProjectData }): React.ReactElement {
 	return (
 		<p
 			data-testid="project-problem"
-			className="flex items-start gap-2 break-words rounded-md bg-warning-bg px-3 py-2 text-xs text-warning-text"
+			className="m-0 flex items-start gap-2 break-words px-3 py-2 text-xs text-warning-text"
 		>
 			<AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
-			<span className="min-w-0">{project.problemText ?? 'This project cannot be read.'}</span>
+			<span className="min-w-0 whitespace-pre-wrap">{project.problemText ?? 'This project cannot be read.'}</span>
 		</p>
 	);
 }
 
-/** The count line of a project: "3 open of 4", "No tasks", "All 5 done"; "unreadable" for a broken project. */
+/** The count line of a project: "3 open of 4", "No tasks", "All 5 done"; "cannot be read" for a broken project. */
 export function projectSummary(project: ProjectData): string {
-	return project.readable ? (project.summaryText ?? '') : 'unreadable';
+	return project.readable ? (project.summaryText ?? '') : 'cannot be read';
 }
 
 /** The rows of one project, indented by depth, each a link to its task; the "N more" line links to the whole tree. */
-export function ProjectTreeRows({
-	project,
-	emptyText = 'No tasks',
-}: {
-	project: ProjectData;
-	emptyText?: string;
-}): React.ReactElement {
+export function ProjectTreeRows({ project }: { project: ProjectData }): React.ReactElement {
 	if (!project.readable) return <ProjectProblem project={project} />;
 	const rows = project.rows ?? [];
-	if (rows.length === 0) {
-		return (
-			<p data-testid="project-empty" className="px-3 py-2 text-sm text-muted">
-				{emptyText}
-			</p>
-		);
-	}
 	return (
 		<div data-testid="project-rows">
 			<ul className="m-0 list-none divide-y divide-border p-0">
