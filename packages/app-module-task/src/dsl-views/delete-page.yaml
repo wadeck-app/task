@@ -8,11 +8,14 @@
 # `previewText` and `canConfirm: false`, so the stale preview, its table and the red button disappear and `deletedText`
 # takes their place. Preview again before deleting more.
 # Conventions of task-page.yaml apply (projectParam, inline errors).
+# `ids` is the `?ids=` of the page address (a link from a task or a list): GET /projects puts it in forms.delete, so the ids of
+# the tasks the user came from are not retyped. Empty = not sent. It names a $urlParam, so the source reloads on a URL change.
 $sources:
     projects:
         url: GET /api/modules/task/projects
         params:
             project: $route.project
+            ids: $urlParam.ids
 
 $actions:
     previewDelete:

@@ -30,7 +30,7 @@ describe('showTask', () => {
 
 		const detail = showTask(t.ctx, { id: parent.id.slice(0, 4) });
 
-		expect(detail).toEqual({ ...parent, childrenIds: [child.id] });
+		expect(detail).toEqual({ ...parent, description: 'parent', childrenIds: [child.id] });
 		expect('parent' in detail).toBe(false);
 		expect('children' in detail).toBe(false);
 	});

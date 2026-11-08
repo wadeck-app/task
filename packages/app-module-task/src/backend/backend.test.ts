@@ -282,8 +282,8 @@ describe('GET /tasks/:id', () => {
 		const answer = await h.call('GET /tasks/:id', { params: { id: child.slice(0, 8) }, query: { project } });
 		expect(answer.status).toBe(200);
 		expect(answer.body['task']).toMatchObject({ id: child, title: 'child', parentId: parent });
-		// A short text is only the title: no description of its own is stored.
-		expect(answer.body['task']).not.toHaveProperty('description');
+		// The JSON record always carries `description` (the resolved text: here the title, nothing of its own is stored).
+		expect(answer.body['task']).toHaveProperty('description', 'child');
 		expect(answer.body['parent']).toMatchObject({ id: parent });
 		expect(answer.body['children']).toEqual([]);
 		expect(answer.body['links']).toMatchObject({ blockedBy: [], blocks: [] });
@@ -2828,6 +2828,7 @@ describe('view data: page links, filters and form defaults', () => {
 				meta: { ...base, key: '', value: '' },
 				parent: { ...base, parent: '' },
 				link: { ...base, type: 'blockedBy', target: '' },
+				delete: { ...base, ids: id, cascade: false, confirm: true },
 				empty: base,
 			});
 			expect(answer.body['hasTypes']).toBe(true);
@@ -3937,12 +3938,9 @@ describe('GET /tasks/:id presentation contract', () => {
 		expect(body['task']['title']).toBe('Add a Dashboard page as the new home page.');
 		expect(body['body']).toBe(long);
 		expect(body['bodyAddsInfo']).toBe(true);
-		// Temporary old fields (see taskViews.ts): the title is already the headline here.
-		expect(body['titleShort']).toBe('Add a Dashboard page as the new home page.');
-		expect(body['hasShortTitle']).toBe(false);
 	});
 
-	it('a legacy task (title = description = long text): headline is cut from the title, body is the whole text, old fields agree', async () => {
+	it('a legacy task (title = description = long text): headline is cut from the title, body is the whole text', async () => {
 		const long =
 			'Add a Dashboard page as the new home page. Server: a GET /dashboard endpoint aggregating the number of books and the todos per status, with the tags.';
 		const id = await createTask('seed');
@@ -3951,15 +3949,6 @@ describe('GET /tasks/:id presentation contract', () => {
 		expect(body['headline']).toBe('Add a Dashboard page as the new home page.');
 		expect(body['body']).toBe(long);
 		expect(body['bodyAddsInfo']).toBe(true);
-		expect(body['titleShort']).toBe('Add a Dashboard page as the new home page.');
-		expect(body['hasShortTitle']).toBe(true);
-	});
-
-	it('titleShort is the title itself and hasShortTitle false for a short title', async () => {
-		const id = await createTask('Fix login redirect');
-		const { body } = await detail(id);
-		expect(body['titleShort']).toBe('Fix login redirect');
-		expect(body['hasShortTitle']).toBe(false);
 	});
 
 	it('a task without a description has descriptionText null and hasDescription false', async () => {

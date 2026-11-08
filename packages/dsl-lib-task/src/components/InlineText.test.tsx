@@ -217,3 +217,38 @@ describe('InlineText', () => {
 		expect(screen.getByRole('textbox').className).toContain('text-xl');
 	});
 });
+
+describe('InlineText collapsedLines (a long prompt)', () => {
+	const LONG = Array.from({ length: 12 }, (_, i) => `Line ${i + 1} of a long prompt`).join('\n');
+
+	it('clamps a long text to the given number of lines and offers Show more, which unfolds it and folds it back', async () => {
+		const user = userEvent.setup();
+		setup({ value: LONG, multiline: true, collapsedLines: 6, ariaLabel: 'Description' });
+
+		const display = screen.getByRole('button', { name: /Edit Description/ });
+		expect(display.querySelector('[data-clamped="true"]')).not.toBeNull();
+		await user.click(screen.getByRole('button', { name: 'Show more' }));
+		expect(display.querySelector('[data-clamped="true"]')).toBeNull();
+		await user.click(screen.getByRole('button', { name: 'Show less' }));
+		expect(display.querySelector('[data-clamped="true"]')).not.toBeNull();
+	});
+
+	it('does not clamp nor offer Show more for a short text', () => {
+		setup({ value: 'short', multiline: true, collapsedLines: 6 });
+
+		expect(screen.queryByRole('button', { name: 'Show more' })).toBeNull();
+		expect(document.querySelector('[data-clamped="true"]')).toBeNull();
+	});
+
+	it('Show more does not start the edit; clicking the text still does', async () => {
+		const user = userEvent.setup();
+		setup({ value: LONG, multiline: true, collapsedLines: 6, ariaLabel: 'Description' });
+
+		await user.click(screen.getByRole('button', { name: 'Show more' }));
+		expect(screen.queryByRole('textbox')).toBeNull();
+		await user.click(screen.getByRole('button', { name: /Edit Description/ }));
+		expect(screen.getByRole('textbox')).toBeInTheDocument();
+		// While editing, the whole text is in the field: no clamp, no toggle.
+		expect(screen.queryByRole('button', { name: /Show/ })).toBeNull();
+	});
+});

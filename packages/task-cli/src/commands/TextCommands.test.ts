@@ -40,11 +40,11 @@ async function created(...args: string[]): Promise<Record<string, unknown> & { i
 }
 
 describe('task new', () => {
-	it('a short text is the title only (no description key printed)', async () => {
+	it('a short text is the title, and the printed description repeats it', async () => {
 		const task = await created('Fix login');
 
 		expect(task['title']).toBe('Fix login');
-		expect(task).not.toHaveProperty('description');
+		expect(task['description']).toBe('Fix login');
 	});
 
 	it('a long text (a flow prompt) is split: headline as title, full text as description', async () => {
@@ -138,8 +138,8 @@ describe('task set-title / set-description', () => {
 		const task = await created('Title');
 
 		expect(json(await run('set-description', task.id, 'Body'))).toMatchObject({ description: 'Body' });
-		expect(json(await run('set-description', task.id, ''))).not.toHaveProperty('description');
-		expect(json(await run('show', task.id))).not.toHaveProperty('description');
+		expect(json(await run('set-description', task.id, ''))).toMatchObject({ description: 'Title' });
+		expect(json(await run('show', task.id))).toMatchObject({ description: 'Title' });
 	});
 
 	it.each([
@@ -355,3 +355,82 @@ describe('readTextSource', () => {
 		expect(() => readTextSource('-', () => '  \n')).toThrow(/standard input is empty/);
 	});
 });
+
+// Public JSON contract: a task record always carries `description` (the resolved text), as before the title/description split.
+describe('description key in task record outputs', () => {
+	it('show --json of a short task has description equal to the title', async () => {
+		const task = await created('Fix login');
+
+		const shown = json(await run('--json', 'show', task.id));
+
+		expect(shown['title']).toBe('Fix login');
+		expect(shown['description']).toBe('Fix login');
+	});
+
+	it('show --json of a long split task has the full text as description', async () => {
+		const prompt = `Review the importer\n\n${'Look at every code path and report. '.repeat(10)}`;
+		const task = await created(prompt);
+
+		const shown = json(await run('--json', 'show', task.id));
+
+		expect(shown['title']).toBe('Review the importer');
+		expect(shown['description']).toBe(prompt);
+	});
+
+	it('show with --with-parent and --with-children keeps description on the task itself', async () => {
+		const parent = await created('Parent');
+		const child = await created('Child', '--parent', parent.id);
+
+		const shown = json(await run('show', parent.id, '--with-children'));
+		const shownChild = json(await run('show', child.id, '--with-parent'));
+
+		expect(shown['description']).toBe('Parent');
+		expect(shownChild['description']).toBe('Child');
+	});
+
+	it('show of a legacy file whose description equals the title is unchanged', async () => {
+		const task = await created('Legacy');
+		const found = findTaskFile(task.id);
+		const record = JSON.parse(fs.readFileSync(found, 'utf8')) as Record<string, unknown>;
+		record['description'] = 'Legacy';
+		fs.writeFileSync(found, JSON.stringify(record, null, 2));
+
+		const shown = json(await run('show', task.id));
+
+		expect(shown['description']).toBe('Legacy');
+	});
+
+	it('the stored file of a short task still has no description key', async () => {
+		const task = await created('Stored short');
+
+		const record = JSON.parse(fs.readFileSync(findTaskFile(task.id), 'utf8')) as Record<string, unknown>;
+
+		expect(record).not.toHaveProperty('description');
+	});
+
+	it('new, set-status, set-title, link outputs carry description too', async () => {
+		const task = await created('Short one');
+		const other = await created('Other');
+
+		expect(task['description']).toBe('Short one');
+		expect(json(await run('set-status', task.id, 'done'))['description']).toBe('Short one');
+		expect(json(await run('set-title', task.id, 'Renamed'))['description']).toBe('Renamed');
+		expect(json(await run('link', task.id, 'blockedBy', other.id))['description']).toBe('Renamed');
+	});
+});
+
+function findTaskFile(id: string): string {
+	const registry = process.env.XDG_CONFIG_HOME;
+	if (registry === undefined)
+		throw new Error('XDG_CONFIG_HOME is not set: vitest.setup.ts should point it at a temp registry');
+	const stack = [registry];
+	while (stack.length > 0) {
+		const current = stack.pop()!;
+		for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+			const full = path.join(current, entry.name);
+			if (entry.isDirectory()) stack.push(full);
+			else if (entry.name === `${id}.json`) return full;
+		}
+	}
+	throw new Error(`task file ${id}.json not found under ${registry}`);
+}

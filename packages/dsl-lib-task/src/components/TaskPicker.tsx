@@ -17,12 +17,21 @@ export interface TaskPickerProps {
 	params?: Record<string, unknown>;
 	/** Name of the body field that carries the id of the picked task. */
 	bodyKey?: string;
+	/** A select shown before the field (a relation: blocked by, blocks...). Its value travels in the body under `choiceKey`; the first one is the default. */
+	choices?: Array<{ value: string; label: string }>;
+	/** Name of the body field that carries the chosen value of `choices`. */
+	choiceKey?: string;
+	/** The accessible name of the `choices` select. */
+	choiceLabel?: string;
 	/** The project to search in (the `project` query of the search route): an id, a name or an alias. */
 	projectParam?: string;
 	placeholder?: string;
 	/** The accessible name of the field. */
 	ariaLabel?: string;
-	/** Ids that must not be offered (the task itself, its current parent...). */
+	/**
+	 * Ids that must not be offered (the task itself, its current parent...).
+	 * @resolveDeep
+	 */
 	excludeIds?: string[];
 	/** Task whose descendants must not be offered (a parent cannot be one of its own descendants). */
 	excludeDescendantsOf?: string;
@@ -91,6 +100,9 @@ export function TaskPicker({
 	action,
 	params,
 	bodyKey = 'target',
+	choices,
+	choiceKey = 'choice',
+	choiceLabel = 'Choice',
 	projectParam,
 	placeholder = 'Search a task',
 	ariaLabel,
@@ -109,6 +121,10 @@ export function TaskPicker({
 	const listId = `${baseId}-list`;
 	const rootRef = useRef<HTMLDivElement>(null);
 	const [text, setText] = useState('');
+	const choiceList = Array.isArray(choices) ? choices : [];
+	const [choice, setChoice] = useState<string | undefined>(undefined);
+	// The first choice until the user picks another; a choice that vanished from the list falls back to the first.
+	const chosen = choiceList.some(entry => entry.value === choice) ? choice : choiceList[0]?.value;
 	const [open, setOpen] = useState(false);
 	const [rows, setRows] = useState<PickerRow[]>([]);
 	const [loading, setLoading] = useState(false);
@@ -184,7 +200,11 @@ export function TaskPicker({
 		pickingRef.current = true;
 		setPicking(true);
 		try {
-			const ok = await runner.run({ ...(params ?? {}) }, { [bodyKey]: row.id });
+			const body: Record<string, string> = { [bodyKey]: row.id };
+			if (chosen !== undefined) {
+				body[choiceKey] = chosen;
+			}
+			const ok = await runner.run({ ...(params ?? {}) }, body);
 			if (ok) {
 				setText('');
 			}
@@ -229,7 +249,22 @@ export function TaskPicker({
 	const activeId = open && !loading && shown[active] ? optionId(active) : undefined;
 
 	return (
-		<div ref={rootRef} data-testid="task-picker" className="relative w-full min-w-0">
+		<div ref={rootRef} data-testid="task-picker" className="relative flex w-full min-w-0 flex-col gap-1.5">
+			{choiceList.length > 0 ? (
+				<select
+					aria-label={choiceLabel}
+					value={chosen}
+					disabled={unavailable}
+					onChange={event => setChoice(event.target.value)}
+					className="w-full rounded-md border border-border bg-surface px-2 py-1 text-sm text-content outline-none focus:ring-2 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-60"
+				>
+					{choiceList.map(entry => (
+						<option key={entry.value} value={entry.value}>
+							{entry.label}
+						</option>
+					))}
+				</select>
+			) : null}
 			<div className="relative flex items-center">
 				<Search size={14} aria-hidden="true" className="pointer-events-none absolute left-2 text-muted" />
 				<input

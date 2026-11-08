@@ -237,7 +237,7 @@ export function PropertyPopover({
 					<div
 						id={`${id}-panel`}
 						data-testid="property-popover-panel"
-						className="absolute left-0 top-full z-30 mt-1 min-w-[12rem] max-w-[calc(100vw-1rem)] rounded-md border border-border bg-surface p-1 shadow-lg max-sm:fixed max-sm:inset-x-0 max-sm:bottom-0 max-sm:top-auto max-sm:mt-0 max-sm:max-h-[70vh] max-sm:max-w-none max-sm:overflow-y-auto max-sm:rounded-b-none"
+						className={`absolute left-0 top-full z-30 mt-1 min-w-[12rem] max-w-[calc(100vw-1rem)] ${hasOptions ? '' : 'w-80'} rounded-md border border-border bg-surface p-1 shadow-lg max-sm:fixed max-sm:inset-x-0 max-sm:bottom-0 max-sm:top-auto max-sm:mt-0 max-sm:max-h-[70vh] max-sm:max-w-none max-sm:overflow-y-auto max-sm:rounded-b-none`}
 					>
 						{hasOptions ? (
 							<div

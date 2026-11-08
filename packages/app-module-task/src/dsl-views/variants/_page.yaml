@@ -1,51 +1,43 @@
 # ============================================================================================================
-# TASK PAGE VARIANTS - how this page is built (read this before editing task-page.yaml: it is GENERATED)
+# TASK PAGE - how this page is built (read this before editing task-page.yaml: it is GENERATED)
 #
 # `src/dsl-views/task-page.yaml` is assembled by `npm run views --workspace=packages/app-module-task` (script:
 # scripts/generate-task-page.mjs at the repository root) from the files of this folder:
-#   _page.yaml     this file: the sources, the actions, the notices and the experiment (variant order).
+#   _page.yaml     this file: the sources, the actions, the notices and the experiment (design order, `variants`).
 #                  Everything up to the line `$type: PageContent` is copied verbatim (comments included).
-#   _shared.yaml   named fragments, used anywhere as `{ $use: form.status }` (one node each; no other key next to $use).
-#   <variant>.yaml one file per variant with exactly three keys: `label`, `hint` (shown by the switcher), `view` (ONE node).
+#   _shared.yaml   named fragments, used anywhere as `{ $use: prop.status.row }` (one node each; no other key next to $use).
+#   <design>.yaml  one file per design with exactly three keys: `label`, `hint` (shown by the dock), `view` (ONE node).
 # A test fails when task-page.yaml is stale, so run the script after every edit here.
 #
-# Add a variant: create <name>.yaml here and add <name> to `variants` under `$experiment` below, then run the script.
-# Options of a variant: nested `AbTest` nodes inside its view, id `<variant>-<option>`, 2-3 choices.
-# Remove a variant: take its name out of `variants`, move its file out of the folder.
-# REMOVE THE EXPERIMENT (bake the winner): in this file keep $sources/$actions, replace the `AbTest` by the
-# `view` of the chosen variant (expand its `$use`), delete the other fragments, the generator, `npm run views`,
-# taskPageVariants.test.ts and the fixture, then drop the presentation fields no remaining view reads (see taskViews.ts).
+# THREE DESIGNS under ONE dock row "Task page" (dsl-ui AbTest, production renders `initial` only):
+#   issue  document first: title, the text, sub-tasks, relations; a sticky properties sidebar (GitHub / GitLab / Jira)
+#   bar    one row of labelled property pills, one narrow column (Linear)
+#   flow   for tasks made by a flow: status stepper, long prompt folded to 6 lines, steps checklist, activity open
+# No design has an option row of its own: the ones of the eleven old designs (title, header, controls, width, lists...) are gone.
+# Each fact (id, status, type, parent, labels, dates, title, body) is shown ONCE per design, where it is edited (a test counts).
 #
-# DIMENSIONS shared by every design and `current` (temporary, same experiment dock; the one of today is always an option):
-#   task-title     Title     { $use: dim.title }  clamp 2 lines (default) / one line + tooltip / short (first sentence) / large (today)
-#   task-header    Header    { $use: dim.header } compact bar (default) / actions in a menu / beside the title (today); replaces the PageHeader
-#   task-controls  Controls  built by the GENERATOR around every status / type task:ActionSelect of a design (inline, on change = the
-#                  design's own, default) / select field / form with Save (old page); `current` uses { $use: ctl.status } / ctl.type
-#   task-width     Width     the task:WidthFrame component (see `$wrap` at the end of this file), not an AbTest
-# A design therefore writes `$use: dim.header` where it had its PageHeader and keeps its own ActionSelects; nothing else.
+# Add a design: create <name>.yaml here and add <name> to `variants` under `$experiment` below, then run the script.
+# BAKE THE WINNER: in this file keep $sources/$actions, replace the `AbTest` by the `view` of the chosen design (expand its
+# `$use`), delete the other designs, the generator, `npm run views` and taskPageVariants.test.ts.
 #
-# Conventions for the components that run actions (the installed shell, dsl-ui 175, sends NO body from onAction):
-#   params: { id: $route.id, projectParam: $sources.detail.projectParam }   plus the value, which the component adds
-#   quick actions (below): setStatusTo / setTypeTo / addLabelTo carry the value in the URL path; removeLabel already does.
+# Conventions for the components that run actions (dsl-ui >= 318: `onAction(name, params, { body })` sends a JSON body):
+#   params: { id: $route.id, projectParam: $sources.detail.projectParam }   (fragment params.task), plus what the component adds
+#   the value of a control travels in the body (status, type, label, parent, link, text, metadata, sub-task).
 # ============================================================================================================
 
 # Detail of one task (/modules/task/tasks/p/:project/:id). ":id" of the manifest path is $route.id, ":project" is
-# $route.project (the id of the project, resolved by GET /projects). The breadcrumb leads back: no back link here.
+# $route.project (the id of the project, resolved by GET /projects). The breadcrumb and the tab strip lead elsewhere: no link here.
 #
-# Every form below submits through a named action ($actions) bound with `onSubmit: $ctx.<action>`:
-# - the body is the form data; it also fills the {placeholders} of the action URL ({id} is the route id);
-# - `projectParam` is the project already URL-encoded by the route (the substitution does not encode), so the URL is
-#   always `?project={projectParam}`; the forms get it through their initialData (`$sources.detail.forms.*`);
+# Every control submits through a named action ($actions):
+# - the body is what the component sends; `{placeholders}` of the url come from its `params` ({id} is the route id);
+# - `projectParam` is the project already URL-encoded by the route, so the URL is always `?project={projectParam}`;
 # - the page reloads its sources after a successful action;
-# - `&inlineErrors=true`: the DSL drops the answer of a failed request (nothing is shown, the form just stays as typed),
-#   so the routes answer a failure as data (`errorText`, one line with the hint) and the section of the form shows it;
+# - `&inlineErrors=true`: the DSL drops the answer of a failed request, so the routes answer a failure as data (`errorText`,
+#   one line with the hint) and the page shows it;
 # - `resultKey` publishes the answer as $ctx.<key>: the error, and what the queue did not receive (`undeliveredText`),
-#   are shown in the section of the form that produced them (the page is long, a message at the top would be off screen).
-# FieldSelect crashes the page while its options are not loaded: every form sits behind $if on its source data.
+#   are shown by the feedback block of the design (task:Notice, which wraps; a Badge keeps one line).
 # The sources are fed by `projectQuery` (the project, else `blank=true`): the shell keeps the last answer of a source it
 # skips, so an unknown or unreadable project must replace the previous task with an empty answer, not skip the request.
-# The sources that wait for `projects` also name a $urlParam (`reload`, empty in practice): the shell reloads on a URL
-# change only the sources that name one, so without it a link to another project or filter changed the URL and nothing else.
 $sources:
     projects:
         url: GET /api/modules/task/projects
@@ -53,15 +45,9 @@ $sources:
             project: $route.project
     # inlineErrors on every source: one failing source discards the answers of all the others (the page stays blank), so a
     # failure is answered as data (`errorText`) and shown by a badge.
-    # `tree` and `links` fail with the same error as `detail` when the task does not exist: `detail` shows it.
+    # `links` fails with the same error as `detail` when the task does not exist: `detail` shows it.
     detail:
         url: GET /api/modules/task/tasks/{id}?{query}&inlineErrors=true
-        params:
-            id: $route.id
-            query: $source.projects.projectQuery
-            reload: $urlParam.reload
-    tree:
-        url: GET /api/modules/task/tree?{query}&id={id}&inlineErrors=true
         params:
             id: $route.id
             query: $source.projects.projectQuery
@@ -81,6 +67,12 @@ $actions:
         url: POST /api/modules/task/tasks/{id}/status?project={projectParam}&inlineErrors=true
         resultKey: statusResult
         reloadSources: true
+    # The stepper of the flow design (task:SegmentedControl sends no body): the status is in the path.
+    setStatusTo:
+        url: POST /api/modules/task/tasks/{id}/status/{statusEncoded}?project={projectParam}&inlineErrors=true
+        resultKey: statusResult
+        reloadSources: true
+    # An empty type (the "None" choice) clears the type.
     setType:
         url: POST /api/modules/task/tasks/{id}/type?project={projectParam}&inlineErrors=true
         resultKey: typeResult
@@ -89,18 +81,18 @@ $actions:
         url: POST /api/modules/task/tasks/{id}/labels?project={projectParam}&inlineErrors=true
         resultKey: labelResult
         reloadSources: true
-    # {label} is the base64url key of the label picked in the select (see labelOptions).
-    removeLabel:
-        url: DELETE /api/modules/task/tasks/{id}/label-keys/{label}?project={projectParam}&inlineErrors=true
-        resultKey: labelResult
-        reloadSources: true
-    # The chip x of task:LabelChips: removes by the base64url key of the label ({labelKey}), which any label can travel in a path.
+    # The x of a label chip: removes by the base64url key of the label ({labelKey}), which any label can travel in a path.
     removeLabelChip:
         url: DELETE /api/modules/task/tasks/{id}/label-keys/{labelKey}?project={projectParam}&inlineErrors=true
         resultKey: labelResult
         reloadSources: true
     setMeta:
         url: POST /api/modules/task/tasks/{id}/meta?project={projectParam}&inlineErrors=true
+        resultKey: metaResult
+        reloadSources: true
+    # {keyKey} is the base64url key of the metadata key (a key may hold "/" or "%").
+    removeMetaKey:
+        url: DELETE /api/modules/task/tasks/{id}/meta-keys/{keyKey}?project={projectParam}&inlineErrors=true
         resultKey: metaResult
         reloadSources: true
     setParent:
@@ -115,36 +107,38 @@ $actions:
         url: POST /api/modules/task/tasks/{id}/links?project={projectParam}&inlineErrors=true
         resultKey: linkResult
         reloadSources: true
-    removeLink:
-        url: DELETE /api/modules/task/tasks/{id}/links?project={projectParam}&inlineErrors=true
-        resultKey: linkResult
-        reloadSources: true
     # The x of a row of the link groups (task:TaskRowList, nodes built by the route): the row's `removeParams` fill the
     # placeholders, so nothing is retyped. {targetEncoded} is the named handler's percent-encoded copy of `target`.
     removeLinkRow:
         url: DELETE /api/modules/task/tasks/{id}/links?project={projectParam}&type={type}&target={targetEncoded}&inlineErrors=true
         resultKey: linkRowResult
         reloadSources: true
-
-    # Quick actions for the task: components (ActionSelect, SegmentedControl, LabelChips): the value is in the URL path,
-    # because the shell's onAction sends no body. Same service calls, same answers, same resultKeys as the Form twins.
-    setStatusTo:
-        url: POST /api/modules/task/tasks/{id}/status/{statusEncoded}?project={projectParam}&inlineErrors=true
-        resultKey: statusResult
+    # The title and the description (task:InlineText): body { title } or { description }.
+    setText:
+        url: PATCH /api/modules/task/tasks/{id}?project={projectParam}&inlineErrors=true
+        resultKey: textResult
         reloadSources: true
-    setTypeTo:
-        url: POST /api/modules/task/tasks/{id}/type/{typeEncoded}?project={projectParam}&inlineErrors=true
-        resultKey: typeResult
+    # The add row of the sub-task checklist: body { title, parent }.
+    createSubtask:
+        url: POST /api/modules/task/tasks?project={projectParam}&inlineErrors=true
+        resultKey: subtaskResult
         reloadSources: true
-    addLabelTo:
-        url: POST /api/modules/task/tasks/{id}/labels/{labelEncoded}?project={projectParam}&inlineErrors=true
-        resultKey: labelResult
+    # The box of a sub-task: {id} is the id of the clicked row, body { status }.
+    setChildStatus:
+        url: POST /api/modules/task/tasks/{id}/status?project={projectParam}&inlineErrors=true
+        resultKey: subtaskResult
+        reloadSources: true
+    # The confirmation dialog: the body is forms.delete ({ ids, cascade, confirm: true }). The answer is read by the page-level
+    # notices, because the task is gone afterwards and the design is not drawn any more.
+    deleteTask:
+        url: POST /api/modules/task/tasks/delete?project={projectParam}&inlineErrors=true
+        resultKey: deleteResult
         reloadSources: true
 
 $type: PageContent
-# Shown above whatever variant is chosen, so every variant has the same error and empty states by construction.
+# Shown above whatever design is chosen, so every design has the same error and empty states by construction.
 $notices:
-    # Extension point task:project-header, above whatever variant is chosen (so every variant has it by construction):
+    # Extension point task:project-header, above whatever design is chosen (so every design has it by construction):
     # other modules contribute links/buttons about THIS project; they render with this page's context ($route.project).
     # The slot is shown once its source answered (items is not an array before); an empty slot draws nothing.
     - $type: task:ChipRow
@@ -178,26 +172,28 @@ $notices:
       $if: $sources.detail.warningText
       label: $sources.detail.warningText
       variant: warning
+    # The delete dialog: its answer stays on screen after the task is gone (the designs are not drawn without a task).
+    - $type: task:Notice
+      $if: $ctx.deleteResult.errorText
+      label: $ctx.deleteResult.errorText
+      variant: danger
+    - $type: task:Notice
+      $if: $ctx.deleteResult.deletedText
+      label: $ctx.deleteResult.deletedText
+      variant: success
+    - $type: task:Notice
+      $if: $ctx.deleteResult.undeliveredText
+      label: $ctx.deleteResult.undeliveredText
+      variant: warning
 $experiment:
     id: task-design
     label: Task page
-    initial: current
+    initial: issue
     variants:
-        - current
-        - github-a
-        - github-b
-        - gitlab-a
-        - gitlab-b
-        - jira-a
-        - jira-b
-        - linear-a
-        - linear-b
-        - notion-a
-        - notion-b
-# The page is wrapped in task:WidthFrame (the "Width" row: left 72rem, centered 72rem, full, reading 56rem), which owns the
-# width: the PageContent is told `maxWidth: full`, else its own 72rem centred column would cap every choice. The frame is a
-# component, not an AbTest, because it wraps the WHOLE page (an AbTest would repeat every design once per width).
+        - issue
+        - bar
+        - flow
+# Each design wraps itself in task:WidthFrame (its own width): the PageContent is told `maxWidth: full`, else its own 72rem
+# centred column would cap every design at the same width.
 $page:
     maxWidth: full
-$wrap:
-    $type: task:WidthFrame

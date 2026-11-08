@@ -196,6 +196,28 @@ describe('PropertyPopover', () => {
 		expect(screen.getByTestId('property-popover-backdrop').className).toMatch(/sm:hidden/);
 	});
 
+	it('a panel that holds content (a picker) is wide enough for it; a list of choices stays compact', async () => {
+		const user = userEvent.setup();
+		const { unmount } = render(
+			<PropertyPopover label="Parent" valueText="none" items={<span>picker here</span>} />
+		);
+		await user.click(screen.getByRole('button', { name: 'Parent: none' }));
+		expect(screen.getByTestId('property-popover-panel').className).toContain('w-80');
+		unmount();
+
+		render(
+			<PropertyPopover
+				label="Status"
+				valueText="todo"
+				options={[{ value: 'a', label: 'a' }]}
+				action="x"
+				onAction={() => undefined}
+			/>
+		);
+		await user.click(screen.getByRole('button', { name: 'Status: todo' }));
+		expect(screen.getByTestId('property-popover-panel').className).not.toContain('w-80');
+	});
+
 	it('shows the items slot instead of options and closes when a named action finished', async () => {
 		const user = userEvent.setup();
 		const view = render(

@@ -36,7 +36,8 @@ const META_VALUE_USAGE =
 const STATUS_USAGE = 'Send a JSON body { "status": string } (one of the project statuses).';
 const LABEL_USAGE = 'Send a JSON body { "label": string }.';
 const PARENT_USAGE = 'Send a JSON body { "parent": string } (task id or prefix).';
-const TYPE_USAGE = 'Send a JSON body { "type": string } (one of the project types, when some are configured).';
+const TYPE_USAGE =
+	'Send a JSON body { "type": string } (one of the project types, when some are configured; an empty string clears the type).';
 const PATH_LABEL_USAGE = 'Use POST /tasks/<id>/labels/<label> with a non-blank label in the path.';
 const PATH_STATUS_USAGE = 'Use POST /tasks/<id>/status/<status> with one of the project statuses in the path.';
 const PATH_TYPE_USAGE = 'Use POST /tasks/<id>/type/<type> with a non-blank type in the path.';
@@ -185,6 +186,10 @@ export function registerTaskWriteRoutes(kit: RouteKit): void {
 	route('POST', '/tasks/:id/type', req => {
 		const ctx = open(req);
 		const body = bodyObject(req.body, TYPE_USAGE);
+		// The "None" choice of the type picker posts an empty type: it clears the type (same as DELETE /tasks/:id/type).
+		if (body['type'] === '') {
+			return answerChange(unsetType(ctx, { id: taskId(req) }));
+		}
 		return answerChange(setType(ctx, { id: taskId(req), type: requiredString(body, 'type', TYPE_USAGE) }));
 	});
 

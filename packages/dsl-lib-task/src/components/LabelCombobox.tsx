@@ -96,7 +96,7 @@ function suggestionsOf(answer: unknown): LabelSuggestion[] {
 
 /**
  * The labels of a task as chips (x removes) and a field with autocomplete: existing labels of the project come first
- * with their count, Enter on typed text creates the label, Enter on a highlighted suggestion adds it. Each change runs
+ * with their count, Enter adds the highlighted suggestion (else the first matching one, else creates the typed text). Each change runs
  * a page action at once.
  *
  * IN SCOPE: add and remove labels of one task. OUT OF SCOPE: renaming a label project-wide.
@@ -243,7 +243,10 @@ export function LabelCombobox({
 			}
 		} else if (event.key === 'Enter') {
 			event.preventDefault();
-			const chosen = active >= 0 ? options[active] : undefined;
+			// No highlight: the first existing label that matches the typed text (typing "bil" must not create "bil" while "billing"
+			// exists); with no match the text is created. The raw text is still reachable: ArrowDown to the Create row.
+			const chosen =
+				active >= 0 ? options[active] : query === '' ? undefined : options.find(option => !option.create);
 			void add(chosen ? chosen.label : text);
 		} else if (event.key === 'Escape' && open) {
 			event.preventDefault();

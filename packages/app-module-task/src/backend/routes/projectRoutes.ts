@@ -149,7 +149,14 @@ export function registerProjectRoutes(kit: RouteKit): void {
 									description: '',
 									parent: '',
 								},
-								delete: { ...base, ids: '', filter: '', all: false, cascade: false },
+								// `?ids=` of the delete page address (a task page links there): not retyped.
+								delete: {
+									...base,
+									ids: optionalQueryValue(req.query, 'ids') ?? '',
+									filter: '',
+									all: false,
+									cascade: false,
+								},
 							},
 			},
 		};

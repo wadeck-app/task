@@ -16,6 +16,7 @@ import {
 	unlinkTasks,
 	unsetMeta,
 	unsetType,
+	withDescription,
 } from '@wadeck-app/task-service';
 import type {
 	CreateTaskResult,
@@ -87,7 +88,7 @@ export const runNew: ProjectCommand = async (rest, { jsonMode, ctx, eventSink })
 		return failure(jsonMode, error);
 	}
 	await deliverEvents(eventSink, created.events);
-	return jsonResult(created.task);
+	return jsonResult(withDescription(created.task));
 };
 
 /** The warning for a task closed while still blocked, printed on stderr. */
@@ -114,7 +115,7 @@ export const runSetStatus: ProjectCommand = async (rest, { jsonMode, ctx, eventS
 		process.stderr.write(openBlockersWarning(result));
 	}
 	await deliverEvents(eventSink, unblockedEvents);
-	return jsonResult(result.task);
+	return jsonResult(withDescription(result.task));
 };
 
 export const runLink: ProjectCommand = async (rest, { command, jsonMode, ctx, eventSink }) => {
@@ -135,7 +136,7 @@ Types: ${ALL_LINK_NAMES.join(', ')} (an inverse name such as blocks acts on the 
 		return failure(jsonMode, error);
 	}
 	await deliverEvents(eventSink, result.events);
-	return jsonResult(result.task);
+	return jsonResult(withDescription(result.task));
 };
 
 /** Runs a use case that returns events, delivers them once the change is saved, prints the task. */
@@ -151,7 +152,7 @@ async function changeOutput(
 		return failure(jsonMode, error);
 	}
 	await deliverEvents(eventSink, result.events);
-	return jsonResult(result.task);
+	return jsonResult(withDescription(result.task));
 }
 
 /** A command taking exactly two positional arguments, running a use case that returns events and printing the task. */

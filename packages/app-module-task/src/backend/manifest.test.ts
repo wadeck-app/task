@@ -15,6 +15,7 @@ const manifest = JSON.parse(readFileSync(join(packageDir, 'manifest.json'), 'utf
 		path?: string;
 		width?: number;
 		height?: number;
+		tab?: { group: string; label: string; order?: number };
 		view: { type: string; value: string };
 	}[];
 };
@@ -321,7 +322,7 @@ describe('views: no source is skipped for a project that cannot be used (stale d
 
 	it('the detail and history pages read every source through projectQuery (project, else blank=true)', () => {
 		for (const [name, sources] of [
-			['task-page.yaml', ['detail', 'tree', 'links']],
+			['task-page.yaml', ['detail', 'links']],
 			['task-history-page.yaml', ['detail', 'history']],
 		] as const) {
 			const blocks = sourceBlocks(view(name));
@@ -362,13 +363,17 @@ describe('views: the title columns truncate and keep the full title as tooltip',
 describe('task detail page: forms and links', () => {
 	const page = view('task-page.yaml');
 
-	it('wires status, type, labels, metadata, parent and links to their routes', () => {
+	it('wires status, type, labels, metadata, text, parent, links, sub-tasks and delete to their routes', () => {
 		for (const route of [
 			'POST /api/modules/task/tasks/{id}/status',
 			'POST /api/modules/task/tasks/{id}/type',
 			'POST /api/modules/task/tasks/{id}/labels',
-			'DELETE /api/modules/task/tasks/{id}/label-keys/{label}',
+			'DELETE /api/modules/task/tasks/{id}/label-keys/{labelKey}',
 			'POST /api/modules/task/tasks/{id}/meta',
+			'DELETE /api/modules/task/tasks/{id}/meta-keys/{keyKey}',
+			'PATCH /api/modules/task/tasks/{id}?',
+			'POST /api/modules/task/tasks?project=',
+			'POST /api/modules/task/tasks/delete?',
 			'POST /api/modules/task/tasks/{id}/parent',
 			'DELETE /api/modules/task/tasks/{id}/parent',
 			'POST /api/modules/task/tasks/{id}/links',
@@ -383,11 +388,12 @@ describe('task detail page: forms and links', () => {
 		expect(page).toContain('$ctx.linkResult.undeliveredText');
 	});
 
-	it('links to the history page and lists the links, the hierarchy and the metadata', () => {
-		expect(page).toContain('$sources.detail.taskHrefs.history');
+	it('lists the links, the sub-tasks and the metadata (History is a tab of the manifest, not a link of the page)', () => {
 		expect(page).toContain('GET /api/modules/task/tasks/{id}/links');
-		expect(page).toContain('GET /api/modules/task/tree');
-		expect(page).toContain('$sources.detail.metaRows');
+		expect(page).toContain('$sources.links.groupSections');
+		expect(page).toContain('$sources.detail.checklistRows');
+		expect(page).toContain('$sources.detail.metaEntries');
+		expect(page).not.toContain('taskHrefs.history');
 	});
 });
 
@@ -428,6 +434,12 @@ describe('delete page', () => {
 
 	it('shows the outcome of the delete', () => {
 		expect(page).toContain('$ctx.plan.deletedText');
+	});
+
+	it('takes the ids of its address (?ids=): the source passes $urlParam.ids, so a link from a task does not make the user retype them', () => {
+		expect(page).toMatch(
+			/projects:\n {8}url: GET \/api\/modules\/task\/projects\n {8}params:\n(?: {12}.*\n)* {12}ids: \$urlParam\.ids/
+		);
 	});
 });
 
@@ -763,7 +775,9 @@ describe('views: feedback and refresh conventions found by driving the pages in 
 				// `pick*` is a row button: with no URL the shell only stores the clicked row under its resultKey (no request).
 				const isRowPick = actionName.startsWith('pick') && !block.includes('url:');
 				if (!isRowPick) {
-					expect(block, `${name}: ${actionName}`).toMatch(/url: (POST|DELETE) \S+[?&]inlineErrors=true/);
+					expect(block, `${name}: ${actionName}`).toMatch(
+						/url: (POST|DELETE|PATCH) \S+[?&]inlineErrors=true/
+					);
 				}
 				const key = /resultKey: (\w+)/.exec(block)?.[1];
 				expect(key, `${name}: ${actionName} needs a resultKey`).toBeDefined();
@@ -788,10 +802,9 @@ describe('views: feedback and refresh conventions found by driving the pages in 
 	);
 
 	it('the selects that remove an item start on a placeholder: choosing the only option must count as a change', () => {
-		for (const [name, label] of [
-			['task-page.yaml', 'Label to remove'],
-			['types-page.yaml', 'Type to remove'],
-		] as const) {
+		// The task page has no such select any more: labels are removed by the x of their chip.
+		expect(view('task-page.yaml')).not.toContain('Label to remove');
+		for (const [name, label] of [['types-page.yaml', 'Type to remove']] as const) {
 			const lines = view(name).split('\n');
 			const at = lines.findIndex(line => line.includes(`label: ${label}`));
 			expect(at, `${name}: ${label}`).toBeGreaterThan(-1);
@@ -799,9 +812,9 @@ describe('views: feedback and refresh conventions found by driving the pages in 
 		}
 	});
 
-	it('the detail page names the project, and detaches a task whose parent is dangling', () => {
+	it('the detail page does not repeat the project (the crumb names it), and detaches a task whose parent is dangling', () => {
 		const page = view('task-page.yaml');
-		expect(page).toContain('$sources.detail.projectText');
+		expect(page).not.toContain('$sources.detail.projectText');
 		expect(page).toContain('$if: $sources.detail.canDetach');
 	});
 
@@ -813,10 +826,15 @@ describe('views: feedback and refresh conventions found by driving the pages in 
 	it('the tables use the display texts of the routes: truncated titles and short dates', () => {
 		expect(view('tasks-page.yaml')).toContain("key: 'titleText'");
 		expect(view('tasks-page.yaml')).toContain("key: 'created'");
-		// task-page.yaml is generated (js-yaml): the key is written without quotes.
-		expect(view('task-page.yaml')).toMatch(/key: '?titleText'?/);
 		expect(view('task-history-page.yaml')).toContain('$sources.history.rows');
 		expect(view('task-history-page.yaml')).toContain("key: 'time'");
+	});
+
+	it('the history page titles itself with the headline on one line, never the whole title in a PageHeader', () => {
+		const page = view('task-history-page.yaml');
+		expect(page).not.toContain('$type: PageHeader');
+		expect(page).toContain('text: $sources.detail.headline');
+		expect(page).not.toContain('$sources.detail.task.title');
 	});
 
 	it('the delete page clears the preview and the confirm button once the delete ran (both answers share the plan state)', () => {
@@ -953,14 +971,9 @@ describe('views: no link whose purpose is going back (the breadcrumb carries the
 		'delete-page.yaml': [],
 		'new-task-page.yaml': [{ label: 'Open the new task', to: '$ctx.created.href' }],
 		'task-history-page.yaml': [],
-		// History, Children and (in the design variants) Delete are features of the task (forward), not a way back.
-		'task-page.yaml': [
-			{ label: 'History', to: '$sources.detail.taskHrefs.history' },
-			{ label: 'Children', to: '$sources.detail.taskHrefs.childrenList' },
-			{ label: 'Delete', to: '$sources.detail.taskHrefs.deleteTasks' },
-			// The same feature behind the "More actions" popover of the header option "Actions in a menu".
-			{ label: 'Delete this task', to: '$sources.detail.taskHrefs.deleteTasks' },
-		],
+		// History is a tab, Children is the checklist, Delete is the dialog of the "More actions" menu. The one link left goes
+		// to the parent (a task has no ancestors in the crumb), from inside the Parent picker.
+		'task-page.yaml': [{ label: 'Open parent', to: '$sources.detail.parentRow.href' }],
 		'tasks-page.yaml': [
 			{ label: 'New task', to: '$sources.tasks.hrefs.newTask' },
 			{ label: '$sources.tasks.showAllToggle.label', to: '$sources.tasks.showAllToggle.href' },
@@ -997,6 +1010,76 @@ describe('views: no link whose purpose is going back (the breadcrumb carries the
 		}
 		for (const gone of ['allProjectsHref', 'globalHrefs', 'tasksHref', 'taskHrefs.detail', 'detail.hrefs.tasks']) {
 			expect(text, `${name}: ${gone}`).not.toContain(gone);
+		}
+	});
+});
+
+// Tabs of a page (app-core-cli >= 2026.11.7-171, module-authoring.md "Tabs of a page"): the shell draws the pages of a group
+// under the trail, on each of them. The pages of a group take the same :params (the shell links a tab by filling the params of
+// the page shown) and there are at least two, else `check` and `package` fail.
+describe('manifest: tabs of a page', () => {
+	const pages = manifest.extensionPoints.filter(p => p.kind === 'page');
+	const tabbed = pages.filter(p => p.tab !== undefined);
+	const groups = [...new Set(tabbed.map(p => p.tab!.group))];
+	const paramsOf = (path: string | undefined): string[] =>
+		(path ?? '').split('/').filter(segment => segment.startsWith(':'));
+
+	it('has exactly the two groups: task (Details, History) and project (Tasks, Tree, Types), in that order', () => {
+		const summary = (group: string): Array<[string | undefined, string, number | undefined]> =>
+			tabbed.filter(p => p.tab!.group === group).map(p => [p.path, p.tab!.label, p.tab!.order]);
+		expect(groups.sort()).toEqual(['project', 'task']);
+		expect(summary('task')).toEqual([
+			['/tasks/p/:project/:id', 'Details', 10],
+			['/tasks/p/:project/:id/history', 'History', 20],
+		]);
+		expect(summary('project')).toEqual([
+			['/tasks/p/:project', 'Tasks', 10],
+			['/tree/p/:project', 'Tree', 20],
+			['/types/p/:project', 'Types', 30],
+		]);
+	});
+
+	it.each(['task', 'project'])('group %s: at least two tabs, all with the same :params', group => {
+		const members = tabbed.filter(p => p.tab!.group === group);
+		expect(members.length, group).toBeGreaterThanOrEqual(2);
+		for (const member of members) {
+			expect(paramsOf(member.path), `${group}: ${member.path}`).toEqual(paramsOf(members[0]!.path));
+		}
+	});
+
+	it('every tab has a short label (not the page label) and an order, unique in its group', () => {
+		for (const group of groups) {
+			const members = tabbed.filter(p => p.tab!.group === group);
+			const orders = members.map(p => p.tab!.order);
+			expect(
+				orders.every(order => typeof order === 'number'),
+				group
+			).toBe(true);
+			expect(new Set(orders).size, `${group}: orders are unique`).toBe(orders.length);
+			for (const member of members) expect(member.tab!.label, member.path).toMatch(/^\S.{0,11}$/);
+		}
+	});
+
+	it('the pages that act (new task, delete) and the global pages have no tab', () => {
+		for (const path of ['/tasks/new', '/tasks/delete', '/tasks/p/:project/new', '/tasks/p/:project/delete']) {
+			const page = pages.find(p => p.path === path);
+			expect(page, path).toBeDefined();
+			expect(page!.tab, `${path} must not be a tab`).toBeUndefined();
+		}
+		for (const page of pages.filter(p => !paramsOf(p.path).includes(':project'))) {
+			expect(page.tab, `${page.path} is global`).toBeUndefined();
+		}
+	});
+
+	it('no view repeats the tab strip: no History / Tasks / Tree / Children link in the task page headers', () => {
+		const links = linkNodes(view('task-page.yaml')).map(link => link.to);
+		for (const gone of [
+			'$sources.detail.taskHrefs.history',
+			'$sources.detail.taskHrefs.childrenList',
+			'$sources.detail.hrefs.tree',
+			'$sources.detail.hrefs.tasks',
+		]) {
+			expect(links, gone).not.toContain(gone);
 		}
 	});
 });
@@ -1048,7 +1131,7 @@ describe('views: every mutating action that produces queue events shows what the
 			.filter(block => block.replace(/^\s*#.*$/gm, '').trim() !== '')
 			.map(block => ({
 				name: block.split(':')[0]!,
-				url: /url: (?:POST|DELETE) (\S+)/.exec(block)?.[1] ?? '',
+				url: /url: (?:POST|DELETE|PATCH) (\S+)/.exec(block)?.[1] ?? '',
 				key: /resultKey: (\w+)/.exec(block)?.[1] ?? '',
 			}))
 			.filter(action => action.url !== '');
@@ -1065,19 +1148,20 @@ describe('views: every mutating action that produces queue events shows what the
 			'delete-page.yaml:deleteTasks',
 			'new-task-page.yaml:createTask',
 			'task-page.yaml:addLabel',
-			'task-page.yaml:addLabelTo',
 			'task-page.yaml:addLink',
-			'task-page.yaml:removeLabel',
+			'task-page.yaml:createSubtask',
+			'task-page.yaml:deleteTask',
 			'task-page.yaml:removeLabelChip',
-			'task-page.yaml:removeLink',
 			'task-page.yaml:removeLinkRow',
+			'task-page.yaml:removeMetaKey',
 			'task-page.yaml:removeParent',
+			'task-page.yaml:setChildStatus',
 			'task-page.yaml:setMeta',
 			'task-page.yaml:setParent',
 			'task-page.yaml:setStatus',
 			'task-page.yaml:setStatusTo',
+			'task-page.yaml:setText',
 			'task-page.yaml:setType',
-			'task-page.yaml:setTypeTo',
 		]);
 	});
 

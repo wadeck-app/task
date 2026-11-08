@@ -89,10 +89,11 @@ export const InlineTextEntry: ComponentRegistryEntry = {
 		const allowEmpty = coerceProp(resolveExpressionValue(node['allowEmpty'], ctx), 'InlineText.allowEmpty', 'primitive', false) as import('../components/InlineText.js').InlineTextProps['allowEmpty']
 		const readOnly = coerceProp(resolveExpressionValue(node['readOnly'], ctx), 'InlineText.readOnly', 'primitive', false) as import('../components/InlineText.js').InlineTextProps['readOnly']
 		const ariaLabel = coerceProp(resolveExpressionValue(node['ariaLabel'], ctx), 'InlineText.ariaLabel', 'string', false) as import('../components/InlineText.js').InlineTextProps['ariaLabel']
+		const collapsedLines = coerceProp(resolveExpressionValue(node['collapsedLines'], ctx), 'InlineText.collapsedLines', 'primitive', false) as import('../components/InlineText.js').InlineTextProps['collapsedLines']
 		const textClass = coerceProp(resolveExpressionValue(node['textClass'], ctx), 'InlineText.textClass', 'string', false) as import('../components/InlineText.js').InlineTextProps['textClass']
 		const onAction = coerceProp(resolveExpressionValue(node['onAction'], ctx) ?? pageActionHandler(ctx), 'InlineText.onAction', 'function', false) as import('../components/InlineText.js').InlineTextProps['onAction']
 		const actionPending = coerceProp(resolveExpressionValue(node['actionPending'], ctx) ?? ctx['$actionPending'], 'InlineText.actionPending', 'object', false) as import('../components/InlineText.js').InlineTextProps['actionPending']
-		return <InlineText value={value} action={action} valueParam={valueParam} params={params} multiline={multiline} placeholder={placeholder} maxLength={maxLength} allowEmpty={allowEmpty} readOnly={readOnly} ariaLabel={ariaLabel} textClass={textClass} onAction={onAction} actionPending={actionPending} />
+		return <InlineText value={value} action={action} valueParam={valueParam} params={params} multiline={multiline} placeholder={placeholder} maxLength={maxLength} allowEmpty={allowEmpty} readOnly={readOnly} ariaLabel={ariaLabel} collapsedLines={collapsedLines} textClass={textClass} onAction={onAction} actionPending={actionPending} />
 	},
 }
 
@@ -296,7 +297,8 @@ export const SplitLayoutEntry: ComponentRegistryEntry = {
 		const sideWidth = coerceProp(resolveExpressionValue(node['sideWidth'], ctx), 'SplitLayout.sideWidth', 'primitive', false) as import('../components/SplitLayout.js').SplitLayoutProps['sideWidth']
 		const sticky = coerceProp(resolveExpressionValue(node['sticky'], ctx), 'SplitLayout.sticky', 'primitive', false) as import('../components/SplitLayout.js').SplitLayoutProps['sticky']
 		const gap = coerceProp(resolveExpressionValue(node['gap'], ctx), 'SplitLayout.gap', 'primitive', false) as import('../components/SplitLayout.js').SplitLayoutProps['gap']
-		return <SplitLayout main={main ? renderChildren(main, registry, ctx) : null} side={side ? renderChildren(side, registry, ctx) : null} sidePosition={sidePosition} sideWidth={sideWidth} sticky={sticky} gap={gap} />
+		const sideFirstWhenStacked = coerceProp(resolveExpressionValue(node['sideFirstWhenStacked'], ctx), 'SplitLayout.sideFirstWhenStacked', 'primitive', false) as import('../components/SplitLayout.js').SplitLayoutProps['sideFirstWhenStacked']
+		return <SplitLayout main={main ? renderChildren(main, registry, ctx) : null} side={side ? renderChildren(side, registry, ctx) : null} sidePosition={sidePosition} sideWidth={sideWidth} sticky={sticky} gap={gap} sideFirstWhenStacked={sideFirstWhenStacked} />
 	},
 }
 
@@ -356,10 +358,13 @@ export const TaskPickerEntry: ComponentRegistryEntry = {
 		const action = coerceProp(resolveExpressionValue(node['action'], ctx), 'TaskPicker.action', 'string', true) as import('../components/TaskPicker.js').TaskPickerProps['action']
 		const params = coerceProp(resolveExpressionsDeep(node['params'], ctx), 'TaskPicker.params', 'object', false) as import('../components/TaskPicker.js').TaskPickerProps['params']
 		const bodyKey = coerceProp(resolveExpressionValue(node['bodyKey'], ctx), 'TaskPicker.bodyKey', 'string', false) as import('../components/TaskPicker.js').TaskPickerProps['bodyKey']
+		const choices = coerceProp(resolveExpressionValue(node['choices'], ctx), 'TaskPicker.choices', 'array', false) as import('../components/TaskPicker.js').TaskPickerProps['choices']
+		const choiceKey = coerceProp(resolveExpressionValue(node['choiceKey'], ctx), 'TaskPicker.choiceKey', 'string', false) as import('../components/TaskPicker.js').TaskPickerProps['choiceKey']
+		const choiceLabel = coerceProp(resolveExpressionValue(node['choiceLabel'], ctx), 'TaskPicker.choiceLabel', 'string', false) as import('../components/TaskPicker.js').TaskPickerProps['choiceLabel']
 		const projectParam = coerceProp(resolveExpressionValue(node['projectParam'], ctx), 'TaskPicker.projectParam', 'string', false) as import('../components/TaskPicker.js').TaskPickerProps['projectParam']
 		const placeholder = coerceProp(resolveExpressionValue(node['placeholder'], ctx), 'TaskPicker.placeholder', 'string', false) as import('../components/TaskPicker.js').TaskPickerProps['placeholder']
 		const ariaLabel = coerceProp(resolveExpressionValue(node['ariaLabel'], ctx), 'TaskPicker.ariaLabel', 'string', false) as import('../components/TaskPicker.js').TaskPickerProps['ariaLabel']
-		const excludeIds = coerceProp(resolveExpressionValue(node['excludeIds'], ctx), 'TaskPicker.excludeIds', 'array', false) as import('../components/TaskPicker.js').TaskPickerProps['excludeIds']
+		const excludeIds = coerceProp(resolveExpressionsDeep(node['excludeIds'], ctx), 'TaskPicker.excludeIds', 'array', false) as import('../components/TaskPicker.js').TaskPickerProps['excludeIds']
 		const excludeDescendantsOf = coerceProp(resolveExpressionValue(node['excludeDescendantsOf'], ctx), 'TaskPicker.excludeDescendantsOf', 'string', false) as import('../components/TaskPicker.js').TaskPickerProps['excludeDescendantsOf']
 		const limit = coerceProp(resolveExpressionValue(node['limit'], ctx), 'TaskPicker.limit', 'primitive', false) as import('../components/TaskPicker.js').TaskPickerProps['limit']
 		const debounceMs = coerceProp(resolveExpressionValue(node['debounceMs'], ctx), 'TaskPicker.debounceMs', 'primitive', false) as import('../components/TaskPicker.js').TaskPickerProps['debounceMs']
@@ -368,7 +373,7 @@ export const TaskPickerEntry: ComponentRegistryEntry = {
 		const apiBase = coerceProp(resolveExpressionValue(node['apiBase'], ctx), 'TaskPicker.apiBase', 'string', false) as import('../components/TaskPicker.js').TaskPickerProps['apiBase']
 		const onAction = coerceProp(resolveExpressionValue(node['onAction'], ctx) ?? pageActionHandler(ctx), 'TaskPicker.onAction', 'function', false) as import('../components/TaskPicker.js').TaskPickerProps['onAction']
 		const actionPending = coerceProp(resolveExpressionValue(node['actionPending'], ctx) ?? ctx['$actionPending'], 'TaskPicker.actionPending', 'object', false) as import('../components/TaskPicker.js').TaskPickerProps['actionPending']
-		return <TaskPicker action={action} params={params} bodyKey={bodyKey} projectParam={projectParam} placeholder={placeholder} ariaLabel={ariaLabel} excludeIds={excludeIds} excludeDescendantsOf={excludeDescendantsOf} limit={limit} debounceMs={debounceMs} clearable={clearable} disabled={disabled} apiBase={apiBase} onAction={onAction} actionPending={actionPending} />
+		return <TaskPicker action={action} params={params} bodyKey={bodyKey} choices={choices} choiceKey={choiceKey} choiceLabel={choiceLabel} projectParam={projectParam} placeholder={placeholder} ariaLabel={ariaLabel} excludeIds={excludeIds} excludeDescendantsOf={excludeDescendantsOf} limit={limit} debounceMs={debounceMs} clearable={clearable} disabled={disabled} apiBase={apiBase} onAction={onAction} actionPending={actionPending} />
 	},
 }
 
@@ -418,11 +423,12 @@ export const TitleTextEntry: ComponentRegistryEntry = {
 }
 
 export const WidthFrameEntry: ComponentRegistryEntry = {
-	name: 'WidthFrame', category: 'disposition', tags: ["layout","width","page","frame","experiment"],
+	name: 'WidthFrame', category: 'disposition', tags: ["layout","width","page","frame"],
 	nodeSchema: null as never,
 	render: ({ node, registry, ctx }: RegistryRenderProps) => {
+		const width = coerceProp(resolveExpressionValue(node['width'], ctx), 'WidthFrame.width', 'primitive', false) as import('../components/WidthFrame.js').WidthFrameProps['width']
 		const items = node['items'] as unknown[] | undefined
-		return <WidthFrame items={items ? renderChildren(items, registry, ctx) : null} />
+		return <WidthFrame width={width} items={items ? renderChildren(items, registry, ctx) : null} />
 	},
 }
 // ─── All entries ──────────────────────────────────────────────────────────────
@@ -461,7 +467,7 @@ ActionSelectEntry.knownKeys = ["action","actionPending","allowEmpty","appearance
 BreadcrumbTrailEntry.knownKeys = ["currentLabel","items","maxItems","separator"];
 ChipRowEntry.allowedChildren = {"items":["atomic","composite","display"]};
 ChipRowEntry.knownKeys = ["align","gap","items","justify"];
-InlineTextEntry.knownKeys = ["action","actionPending","allowEmpty","ariaLabel","maxLength","multiline","onAction","params","placeholder","readOnly","textClass","value","valueParam"];
+InlineTextEntry.knownKeys = ["action","actionPending","allowEmpty","ariaLabel","collapsedLines","maxLength","multiline","onAction","params","placeholder","readOnly","textClass","value","valueParam"];
 KeyValueListEntry.knownKeys = ["density","emptyText","entries"];
 LabelChipsEntry.knownKeys = ["actionPending","addAction","colors","emptyText","labelKeys","labelParam","labels","onAction","params","placeholder","readOnly","removeAction","size"];
 LabelComboboxEntry.knownKeys = ["actionPending","addAction","apiBase","colors","emptyText","labelKeys","labelParam","labels","onAction","params","placeholder","projectParam","readOnly","removeAction","size","suggestions"];
@@ -480,13 +486,13 @@ PropertyRowEntry.allowedChildren = {"items":["layout","display","composite","ato
 PropertyRowEntry.knownKeys = ["hint","items","label"];
 PropertyRowEntry.requiresContext = ["PropertyLayoutContext"];
 SegmentedControlEntry.knownKeys = ["action","actionPending","appearance","ariaLabel","fullWidth","onAction","options","params","size","value","valueParam"];
-SplitLayoutEntry.knownKeys = ["gap","main","side","sidePosition","sideWidth","sticky"];
+SplitLayoutEntry.knownKeys = ["gap","main","side","sideFirstWhenStacked","sidePosition","sideWidth","sticky"];
 StatusBadgeEntry.knownKeys = ["appearance","icon","label","size","tone"];
 TabPanelsEntry.knownKeys = ["counts","defaultTab","tabs"];
 TaskChecklistEntry.knownKeys = ["actionPending","addAction","doneAction","emptyText","idParam","onAction","params","parentId","parentKey","placeholder","reopenAction","reopenStatus","rows","statusParam","terminalStatus","titleKey"];
-TaskPickerEntry.knownKeys = ["action","actionPending","apiBase","ariaLabel","bodyKey","clearable","debounceMs","disabled","excludeDescendantsOf","excludeIds","limit","onAction","params","placeholder","projectParam"];
+TaskPickerEntry.knownKeys = ["action","actionPending","apiBase","ariaLabel","bodyKey","choiceKey","choiceLabel","choices","clearable","debounceMs","disabled","excludeDescendantsOf","excludeIds","limit","onAction","params","placeholder","projectParam"];
 TaskRowListEntry.knownKeys = ["actionPending","appearance","density","emptyText","maxRows","onAction","removeAction","removeLabel","rows","showId","showStatus"];
 TimelineEntry.knownKeys = ["emptyText","entries","groupByDay","order","showIcons"];
 TitleTextEntry.knownKeys = ["expandable","lines","size","text","tooltip"];
 WidthFrameEntry.allowedChildren = {"items":["layout","table","form","display","composite","atomic"]};
-WidthFrameEntry.knownKeys = ["items"];
+WidthFrameEntry.knownKeys = ["items","width"];

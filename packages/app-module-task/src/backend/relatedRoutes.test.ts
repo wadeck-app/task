@@ -38,6 +38,8 @@ beforeEach(() => {
 		off: vi.fn(),
 		emit: vi.fn(),
 		registerRoute: (method, subPath, handler) => routes.set(`${method} ${subPath}`, handler),
+		fileVersion: vi.fn(() => Promise.resolve('v')),
+		unchanged: vi.fn(() => false),
 		dispose: vi.fn(),
 	};
 	registerTaskRoutes(ctx, { configDir: world.configDir, eventSink: sink });

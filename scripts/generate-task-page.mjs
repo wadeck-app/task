@@ -5,12 +5,12 @@
 //
 // Fragments (see variants/_page.yaml for the full explanation):
 //   _page.yaml     text before the line `$type: PageContent` is copied verbatim (comments, $sources, $actions); after it:
-//                  `$notices` (nodes shown above the variants) and `$experiment` ({id, label, initial, variants: [names]}).
+//                  `$notices` (nodes shown above the designs) and `$experiment` ({id, label, initial, variants: [names]}).
 //   _shared.yaml   { name: node }, used as `{ $use: name }` anywhere in a fragment (nested uses allowed, cycles refused).
-//   <name>.yaml    { label, hint, view } per variant, in the order of `$experiment.variants`.
+//   <name>.yaml    { label, hint, view } per design, in the order of `$experiment.variants`.
 //
 // To REMOVE the experiment later (bake the winner): replace the AbTest of the generated page by the chosen
-// variant's view, then delete variants/, this script, the `views` npm script and taskPageVariants.test.ts.
+// design's view, then delete variants/, this script, the `views` npm script and taskPageVariants.test.ts.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,7 +20,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_VIEWS_DIR = path.resolve(HERE, '../packages/app-module-task/src/dsl-views');
 
 const HOW =
-	'See the header of src/dsl-views/variants/_page.yaml: a variant is src/dsl-views/variants/<name>.yaml with the keys label, hint and view, listed under $experiment.variants.';
+	'See the header of src/dsl-views/variants/_page.yaml: a design is src/dsl-views/variants/<name>.yaml with the keys label, hint and view, listed under $experiment.variants.';
 
 function fail(message) {
 	throw new Error(`generate-task-page: ${message}\n${HOW}`);
@@ -64,60 +64,6 @@ function expand(value, shared, where, chain = []) {
 	return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, expand(item, shared, where, chain)]));
 }
 
-const CONTROLS_ID = 'task-controls';
-
-/**
- * The task-controls switcher around ONE status or type control: the control as the design draws it (`inline`, the
- * default), the same as a bordered field, and the labelled select with a Save button the page had before. Needs the
- * fragments `form.status` / `form.type` of _shared.yaml.
- */
-function controlsTest(kind, inline, shared) {
-	const form = shared[kind === 'status' ? 'form.status' : 'form.type'];
-	return {
-		$type: 'AbTest',
-		id: CONTROLS_ID,
-		label: 'Controls',
-		initial: 'inline',
-		variants: {
-			inline: {
-				label: 'Inline, on change',
-				hint: 'A compact select that applies the change as soon as it is picked: no Save button. The look is that of the design.',
-				view: inline,
-			},
-			field: {
-				label: 'Select field, on change',
-				hint: 'A bordered select field that applies the change as soon as it is picked.',
-				view: { ...structuredClone(inline), appearance: 'field' },
-			},
-			form: {
-				label: 'Form with Save (old page)',
-				hint: 'A labelled select and a Save button, as the page was before the experiment.',
-				view: structuredClone(form),
-			},
-		},
-	};
-}
-
-const isControl = node =>
-	node.$type === 'task:ActionSelect' && (node.action === 'setStatusTo' || node.action === 'setTypeTo');
-
-/** Wraps every status / type ActionSelect of a design in the task-controls switcher (the ones already wrapped are kept). */
-function wrapControls(value, shared) {
-	if (Array.isArray(value)) {
-		return value.map(item => wrapControls(item, shared));
-	}
-	if (value === null || typeof value !== 'object') {
-		return value;
-	}
-	if (value.$type === 'AbTest' && value.id === CONTROLS_ID) {
-		return value;
-	}
-	if (isControl(value)) {
-		return controlsTest(value.action === 'setStatusTo' ? 'status' : 'type', value, shared);
-	}
-	return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, wrapControls(item, shared)]));
-}
-
 /** The content of task-page.yaml for the fragments in `viewsDir`, nothing written. */
 export function generateTaskPage(viewsDir = DEFAULT_VIEWS_DIR) {
 	const dir = path.join(viewsDir, 'variants');
@@ -148,56 +94,39 @@ export function generateTaskPage(viewsDir = DEFAULT_VIEWS_DIR) {
 	const names = experiment.variants;
 	const duplicate = names.find((name, index) => names.indexOf(name) !== index);
 	if (duplicate !== undefined) {
-		fail(`${pageFile}: variant "${duplicate}" is listed twice under $experiment.variants.`);
+		fail(`${pageFile}: design "${duplicate}" is listed twice under $experiment.variants.`);
 	}
 	if (!names.includes(experiment.initial)) {
 		fail(
-			`${pageFile}: $experiment.initial "${experiment.initial}" is not one of the variants (${names.join(', ')}).`
+			`${pageFile}: $experiment.initial "${experiment.initial}" is not one of the designs (${names.join(', ')}).`
 		);
 	}
 
 	const shared = readYaml(path.join(dir, '_shared.yaml'), '_shared.yaml') ?? {};
-	// The task-controls dimension exists when _shared.yaml has its fragments (the scratch folders of the tests have none).
-	const withControls = 'ctl.status.default' in shared && 'form.status' in shared && 'form.type' in shared;
-	if (withControls) {
-		for (const kind of ['status', 'type']) {
-			shared[`ctl.${kind}`] = controlsTest(
-				kind,
-				expand(structuredClone(shared[`ctl.${kind}.default`]), shared, `ctl.${kind}.default`),
-				shared
-			);
-		}
-	}
 	const variants = {};
 	for (const name of names) {
 		const file = path.join(dir, `${name}.yaml`);
-		const fragment = readYaml(file, `variant file "${name}.yaml" (listed under $experiment.variants)`);
+		const fragment = readYaml(file, `design file "${name}.yaml" (listed under $experiment.variants)`);
 		const keys = fragment && typeof fragment === 'object' ? Object.keys(fragment) : [];
 		const missing = ['label', 'hint', 'view'].filter(key => !keys.includes(key));
 		const unknown = keys.filter(key => !['label', 'hint', 'view'].includes(key));
 		if (missing.length > 0 || unknown.length > 0) {
 			fail(
-				`${file}: a variant has exactly label, hint and view (missing: ${missing.join(', ') || 'none'}; unexpected: ${unknown.join(', ') || 'none'}).`
+				`${file}: a design has exactly label, hint and view (missing: ${missing.join(', ') || 'none'}; unexpected: ${unknown.join(', ') || 'none'}).`
 			);
 		}
-		const expanded = withControls
-			? wrapControls(expand(fragment, shared, `${name}.yaml`), shared)
-			: expand(fragment, shared, `${name}.yaml`);
-		// The reference variant is the page as shipped, untouched. Every other variant draws nothing until the task is loaded:
-		// with an unknown, unreadable or virtual project the notices above the switcher say why, and the empty frames of a
-		// design ("Created: undefined") would only add noise.
-		variants[name] =
-			name === experiment.initial
-				? expanded
-				: {
-						...expanded,
-						view: {
-							$type: 'VerticalStack',
-							$if: '$sources.detail.task',
-							gap: 'gap-0',
-							items: [expanded.view],
-						},
-					};
+		const expanded = expand(fragment, shared, `${name}.yaml`);
+		// Every design draws nothing until the task is loaded: with an unknown, unreadable or virtual project the notices above the
+		// switcher say why, and the empty frames of a design ("Created: undefined") would only add noise.
+		variants[name] = {
+			...expanded,
+			view: {
+				$type: 'VerticalStack',
+				$if: '$sources.detail.task',
+				gap: 'gap-0',
+				items: [expanded.view],
+			},
+		};
 	}
 	const known = new Set([...names.map(name => `${name}.yaml`), '_page.yaml', '_shared.yaml']);
 	const orphans = fs.readdirSync(dir).filter(file => file.endsWith('.yaml') && !known.has(file));
@@ -214,8 +143,8 @@ export function generateTaskPage(viewsDir = DEFAULT_VIEWS_DIR) {
 		initial: experiment.initial,
 		variants,
 	};
-	// `$wrap`: a node with an `items` slot that holds the experiment (task:WidthFrame, the width dimension).
-	// `$page`: extra props of the PageContent (maxWidth: full, so the frame decides the width).
+	// `$wrap`: a node with an `items` slot that holds the experiment (optional).
+	// `$page`: extra props of the PageContent (maxWidth: full, so each design decides its own width).
 	const wrapped = wrap === undefined ? experimentNode : { ...expand(wrap, shared, '$wrap'), items: [experimentNode] };
 	const body = {
 		$type: 'PageContent',

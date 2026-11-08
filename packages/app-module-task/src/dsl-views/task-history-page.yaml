@@ -25,8 +25,14 @@ $sources:
 
 $type: PageContent
 sections:
-    - $type: PageHeader
-      title: $sources.detail.task.title
+    # The headline (<= 90 characters), one line with the whole of it as tooltip: a task made by a flow has a prompt of
+    # hundreds of characters, which a PageHeader would print whole at 32 px.
+    - $type: task:TitleText
+      $if: $sources.detail.task
+      text: $sources.detail.headline
+      size: xl
+      lines: 1
+      tooltip: true
     # Nothing registered yet: the welcome text of the route (the exact next step) instead of a blank page.
     - $type: Badge
       $if: $sources.projects.noProjects

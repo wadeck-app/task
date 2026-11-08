@@ -23,6 +23,8 @@ export interface SplitLayoutProps {
 	sticky?: boolean;
 	/** Space between the columns (and between them once stacked). */
 	gap?: 'gap-4' | 'gap-6' | 'gap-8';
+	/** Below the `lg` breakpoint the secondary column comes BEFORE the main one (properties above the document). */
+	sideFirstWhenStacked?: boolean;
 }
 
 /**
@@ -41,13 +43,15 @@ export function SplitLayout({
 	sideWidth = 'normal',
 	sticky = true,
 	gap = 'gap-6',
+	sideFirstWhenStacked = false,
 }: SplitLayoutProps): React.ReactElement {
 	const direction = sidePosition === 'left' ? 'lg:flex-row-reverse' : 'lg:flex-row';
 	const sideClass = [
 		'min-w-0 w-full shrink-0',
 		SIDE_WIDTH_CLASSES[sideWidth],
 		// self-start: a sticky column stretched to the height of the row would have nothing to slide in.
-		sticky ? 'lg:sticky lg:top-4 lg:self-start' : '',
+		sticky ? 'lg:sticky lg:top-32 lg:self-start' : '',
+		sideFirstWhenStacked ? 'max-lg:order-first' : '',
 	]
 		.filter(Boolean)
 		.join(' ');

@@ -59,3 +59,13 @@ export function taskDescription(task: { title: string; description?: string }): 
 export function bodyAddsInfo(headline: string, body: string | undefined): boolean {
 	return body !== undefined && body.trim() !== headline.trim();
 }
+
+/**
+ * The record as public JSON output: `description` is always present (the resolved text). Storage is unchanged (the key
+ * is stored only when it differs from the title); readers of the CLI JSON have always found the key.
+ */
+export function withDescription<T extends { title: string; description?: string }>(
+	task: T
+): T & { description: string } {
+	return { ...task, description: taskDescription(task) };
+}

@@ -1,0 +1,54 @@
+label: Bar
+hint: One row of labelled property pills under the title (status, type, labels, parent, blocked, link, metadata), each opening its picker; one narrow column (Linear).
+view:
+    $type: task:WidthFrame
+    width: reading
+    items:
+        - $type: VerticalStack
+          gap: gap-4
+          items:
+              - $type: VerticalStack
+                gap: gap-2
+                items:
+                    - $type: task:ChipRow
+                      gap: gap-2
+                      align: center
+                      justify: between
+                      items:
+                          - $use: id.badge
+                          - $use: menu.more
+                    - $use: title.edit
+              - $type: task:ChipRow
+                gap: gap-2
+                align: center
+                items:
+                    - $use: prop.status.pill
+                    - $use: prop.type.pill
+                    - $use: prop.type.free
+                    - $use: prop.labels
+                    - $use: prop.parent.pill
+                    - $use: prop.blocked.pill
+                    - $use: links.add
+                    - $use: prop.meta.pill
+              - $use: feedback.all
+              - $use: body.edit
+              - $use: body.add
+              - $type: task:Panel
+                title: Sub-tasks
+                appearance: plain
+                items:
+                    - $use: subtasks.checklist
+              - $type: task:Panel
+                $if: $sources.links.hasLinks
+                title: Relations
+                appearance: plain
+                items:
+                    - $use: links.groups
+              - $type: task:Panel
+                title: Activity
+                appearance: plain
+                collapsible: true
+                defaultOpen: false
+                items:
+                    - $use: activity.timeline
+                    - $use: dates

@@ -57,7 +57,14 @@ export { setType, addLabel, removeLabel, setMeta, unsetMeta, unsetType } from '.
 export type { SetTaskTextInput } from './setTaskText.js';
 export { setTaskText } from './setTaskText.js';
 export type { SplitText } from './taskText.js';
-export { HEADLINE_MAX_LENGTH, bodyAddsInfo, headlineOf, splitHeadline, taskDescription } from './taskText.js';
+export {
+	HEADLINE_MAX_LENGTH,
+	bodyAddsInfo,
+	headlineOf,
+	splitHeadline,
+	taskDescription,
+	withDescription,
+} from './taskText.js';
 export type { SearchTasksInput, TaskSearchHit } from './searchTasks.js';
 export { SEARCH_DEFAULT_LIMIT, SEARCH_MAX_LIMIT, searchTasks } from './searchTasks.js';
 export type { LabelCount } from './listLabels.js';

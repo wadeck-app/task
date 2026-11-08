@@ -43,6 +43,16 @@ describe('SplitLayout', () => {
 		expect(screen.getByTestId('split-layout-side')).toHaveClass('lg:w-96');
 	});
 
+	it('can put the side column above the main one once stacked (properties before the document on a phone)', () => {
+		const { rerender } = render(<SplitLayout main={<p>a</p>} side={<p>b</p>} />);
+		expect(screen.getByTestId('split-layout-side')).not.toHaveClass('max-lg:order-first');
+
+		rerender(<SplitLayout main={<p>a</p>} side={<p>b</p>} sideFirstWhenStacked />);
+		expect(screen.getByTestId('split-layout-side')).toHaveClass('max-lg:order-first');
+		// From lg up the position is still sidePosition: the class only reorders below it.
+		expect(screen.getByTestId('split-layout')).toHaveClass('lg:flex-row');
+	});
+
 	it('never lets the main column overflow its flex parent', () => {
 		render(<SplitLayout main={<p>a</p>} side={<p>b</p>} />);
 

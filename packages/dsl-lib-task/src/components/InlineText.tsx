@@ -3,6 +3,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useAction } from '../useAction.js';
 import type { ActionHandler } from '../useAction.js';
 
+// A line of the page holds roughly this many characters (the same estimate as TitleText).
+const CHARS_PER_LINE = 70;
+
 export interface InlineTextProps {
 	/** The current text. The page gives the new one after the action ran and the sources reloaded. */
 	value: string;
@@ -27,6 +30,8 @@ export interface InlineTextProps {
 	readOnly?: boolean;
 	/** The accessible name of the field (`Title`, `Description`). */
 	ariaLabel?: string;
+	/** Shows at most this many lines of a long text, with a Show more / Show less button (a prompt of 700 characters). 0 = all. */
+	collapsedLines?: number;
 	/** Classes of the text, shared by the display and the editor so the page does not jump (`text-xl font-semibold`). */
 	textClass?: string;
 	/**
@@ -61,6 +66,7 @@ export function InlineText({
 	allowEmpty = false,
 	readOnly = false,
 	ariaLabel = 'Text',
+	collapsedLines = 0,
 	textClass = 'text-sm',
 	onAction,
 	actionPending,
@@ -71,6 +77,7 @@ export function InlineText({
 	const [draft, setDraft] = useState(current);
 	const [saving, setSaving] = useState(false);
 	const [problem, setProblem] = useState<string | null>(null);
+	const [unfolded, setUnfolded] = useState(false);
 	// Enter makes the field read-only and the browser may then blur it: the guard keeps the blur from saving again.
 	const guard = useRef(false);
 	const cancelled = useRef(false);
@@ -146,7 +153,12 @@ export function InlineText({
 	}
 
 	if (!editing) {
-		return (
+		// A text shorter than this many lines x characters never needs the fold.
+		const foldable =
+			collapsedLines > 0 &&
+			(current.split('\n').length > collapsedLines || current.length > collapsedLines * CHARS_PER_LINE);
+		const clamped = foldable && !unfolded;
+		const button = (
 			<button
 				ref={display}
 				type="button"
@@ -157,7 +169,20 @@ export function InlineText({
 				onClick={start}
 				className={`group inline-flex w-full items-start gap-2 rounded border border-transparent px-1 text-left hover:border-border focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed ${multiline ? 'whitespace-pre-wrap' : ''} break-words ${textClass}`}
 			>
-				<span className={`min-w-0 flex-1 ${current === '' ? 'text-muted' : ''}`}>
+				<span
+					data-clamped={clamped ? 'true' : undefined}
+					style={
+						clamped
+							? {
+									display: '-webkit-box',
+									WebkitLineClamp: collapsedLines,
+									WebkitBoxOrient: 'vertical',
+									overflow: 'hidden',
+								}
+							: undefined
+					}
+					className={`min-w-0 flex-1 ${current === '' ? 'text-muted' : ''}`}
+				>
 					{current !== '' ? current : placeholder}
 				</span>
 				<Pencil
@@ -166,6 +191,22 @@ export function InlineText({
 					className="mt-1 shrink-0 opacity-0 group-hover:opacity-60 group-focus-visible:opacity-60"
 				/>
 			</button>
+		);
+		if (!foldable) {
+			return button;
+		}
+		return (
+			<div className="flex w-full flex-col items-start gap-0.5">
+				{button}
+				<button
+					type="button"
+					aria-expanded={unfolded}
+					onClick={() => setUnfolded(open => !open)}
+					className="ml-1 cursor-pointer border-0 bg-transparent p-0 text-xs font-medium text-muted underline"
+				>
+					{unfolded ? 'Show less' : 'Show more'}
+				</button>
+			</div>
 		);
 	}
 

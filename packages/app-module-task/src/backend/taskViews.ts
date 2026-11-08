@@ -15,7 +15,11 @@
 // | createdText, updatedText| "2026-10-19 19:37"                     | UTC minute display of the dates                                      | all      |
 // | headline                | string                                 | the title as a heading: task-service `headlineOf(title)`, <= 90 chars (an old task whose title is a whole prompt is cut; a new task's title already is a headline) | H1, pickers |
 // | body, bodyAddsInfo      | string, boolean                        | the full text (`description`, else the title) and whether it says more than the headline (`bodyAddsInfo`): show the body panel only then | body panel |
-// | titleShort, hasShortTitle | string, boolean                     | TEMPORARY (old yaml of dsl-views, WP5): `titleShort` = `headline`, `hasShortTitle` = the title is longer than its headline. Removal: delete both fields here and in the contract test once dsl-views/** no longer binds them | title treatment "short" |
+// | noBodyInfo              | boolean                                | opposite of `bodyAddsInfo` (the DSL has no negation): the "Add a description" field is shown only then | $if      |
+// | checklistRows           | [{id,title,headline,status,tone,terminal,href}] | the children as the rows of task:TaskChecklist | checklist |
+// | terminalStatus, reopenStatus | string, string                    | the status a checked sub-task gets (first terminal in config order, '' when the project has none) and the one an unchecked one gets back (the default status) | checklist |
+// | deleteImpactText, hasDescendants, deleteCascadeLabel | string, boolean, string | the sentence of the delete dialog ("its 2 children become root tasks, ..."), whether the cascade switch is offered, and its label | delete dialog |
+// | forms.delete            | {projectParam,ids,cascade,confirm}     | the body of POST /tasks/delete for this task (the dialog's submit); ids is this task's id | delete dialog |
 // | descriptionText, hasDescription | string or null, boolean        | the body when it adds information, else null / false (the old Description panel no longer repeats the title) | Markdown, $if |
 // | statusOptions           | [{value,label,tone,terminal}]          | the statuses of the merged config (the one `set-status` validates against), config order | pickers |
 // | typeOptions             | [{value,label}]                        | "None" (value '') then the configured types; [] when the project has none (free text) | pickers |
@@ -24,6 +28,7 @@
 // | metaEntries             | [{key,value,keyId}]                    | the metadata with `keyId`, the base64url key of `PUT/DELETE /tasks/:id/meta-keys/:key` (a key may hold "/" or "%") | MetaEditor |
 // | deleteImpact            | {childCount,descendantCount,linkCount,blocksCount} | what a deletion touches: direct children (become roots), all descendants (a cascade), links counted both ways (removed), tasks it blocks | delete dialog |
 // | pills                   | [{key,label,text,tone,empty}]          | status, type, labels, parent (+ `blocked`, tone danger, only while open blockers exist); text "none" when empty | pill row |
+// | pillTexts               | {status,type,labels,parent,blocked?}   | each pill as one text "Label: text" (blocked only while blockers are open): the labelled pills of the bar and flow designs | pill row |
 // | statusChoices           | [{value,label,tone,isDefault,isTerminal}] | statuses in config order; tone success (closed), neutral (initial), info (others) | ActionSelect, SegmentedControl |
 // | statusTone, isTerminal, isOpen | tone, boolean, boolean          | of the task's current status; isOpen = not terminal (the DSL has no negation) | badges   |
 // | typeChoices             | [{value,label}]                        | configured types; [] when the project has none (free text)           | ActionSelect |
@@ -60,8 +65,13 @@ import {
 	ancestorChips,
 	blockedText,
 	blockerRows,
+	checklistRows,
+	checklistStatuses,
 	childrenSummaryView,
+	deleteCascadeLabel,
+	deleteImpactText,
 	propertyPills,
+	relationLabel,
 	statusChoices,
 	statusOptionRows,
 	statusTone,
@@ -107,6 +117,8 @@ function detailForms(project: Project, task: TaskRecord): Record<string, Record<
 		meta: { ...base, key: '', value: '' },
 		parent: { ...base, parent: '' },
 		link: { ...base, type: 'blockedBy', target: '' },
+		// The delete dialog posts this as is to POST /tasks/delete: the task is never retyped, `confirm` is set by the dialog's own button.
+		delete: { ...base, ids: task.id, cascade: false, confirm: true },
 		empty: base,
 	};
 }
@@ -144,6 +156,16 @@ export function taskDetailBody(
 	const ancestors = ancestorChips(project, config, data.ancestors);
 	const linkCount =
 		Object.values(data.links).reduce((sum, tasks) => sum + tasks.length, 0) + data.danglingLinks.length;
+	const parentRow =
+		ancestors.length === 0 ? null : (ancestors[ancestors.length - 1] as { id: string; titleText: string });
+	const pills = propertyPills({ config, record, parent: parentRow, blockerCount: data.blockers.count });
+	const childRows = withRowLinks(project, children as TaskSummary[]) as Array<TaskSummary & { href?: string }>;
+	const deleteImpact = {
+		childCount: (children as unknown[]).length,
+		descendantCount: data.descendantCount,
+		linkCount,
+		blocksCount: data.links.blocks?.length ?? 0,
+	};
 	return {
 		project,
 		projectText: projectText(project),
@@ -151,23 +173,25 @@ export function taskDetailBody(
 		headline,
 		body,
 		bodyAddsInfo: addsInfo,
-		// TEMPORARY, see the contract above: removed with the old yaml (WP5).
-		titleShort: headline,
-		hasShortTitle: headline !== record.title.trim(),
+		noBodyInfo: !addsInfo,
 		metaEntries: meta.map(entry => ({ ...entry, keyId: metaKey(entry.key) })),
-		deleteImpact: {
-			childCount: (children as unknown[]).length,
-			descendantCount: data.descendantCount,
-			linkCount,
-			blocksCount: data.links.blocks?.length ?? 0,
-		},
-		pills: propertyPills({
-			config,
-			record,
-			parent:
-				ancestors.length === 0 ? null : (ancestors[ancestors.length - 1] as { id: string; titleText: string }),
-			blockerCount: data.blockers.count,
-		}),
+		deleteImpact,
+		deleteImpactText: deleteImpactText(deleteImpact),
+		hasDescendants: data.descendantCount > 0,
+		deleteCascadeLabel: deleteCascadeLabel(data.descendantCount),
+		checklistRows: checklistRows(config, childRows),
+		...checklistStatuses(config),
+		pills,
+		// "Label: text" of each pill, one string per property: a pill of the bar and flow designs reads "Type: none", never anonymous.
+		// The parent reads by its title only: the id is in the picker and the pill is a sentence, not a reference.
+		pillTexts: Object.fromEntries(
+			pills.map(pill => [
+				pill.key,
+				pill.key === 'parent' && !pill.empty && parentRow !== null
+					? `Parent: ${parentRow.titleText}`
+					: `${pill.label}: ${pill.text}`,
+			])
+		),
 		createdAt: record.createdAt,
 		updatedAt: record.updatedAt,
 		createdText: shortUtcTime(record.createdAt),
@@ -211,7 +235,7 @@ export function taskDetailBody(
 		// The value is the key of the label (DELETE /tasks/:id/label-keys/:key), whatever characters the label holds.
 		labelOptions: labels.map(label => ({ value: labelKey(label), label })),
 		labelKeys: Object.fromEntries(labels.map(label => [label, labelKey(label)])),
-		linkTypeOptions: ALL_LINK_NAMES.map(name => ({ value: name, label: name })),
+		linkTypeOptions: ALL_LINK_NAMES.map(name => ({ value: name, label: relationLabel(name) })),
 		hrefs: pageHrefs(project),
 		taskHrefs: {
 			detail: detailHref(project, record.id),
@@ -226,7 +250,7 @@ export function taskDetailBody(
 		canDetach: record.parentId !== undefined,
 		warnings: data.warnings,
 		warningText: data.warnings.length === 0 ? null : data.warnings.join(' '),
-		children: withTones(config, withRowLinks(project, children as TaskSummary[]) as TaskSummary[]),
+		children: withTones(config, childRows),
 		links: data.links,
 	};
 }

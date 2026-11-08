@@ -116,7 +116,7 @@ describe('LabelCombobox', () => {
 		expect(names.some(n => n.includes('Create'))).toBe(true);
 	});
 
-	it('creates the typed label on Enter with no highlighted suggestion, label in the body', async () => {
+	it('creates the typed label on Enter when nothing matches, label in the body', async () => {
 		const { input, onAction } = setup();
 		const user = userEvent.setup();
 		await user.click(input);
@@ -127,6 +127,35 @@ describe('LabelCombobox', () => {
 		await waitFor(() => expect(onAction).toHaveBeenCalledTimes(1));
 		expect(onAction).toHaveBeenCalledWith('addLabel', { id: 't1' }, { body: { label: 'brand new' } });
 		await waitFor(() => expect(input.value).toBe(''));
+	});
+
+	it('Enter on a typed prefix with no highlight adds the first suggestion, not the raw prefix ("bil" must not create "bil" while "billing" exists)', async () => {
+		const { input, onAction } = setup();
+		const user = userEvent.setup();
+		await user.click(input);
+		await screen.findAllByRole('option');
+
+		await user.type(input, 'bil{Enter}');
+
+		await waitFor(() => expect(onAction).toHaveBeenCalledTimes(1));
+		expect(onAction.mock.calls[0]![2]).toEqual({ body: { label: 'billing' } });
+	});
+
+	it('the raw text is still created by moving to the Create row (ArrowDown past the suggestions)', async () => {
+		const { input, onAction } = setup();
+		const user = userEvent.setup();
+		await user.click(input);
+		await screen.findAllByRole('option');
+
+		await user.type(input, 'bil');
+		const rows = screen.getAllByRole('option');
+		const create = rows.length - 1;
+		expect(rows[create]).toHaveTextContent('Create "bil"');
+		for (let step = 0; step <= create; step++) await user.keyboard('{ArrowDown}');
+		await user.keyboard('{Enter}');
+
+		await waitFor(() => expect(onAction).toHaveBeenCalledTimes(1));
+		expect(onAction.mock.calls[0]![2]).toEqual({ body: { label: 'bil' } });
 	});
 
 	it('adds the highlighted suggestion on Enter', async () => {

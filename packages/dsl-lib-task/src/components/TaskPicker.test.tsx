@@ -48,7 +48,12 @@ function setup(props: Partial<React.ComponentProps<typeof TaskPicker>> = {}, row
 			{...props}
 		/>
 	);
-	return { ...fetchStub, onAction, ...utils, input: screen.getByRole('combobox') as HTMLInputElement };
+	return {
+		...fetchStub,
+		onAction,
+		...utils,
+		input: screen.getByRole('combobox', { name: 'Parent task' }) as HTMLInputElement,
+	};
 }
 
 describe('TaskPicker', () => {
@@ -175,6 +180,40 @@ describe('TaskPicker', () => {
 
 		await waitFor(() => expect(onAction).toHaveBeenCalled());
 		expect(onAction).toHaveBeenCalledWith('setParent', { id: 't1' }, { body: { parent: 'aaaa1111' } });
+	});
+
+	it('with choices, shows a select first and sends the chosen value next to the id (a relation, then a task)', async () => {
+		const { input, onAction } = setup({
+			choices: [
+				{ value: 'blockedBy', label: 'Blocked by' },
+				{ value: 'blocks', label: 'Blocks' },
+			],
+			choiceKey: 'type',
+			choiceLabel: 'Relation',
+		});
+		const user = userEvent.setup();
+		const select = screen.getByRole('combobox', { name: 'Relation' }) as HTMLSelectElement;
+		expect(select.tagName).toBe('SELECT');
+		// The first choice is the default.
+		expect(select.value).toBe('blockedBy');
+		await user.selectOptions(select, 'blocks');
+		await user.click(input);
+		await screen.findAllByRole('option');
+		await user.keyboard('{Enter}');
+
+		await waitFor(() => expect(onAction).toHaveBeenCalled());
+		expect(onAction).toHaveBeenCalledWith(
+			'setParent',
+			{ id: 't1' },
+			{ body: { target: 'aaaa1111', type: 'blocks' } }
+		);
+	});
+
+	it('without choices there is no select and the body holds the id only', async () => {
+		const { input } = setup();
+
+		expect(document.querySelector('select')).toBeNull();
+		expect(input.tagName).toBe('INPUT');
 	});
 
 	it('picks with a click on a row', async () => {

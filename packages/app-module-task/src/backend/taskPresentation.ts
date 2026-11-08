@@ -1,6 +1,7 @@
 // Presentation helpers of the task detail page: tones, activity feed, ancestor chips, grouped links. Pure functions over
 // service results; the rules they display (what is closed, what blocks) come from task-service.
 import type { TaskLinks, TaskRecord, TaskSummary } from '@wadeck-app/task-core';
+import { headlineOf } from '@wadeck-app/task-service';
 import type { Blocker, ChildrenSummary, DanglingLink } from '@wadeck-app/task-service';
 
 import { shortTitle, shortUtcTime } from './display.js';
@@ -200,8 +201,70 @@ const RELATION_LABELS: Record<string, string> = {
 };
 
 /** A relation as a reader says it (`blockedBy` -> `Blocked by`). */
-function relationLabel(relation: string): string {
+export function relationLabel(relation: string): string {
 	return RELATION_LABELS[relation] ?? relation;
+}
+
+/** What deleting a task touches, as counted by the detail route. */
+export interface DeleteImpact {
+	childCount: number;
+	descendantCount: number;
+	linkCount: number;
+	blocksCount: number;
+}
+
+const plural = (count: number, one: string, many: string): string => `${count} ${count === 1 ? one : many}`;
+
+/** The consequences of deleting a task, in one sentence for the confirmation dialog (children become roots, links go). */
+export function deleteImpactText(impact: DeleteImpact): string {
+	const parts: string[] = [];
+	if (impact.childCount > 0) {
+		parts.push(
+			impact.childCount === 1
+				? 'its 1 child becomes a root task'
+				: `its ${impact.childCount} children become root tasks`
+		);
+	}
+	if (impact.linkCount > 0) {
+		parts.push(`${plural(impact.linkCount, 'link is', 'links are')} removed`);
+	}
+	if (impact.blocksCount > 0) {
+		parts.push(
+			`${impact.blocksCount} ${impact.blocksCount === 1 ? 'task it blocks loses' : 'tasks it blocks lose'} a blocker`
+		);
+	}
+	return parts.length === 0
+		? 'Deleting this task has no other effect: no children, no links. This cannot be undone.'
+		: `Deleting this task: ${parts.join(', ')}. This cannot be undone.`;
+}
+
+/** The label of the "also delete the descendants" switch of the delete dialog. */
+export function deleteCascadeLabel(descendantCount: number): string {
+	return `Also delete its ${plural(descendantCount, 'descendant', 'descendants')}`;
+}
+
+/** The status a checked sub-task gets (the first terminal status in config order) and the one an unchecked one gets back. */
+export function checklistStatuses(config: StatusConfig): { terminalStatus: string; reopenStatus: string } {
+	return {
+		terminalStatus: config.statuses.find(status => config.terminalStatuses.includes(status)) ?? '',
+		reopenStatus: config.defaultStatus,
+	};
+}
+
+/** The children as the rows of task:TaskChecklist (headline for the line, the whole title as a tooltip is up to the view). */
+export function checklistRows(
+	config: StatusConfig,
+	children: Array<TaskSummary & { href?: string }>
+): Array<Record<string, unknown>> {
+	return children.map(child => ({
+		id: child.id,
+		title: child.title,
+		headline: headlineOf(child.title),
+		status: child.status,
+		tone: statusTone(config, child.status),
+		terminal: config.terminalStatuses.includes(child.status),
+		href: child.href,
+	}));
 }
 
 /** The task the links belong to, and the links of it that point to a vanished task (see `readTaskLinks`). */

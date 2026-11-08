@@ -2,6 +2,7 @@ import type { TaskRecord } from '@wadeck-app/task-core';
 
 import type { TaskServiceContext } from './context.js';
 import { DanglingParentError } from './errors.js';
+import { withDescription } from './taskText.js';
 
 export interface ShowTaskInput {
 	/** Task id or unambiguous prefix. */
@@ -16,7 +17,8 @@ export interface ShowTaskInput {
 export function showTask(ctx: TaskServiceContext, input: ShowTaskInput): Record<string, unknown> {
 	const task = ctx.store.findByPrefix(input.id);
 	const children = ctx.store.getChildren(task.id);
-	const detail: Record<string, unknown> = { ...task, childrenIds: children.map(c => c.id) };
+	// `description` is always present (the resolved text), whatever is stored.
+	const detail: Record<string, unknown> = { ...withDescription(task), childrenIds: children.map(c => c.id) };
 	if (input.withParent) {
 		const parent = task.parentId === undefined ? null : ctx.store.list().find(t => t.id === task.parentId);
 		if (parent === undefined) {
