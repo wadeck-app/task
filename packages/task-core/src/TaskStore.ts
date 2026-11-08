@@ -140,7 +140,7 @@ export class TaskStore {
 			// Each arrow reads "has as parent": id -> parentId -> ... -> id.
 			const cyclePath = [id, parentId, ...parentAncestors.slice(0, parentAncestors.indexOf(id) + 1)];
 			throw new TaskConflictError(
-				`Cannot set parent of "${id}" to "${parentId}": it would create a cycle (${cyclePath.join(' → ')}); "${parentId}" is a descendant of "${id}"`
+				`Cannot set parent of "${id}" to "${parentId}": it would create a cycle (${cyclePath.join(' -> ')}); "${parentId}" is a descendant of "${id}"`
 			);
 		}
 		return this.writeParent(record, parentId);
@@ -183,7 +183,7 @@ export class TaskStore {
 		const cyclePath = this.findLinkPath(type, targetId, id);
 		if (cyclePath) {
 			throw new TaskConflictError(
-				`Cannot link "${id}" ${type} "${targetId}": it would create a cycle (${[id, ...cyclePath].join(' → ')})`
+				`Cannot link "${id}" ${type} "${targetId}": it would create a cycle (${[id, ...cyclePath].join(' -> ')})`
 			);
 		}
 		return this.writeLinks(record, [...links, { type, target: targetId }]);

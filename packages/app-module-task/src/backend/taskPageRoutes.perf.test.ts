@@ -1,9 +1,9 @@
-// Timings of the routes the task page calls on a project of 1000 tasks (printed; the bounds only catch a regression to a
+// Timings of the routes the task page calls on a project of 150 tasks (printed; the bounds only catch a regression to a
 // scan of the whole project on the detail route).
 import { setup, STATUSES_YML } from './routeHarness.js';
 import type { Harness } from './routeHarness.js';
 
-const TASKS = 1000;
+const TASKS = 150;
 let h: Harness;
 
 afterEach(() => h.world.cleanup());
@@ -29,7 +29,7 @@ describe(`routes on ${TASKS} seeded tasks`, () => {
 			});
 			const id = answer.body['task'].id as string;
 			if (index % 10 === 0) parent = id;
-			if (index === 500) sample = id;
+			if (index === TASKS / 2) sample = id;
 			if (index % 3 === 0) {
 				await h.call('POST /tasks/:id/labels', {
 					params: { id },

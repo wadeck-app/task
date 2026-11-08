@@ -42,7 +42,7 @@ export function PropertyRow({ label, hint, items }: PropertyRowProps): React.Rea
 		>
 			<span
 				title={hint}
-				className={`shrink-0 text-xs font-medium uppercase tracking-wide text-muted${inline ? ` ${LABEL_WIDTH[labelWidth]} pt-0.5` : ''}`}
+				className={`shrink-0 text-xs font-medium tracking-wide text-muted${inline ? ` ${LABEL_WIDTH[labelWidth]} pt-0.5` : ''}`}
 			>
 				{label}
 			</span>

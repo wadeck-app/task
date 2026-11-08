@@ -60,7 +60,7 @@ export async function runCliSubcommand(rest: string[], jsonMode: boolean): Promi
 		case 'help':
 			printTaskCliHelp();
 			return DONE;
-		// violations-suppress: ts/no-switch-default-break returns a user-facing error, not a silent fallback
+		// returns a user-facing error, not a silent fallback
 		default:
 			return errorOutput(
 				jsonMode,

@@ -27,7 +27,7 @@ describe('projectRows: the label of the narrow dashboard widget (3 cells, about 
 		const name = 'customer-onboarding-and-billing-platform';
 		const [row] = projectRows([project(name)]);
 		expect(String(row?.['label']).length).toBe(WIDGET_LABEL_MAX);
-		expect(row?.['label']).toBe(`${name.slice(0, WIDGET_LABEL_MAX - 1)}…`);
+		expect(row?.['label']).toBe(`${name.slice(0, WIDGET_LABEL_MAX - 3)}...`);
 		expect(row?.['labelTitle']).toBe(name);
 	});
 
@@ -36,7 +36,7 @@ describe('projectRows: the label of the narrow dashboard widget (3 cells, about 
 			"layer 'x/config.yml': key 'nonsense_key' is not declared. Fix the config.yml named in the message.";
 		const [row] = projectRows([project('broken-config-project', { error, open: null, total: null })]);
 		expect(String(row?.['label']).length).toBeLessThanOrEqual(WIDGET_LABEL_MAX);
-		expect(row?.['label']).toMatch(/…? \(invalid config\)$/);
+		expect(row?.['label']).toMatch(/(\.\.\.)? \(invalid config\)$/);
 		expect(row?.['labelTitle']).toBe(`broken-config-project: ${error}`);
 		expect(row).toMatchObject({ openText: '-', totalText: '-', href: null, problem: error });
 	});

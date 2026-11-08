@@ -33,7 +33,7 @@ afterEach(() => {
 	fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe('runTaskCommand — new --parent', () => {
+describe('runTaskCommand - new --parent', () => {
 	it('creates a child of the given parent', async () => {
 		const parent = await newTask('parent');
 		const child = await newTask('child', '--parent', parent.id);
@@ -77,7 +77,7 @@ describe('runTaskCommand — new --parent', () => {
 	});
 });
 
-describe('runTaskCommand — list / show expose parentId', () => {
+describe('runTaskCommand - list / show expose parentId', () => {
 	it('list entries carry parentId for children only', async () => {
 		const parent = await newTask('parent');
 		const child = await newTask('child', '--parent', parent.id);
@@ -94,7 +94,7 @@ describe('runTaskCommand — list / show expose parentId', () => {
 	});
 });
 
-describe('runTaskCommand — set-parent', () => {
+describe('runTaskCommand - set-parent', () => {
 	it('attaches an existing task to a parent (prefixes accepted)', async () => {
 		const parent = await newTask('parent');
 		const child = await newTask('child');
@@ -141,7 +141,7 @@ describe('runTaskCommand — set-parent', () => {
 	});
 });
 
-describe('runTaskCommand — remove-parent', () => {
+describe('runTaskCommand - remove-parent', () => {
 	it('detaches a child', async () => {
 		const parent = await newTask('parent');
 		const child = await newTask('child', '--parent', parent.id);
@@ -164,7 +164,7 @@ describe('runTaskCommand — remove-parent', () => {
 	});
 });
 
-describe('runTaskCommand — children', () => {
+describe('runTaskCommand - children', () => {
 	it('lists direct children only', async () => {
 		const root = await newTask('root');
 		const c1 = await newTask('c1', '--parent', root.id);
@@ -206,7 +206,7 @@ describe('runTaskCommand — children', () => {
 	});
 });
 
-describe('runTaskCommand — delete a parent', () => {
+describe('runTaskCommand - delete a parent', () => {
 	it('orphans the children (they are kept) and tells the user', async () => {
 		const parent = await newTask('parent');
 		const child = await newTask('child', '--parent', parent.id);
@@ -237,7 +237,7 @@ describe('runTaskCommand — delete a parent', () => {
 	});
 });
 
-describe('runTaskCommand — parents', () => {
+describe('runTaskCommand - parents', () => {
 	it('lists every ancestor from the direct parent up to the root', async () => {
 		const root = await newTask('root');
 		const mid = await newTask('mid', '--parent', root.id);
@@ -267,7 +267,7 @@ describe('runTaskCommand — parents', () => {
 	});
 });
 
-describe('runTaskCommand — tree', () => {
+describe('runTaskCommand - tree', () => {
 	it('returns the complete tree from the topmost ancestor and flags the requested task', async () => {
 		const root = await newTask('root');
 		const mid = await newTask('mid', '--parent', root.id);
@@ -307,7 +307,7 @@ describe('runTaskCommand — tree', () => {
 	});
 });
 
-describe('runTaskCommand — show with hierarchy', () => {
+describe('runTaskCommand - show with hierarchy', () => {
 	interface Shown extends Created {
 		childrenIds: string[];
 		parent?: { id: string; title: string; status: string } | null;
@@ -381,7 +381,7 @@ describe('runTaskCommand — show with hierarchy', () => {
 	});
 });
 
-describe('runTaskCommand — delete --cascade-delete', () => {
+describe('runTaskCommand - delete --cascade-delete', () => {
 	const listAll = async (): Promise<Created[]> =>
 		JSON.parse((await runTaskCommand(['list', '--all'], tmpDir)).output) as Created[];
 
@@ -423,7 +423,7 @@ describe('runTaskCommand — delete --cascade-delete', () => {
 	});
 });
 
-describe('runTaskCommand — delete --filter parentId', () => {
+describe('runTaskCommand - delete --filter parentId', () => {
 	it('deletes the tasks whose parentId matches; root tasks never match', async () => {
 		const parent = await newTask('parent');
 		const c1 = await newTask('c1', '--parent', parent.id);
@@ -455,7 +455,7 @@ describe('runTaskCommand — delete --filter parentId', () => {
 	});
 });
 
-describe('runTaskCommand — list --parent', () => {
+describe('runTaskCommand - list --parent', () => {
 	const listJson = async (...args: string[]): Promise<Created[]> => {
 		const result = await runTaskCommand(['list', ...args], tmpDir);
 		expect(result.exitCode, result.output).toBe(0);
@@ -503,7 +503,7 @@ describe('runTaskCommand — list --parent', () => {
 	});
 });
 
-describe('runTaskCommand — list --tree', () => {
+describe('runTaskCommand - list --tree', () => {
 	type Node = TreeNode & { status: string };
 	const listTree = async (...args: string[]): Promise<Node[]> => {
 		const result = await runTaskCommand(['list', '--tree', ...args], tmpDir);
@@ -571,7 +571,7 @@ describe('runTaskCommand — list --tree', () => {
 	});
 });
 
-describe('runTaskCommand — help', () => {
+describe('runTaskCommand - help', () => {
 	it('documents the hierarchy commands', async () => {
 		const result = await runTaskCommand(['--help'], tmpDir);
 		for (const snippet of [

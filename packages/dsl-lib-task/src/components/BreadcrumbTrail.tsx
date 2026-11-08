@@ -62,7 +62,7 @@ export function BreadcrumbTrail({
 					title={folded.map(f => f.label).join(' / ')}
 					className="shrink-0 text-muted"
 				>
-					…
+					...
 				</span>
 			);
 			return;

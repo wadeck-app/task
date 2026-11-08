@@ -157,7 +157,7 @@ describe('dashboard widget (src/dsl-views/tasks-widget.yaml)', () => {
 		expect(stack?.itemSizes).toEqual(['flex', 'flex']);
 	});
 
-	// A DataTable cell without nowrap/truncate is break-all (measured in the shell: "a-very-long-project-na|m…" at 3 cells): keep both.
+	// A DataTable cell without nowrap/truncate is break-all (measured in the shell: "a-very-long-project-na|m..." at 3 cells): keep both.
 	it('the project table never breaks a name mid-word: nowrap + truncate (ellipsis) and the full name in the title tooltip', () => {
 		const tree = load(widget) as { items: { $type: string; columns?: Record<string, unknown>[] }[] };
 		const table = tree.items.find(item => item.$type === 'DataTable');

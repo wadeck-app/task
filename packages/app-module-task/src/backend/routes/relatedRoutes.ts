@@ -31,7 +31,7 @@ export function registerRelatedRoutes(kit: RouteKit): void {
 			.slice(0, RELATED_MAX_ITEMS)
 			.map(({ task }) => ({
 				label: shortTitle(task.title, RELATED_LABEL_MAX),
-				subtitle: `${task.id} · ${task.status}`,
+				subtitle: `${task.id} - ${task.status}`,
 				url: detailHref(ctx.project, task.id),
 			}));
 		return {

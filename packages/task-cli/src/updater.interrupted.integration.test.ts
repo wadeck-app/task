@@ -244,7 +244,7 @@ describe('npm install -g killed halfway (real npm, fake registry, isolated tree)
 			expect(repair.stdout).toContain('[task-updater] status:');
 			expect(repair.stdout, 'a repaired interruption is not a failed self-check').not.toContain('self-check');
 			expect(repair.stdout).toContain('interrupted install repaired');
-			// Every echoed log entry is a readable message: the log holds a multi-byte arrow ("a → b") from the first run, and
+			// Every echoed log entry is a readable message: the log holds a multi-byte arrow ("a -> b") from the first run, and
 			// a byte offset applied to a decoded string once cut the first echoed line into `ts":"...","level":...`.
 			expect(repair.stdout, 'a raw NDJSON fragment was echoed').not.toContain('"level":');
 		}, 240000);

@@ -24,7 +24,7 @@ function resolveTsx(): string {
 		if (parent === dir) break;
 		dir = parent;
 	}
-	throw new Error('tsx not found in node_modules — run npm install in the monorepo root');
+	throw new Error('tsx not found in node_modules - run npm install in the monorepo root');
 }
 
 // The spawned CLI runs from source (a dev version): it must see a throwaway config dir, HOME and npm, never the real ones.

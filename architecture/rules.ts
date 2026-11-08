@@ -67,11 +67,11 @@ const NO_PROJECT_SDK_OUTSIDE_SERVICE = {
 /**
  * Task keeps its project data and config in the shared project registry, never in the project folder: no source names `.task` as a
  * path segment (`'.task'`, `"/.task"`, `` `${dir}/.task` ``). The only spelling allowed is the global config dir default,
- * `path.join(os.homedir(), '.task')` (and the prose `~/.task`). Source rule: tests and comments are out of scope.
+ * the home directory joined with `.task` (and the prose `~/.task`). Source rule: tests and comments are out of scope.
  */
 const NO_PROJECT_DATA_DIR = {
 	pattern: /(?<!\bhomedir\(\)\s*,\s*)(?:['"`]\.task(?:['"`/\\])|(?<!~)[/\\]\.task\b)/,
-	why: 'project data and config live in the shared project registry: no source builds a `.task` path (only the global config dir default, path.join(os.homedir(), ".task"))',
+	why: 'project data and config live in the shared project registry: no source builds a `.task` path (only the global config dir default, the home directory joined with ".task")',
 };
 
 /**

@@ -1,4 +1,4 @@
-// violations-suppress: ts/no-barrel-index app-core requires lifecycle hooks to be src/backend/<file>.ts with a default export (app-core-cli check)
+// app-core requires lifecycle hooks to be src/backend/<file>.ts with a default export (app-core-cli check)
 import type { ModuleTeardownContext } from '@wadeck-app/app-core-sdk';
 
 import type { TaskModuleInstance } from './routes.js';

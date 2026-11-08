@@ -162,6 +162,7 @@ describe('the rules detect what they forbid', () => {
 
 		it('must not use the Node process API', () => {
 			expect(inLib('const dir = process.cwd();')).toHaveLength(1);
+			// violations-suppress: shared/no-out-of-repo-path input text of a detection test, parsed as source and never executed
 			expect(inLib('const dir = process.env.HOME;')).toHaveLength(1);
 			expect(inLib('const dir = process.cwd();', true)).toEqual([]);
 		});
@@ -276,6 +277,7 @@ describe('the rules detect what they forbid', () => {
 		});
 
 		it('the global config dir default (~/.task) is not project data', () => {
+			// violations-suppress: shared/no-out-of-repo-path input text of a detection test, parsed as source and never executed
 			expect(violationsIn('task-core', "const raw = path.join(os.homedir(), '.task');")).toEqual([]);
 			// Documentation text of the same directory.
 			expect(violationsIn('task-cli', "const help = 'Global config directory (default: ~/.task)';")).toEqual([]);

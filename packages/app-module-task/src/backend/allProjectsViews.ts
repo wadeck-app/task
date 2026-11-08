@@ -45,7 +45,7 @@ export const WIDGET_LABEL_MAX = 24;
 
 /** The text cut to `max` characters, ending with an ellipsis when it was longer. */
 function clamp(text: string, max: number): string {
-	return text.length <= max ? text : `${text.slice(0, Math.max(0, max - 1))}…`;
+	return text.length <= max ? text : `${text.slice(0, Math.max(0, max - 3))}...`;
 }
 
 /** What the project table of the widget shows: figures and link for a readable project, the reason for the others. */

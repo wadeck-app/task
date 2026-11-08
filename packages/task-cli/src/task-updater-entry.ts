@@ -101,7 +101,7 @@ function echoUpdaterLog(startPath: string, startSize: number): LogEntry[] {
 	const offset = endPath === startPath ? startSize : 0;
 	if (!existsSync(endPath)) return [];
 	// `offset` is a size in BYTES: slice the bytes, then decode (slicing the decoded string cut the first echoed line
-	// whenever the log held a multi-byte character, e.g. the arrow of "update available: a → b").
+	// whenever the log held a multi-byte character, e.g. the arrow of "update available: a -> b").
 	const appended = readFileSync(endPath).subarray(offset).toString('utf8');
 	const entries: LogEntry[] = [];
 	for (const line of appended.split('\n')) {

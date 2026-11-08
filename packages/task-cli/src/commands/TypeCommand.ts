@@ -42,7 +42,7 @@ export const runType: ProjectCommand = (rest, { jsonMode, ctx }) => {
 			}
 			return { exitCode: 0, output: `Removed type: ${typeName}` };
 		}
-		// violations-suppress: ts/no-switch-default-break returns a user-facing error, not a silent fallback
+		// returns a user-facing error, not a silent fallback
 		default:
 			return errorOutput(
 				jsonMode,

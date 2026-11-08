@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import { LINK_TYPES, TaskStore } from './TaskStore';
 import type { LinkType } from './TaskStore';
 
-describe('TaskStore — task links', () => {
+describe('TaskStore - task links', () => {
 	let rootDir: string;
 	let store: TaskStore;
 
@@ -148,7 +148,9 @@ describe('TaskStore — task links', () => {
 			store.addLink(a.id, type, b.id);
 			store.addLink(b.id, type, c.id);
 
-			expect(() => store.addLink(c.id, type, a.id)).toThrow(new RegExp(`${c.id} → ${a.id} → ${b.id} → ${c.id}`));
+			expect(() => store.addLink(c.id, type, a.id)).toThrow(
+				new RegExp(`${c.id} -> ${a.id} -> ${b.id} -> ${c.id}`)
+			);
 		});
 
 		it('rejects closing a long chain (60 tasks) end to start', () => {

@@ -33,15 +33,15 @@ export function headlineOf(text: string): string {
 	if (sentence !== undefined && sentence.length <= HEADLINE_MAX_LENGTH) {
 		return sentence;
 	}
-	// One slot is kept for the ellipsis.
-	const room = HEADLINE_MAX_LENGTH - 1;
+	// Three slots are kept for the ellipsis.
+	const room = HEADLINE_MAX_LENGTH - 3;
 	const wordIsComplete = /\s/.test(line[room] ?? '');
 	const lastSpace = line.slice(0, room).search(/\s\S*$/);
 	const cut = wordIsComplete || lastSpace <= 0 ? room : lastSpace;
 	return `${line
 		.slice(0, cut)
 		.trimEnd()
-		.replace(/[,;:]+$/, '')}…`;
+		.replace(/[,;:]+$/, '')}...`;
 }
 
 /** Splits one text into the title to store and, when it adds information, the description holding the full text. */

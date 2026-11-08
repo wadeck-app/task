@@ -19,6 +19,7 @@ describe('TaskConfigLoader', () => {
 
 	describe('TaskConfigLoader.expandTilde()', () => {
 		it('expands ~ to home dir', () => {
+			// violations-suppress: shared/no-out-of-repo-path the code under test expands "~" against the user home dir by design; the test compares with that same expansion and writes nothing there
 			expect(TaskConfigLoader.expandTilde('~/foo')).toBe(path.join(os.homedir(), 'foo'));
 		});
 
@@ -33,6 +34,7 @@ describe('TaskConfigLoader', () => {
 		});
 
 		it('expands tilde in override', () => {
+			// violations-suppress: shared/no-out-of-repo-path the code under test expands "~" against the user home dir by design; the test compares with that same expansion and writes nothing there
 			expect(TaskConfigLoader.resolveGlobalConfigDir('~/mydir')).toBe(path.join(os.homedir(), 'mydir'));
 		});
 
@@ -40,6 +42,7 @@ describe('TaskConfigLoader', () => {
 			const original = process.env['TASK_CONFIG'];
 			delete process.env['TASK_CONFIG'];
 			try {
+				// violations-suppress: shared/no-out-of-repo-path the code under test expands "~" against the user home dir by design; the test compares with that same expansion and writes nothing there
 				expect(TaskConfigLoader.resolveGlobalConfigDir()).toBe(path.join(os.homedir(), '.task'));
 			} finally {
 				if (original !== undefined) process.env['TASK_CONFIG'] = original;

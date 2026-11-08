@@ -81,13 +81,15 @@ describe('LabelChips', () => {
 
 	it('computes the base64url (UTF-8, no padding) key itself when labelKeys is not given', async () => {
 		const onAction = vi.fn().mockResolvedValue(undefined);
-		render(<LabelChips labels={['é ü/%']} removeAction="r" onAction={onAction} />);
+		// e-acute and u-umlaut built from code points: the source stays ASCII
+		const label = `${String.fromCharCode(0xe9)} ${String.fromCharCode(0xfc)}/%`;
+		render(<LabelChips labels={[label]} removeAction="r" onAction={onAction} />);
 
-		await userEvent.setup().click(screen.getByRole('button', { name: 'Remove label é ü/%' }));
+		await userEvent.setup().click(screen.getByRole('button', { name: `Remove label ${label}` }));
 
 		expect(onAction).toHaveBeenCalledWith('r', {
-			label: 'é ü/%',
-			labelKey: Buffer.from('é ü/%', 'utf8').toString('base64url'),
+			label,
+			labelKey: Buffer.from(label, 'utf8').toString('base64url'),
 		});
 	});
 

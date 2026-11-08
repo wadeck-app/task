@@ -19,14 +19,14 @@ describe('shortTitle (the label of a list row, a tree row, a picker hit)', () =>
 	it('cuts a 700-character text without sentence at a word boundary, at most 90 characters, with an ellipsis', () => {
 		const short = shortTitle('word '.repeat(140).trim());
 		expect(short.length).toBeLessThanOrEqual(90);
-		expect(short.endsWith('…')).toBe(true);
-		expect(short).not.toMatch(/\s…$/);
+		expect(short.endsWith('...')).toBe(true);
+		expect(short).not.toMatch(/\s\.\.\.$/);
 	});
 
 	it('cuts further when the caller wants less', () => {
 		const short = shortTitle('a'.repeat(120), 60);
 		expect(short.length).toBe(60);
-		expect(short.endsWith('…')).toBe(true);
+		expect(short.endsWith('...')).toBe(true);
 	});
 
 	it('cuts one unbroken word hard at 90 characters', () => {

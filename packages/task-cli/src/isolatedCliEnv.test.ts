@@ -65,7 +65,9 @@ describe('createIsolatedCliEnv', () => {
 	});
 
 	it('drops every case variant of the parent steering variables, keeps the rest', () => {
+		// violations-suppress: shared/no-out-of-repo-path fake Windows path stubbed into the environment to prove it is dropped or refused, never touched on disk
 		vi.stubEnv('npm_config_prefix', 'C:\\real\\global\\prefix');
+		// violations-suppress: shared/no-out-of-repo-path fake Windows path stubbed into the environment to prove it is dropped or refused, never touched on disk
 		vi.stubEnv('npm_config_userconfig', 'C:\\real\\.npmrc');
 		vi.stubEnv('npm_config_@wadeck-app:registry', 'https://npm.pkg.github.com/');
 		vi.stubEnv('UPDATER_FORCE', '1');
@@ -132,6 +134,7 @@ describe('assertIsolatedEnv', () => {
 	});
 
 	it('fails when a lowercase npm_config_prefix variant would win over the isolated one', () => {
+		// violations-suppress: shared/no-out-of-repo-path fake Windows path stubbed into the environment to prove it is dropped or refused, never touched on disk
 		const env = { ...create().env, npm_config_prefix: 'C:\\real\\prefix' };
 		expect(() => assertIsolatedEnv(env)).toThrow('npm_config_prefix');
 	});

@@ -33,15 +33,15 @@ describe('splitHeadline', () => {
 		const { title, description } = splitHeadline(text);
 		expect(description).toBe(text);
 		expect(title.length).toBeLessThanOrEqual(90);
-		expect(title.endsWith('…')).toBe(true);
-		expect(text.startsWith(title.slice(0, -1))).toBe(true);
+		expect(title.endsWith('...')).toBe(true);
+		expect(text.startsWith(title.slice(0, -3))).toBe(true);
 		// Cut on a word boundary: the char after the kept part is a space.
-		expect(text[title.length - 1]).toBe(' ');
+		expect(text[title.length - 3]).toBe(' ');
 	});
 
 	it('hard-cuts a single very long word', () => {
 		const { title } = splitHeadline('x'.repeat(200));
-		expect(title).toBe(`${'x'.repeat(89)}…`);
+		expect(title).toBe(`${'x'.repeat(87)}...`);
 	});
 
 	it('skips leading blank lines and trims the headline', () => {

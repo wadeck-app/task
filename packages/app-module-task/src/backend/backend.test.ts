@@ -1159,7 +1159,7 @@ describe('events of the label routes', () => {
 		]);
 	});
 
-	it.each(['a/b', '100%', 'é ü', 'x%2Fy', 'plain'])(
+	it.each(['a/b', '100%', String.fromCharCode(0xe9, 0x20, 0xfc), 'x%2Fy', 'plain'])(
 		'DELETE /tasks/:id/label-keys/:key removes the label %j given as base64url and delivers onTaskLabelRemoved',
 		async label => {
 			const id = await createTask('a');
@@ -3138,7 +3138,7 @@ describe('display text of dates and titles (the views cannot format a column)', 
 		const answer = await h.call('GET /tasks', { query: { project } });
 		const row = answer.body['tasks'][0];
 		expect(row['title'].length).toBeLessThanOrEqual(90);
-		expect(row['title'].endsWith('\u2026')).toBe(true);
+		expect(row['title'].endsWith('...')).toBe(true);
 		expect(row['titleText']).toBe(row['title']);
 		expect(row['created']).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d$/);
 		const detail = await h.call('GET /tasks/:id', { params: { id }, query: { project } });
@@ -3152,7 +3152,7 @@ describe('display text of dates and titles (the views cannot format a column)', 
 		const row = answer.body['tasks'][0];
 		expect(row['title']).toBe(long);
 		expect(row['titleText'].length).toBeLessThanOrEqual(90);
-		expect(row['titleText'].endsWith('\u2026')).toBe(true);
+		expect(row['titleText'].endsWith('...')).toBe(true);
 	});
 
 	it('a short title is shown as is', async () => {

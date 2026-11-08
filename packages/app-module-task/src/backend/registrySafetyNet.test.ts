@@ -24,6 +24,7 @@ describe('shared project registry under the test setup', () => {
 
 	it('the default registry dir is inside the temp dir, with or without XDG_CONFIG_HOME', () => {
 		expect(insideTemp(defaultRegistryDir(process.env))).toBe(true);
+		// violations-suppress: shared/no-out-of-repo-path the safety net asserts that the real home dir is NOT used: it needs the value HOME points to, and reads nothing there
 		expect(insideTemp(defaultRegistryDir({}, os.homedir()))).toBe(true);
 	});
 });

@@ -1,4 +1,4 @@
-// violations-suppress: ts/no-barrel-index app-core requires the backend entry of an app-module to be src/backend/index.ts (app-core-cli check)
+// app-core requires the backend entry of an app-module to be src/backend/index.ts (app-core-cli check)
 import type { ModuleContext } from '@wadeck-app/app-core-sdk';
 
 import { registerTaskRoutes, type TaskModuleInstance } from './routes.js';

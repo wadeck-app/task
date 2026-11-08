@@ -115,13 +115,13 @@ describe('GET /related/project/:projectId', () => {
 		expect(answer.body['items']).toEqual([
 			{
 				label: 'First task',
-				subtitle: `${first} · in-progress`,
+				subtitle: `${first} - in-progress`,
 				url: `/modules/task/tasks/p/${project}/${first}`,
 			},
-			{ label: 'Third task', subtitle: `${third} · backlog`, url: `/modules/task/tasks/p/${project}/${third}` },
+			{ label: 'Third task', subtitle: `${third} - backlog`, url: `/modules/task/tasks/p/${project}/${third}` },
 			{
 				label: 'Second task',
-				subtitle: `${second} · backlog`,
+				subtitle: `${second} - backlog`,
 				url: `/modules/task/tasks/p/${project}/${second}`,
 			},
 		]);
@@ -164,7 +164,7 @@ describe('GET /related/project/:projectId', () => {
 		const label = (await related(project)).body['items'][0].label as string;
 
 		expect(label.length).toBeLessThanOrEqual(60);
-		expect(label.endsWith('…')).toBe(true);
+		expect(label.endsWith('...')).toBe(true);
 	});
 
 	it('answers an empty list with count 0 for a project without task (a fresh project is not an error)', async () => {

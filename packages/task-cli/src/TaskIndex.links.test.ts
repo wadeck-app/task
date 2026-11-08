@@ -44,7 +44,7 @@ afterEach(() => {
 	fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe('runTaskCommand — link', () => {
+describe('runTaskCommand - link', () => {
 	it.each(['blockedBy', 'duplicateOf', 'causedBy'])(
 		'adds a %s link and returns the updated source task',
 		async type => {
@@ -138,7 +138,7 @@ describe('runTaskCommand — link', () => {
 	});
 });
 
-describe.each(['blockedBy', 'duplicateOf', 'causedBy'])('runTaskCommand — %s cycles over the full graph', type => {
+describe.each(['blockedBy', 'duplicateOf', 'causedBy'])('runTaskCommand - %s cycles over the full graph', type => {
 	it('A => B => C then C => A fails, leaves C untouched, and names the cycle', async () => {
 		const a = await newTask('a');
 		const b = await newTask('b');
@@ -150,7 +150,7 @@ describe.each(['blockedBy', 'duplicateOf', 'causedBy'])('runTaskCommand — %s c
 
 		expect(result.exitCode).toBe(1);
 		expect(result.output).toContain('cycle');
-		expect(result.output).toContain(`${c.id} → ${a.id} → ${b.id} → ${c.id}`);
+		expect(result.output).toContain(`${c.id} -> ${a.id} -> ${b.id} -> ${c.id}`);
 		expect((await show(c.id)).links).toBeUndefined();
 	});
 
@@ -166,7 +166,7 @@ describe.each(['blockedBy', 'duplicateOf', 'causedBy'])('runTaskCommand — %s c
 	});
 });
 
-describe('runTaskCommand — cycles are detected across both spellings', () => {
+describe('runTaskCommand - cycles are detected across both spellings', () => {
 	it('builds a chain with inverse spellings, then rejects closing it either way', async () => {
 		const a = await newTask('a');
 		const b = await newTask('b');
@@ -194,7 +194,7 @@ describe('runTaskCommand — cycles are detected across both spellings', () => {
 	});
 });
 
-describe('runTaskCommand — unlink', () => {
+describe('runTaskCommand - unlink', () => {
 	it('removes a link, and the same link can then be added in the reverse direction', async () => {
 		const a = await newTask('a');
 		const b = await newTask('b');
@@ -230,7 +230,7 @@ describe('runTaskCommand — unlink', () => {
 	});
 });
 
-describe('runTaskCommand — links', () => {
+describe('runTaskCommand - links', () => {
 	it('shows outgoing links and derived inverses with summaries', async () => {
 		const a = await newTask('task a');
 		const b = await newTask('task b');
@@ -273,7 +273,7 @@ describe('runTaskCommand — links', () => {
 	});
 });
 
-describe('runTaskCommand — links in show and list', () => {
+describe('runTaskCommand - links in show and list', () => {
 	it('show returns the outgoing links of the record', async () => {
 		const a = await newTask('a');
 		const b = await newTask('b');
@@ -291,7 +291,7 @@ describe('runTaskCommand — links in show and list', () => {
 	});
 });
 
-describe('runTaskCommand — delete and links', () => {
+describe('runTaskCommand - delete and links', () => {
 	it('removes links pointing to deleted tasks and tells the user', async () => {
 		const a = await newTask('a');
 		const gone = await newTask('gone');
@@ -326,7 +326,7 @@ describe('runTaskCommand — delete and links', () => {
 	});
 });
 
-describe('runTaskCommand — help', () => {
+describe('runTaskCommand - help', () => {
 	it('documents the link commands and types', async () => {
 		const result = await runTaskCommand(['--help'], tmpDir);
 		for (const snippet of ['task link', 'task unlink', 'task links', 'blockedBy', 'duplicateOf', 'causedBy']) {

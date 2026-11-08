@@ -127,6 +127,7 @@ describe('unreadableSummary', () => {
 	const bad = (name: string) => ({
 		id: `id-${name}`,
 		name,
+		// violations-suppress: shared/no-out-of-repo-path Windows-form path fixture in a string, never touched on disk
 		path: `C:\\work\\${name}`,
 		error: `config file C:\\x\\${name}.yml is not valid YAML`,
 	});

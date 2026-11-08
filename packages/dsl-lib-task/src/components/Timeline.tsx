@@ -140,10 +140,7 @@ export function Timeline({
 		<div data-testid="timeline" className="flex flex-col gap-2">
 			{groups.map(group => (
 				<section key={group.day} data-testid="timeline-group">
-					<h4
-						data-testid="timeline-day"
-						className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted"
-					>
+					<h4 data-testid="timeline-day" className="mb-2 text-xs font-semibold tracking-wide text-muted">
 						{group.day}
 					</h4>
 					<EntryList entries={group.entries} showIcons={showIcons} />

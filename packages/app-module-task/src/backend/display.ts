@@ -3,7 +3,7 @@ import { headlineOf } from '@wadeck-app/task-service';
 
 /** The longest title shown in a table cell; the whole text is on the detail page. */
 const MAX_TITLE_CHARS = 90;
-const ELLIPSIS = '\u2026';
+const ELLIPSIS = '...';
 
 /**
  * What a list, tree, table or picker shows of a title: its headline (task-service `headlineOf`: the first line or sentence,
@@ -12,7 +12,7 @@ const ELLIPSIS = '\u2026';
  */
 export function shortTitle(title: string, max = MAX_TITLE_CHARS): string {
 	const headline = headlineOf(title);
-	return headline.length <= max ? headline : `${headline.slice(0, max - 1).trimEnd()}${ELLIPSIS}`;
+	return headline.length <= max ? headline : `${headline.slice(0, max - ELLIPSIS.length).trimEnd()}${ELLIPSIS}`;
 }
 
 /** "2026-10-19 19:37": an ISO timestamp as UTC date and minute; a value that is not a timestamp is returned as is. */

@@ -71,7 +71,7 @@ afterEach(() => {
 	else process.env['XDG_CONFIG_HOME'] = previousXdg;
 });
 
-describe('queue events — onTaskCreated carries the hierarchy', () => {
+describe('queue events - onTaskCreated carries the hierarchy', () => {
 	it('includes parentId (the full id) when the task is created under a parent', async () => {
 		const parent = JSON.parse((await runTaskCommand(['new', 'parent'], tmpDir)).output) as { id: string };
 		publishMock.mockClear();
@@ -108,7 +108,7 @@ async function newTask(title: string): Promise<{ id: string }> {
 	return JSON.parse((await runTaskCommand(['new', title], tmpDir)).output) as { id: string };
 }
 
-describe('queue events — an undelivered event leaves a trace in the task log', () => {
+describe('queue events - an undelivered event leaves a trace in the task log', () => {
 	let stderr: string[];
 
 	const errorLogLines = (): Array<{ level: string; msg: string }> => {
@@ -217,7 +217,7 @@ describe('queue events — an undelivered event leaves a trace in the task log',
 	});
 });
 
-describe('queue events — onStatusChange', () => {
+describe('queue events - onStatusChange', () => {
 	it('carries the previous status as oldStatus and the new one as newStatus', async () => {
 		const task = await newTask('task');
 		publishMock.mockClear();
@@ -245,7 +245,7 @@ describe('queue events — onStatusChange', () => {
 	});
 });
 
-describe('queue events — onTaskLinked / onTaskUnlinked', () => {
+describe('queue events - onTaskLinked / onTaskUnlinked', () => {
 	it('link pushes onTaskLinked from the task that holds the link', async () => {
 		const a = await newTask('a');
 		const b = await newTask('b');
@@ -318,7 +318,7 @@ describe('queue events — onTaskLinked / onTaskUnlinked', () => {
 	});
 });
 
-describe('queue events — onTaskUnblocked', () => {
+describe('queue events - onTaskUnblocked', () => {
 	const setup = async () => {
 		const blocker = await newTask('blocker');
 		const blocked = await newTask('blocked');
@@ -398,7 +398,7 @@ describe('queue events — onTaskUnblocked', () => {
 	});
 });
 
-describe('queue events — onTaskTypeChanged', () => {
+describe('queue events - onTaskTypeChanged', () => {
 	it('set-type pushes oldType and newType, in the project', async () => {
 		const task = await newTask('task');
 		await runTaskCommand(['set-type', task.id, 'bug'], tmpDir);
@@ -446,7 +446,7 @@ describe('queue events — onTaskTypeChanged', () => {
 	});
 });
 
-describe('queue events — onTaskLabelAdded / onTaskLabelRemoved', () => {
+describe('queue events - onTaskLabelAdded / onTaskLabelRemoved', () => {
 	it('add-label pushes onTaskLabelAdded, and nothing when the label is already there', async () => {
 		const task = await newTask('task');
 		publishMock.mockClear();
@@ -483,7 +483,7 @@ describe('queue events — onTaskLabelAdded / onTaskLabelRemoved', () => {
 	});
 });
 
-describe('queue events — onTaskMetaChanged', () => {
+describe('queue events - onTaskMetaChanged', () => {
 	it('set-meta pushes key, oldValue (absent for a new key) and newValue', async () => {
 		const task = await newTask('task');
 		publishMock.mockClear();
@@ -518,7 +518,7 @@ describe('queue events — onTaskMetaChanged', () => {
 	});
 });
 
-describe('queue events — onTaskParentChanged', () => {
+describe('queue events - onTaskParentChanged', () => {
 	it('set-parent pushes oldParentId (absent for a root task) and newParentId; remove-parent pushes the reverse', async () => {
 		const parent = await newTask('parent');
 		const other = await newTask('other');
@@ -557,7 +557,7 @@ describe('queue events — onTaskParentChanged', () => {
 	});
 });
 
-describe('queue events — onTaskDeleted', () => {
+describe('queue events - onTaskDeleted', () => {
 	it('delete <id> pushes one event with what the task was, the orphaned children and the removed links', async () => {
 		const parent = await newTask('the parent');
 		const child = JSON.parse((await runTaskCommand(['new', 'child', '--parent', parent.id], tmpDir)).output) as {
@@ -649,7 +649,7 @@ describe('queue events — onTaskDeleted', () => {
 	});
 });
 
-describe('set-status — closing a task that still has open blockers', () => {
+describe('set-status - closing a task that still has open blockers', () => {
 	let stderr: string[];
 
 	beforeEach(() => {
@@ -715,7 +715,7 @@ describe('set-status — closing a task that still has open blockers', () => {
 });
 
 // The queue finds .queue/subscribers.yml from the cwd the SDK sends: the CLI must publish with the project it works on, wherever it runs.
-describe('queue events — published in the project directory', () => {
+describe('queue events - published in the project directory', () => {
 	let elsewhere: string;
 	const publishCwds = (): unknown[] => publishMock.mock.calls.map(call => (call[2] as { cwd?: string }).cwd);
 
@@ -760,7 +760,7 @@ describe('queue events — published in the project directory', () => {
 	});
 });
 
-describe('queue events — the task events are declared to the queue (registerEvents)', () => {
+describe('queue events - the task events are declared to the queue (registerEvents)', () => {
 	const markerFile = (): string => path.join(configHome, 'task', 'queue-events.json');
 	const logText = (): string => {
 		const logDir = path.join(configHome, 'task', 'logs');
@@ -934,7 +934,7 @@ describe('queue events — the task events are declared to the queue (registerEv
 	});
 });
 
-describe('queue events — a delete that fails partway through its plan', () => {
+describe('queue events - a delete that fails partway through its plan', () => {
 	it('delivers the events of the tasks already deleted, then fails (exit 1) naming how many were deleted', async () => {
 		const tasks = [await newTask('one'), await newTask('two'), await newTask('three'), await newTask('four')];
 		publishMock.mockClear();
@@ -979,7 +979,7 @@ describe('queue events — a delete that fails partway through its plan', () => 
 });
 
 // Stage 1 of the shared project registry: a project that is registered there carries its id (and its registry name) in every payload.
-describe('queue events — taskProjectId', () => {
+describe('queue events - taskProjectId', () => {
 	it('is the registry id for a registered project, next to its registry name; the queue cwd stays the project path', async () => {
 		// A registered project keeps its data in the registry: its folder needs no .task (and must not hold unmigrated data).
 		const registeredDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-events-registered-'));
@@ -1003,7 +1003,7 @@ describe('queue events — taskProjectId', () => {
 	});
 });
 
-describe('queue events — text, metadata removal, type clearing, split at creation', () => {
+describe('queue events - text, metadata removal, type clearing, split at creation', () => {
 	it('new with a long text pushes onTaskCreated whose description is the FULL text (the title is the headline)', async () => {
 		const prompt = `Review the importer\n\n${'Check every code path. '.repeat(12)}`;
 

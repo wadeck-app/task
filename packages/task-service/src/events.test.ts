@@ -15,11 +15,13 @@ describe('replayCommand', () => {
 	it('quotes single quotes of the directory and of the payload for a POSIX shell', () => {
 		const event: TaskEvent = {
 			name: 'onTaskLinked',
+			// violations-suppress: shared/no-out-of-repo-path Windows-form directory fixture in a string quoted by the replay command, never touched on disk
 			payload: { ...linked.payload, taskProjectPath: "C:\\Users\\O'Neil\\my proj", targetId: "it's" },
 		};
 
 		const command = replayCommand(event);
 
+		// violations-suppress: shared/no-out-of-repo-path Windows-form directory fixture in a string quoted by the replay command, never touched on disk
 		expect(command.startsWith(`cd 'C:\\Users\\O'\\''Neil\\my proj' && queue push onTaskLinked `)).toBe(true);
 		expect(command).toContain(`it'\\''s`);
 	});

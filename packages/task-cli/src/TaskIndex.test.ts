@@ -16,7 +16,7 @@ afterEach(() => {
 	fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe('runTaskCommand — version and help', () => {
+describe('runTaskCommand - version and help', () => {
 	it('--version returns CalVer string without requiring project init', async () => {
 		const result = await runTaskCommand(['--version'], tmpDir);
 		expect(result.exitCode).toBe(0);
@@ -112,7 +112,7 @@ describe('runTaskCommand — version and help', () => {
 	});
 });
 
-describe('runTaskCommand — project guard', () => {
+describe('runTaskCommand - project guard', () => {
 	it('fails with human-readable message when project not initialized', async () => {
 		const result = await runTaskCommand(['list'], tmpDir);
 		expect(result.exitCode).toBe(1);
@@ -145,7 +145,7 @@ describe('runTaskCommand — project guard', () => {
 	});
 });
 
-describe('runTaskCommand — a registered project', () => {
+describe('runTaskCommand - a registered project', () => {
 	it('after the folder is registered, list succeeds', async () => {
 		await registerTestProject(tmpDir);
 		const result = await runTaskCommand(['list'], tmpDir);
@@ -153,7 +153,7 @@ describe('runTaskCommand — a registered project', () => {
 	});
 });
 
-describe('runTaskCommand — prefix match', () => {
+describe('runTaskCommand - prefix match', () => {
 	beforeEach(async () => {
 		await registerTestProject(tmpDir);
 	});
@@ -194,7 +194,7 @@ describe('runTaskCommand — prefix match', () => {
 	});
 });
 
-describe('runTaskCommand — set-status error messages', () => {
+describe('runTaskCommand - set-status error messages', () => {
 	beforeEach(async () => {
 		await registerTestProject(tmpDir);
 	});
@@ -247,7 +247,7 @@ describe('runTaskCommand — set-status error messages', () => {
 	});
 });
 
-describe('runTaskCommand — -p flag', () => {
+describe('runTaskCommand - -p flag', () => {
 	let projectDir: string;
 	let projectName: string;
 
@@ -290,7 +290,7 @@ describe('runTaskCommand — -p flag', () => {
 	});
 });
 
-describe('runTaskCommand — delete', () => {
+describe('runTaskCommand - delete', () => {
 	beforeEach(async () => {
 		await registerTestProject(tmpDir);
 	});
@@ -481,7 +481,7 @@ describe('runTaskCommand — delete', () => {
 	});
 });
 
-describe('runTaskCommand — list hides terminal statuses by default', () => {
+describe('runTaskCommand - list hides terminal statuses by default', () => {
 	beforeEach(async () => {
 		await registerTestProject(tmpDir);
 	});
@@ -505,7 +505,7 @@ describe('runTaskCommand — list hides terminal statuses by default', () => {
 	});
 });
 
-describe('runTaskCommand — TASK_PROJECT env var', () => {
+describe('runTaskCommand - TASK_PROJECT env var', () => {
 	let projectDir: string;
 	let projectName: string;
 	const origEnv = process.env;

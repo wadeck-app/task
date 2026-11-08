@@ -308,7 +308,9 @@ describe('TaskStore', () => {
 				const b = store.create('B', 'backlog', a.id);
 				const c = store.create('C', 'backlog', b.id);
 
-				expect(() => store.setParent(a.id, c.id)).toThrow(new RegExp(`${a.id} → ${c.id} → ${b.id} → ${a.id}`));
+				expect(() => store.setParent(a.id, c.id)).toThrow(
+					new RegExp(`${a.id} -> ${c.id} -> ${b.id} -> ${a.id}`)
+				);
 			});
 
 			it('rejects moving a middle task under one of its own descendants', () => {
