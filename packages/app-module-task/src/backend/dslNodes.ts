@@ -32,8 +32,10 @@ export const REMOVE_LINK_ROW_ACTION = 'removeLinkRow';
  */
 export function linkGroupSection(input: { label: string; rows: ReadonlyArray<Record<string, unknown>> }): DslNode {
 	return {
-		$type: 'Section',
-		title: literal(`${input.label} (${input.rows.length})`),
+		$type: 'task:Panel',
+		title: literal(input.label),
+		count: input.rows.length,
+		appearance: 'plain',
 		items: [
 			{
 				$type: 'task:TaskRowList',

@@ -175,32 +175,24 @@ $notices:
           - $type: ExtensionSlot
             $if: $sources.projectHeader
             items: $sources.projectHeader
+    # task:Notice for every message (same radius, padding and text size as the controls; wraps, unlike a Badge).
     # Nothing registered yet: the welcome text of the route (the exact next step) instead of a blank page.
-    - $type: Badge
+    - $type: task:Notice
       $if: $sources.projects.noProjects
       label: $sources.projects.noProjectsText
       variant: info
     # The selected project cannot be read (not initialized, corrupt config...): the reason and the fix, not a blank page.
-    - $type: Badge
+    - $type: task:Notice
       $if: $sources.projects.selectedProblem
       label: $sources.projects.selectedProblem
       variant: danger
     # The address names a project the registry does not know (a stale bookmark): said, with the next step, not a blank page.
-    - $type: Badge
+    - $type: task:Notice
       $if: $sources.projects.unknownProjectText
       label: $sources.projects.unknownProjectText
       variant: danger
-    # The task does not exist (or the id is ambiguous): what was asked and what to do.
-    - $type: Badge
-      $if: $sources.detail.errorText
-      label: $sources.detail.errorText
-      variant: danger
-    # Repairable inconsistencies of this task (dangling parent...), with the command that fixes them.
-    - $type: Badge
-      $if: $sources.detail.warningText
-      label: $sources.detail.warningText
-      variant: warning
-    # The delete dialog: its answer stays on screen after the task is gone (the designs are not drawn without a task).
+    # The delete dialog: its answer stays on screen after the task is gone (the designs are not drawn without a task). It comes
+    # BEFORE "task not found", which the reload after the deletion causes: what happened is read first.
     - $type: task:Notice
       $if: $ctx.deleteResult.errorText
       label: $ctx.deleteResult.errorText
@@ -212,6 +204,16 @@ $notices:
     - $type: task:Notice
       $if: $ctx.deleteResult.undeliveredText
       label: $ctx.deleteResult.undeliveredText
+      variant: warning
+    # The task does not exist (or the id is ambiguous): what was asked and what to do.
+    - $type: task:Notice
+      $if: $sources.detail.errorText
+      label: $sources.detail.errorText
+      variant: danger
+    # Repairable inconsistencies of this task (dangling parent...), with the command that fixes them.
+    - $type: task:Notice
+      $if: $sources.detail.warningText
+      label: $sources.detail.warningText
       variant: warning
 $experiment:
     id: task-design

@@ -267,8 +267,13 @@ export function deleteImpactText(impact: DeleteImpact): string {
 }
 
 /** The label of the "also delete the descendants" switch of the delete dialog. */
-export function deleteCascadeLabel(descendantCount: number): string {
-	return `Also delete its ${plural(descendantCount, 'descendant', 'descendants')}`;
+export function deleteCascadeLabel(descendantCount: number, childCount = 0): string {
+	const label = `Also delete its ${plural(descendantCount, 'descendant', 'descendants')}`;
+	// The sentence above the switch cannot follow it (a view reads no form state): the label says what the switch changes.
+	if (childCount === 0) return label;
+	const otherwise =
+		childCount === 1 ? 'its 1 child becomes a root task' : `its ${childCount} children become root tasks`;
+	return `${label} (otherwise ${otherwise})`;
 }
 
 /** The status a checked sub-task gets (the first terminal status in config order) and the one an unchecked one gets back. */

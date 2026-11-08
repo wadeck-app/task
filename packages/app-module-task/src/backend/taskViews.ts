@@ -192,7 +192,7 @@ export function taskDetailBody(
 		deleteImpact,
 		deleteImpactText: deleteImpactText(deleteImpact),
 		hasDescendants: data.descendantCount > 0,
-		deleteCascadeLabel: deleteCascadeLabel(data.descendantCount),
+		deleteCascadeLabel: deleteCascadeLabel(data.descendantCount, deleteImpact.childCount),
 		checklistRows: checklistRows(config, childRows),
 		...checklistStatuses(config),
 		pills,

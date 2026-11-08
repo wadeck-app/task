@@ -37,6 +37,11 @@
 			"view": {
 				"type": "path",
 				"value": "./src/dsl-views/tasks-page.yaml"
+			},
+			"count": {
+				"route": "/tasks/open/count",
+				"field": "count",
+				"refreshSeconds": 60
 			}
 		},
 		{
@@ -97,7 +102,12 @@
 			"tab": {
 				"group": "project",
 				"label": "Tasks",
-				"order": 10
+				"order": 10,
+				"count": {
+					"route": "/tasks/p/:project/open/count",
+					"field": "count",
+					"refreshSeconds": 60
+				}
 			},
 			"view": {
 				"type": "path",
@@ -157,7 +167,12 @@
 			"tab": {
 				"group": "project",
 				"label": "Types",
-				"order": 30
+				"order": 30,
+				"count": {
+					"route": "/types/p/:project/count",
+					"field": "count",
+					"refreshSeconds": 60
+				}
 			},
 			"view": {
 				"type": "path",

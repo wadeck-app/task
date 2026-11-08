@@ -1,5 +1,6 @@
 import { Ban, CheckCircle2, Circle, CircleDot } from 'lucide-react';
 import React from 'react';
+import { CONTROL_H, GAP_CONTROLS, ICON_SIZE, PILL_RADIUS, PILL_TEXT } from '../ui/tokens.js';
 import { TONE_DOT, TONE_PILL, TONE_TEXT, toneOf } from '../tones.js';
 import type { Tone } from '../tones.js';
 
@@ -12,7 +13,10 @@ export interface StatusBadgeProps {
 	tone?: Tone;
 	/** Glyph before the label: an open circle, a half-done circle, a check, a ban. */
 	icon?: StatusIcon;
-	size?: 'sm' | 'md';
+	/** `control`: the height, radius and text of a pill or a button (h-8), for a badge that sits in a row with controls. */
+	size?: 'sm' | 'md' | 'control';
+	/** Monospace label (an id). */
+	mono?: boolean;
 	/** `pill`: tinted capsule. `dot`: bare coloured dot and text. `icon`: the glyph alone (the label becomes its tooltip). */
 	appearance?: 'pill' | 'dot' | 'icon';
 }
@@ -23,10 +27,12 @@ const ICONS = { open: Circle, progress: CircleDot, done: CheckCircle2, blocked: 
 const PILL_SIZE: Record<NonNullable<StatusBadgeProps['size']>, string> = {
 	sm: 'px-2 py-0.5 text-xs gap-1',
 	md: 'px-2.5 py-1 text-sm gap-1.5',
+	control: `${CONTROL_H} px-3 ${PILL_TEXT} ${GAP_CONTROLS}`,
 };
 const TEXT_SIZE: Record<NonNullable<StatusBadgeProps['size']>, string> = {
 	sm: 'text-xs gap-1.5',
 	md: 'text-sm gap-2',
+	control: `${PILL_TEXT} ${GAP_CONTROLS}`,
 };
 // @formatter:on
 
@@ -43,11 +49,12 @@ export function StatusBadge({
 	tone = 'neutral',
 	icon = 'none',
 	size = 'sm',
+	mono = false,
 	appearance = 'pill',
 }: StatusBadgeProps): React.ReactElement {
 	const resolved = toneOf(tone);
 	const Glyph = icon === 'none' ? null : ICONS[icon];
-	const glyphSize = size === 'sm' ? 12 : 14;
+	const glyphSize = size === 'sm' ? 12 : ICON_SIZE;
 
 	if (appearance === 'icon') {
 		return (
@@ -91,10 +98,10 @@ export function StatusBadge({
 		<span
 			data-testid="status-badge"
 			data-tone={resolved}
-			className={`inline-flex items-center whitespace-nowrap rounded-full font-medium ${PILL_SIZE[size]} ${TONE_PILL[resolved]}`}
+			className={`inline-flex items-center whitespace-nowrap ${PILL_RADIUS} ${size === 'control' ? '' : 'font-medium'} ${PILL_SIZE[size]} ${TONE_PILL[resolved]}`}
 		>
 			{Glyph ? <Glyph size={glyphSize} aria-hidden="true" /> : null}
-			<span>{label}</span>
+			<span className={mono ? 'font-mono' : ''}>{label}</span>
 		</span>
 	);
 }

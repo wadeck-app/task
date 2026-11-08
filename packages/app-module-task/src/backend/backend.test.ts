@@ -24,6 +24,9 @@ import { createTestWorld, type TestWorld } from './testHelpers.js';
 const EXPECTED_ROUTES = [
 	'GET /projects',
 	'GET /summary',
+	'GET /tasks/open/count',
+	'GET /tasks/p/:project/open/count',
+	'GET /types/p/:project/count',
 	'GET /related/project/:projectId',
 	'GET /tasks',
 	'GET /tasks/search',
@@ -2169,8 +2172,11 @@ describe('GET /tasks/:id/links', () => {
 				gap: 'gap-4',
 				items: [
 					{
-						$type: 'Section',
-						title: 'Blocked by (2)',
+						// A plain task:Panel with a count, like the other blocks of the page (a dsl-ui Section title is larger than its parent's).
+						$type: 'task:Panel',
+						title: 'Blocked by',
+						count: 2,
+						appearance: 'plain',
 						// A row list, not a table: the title stays a link to the task and a button beside it removes the
 						// link (a DataTable with row actions has no row click, and a url action keeps `{id}` unsubstituted).
 						items: [
@@ -2185,8 +2191,10 @@ describe('GET /tasks/:id/links', () => {
 						],
 					},
 					{
-						$type: 'Section',
-						title: 'Causes (1)',
+						$type: 'task:Panel',
+						title: 'Causes',
+						count: 1,
+						appearance: 'plain',
 						items: [
 							expect.objectContaining({
 								$type: 'task:TaskRowList',

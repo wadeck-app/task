@@ -99,10 +99,13 @@ feedback.all:
 
 # ---- the identity of the task: the id once, the title once (editable in place) --------------------------------------------
 # The id is shown here and nowhere else (the shell breadcrumb carries it too, but it is the shell's).
+# A task:StatusBadge of size control: the same 32px control height as the pills and buttons it sits next to (a dsl-ui Badge is 22px).
 id.badge:
-    $type: Badge
+    $type: task:StatusBadge
     label: $sources.detail.task.id
-    variant: default
+    tone: neutral
+    size: control
+    mono: true
 # The title is the headline (<= 90 characters; the body is the rest, see body.*). Enter saves, Esc cancels.
 title.edit:
     $type: task:InlineText
@@ -128,14 +131,14 @@ state.open:
     label: Open
     tone: $sources.detail.statusTone
     icon: open
-    size: md
+    size: control
 state.closed:
     $type: task:StatusBadge
     $if: $sources.detail.isTerminal
     label: Closed
     tone: $sources.detail.statusTone
     icon: done
-    size: md
+    size: control
 # "Opened 3 days ago": the creation date, shown once (the tooltip of the date holds the exact instant).
 created.caption:
     $type: task:Caption
@@ -177,25 +180,28 @@ delete.dialog:
         - $type: ButtonAction
           label: Delete task...
           variant: danger-outline
-          size: sm
+          size: md
     items:
-        - $type: task:Notice
-          label: $sources.detail.deleteImpactText
-          variant: warning
-        - $type: Form
-          $if: $sources.detail.forms
-          onSubmit: $ctx.deleteTask
-          initialData: $sources.detail.forms.delete
-          fields:
-              - $type: Switch
-                $if: $sources.detail.hasDescendants
-                label: $sources.detail.deleteCascadeLabel
-                bind: cascade
-          actions:
-              - $type: ButtonAction
-                label: Delete task
-                variant: danger
-                type: submit
+        - $type: VerticalStack
+          gap: gap-4
+          items:
+              - $type: task:Notice
+                label: $sources.detail.deleteImpactText
+                variant: warning
+              - $type: Form
+                $if: $sources.detail.forms
+                onSubmit: $ctx.deleteTask
+                initialData: $sources.detail.forms.delete
+                fields:
+                    - $type: Switch
+                      $if: $sources.detail.hasDescendants
+                      label: $sources.detail.deleteCascadeLabel
+                      bind: cascade
+                actions:
+                    - $type: ButtonAction
+                      label: Delete task
+                      variant: danger
+                      type: submit
 # The overflow menu of the header: a popover holding the dialog. A PropertyPopover, so its trigger has the height of every other
 # pill of the page (a ButtonAction is shorter), and it opens towards the left (it sits at the right edge).
 menu.more:

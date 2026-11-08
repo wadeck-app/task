@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { CONTROL_RADIUS, CONTROL_TEXT } from '../ui/tokens.js';
 import { TONE_PILL, toneOf } from '../tones.js';
 import type { Tone } from '../tones.js';
 
@@ -32,7 +33,7 @@ export function Notice({ label, variant = 'info' }: NoticeProps): React.ReactEle
 	return (
 		<div
 			role={variant === 'danger' ? 'alert' : 'status'}
-			className={`min-w-0 break-words rounded-md px-2.5 py-1.5 text-xs leading-snug ${TONE_PILL[tone]}`}
+			className={`min-w-0 break-words ${CONTROL_RADIUS} px-3 py-2 ${CONTROL_TEXT} leading-snug ${TONE_PILL[tone]}`}
 		>
 			<p className={`m-0 ${isLong && !expanded ? 'line-clamp-3' : ''}`}>{label}</p>
 			{isLong ? (

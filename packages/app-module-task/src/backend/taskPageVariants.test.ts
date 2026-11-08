@@ -156,28 +156,22 @@ describe('the experiment', () => {
 		}
 	});
 
+	// task:Notice everywhere (same radius, padding and text as the controls; a dsl-ui Badge is a one-line 22px pill). The answer of the
+	// delete comes BEFORE "task not found": once the task is gone the page cannot draw it, and the reader meets what happened first.
 	it('keeps the notices OUTSIDE the switcher, so every design has the same error and empty states (and the delete answer survives the task)', () => {
-		const labels = notices.slice(1).map(s => `${String(s.$type)}:${String(s.label)}`);
-		expect(labels).toEqual([
-			'Badge:$sources.projects.noProjectsText',
-			'Badge:$sources.projects.selectedProblem',
-			'Badge:$sources.projects.unknownProjectText',
-			'Badge:$sources.detail.errorText',
-			'Badge:$sources.detail.warningText',
-			'task:Notice:$ctx.deleteResult.errorText',
-			'task:Notice:$ctx.deleteResult.deletedText',
-			'task:Notice:$ctx.deleteResult.undeliveredText',
-		]);
-		expect(notices.slice(1).map(s => s.$if)).toEqual([
-			'$sources.projects.noProjects',
-			'$sources.projects.selectedProblem',
-			'$sources.projects.unknownProjectText',
-			'$sources.detail.errorText',
-			'$sources.detail.warningText',
-			'$ctx.deleteResult.errorText',
-			'$ctx.deleteResult.deletedText',
-			'$ctx.deleteResult.undeliveredText',
-		]);
+		const expected: [string, string, string][] = [
+			['$sources.projects.noProjects', '$sources.projects.noProjectsText', 'info'],
+			['$sources.projects.selectedProblem', '$sources.projects.selectedProblem', 'danger'],
+			['$sources.projects.unknownProjectText', '$sources.projects.unknownProjectText', 'danger'],
+			['$ctx.deleteResult.errorText', '$ctx.deleteResult.errorText', 'danger'],
+			['$ctx.deleteResult.deletedText', '$ctx.deleteResult.deletedText', 'success'],
+			['$ctx.deleteResult.undeliveredText', '$ctx.deleteResult.undeliveredText', 'warning'],
+			['$sources.detail.errorText', '$sources.detail.errorText', 'danger'],
+			['$sources.detail.warningText', '$sources.detail.warningText', 'warning'],
+		];
+		expect(notices.slice(1).map(n => [n.$if, n.label, n.variant, n.$type])).toEqual(
+			expected.map(([condition, label, variant]) => [condition, label, variant, 'task:Notice'])
+		);
 	});
 });
 
@@ -907,10 +901,14 @@ describe('the layouts of the products', () => {
 		it('has a header with the Open / Closed state badge in the tone of the status, the short id and when it was opened', () => {
 			const badges = nodesOf(variants.github!.view).filter(n => n.$type === 'task:StatusBadge');
 			expect(badges.map(n => [n.label, n.$if]).sort()).toEqual([
+				['$sources.detail.task.id', undefined],
 				['Closed', '$sources.detail.isTerminal'],
 				['Open', '$sources.detail.isOpen'],
 			]);
-			for (const badge of badges) expect(badge.tone).toBe('$sources.detail.statusTone');
+			// The id is neutral, the state takes the colour of the status.
+			for (const badge of badges.filter(n => n.label !== '$sources.detail.task.id')) {
+				expect(badge.tone).toBe('$sources.detail.statusTone');
+			}
 			expect(
 				nodesOf(variants.github!.view).some(
 					n => n.$type === 'RelativeDate' && n.date === '$sources.detail.createdAt'
@@ -934,7 +932,7 @@ describe('the layouts of the products', () => {
 	describe('gitlab', () => {
 		it('has the state badge and the actions on the right of the header, Child items with a count and a progress bar, Linked items', () => {
 			const badges = nodesOf(variants.gitlab!.view).filter(n => n.$type === 'task:StatusBadge');
-			expect(badges.map(n => n.label).sort()).toEqual(['Closed', 'Open']);
+			expect(badges.map(n => n.label).sort()).toEqual(['$sources.detail.task.id', 'Closed', 'Open']);
 			expect(panelTitles(main('gitlab'))).toEqual(['Child items', 'Linked items', 'Activity']);
 			const child = main('gitlab').find(n => n.$type === 'task:Panel' && n.title === 'Child items')!;
 			expect(child.count).toBe('$sources.detail.childrenSummary.total');
@@ -1171,4 +1169,29 @@ describe('the generator reports what is wrong, with the fix', () => {
 		expect(files.sort()).toEqual(['_page.yaml', '_shared.yaml', ...designNames.map(n => `${n}.yaml`)].sort());
 		expect(viewsDir).toContain('dsl-views');
 	});
+});
+
+// A badge in a row with pills and buttons is the same control: the 32px height token, not the 22px of a dsl-ui Badge nor the
+// 28px of a padded badge (measured in a browser before this rule). The header row of every design holds the state badge, the
+// id and the Actions menu.
+describe('the header row of every design', () => {
+	it.each(designs)(
+		'%s: the state badges and the id are task:StatusBadge of size control, none a dsl-ui Badge',
+		(name, view) => {
+			const header = nodesOf(view).filter(
+				n => n.$use === undefined && (n.$type === 'Badge' || n.$type === 'task:StatusBadge')
+			);
+			const feedback = (n: Node): boolean => String(n.label ?? '').startsWith('$ctx.');
+			const badges = header.filter(n => !feedback(n));
+			const ids = badges.filter(n => n.label === '$sources.detail.task.id');
+			const states = badges.filter(n => n.label === 'Open' || n.label === 'Closed');
+			expect(ids, name).toHaveLength(1);
+			// Jira shows the status as a button of the sidebar and has no state badge.
+			expect(states, name).toHaveLength(name === 'jira' ? 0 : 2);
+			for (const badge of [...ids, ...states]) {
+				expect(badge.$type, `${name}: ${String(badge.label)}`).toBe('task:StatusBadge');
+				expect(badge.size, `${name}: ${String(badge.label)}`).toBe('control');
+			}
+		}
+	);
 });

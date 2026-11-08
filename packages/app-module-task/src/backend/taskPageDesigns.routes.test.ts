@@ -74,7 +74,10 @@ describe('detail fields of the three task page designs', () => {
 			'Deleting this task: its 1 child becomes a root task, 1 link is removed, 1 task it blocks loses a blocker. This cannot be undone.'
 		);
 		expect(body['hasDescendants']).toBe(true);
-		expect(body['deleteCascadeLabel']).toBe('Also delete its 2 descendants');
+		// The impact sentence cannot follow the switch (a view reads no form state): the label states the alternative.
+		expect(body['deleteCascadeLabel']).toBe(
+			'Also delete its 2 descendants (otherwise its 1 child becomes a root task)'
+		);
 		const blocked = await detail(other);
 		expect(blocked.body['hasDescendants']).toBe(false);
 		expect(blocked.body['deleteImpactText']).toBe('Deleting this task: 1 link is removed. This cannot be undone.');

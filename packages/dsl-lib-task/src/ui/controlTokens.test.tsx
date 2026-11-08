@@ -5,7 +5,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { LabelCombobox } from '../components/LabelCombobox.js';
 import { MetaEditor } from '../components/MetaEditor.js';
 import { PropertyPopover } from '../components/PropertyPopover.js';
-import { CONTROL_H } from './tokens.js';
+import { Notice } from '../components/Notice.js';
+import { StatusBadge } from '../components/StatusBadge.js';
+import { CONTROL_H, CONTROL_RADIUS, CONTROL_TEXT, PILL_RADIUS, PILL_TEXT } from './tokens.js';
 
 const SRC = path.resolve(import.meta.dirname, '..');
 
@@ -113,5 +115,43 @@ describe('labels and metadata share one pattern', () => {
 		expect(screen.getByRole('button', { name: 'Status: todo' }).className).toContain(CONTROL_H);
 		expect(screen.getByTestId('label-chip').className).toContain(CONTROL_H);
 		expect(screen.getByRole('button', { name: 'Add label' }).className).toContain(CONTROL_H);
+	});
+});
+
+describe('badges and notices in a header row follow the control tokens', () => {
+	it('a StatusBadge of size control has the control height, the pill radius and the pill text of a pill', () => {
+		render(<StatusBadge label="Open" size="control" />);
+
+		const badge = screen.getByTestId('status-badge');
+		expect(badge).toHaveClass(CONTROL_H);
+		expect(badge).toHaveClass(PILL_RADIUS);
+		expect(badge.className).toContain(PILL_TEXT);
+		// The height comes from the token alone: a vertical padding would add to it.
+		expect(badge.className).not.toMatch(/(^|\s)py-/);
+	});
+
+	it('the id badge (mono, neutral) and the state badge are the same control as a PropertyPopover pill', () => {
+		render(
+			<>
+				<StatusBadge label="Open" tone="success" icon="open" size="control" />
+				<StatusBadge label="a1b2c3d4" size="control" mono />
+				<PropertyPopover label="Menu" appearance="pill" valueText="Actions" items={[]} />
+			</>
+		);
+
+		const heights = [...screen.getAllByTestId('status-badge'), screen.getByRole('button', { name: /Actions/ })].map(
+			element => element.className.split(/\s+/).filter(token => /^h-\d+$/.test(token))
+		);
+		expect(heights).toEqual([[CONTROL_H], [CONTROL_H], [CONTROL_H]]);
+		expect(screen.getByText('a1b2c3d4').className).toContain('font-mono');
+	});
+
+	it('a Notice uses the control radius and the control text size, with the horizontal padding of a control', () => {
+		render(<Notice label="Blocked by 1 open task" variant="warning" />);
+
+		const notice = screen.getByRole('status');
+		expect(notice).toHaveClass(CONTROL_RADIUS);
+		expect(notice).toHaveClass(CONTROL_TEXT);
+		expect(notice).toHaveClass('px-3');
 	});
 });

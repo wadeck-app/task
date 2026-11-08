@@ -174,26 +174,18 @@ sections:
       - $type: ExtensionSlot
         $if: $sources.projectHeader
         items: $sources.projectHeader
-  - $type: Badge
+  - $type: task:Notice
     $if: $sources.projects.noProjects
     label: $sources.projects.noProjectsText
     variant: info
-  - $type: Badge
+  - $type: task:Notice
     $if: $sources.projects.selectedProblem
     label: $sources.projects.selectedProblem
     variant: danger
-  - $type: Badge
+  - $type: task:Notice
     $if: $sources.projects.unknownProjectText
     label: $sources.projects.unknownProjectText
     variant: danger
-  - $type: Badge
-    $if: $sources.detail.errorText
-    label: $sources.detail.errorText
-    variant: danger
-  - $type: Badge
-    $if: $sources.detail.warningText
-    label: $sources.detail.warningText
-    variant: warning
   - $type: task:Notice
     $if: $ctx.deleteResult.errorText
     label: $ctx.deleteResult.errorText
@@ -205,6 +197,14 @@ sections:
   - $type: task:Notice
     $if: $ctx.deleteResult.undeliveredText
     label: $ctx.deleteResult.undeliveredText
+    variant: warning
+  - $type: task:Notice
+    $if: $sources.detail.errorText
+    label: $sources.detail.errorText
+    variant: danger
+  - $type: task:Notice
+    $if: $sources.detail.warningText
+    label: $sources.detail.warningText
     variant: warning
   - $type: AbTest
     id: task-design
@@ -252,16 +252,18 @@ sections:
                                   label: Open
                                   tone: $sources.detail.statusTone
                                   icon: open
-                                  size: md
+                                  size: control
                                 - $type: task:StatusBadge
                                   $if: $sources.detail.isTerminal
                                   label: Closed
                                   tone: $sources.detail.statusTone
                                   icon: done
-                                  size: md
-                                - $type: Badge
+                                  size: control
+                                - $type: task:StatusBadge
                                   label: $sources.detail.task.id
-                                  variant: default
+                                  tone: neutral
+                                  size: control
+                                  mono: true
                                 - $type: task:Caption
                                   text: Opened
                                 - $type: RelativeDate
@@ -278,25 +280,28 @@ sections:
                                     - $type: ButtonAction
                                       label: Delete task...
                                       variant: danger-outline
-                                      size: sm
+                                      size: md
                                   items:
-                                    - $type: task:Notice
-                                      label: $sources.detail.deleteImpactText
-                                      variant: warning
-                                    - $type: Form
-                                      $if: $sources.detail.forms
-                                      onSubmit: $ctx.deleteTask
-                                      initialData: $sources.detail.forms.delete
-                                      fields:
-                                        - $type: Switch
-                                          $if: $sources.detail.hasDescendants
-                                          label: $sources.detail.deleteCascadeLabel
-                                          bind: cascade
-                                      actions:
-                                        - $type: ButtonAction
-                                          label: Delete task
-                                          variant: danger
-                                          type: submit
+                                    - $type: VerticalStack
+                                      gap: gap-4
+                                      items:
+                                        - $type: task:Notice
+                                          label: $sources.detail.deleteImpactText
+                                          variant: warning
+                                        - $type: Form
+                                          $if: $sources.detail.forms
+                                          onSubmit: $ctx.deleteTask
+                                          initialData: $sources.detail.forms.delete
+                                          fields:
+                                            - $type: Switch
+                                              $if: $sources.detail.hasDescendants
+                                              label: $sources.detail.deleteCascadeLabel
+                                              bind: cascade
+                                          actions:
+                                            - $type: ButtonAction
+                                              label: Delete task
+                                              variant: danger
+                                              type: submit
                         - $type: task:Notice
                           $if: $sources.detail.blockedText
                           label: $sources.detail.blockedText
@@ -643,9 +648,11 @@ sections:
                           gap: gap-2
                           align: center
                           items:
-                            - $type: Badge
+                            - $type: task:StatusBadge
                               label: $sources.detail.task.id
-                              variant: default
+                              tone: neutral
+                              size: control
+                              mono: true
                         - $type: task:InlineText
                           ariaLabel: Title
                           value: $sources.detail.headline
@@ -719,25 +726,28 @@ sections:
                                     - $type: ButtonAction
                                       label: Delete task...
                                       variant: danger-outline
-                                      size: sm
+                                      size: md
                                   items:
-                                    - $type: task:Notice
-                                      label: $sources.detail.deleteImpactText
-                                      variant: warning
-                                    - $type: Form
-                                      $if: $sources.detail.forms
-                                      onSubmit: $ctx.deleteTask
-                                      initialData: $sources.detail.forms.delete
-                                      fields:
-                                        - $type: Switch
-                                          $if: $sources.detail.hasDescendants
-                                          label: $sources.detail.deleteCascadeLabel
-                                          bind: cascade
-                                      actions:
-                                        - $type: ButtonAction
-                                          label: Delete task
-                                          variant: danger
-                                          type: submit
+                                    - $type: VerticalStack
+                                      gap: gap-4
+                                      items:
+                                        - $type: task:Notice
+                                          label: $sources.detail.deleteImpactText
+                                          variant: warning
+                                        - $type: Form
+                                          $if: $sources.detail.forms
+                                          onSubmit: $ctx.deleteTask
+                                          initialData: $sources.detail.forms.delete
+                                          fields:
+                                            - $type: Switch
+                                              $if: $sources.detail.hasDescendants
+                                              label: $sources.detail.deleteCascadeLabel
+                                              bind: cascade
+                                          actions:
+                                            - $type: ButtonAction
+                                              label: Delete task
+                                              variant: danger
+                                              type: submit
                     - $type: task:SplitLayout
                       sidePosition: right
                       sideWidth: normal
@@ -1079,16 +1089,18 @@ sections:
                                   label: Open
                                   tone: $sources.detail.statusTone
                                   icon: open
-                                  size: md
+                                  size: control
                                 - $type: task:StatusBadge
                                   $if: $sources.detail.isTerminal
                                   label: Closed
                                   tone: $sources.detail.statusTone
                                   icon: done
-                                  size: md
-                                - $type: Badge
+                                  size: control
+                                - $type: task:StatusBadge
                                   label: $sources.detail.task.id
-                                  variant: default
+                                  tone: neutral
+                                  size: control
+                                  mono: true
                             - $type: task:PropertyPopover
                               label: Menu
                               appearance: pill
@@ -1101,25 +1113,28 @@ sections:
                                     - $type: ButtonAction
                                       label: Delete task...
                                       variant: danger-outline
-                                      size: sm
+                                      size: md
                                   items:
-                                    - $type: task:Notice
-                                      label: $sources.detail.deleteImpactText
-                                      variant: warning
-                                    - $type: Form
-                                      $if: $sources.detail.forms
-                                      onSubmit: $ctx.deleteTask
-                                      initialData: $sources.detail.forms.delete
-                                      fields:
-                                        - $type: Switch
-                                          $if: $sources.detail.hasDescendants
-                                          label: $sources.detail.deleteCascadeLabel
-                                          bind: cascade
-                                      actions:
-                                        - $type: ButtonAction
-                                          label: Delete task
-                                          variant: danger
-                                          type: submit
+                                    - $type: VerticalStack
+                                      gap: gap-4
+                                      items:
+                                        - $type: task:Notice
+                                          label: $sources.detail.deleteImpactText
+                                          variant: warning
+                                        - $type: Form
+                                          $if: $sources.detail.forms
+                                          onSubmit: $ctx.deleteTask
+                                          initialData: $sources.detail.forms.delete
+                                          fields:
+                                            - $type: Switch
+                                              $if: $sources.detail.hasDescendants
+                                              label: $sources.detail.deleteCascadeLabel
+                                              bind: cascade
+                                          actions:
+                                            - $type: ButtonAction
+                                              label: Delete task
+                                              variant: danger
+                                              type: submit
                         - $type: task:InlineText
                           ariaLabel: Title
                           value: $sources.detail.headline

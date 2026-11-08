@@ -381,8 +381,9 @@ export const StatusBadgeEntry: ComponentRegistryEntry = {
 		const tone = coerceProp(resolveExpressionValue(node['tone'], ctx), 'StatusBadge.tone', 'primitive', false) as import('../components/StatusBadge.js').StatusBadgeProps['tone']
 		const icon = coerceProp(resolveExpressionValue(node['icon'], ctx), 'StatusBadge.icon', 'primitive', false) as import('../components/StatusBadge.js').StatusBadgeProps['icon']
 		const size = coerceProp(resolveExpressionValue(node['size'], ctx), 'StatusBadge.size', 'primitive', false) as import('../components/StatusBadge.js').StatusBadgeProps['size']
+		const mono = coerceProp(resolveExpressionValue(node['mono'], ctx), 'StatusBadge.mono', 'primitive', false) as import('../components/StatusBadge.js').StatusBadgeProps['mono']
 		const appearance = coerceProp(resolveExpressionValue(node['appearance'], ctx), 'StatusBadge.appearance', 'primitive', false) as import('../components/StatusBadge.js').StatusBadgeProps['appearance']
-		return <StatusBadge label={label} tone={tone} icon={icon} size={size} appearance={appearance} />
+		return <StatusBadge label={label} tone={tone} icon={icon} size={size} mono={mono} appearance={appearance} />
 	},
 }
 
@@ -589,7 +590,7 @@ PropertyRowEntry.knownKeys = ["align","hint","items","label"];
 PropertyRowEntry.requiresContext = ["PropertyLayoutContext"];
 SegmentedControlEntry.knownKeys = ["action","actionPending","appearance","ariaLabel","fullWidth","onAction","options","params","size","value","valueParam"];
 SplitLayoutEntry.knownKeys = ["gap","main","side","sideFirstWhenStacked","sidePosition","sideWidth","sticky"];
-StatusBadgeEntry.knownKeys = ["appearance","icon","label","size","tone"];
+StatusBadgeEntry.knownKeys = ["appearance","icon","label","mono","size","tone"];
 StatusSelectEntry.knownKeys = ["action","actionPending","appearance","bodyKey","current","disabled","label","onAction","options","params","valueParam"];
 TabPanelsEntry.knownKeys = ["counts","defaultTab","tabs"];
 TaskChecklistEntry.knownKeys = ["actionPending","addAction","doneAction","emptyText","idParam","onAction","params","parentId","parentKey","placeholder","progress","reopenAction","reopenStatus","rows","statusParam","terminalStatus","titleKey"];
