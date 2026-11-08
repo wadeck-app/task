@@ -2,6 +2,9 @@ import { ConfigSchemaError, ProjectOptionError } from '@wadeck-app/project-sdk';
 import { AmbiguousTaskPrefixError, TaskConflictError, TaskNotFoundError } from '@wadeck-app/task-core';
 
 import { describeError } from './describeError.js';
+import { PluginCreateError } from './plugin-host/index.js';
+import { PluginNotImplementedError } from './plugins/kinds.js';
+import { StrategyConfigError } from './strategyConfig.js';
 import {
 	AmbiguousDeletePrefixError,
 	DanglingParentError,
@@ -121,5 +124,50 @@ describe('describeError: project option errors of the shared SDK', () => {
 		);
 		expect(description.kind).toBe('invalid');
 		expect(description.hint).toContain('once');
+	});
+});
+
+describe('describeError: the strategy and its plugins', () => {
+	it('a strategy config error is "invalid" and carries its own fix, not the generic one', () => {
+		const error = new StrategyConfigError(
+			'/cfg/config.yml',
+			'strategy.type',
+			'unknown strategy plugin "foo"',
+			'Registered strategy plugins: local'
+		);
+
+		const description = describeError(error);
+
+		expect(description.kind).toBe('invalid');
+		expect(description.message).toBe('/cfg/config.yml: strategy.type: unknown strategy plugin "foo"');
+		expect(description.hint).toBe('Registered strategy plugins: local');
+	});
+
+	it('a strategy config error without hint falls back to the generic config fix', () => {
+		const description = describeError(new StrategyConfigError('/cfg/config.yml', 'strategy', 'x'));
+
+		expect(description.hint).toBe(
+			'Fix the config.yml named in the message (remove or rename the key), then retry.'
+		);
+	});
+
+	it('a plugin that is registered but not implemented is "internal" with its fix', () => {
+		const description = describeError(
+			new PluginNotImplementedError('plugins.plain-http.default', 'stage 4', 'Use local')
+		);
+
+		expect(description.kind).toBe('internal');
+		expect(description.message).toBe(
+			'plugin "plugins.plain-http.default" is registered but not implemented in this version (it arrives in stage 4)'
+		);
+		expect(description.hint).toBe('Use local');
+	});
+
+	it('a failed plugin creation shows the hint of its cause', () => {
+		const cause = new PluginNotImplementedError('plugins.x.default', 'stage 9', 'Do the other thing');
+		const description = describeError(new PluginCreateError('plugins.x.default', cause.message, cause));
+
+		expect(description.kind).toBe('internal');
+		expect(description.hint).toBe('Do the other thing');
 	});
 });

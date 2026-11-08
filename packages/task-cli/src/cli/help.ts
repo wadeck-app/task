@@ -11,9 +11,11 @@ Concepts:
   link        Typed, directional, acyclic relation between two tasks: blockedBy, duplicateOf, causedBy (inverses blocks, duplicates, causes are derived)
   project     A project of the shared project registry (managed by the 'project' CLI): id (8 hex), name, aliases, paths. Selected with -p, TASK_PROJECT or the cwd.
               Its tasks live in the registry (<registry>/projects/<id>/task/data), not in the project folder; a project may have no folder (virtual)
-  config      Project config: <registry>/projects/<id>/task/config/config.yml, merged along the parent chain of the project (statuses, types, fields, hooks:
-              the project's own; defaults: inherited). Defines valid statuses (default: backlog, in-progress, done). An unknown key is an error naming the file.
+  config      Project config: <registry>/projects/<id>/task/config/config.yml, merged along the parent chain of the project (statuses, types, fields, hooks,
+              strategy: the project's own; defaults: inherited). Defines valid statuses (default: backlog, in-progress, done). An unknown key is an error naming the file.
               The global config (~/.task/config.yml: defaults, hooks) stays task's own file
+  strategy    Where the tasks of a project are stored: the 'strategy' section of the project config ({type, fidelity, options}). Without it the project uses
+              the local files of the registry (type: local), silently. Other types are declared but not installed yet and fail loudly. See: task strategy --help
   id          Short prefix of the task UUID - any unambiguous prefix is accepted
 
 Usage:
@@ -72,8 +74,8 @@ Usage:
   task delete --filter <field>=<value>       Delete tasks matching a filter (fields: id, title, status, parentId; glob * allowed)
   task delete --dry-run ...                  Show what would be deleted without deleting
   task delete ... --cascade-delete           Also delete all descendants of the matched tasks (default: children become root tasks)
-  task plugins list [--json]                 List available built-in flow plugins
-  task plugins config <id> [--json]         Show config snippet for a plugin
+  task strategy show [--json]                Strategy of the project (type, fidelity, fills, tokens, capabilities native/emulated/unsupported); opens nothing
+  task strategy check [--json]               Validate the strategy: config, tokens, backend; exit 1 with the fix of each problem
   task cli self-check                        Validate installation
   task cli update [--check] [--log]         Update to latest version
   task cli logs [--follow]                   Print today's invocation log
@@ -145,6 +147,29 @@ Usage:
   task projects --help                       Show this help
 
 These commands need no project: the registry is global (-p and TASK_PROJECT are not used here).`;
+
+/** `task strategy --help`. */
+export const STRATEGY_HELP = `task strategy - where the tasks of this project are stored
+
+Usage:
+  task strategy show [-p <project>] [--json]    The strategy the project's config selects: type and plugin, fidelity, declared fills, the token
+                                                variables (name and whether set, never the value), and a table of the capabilities of the
+                                                backend: native, emulated (by a declared fill) or unsupported. Reads the config only: opens no
+                                                backend, creates nothing.
+  task strategy check [-p <project>] [--json]   show, plus the checks: the config is valid, each token is there (variable set, file readable by
+                                                you only), the transport warns on plain http:// to a non-loopback host, the backend opens
+                                                (local: data folder, writable, task counts). Each problem prints its fix; exit 1 on any error
+                                                (warnings do not fail it).
+  task strategy --help                          Show this help
+
+Configuration (the project's config.yml, section 'strategy'; no section = type: local, silently):
+  strategy:
+      type: local            # local (installed); github, gitlab, remote are declared but not installed yet: a loud error, never a fallback
+      fidelity: strict       # strict (default) | degrade: whether an approximate or lossy fill is accepted
+      options: {}            # read by the strategy plugin only; local takes none. fills: <capability>: <technique> | { use, fidelity }
+                             # secrets: tokenEnv: <NAME of an environment variable> or tokenFile: <path>; a literal token is refused
+
+A 'strategy' key in the global ~/.task/config.yml, a literal credential, and 'pluginsDir' (external plugins) are errors naming the file and the key.`;
 
 /** `task type --help`. */
 export const TYPE_HELP = `task type - manage valid task types for this project

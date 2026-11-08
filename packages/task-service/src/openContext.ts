@@ -1,8 +1,10 @@
 import { writeFileAtomic } from '@wadeck-app/project-sdk';
-import { createLocalBackend } from '@wadeck-app/task-core';
 
 import type { TaskServiceContext } from './context.js';
-import { loadTaskConfig } from './projectConfig.js';
+import { createLazyBackend } from './lazyBackend.js';
+import { createInstance } from './plugin-host/index.js';
+import type { TaskPluginRegistry } from './plugins/kinds.js';
+import { loadProjectSetup } from './projectConfig.js';
 import type { ResolvedProject } from './resolveProject.js';
 import { tasksDirOf } from './storage.js';
 import type { TaskStorage } from './storage.js';
@@ -17,6 +19,10 @@ export interface OpenTaskContextInput {
 	 * `name` is required.
 	 */
 	project: { id?: string; name: string; path?: string };
+	/** The plugin registry the strategy is looked up in. Default: the built-ins (tests inject their own). */
+	registry?: TaskPluginRegistry;
+	/** The environment plugins read tokens from. Default: `process.env`. */
+	env?: NodeJS.ProcessEnv;
 }
 
 /** Task files are written whole or not at all (temp file, fsync, rename): a crash never leaves half a task. */
@@ -25,23 +31,36 @@ function writeAtomically(file: string, content: string): void {
 }
 
 /**
- * Builds the context of a project: its task backend (`ctx.store`, the local file backend for now), its resolved config and its
- * identity. Construction is synchronous and cheap (nothing is read or created); an invalid config file throws the loader's
- * error, never defaults.
+ * Builds the context of a project: its resolved config, its strategy and its task backend (`ctx.store`), and its identity.
+ * The strategy comes from the project's own `strategy` section (the local file backend when there is none, silently); the
+ * backend is created by its plugin at its first call, so construction is synchronous and cheap (nothing is read or created).
+ * An invalid config file, a strategy section the plugin refuses, or a declared type with no plugin throws a ConfigSchemaError
+ * naming the file and the key, never defaults and never the local backend.
  */
 export function openTaskContext(input: OpenTaskContextInput): TaskServiceContext {
 	const { storage } = input;
 	const { id, name, path: projectPath } = input.project;
-	return {
-		store: createLocalBackend(tasksDirOf(storage), { writeFile: writeAtomically }),
-		config: loadTaskConfig(storage, input.globalConfigDir),
-		storage,
-		project: {
-			...(id === undefined ? {} : { id }),
-			name,
-			...(projectPath === undefined ? {} : { path: projectPath }),
-		},
+	const { config, strategy } = loadProjectSetup(storage, {
+		globalConfigDir: input.globalConfigDir,
+		registry: input.registry,
+	});
+	const project = {
+		...(id === undefined ? {} : { id }),
+		name,
+		...(projectPath === undefined ? {} : { path: projectPath }),
 	};
+	const lazy = createLazyBackend(strategy.plugin, () =>
+		createInstance(strategy, {
+			project,
+			tasksDir: tasksDirOf(storage),
+			dataDir: storage.dataDir,
+			writeFile: writeAtomically,
+			env: input.env ?? process.env,
+			fidelity: strategy.fidelity,
+			fills: strategy.fills,
+		})
+	);
+	return { store: lazy.backend, config, storage, project, strategy, dispose: lazy.dispose };
 }
 
 /** Opens the context of a project found by `resolveProject` (its storage, id, name and path). */

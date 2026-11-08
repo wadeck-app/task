@@ -74,6 +74,7 @@ export const OWN_TEMP_PREFIXES: readonly string[] = [
 	'task-status-cmd-',
 	'task-store-',
 	'task-store-errors-',
+	'task-strategy-cmd-',
 	'task-text-cmd-',
 	'task-type-cmd-',
 	'task-type-ctx-',

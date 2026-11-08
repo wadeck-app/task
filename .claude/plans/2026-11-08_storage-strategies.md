@@ -116,6 +116,26 @@ Remaining:
 - Export `contract/` through a `package.json` subpath for the other packages (needed by the first non-local backend).
 - `TaskStore.updateStatus(existing)` and the other sync-only options can go with 0.7.
 
+#### Stage 0b progress (2026-11-08)
+
+Done (working tree, not committed): the `strategy` config section, the plugin host seam, the `local` strategy and the `plain-http` transport stub, `task strategy show|check`, `task plugins` removed. Reference: task `CLAUDE.md`, section "Storage strategy".
+
+- `strategy: { type, fidelity, options }` in `TASK_CONFIG_SCHEMA` (scope `local`), deep validation in `strategyConfig.ts` (file + dotted key + hint), fills checked against `BACKEND_CAPABILITY_NAMES` and the technique table, literal credentials and `pluginsDir` refused, a global `strategy` refused.
+- `plugin-host/` (registry instance, `resolveSlot`, `createInstance`, shape guard, fixtures in `pluginContract.testkit.ts`) imports nothing of task (architecture rule `seam-imports-task`). Built-ins: strategy `local`, transport `plain-http` (options validated; opening it throws `PluginNotImplementedError`, stage 4). `type: github|gitlab|remote` fails with "declared but no plugin is installed".
+- `openTaskContext` resolves the strategy; `ctx.store` is created lazily by the plugin; `ctx.dispose()` is called by the CLI after each command and by the cross-project views per project.
+- The backend contract suite already existed (stage 0, `runBackendContract`): 0b adds nothing to it.
+
+Differences from the design text, on purpose:
+
+- `task plugins list|config` is REMOVED with no replacement (owner order for 0b), where R15 / 4.2 / 5.2 planned registry-backed commands. `describe()` is on every plugin and shown by `strategy show`; a `plugins` command can return later over the registry.
+- The built-in list is `task-service/src/plugins/builtinPlugins.ts`, not one file per adapter: both adapters get the same list, and the single importer rule is `plugin-folder-import`.
+- A strategy instance is `{ backend, describe(), check(), dispose() }`, not the backend itself with `dispose()`; the plugin also declares `backendKind`, `capabilities` and `fillTechniques` statically, so `ctx.store.kind/capabilities` are known before the lazy `create`.
+- The transport slot of a remote strategy is `strategy.options.transport` (4.1), not `strategy.remote.transport` (3.1, older).
+- `fills` keys are `BackendCapabilities` names (`linkTypes.<type>` for links). The keys 2A.4 uses that are not capabilities (`type`, `fields`, `events`, `writes`, `origin`) are refused until the design maps them.
+- `validate` returns one string; a message starting with `<key>: ` names that option in the dotted path.
+
+Remaining for stage 1: dispose per request in `app-module-task` and in `acrossProjects.ts`; `GET /projects` exposing `strategy` / `capabilities`; `strategy set`, `labels sync`, `sync`; the forge plugin itself (a first real `check()` over the network, rate limits); `fills` keys outside the capabilities; a `plugins` command if wanted.
+
 Design choice inside the port (applies to step 0.7): do NOT mirror the 35 TaskStore methods 1:1. Remote backends cannot atomically do "setParent with cycle check + activity append". Split:
 
 - Port = primitive persistence (below). Domain rules (cycle detection, `duplicateOf` single target, status validation, activity/history synthesis, link inverses) stay in one shared layer (`TaskStore` becomes the rules engine over a `TaskBackend`), so local and remote behave identically where the remote can express it.

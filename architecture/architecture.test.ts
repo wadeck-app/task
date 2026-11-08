@@ -437,3 +437,156 @@ describe('tasks are reached through the backend port', () => {
 		}
 	);
 });
+
+// Stage 0b of the same design (3A.4, 3A.5): the plugin host seam stays extractable, plugins stay behind the seam, no external code
+// is loaded (R11).
+describe('the plugin host seam and the built-in plugins', () => {
+	const noRelative = (s: string): string => s;
+	const SEAM = 'packages/task-service/src/plugin-host';
+	const PLUGINS = 'packages/task-service/src/plugins';
+	const resolver = (target: string) => (): string => target;
+	const check = (file: string, source: string, resolved: string, isTest = false): string[] =>
+		checkSource(file, source, PACKAGE_RULES['task-service'], { isTest, resolveRelative: resolver(resolved) }).map(
+			v => v.rule
+		);
+
+	it('the folders exist and hold sources (a scan of nothing proves nothing)', () => {
+		expect(fs.readdirSync(path.join(ROOT, SEAM)).length).toBeGreaterThan(0);
+		expect(fs.readdirSync(path.join(ROOT, PLUGINS)).length).toBeGreaterThan(0);
+	});
+
+	describe('plugin-host imports nothing of task', () => {
+		const file = `${SEAM}/PluginRegistry.ts`;
+
+		it('may import its own files and Node built-ins', () => {
+			expect(check(file, "import { x } from './Plugin.js';", `${SEAM}/Plugin.js`)).toEqual([]);
+			expect(check(file, "import * as path from 'node:path';", 'node:path')).toEqual([]);
+		});
+
+		it.each([
+			["import { x } from '../storage.js';", 'packages/task-service/src/storage.js'],
+			["import { x } from '../plugins/kinds.js';", `${PLUGINS}/kinds.js`],
+			["import { x } from '@wadeck-app/task-core';", '@wadeck-app/task-core'],
+			["import { x } from '@wadeck-app/project-sdk';", '@wadeck-app/project-sdk'],
+			["import { x } from 'js-yaml';", 'js-yaml'],
+		])('refuses %s', (source, resolved) => {
+			expect(check(file, source, resolved)).toContain('seam-imports-task');
+		});
+
+		it('its tests may use vitest but not task', () => {
+			const test = `${SEAM}/PluginRegistry.test.ts`;
+			expect(check(test, "import { vi } from 'vitest';", 'vitest', true)).toEqual([]);
+			expect(
+				check(test, "import { x } from '../storage.js';", 'packages/task-service/src/storage.js', true)
+			).toContain('seam-imports-task');
+		});
+	});
+
+	describe('built-in plugins import the seam, task-core and Node built-ins only', () => {
+		const plugin = `${PLUGINS}/local/localPlugin.ts`;
+
+		it('may import the kinds file, the seam, task-core and node:', () => {
+			expect(check(plugin, "import type { x } from '../kinds.js';", `${PLUGINS}/kinds.js`)).toEqual([]);
+			expect(check(plugin, "import { x } from '../../plugin-host/index.js';", `${SEAM}/index.js`)).toEqual([]);
+			expect(check(plugin, "import { x } from '@wadeck-app/task-core';", '@wadeck-app/task-core')).toEqual([]);
+			expect(check(plugin, "import * as fs from 'node:fs';", 'node:fs')).toEqual([]);
+		});
+
+		it.each([
+			["import { x } from '../../storage.js';", 'packages/task-service/src/storage.js'],
+			["import { x } from '../plain-http/plainHttpPlugin.js';", `${PLUGINS}/plain-http/plainHttpPlugin.js`],
+			["import { x } from '@wadeck-app/project-sdk';", '@wadeck-app/project-sdk'],
+			["import { x } from '@wadeck-app/queue-sdk';", '@wadeck-app/queue-sdk'],
+		])('refuses %s', (source, resolved) => {
+			expect(check(plugin, source, resolved)).toContain('plugin-imports-outside-seam');
+		});
+
+		it('their tests are free', () => {
+			expect(
+				check(
+					`${PLUGINS}/local/localPlugin.test.ts`,
+					"import { x } from '../../storage.js';",
+					'packages/task-service/src/storage.js',
+					true
+				)
+			).toEqual([]);
+		});
+	});
+
+	describe('only the built-in list imports a plugin folder', () => {
+		it('the list may', () => {
+			expect(
+				check(
+					`${PLUGINS}/builtinPlugins.ts`,
+					"import { x } from './local/localPlugin.js';",
+					`${PLUGINS}/local/localPlugin.js`
+				)
+			).toEqual([]);
+		});
+
+		it.each([
+			['packages/task-service/src/openContext.ts', `${PLUGINS}/local/localPlugin.js`],
+			['packages/task-service/src/strategyResolve.ts', `${PLUGINS}/plain-http/plainHttpPlugin.js`],
+		])('%s may not', (file, resolved) => {
+			expect(check(file, "import { x } from './plugins/local/localPlugin.js';", resolved)).toContain(
+				'plugin-folder-import'
+			);
+		});
+
+		it('importing the kinds file or the list from outside is fine', () => {
+			expect(
+				check(
+					'packages/task-service/src/openContext.ts',
+					"import { x } from './plugins/kinds.js';",
+					`${PLUGINS}/kinds.js`
+				)
+			).toEqual([]);
+			expect(
+				check(
+					'packages/task-service/src/openContext.ts',
+					"import { x } from './plugins/builtinPlugins.js';",
+					`${PLUGINS}/builtinPlugins.js`
+				)
+			).toEqual([]);
+		});
+
+		it('a test may import a plugin folder', () => {
+			expect(
+				check(
+					'packages/task-service/src/x.test.ts',
+					"import { x } from './plugins/local/localPlugin.js';",
+					`${PLUGINS}/local/localPlugin.js`,
+					true
+				)
+			).toEqual([]);
+		});
+	});
+
+	describe('no external code is loaded: no dynamic import of anything but a literal', () => {
+		it.each(PACKAGES)('%s: a computed import() is reported, a literal one is not', pkg => {
+			const rule = PACKAGE_RULES[pkg];
+			const opts = { isTest: false, resolveRelative: noRelative };
+			const rules = (source: string): string[] => checkSource('x.ts', source, rule, opts).map(v => v.rule);
+			expect(rules('const m = await import(name);')).toContain('forbidden-source');
+			expect(rules('const m = await import(`./plugins/${name}.js`);')).toContain('forbidden-source');
+			expect(rules('const m = await import(pathToFileURL(file).href);')).toContain('forbidden-source');
+			expect(rules("const m = await import('node:fs');").filter(r => r === 'forbidden-source')).toEqual([]);
+			expect(rules("type T = typeof import('./x.js');").filter(r => r === 'forbidden-source')).toEqual([]);
+		});
+
+		it('tests are not scanned', () => {
+			expect(
+				checkSource('x.test.ts', 'await import(name);', PACKAGE_RULES['task-service'], {
+					isTest: true,
+					resolveRelative: noRelative,
+				})
+			).toEqual([]);
+		});
+	});
+
+	it('the files that read the token files or the data folder are on the fs allowlist, with their reason', () => {
+		const files = PACKAGE_RULES['task-service'].fsAllowlist!.files;
+		expect(files['packages/task-service/src/tokenCheck.ts']).toMatch(/token/);
+		expect(files['packages/task-service/src/plugins/local/localPlugin.ts']).toMatch(/local/);
+	});
+});

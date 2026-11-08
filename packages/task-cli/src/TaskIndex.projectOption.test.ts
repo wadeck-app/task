@@ -163,9 +163,9 @@ describe('a valid project flag given to a command that is not scoped to a projec
 		],
 		[['-p', 'alpha', 'projects', 'summary'], 'note: -p alpha ignored: this command is not scoped to a project\n'],
 		[['status', '--help', '-p', 'alpha'], 'note: -p alpha ignored: this command is not scoped to a project\n'],
+		[['strategy', '--help', '-p', 'alpha'], 'note: -p alpha ignored: this command is not scoped to a project\n'],
 		[['--help', '-p', 'alpha'], 'note: -p alpha ignored: this command is not scoped to a project\n'],
 		[['--version', '-p', 'alpha'], 'note: -p alpha ignored: this command is not scoped to a project\n'],
-		[['plugins', '--help', '-p', 'alpha'], 'note: -p alpha ignored: this command is not scoped to a project\n'],
 		[['cli', '--help', '-p', 'alpha'], 'note: -p alpha ignored: this command is not scoped to a project\n'],
 	])('task %j prints exactly one note on stderr', async (argv, note) => {
 		await runTaskCommand(argv, root);

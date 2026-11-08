@@ -4,6 +4,9 @@ import type { LinkType } from '../TaskStore.js';
 
 export type BackendKind = 'local' | 'github' | 'gitlab' | 'remote';
 
+/** Every backend kind of the design, as a runtime list (config validation lists them; only the installed ones can be opened). */
+export const BACKEND_KINDS: readonly BackendKind[] = Object.freeze(['local', 'github', 'gitlab', 'remote'] as const);
+
 /** Parent/child tasks: any depth, a depth cap (GitHub sub-issues), or none. */
 export type HierarchySupport = 'unlimited' | 'limited' | 'none';
 /** Statuses: any configured name, a configured mapping onto the system's own, or only open/closed. */
@@ -55,3 +58,25 @@ export const LOCAL_CAPABILITIES: BackendCapabilities = Object.freeze({
 	comments: true,
 	indexedGraph: true,
 });
+
+/**
+ * The capability names as a runtime list (config validation checks `fills` keys against it). The type of the record makes the
+ * compiler refuse a name that is not a key of {@link BackendCapabilities}, and capabilities.test.ts that a key is missing.
+ */
+export const BACKEND_CAPABILITY_NAMES: readonly (keyof BackendCapabilities)[] = Object.freeze(
+	Object.keys({
+		hierarchy: 0,
+		linkTypes: 0,
+		status: 0,
+		history: 0,
+		activity: 0,
+		delete: 0,
+		search: 0,
+		concurrency: 0,
+		ids: 0,
+		labels: 0,
+		meta: 0,
+		comments: 0,
+		indexedGraph: 0,
+	} satisfies Record<keyof BackendCapabilities, 0>) as (keyof BackendCapabilities)[]
+);

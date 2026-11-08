@@ -106,6 +106,15 @@ const NO_TASK_STORE_OUTSIDE_CORE = [
 	},
 ];
 
+/**
+ * No external code is loaded (design R11): a computed `import(...)` (a variable, a template, a call) is refused anywhere. A literal
+ * specifier is a static dependency in disguise and stays allowed (`typeof import('x')`, a lazy `import('node:fs')`).
+ */
+const NO_COMPUTED_IMPORT = {
+	pattern: /\bimport\s*\(\s*(?!['"])/,
+	why: 'plugins are the built-ins registered statically: no import() of a computed specifier (no external code is loaded)',
+};
+
 const FS_WHY =
 	'tasks are read and written through the TaskBackend port; a file that needs the Node file system API is listed here on purpose, with its reason';
 
@@ -122,6 +131,7 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 			NO_PROJECT_SDK_OUTSIDE_SERVICE,
 			...NO_REGISTRY_WRITE,
 			NO_PROJECT_DATA_DIR,
+			NO_COMPUTED_IMPORT,
 		],
 		fsAllowlist: {
 			why: FS_WHY,
@@ -140,14 +150,18 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 			{ pattern: HTTP_AND_CLI_LIBS, why: 'HTTP and CLI frameworks belong to the adapters' },
 			{ pattern: DSL_LIB, why: 'the service is caller-agnostic: it must not know browser components' },
 		],
-		forbiddenSource: [...NO_CONSOLE_NO_EXIT, ...NO_REGISTRY_WRITE, NO_PROJECT_DATA_DIR],
+		forbiddenSource: [...NO_CONSOLE_NO_EXIT, ...NO_REGISTRY_WRITE, NO_PROJECT_DATA_DIR, NO_COMPUTED_IMPORT],
 		forbiddenImportedNames: NO_TASK_STORE_OUTSIDE_CORE,
 		fsAllowlist: {
 			why: FS_WHY,
 			files: {
+				'packages/task-service/src/plugins/local/localPlugin.ts':
+					'the local strategy checks its data folder (exists, writable) for strategy check; tasks go through the backend',
 				'packages/task-service/src/projectsHealth.ts': 'existence of the registered folders',
 				'packages/task-service/src/queueEventSink.ts': 'the queue publisher configuration files',
 				'packages/task-service/src/taskLog.ts': 'the task log files',
+				'packages/task-service/src/tokenCheck.ts':
+					'strategy check: a token file exists and is readable by its owner only (never read into a result)',
 			},
 		},
 	},
@@ -156,7 +170,12 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 			{ pattern: APP_MODULE, why: 'the adapters must not know each other: share through task-service' },
 			{ pattern: DSL_LIB, why: 'the CLI has no browser components' },
 		],
-		forbiddenSource: [NO_PROJECT_SDK_OUTSIDE_SERVICE, ...NO_REGISTRY_WRITE, NO_PROJECT_DATA_DIR],
+		forbiddenSource: [
+			NO_PROJECT_SDK_OUTSIDE_SERVICE,
+			...NO_REGISTRY_WRITE,
+			NO_PROJECT_DATA_DIR,
+			NO_COMPUTED_IMPORT,
+		],
 		forbiddenImportedNames: NO_TASK_STORE_OUTSIDE_CORE,
 		fsAllowlist: {
 			why: FS_WHY,
@@ -178,7 +197,12 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 			{ pattern: TASK_CLI, why: 'the adapters must not know each other: share through task-service' },
 			{ pattern: SHARED_CLI, why: 'CLI libraries belong to task-cli; share through task-service' },
 		],
-		forbiddenSource: [NO_PROJECT_SDK_OUTSIDE_SERVICE, ...NO_REGISTRY_WRITE, NO_PROJECT_DATA_DIR],
+		forbiddenSource: [
+			NO_PROJECT_SDK_OUTSIDE_SERVICE,
+			...NO_REGISTRY_WRITE,
+			NO_PROJECT_DATA_DIR,
+			NO_COMPUTED_IMPORT,
+		],
 		forbiddenImportedNames: NO_TASK_STORE_OUTSIDE_CORE,
 		fsAllowlist: {
 			why: FS_WHY,
@@ -212,6 +236,7 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 			NO_PROJECT_SDK_OUTSIDE_SERVICE,
 			...NO_REGISTRY_WRITE,
 			NO_PROJECT_DATA_DIR,
+			NO_COMPUTED_IMPORT,
 			{ pattern: /\bprocess\.(?:env|argv|exit|cwd)\b/, why: 'no Node process API in browser code' },
 		],
 	},
@@ -308,6 +333,7 @@ export function checkSource(
 			}
 		}
 	}
+	violations.push(...checkPluginFolders(file, source, options));
 	return violations;
 }
 
@@ -331,4 +357,88 @@ export function checkManifest(
 			.filter(({ pattern }) => pattern.test(name))
 			.map(({ why }) => ({ file, rule: 'forbidden-dependency', detail: `declares "${name}": ${why}` }))
 	);
+}
+
+// ---- the plugin host seam and the built-in plugins (design 3A.4, 3A.5) ----
+
+const SEAM_DIR = 'packages/task-service/src/plugin-host/';
+const PLUGINS_DIR = 'packages/task-service/src/plugins/';
+const BUILTIN_LIST = 'packages/task-service/src/plugins/builtinPlugins.ts';
+const NODE_BUILTIN = /^node:/;
+
+/** Where a relative specifier lands, extension and all, as a repository-relative path; non-relative ones are returned as they are. */
+function landing(specifier: string, resolveRelative: (specifier: string) => string): string {
+	return specifier.startsWith('.') ? resolveRelative(specifier) : specifier;
+}
+
+/**
+ * Folder rules of the plugin mechanism, by the folder of the file checked:
+ * - `plugin-host/` (the seam, extractable): imports only its own files and Node built-ins (its tests may add vitest). It knows nothing of task.
+ * - `plugins/<id>/` (a built-in plugin): the seam, `plugins/kinds`, its own files, task-core and Node built-ins. Tests are free.
+ * - `plugins/` itself (`kinds.ts`, the built-in list): the seam, `plugins/**`, task-core and Node built-ins.
+ * - everywhere else in task-service: only the built-in list imports a `plugins/<id>/` folder.
+ */
+export function checkPluginFolders(
+	file: string,
+	source: string,
+	options: { isTest: boolean; resolveRelative: (specifier: string) => string }
+): Violation[] {
+	const violations: Violation[] = [];
+	const specifiers = importedModules(source);
+	const report = (rule: string, specifier: string, why: string): void => {
+		violations.push({ file, rule, detail: `imports "${specifier}": ${why}` });
+	};
+	if (file.startsWith(SEAM_DIR)) {
+		for (const specifier of specifiers) {
+			const target = landing(specifier, options.resolveRelative);
+			const inside = specifier.startsWith('.') && target.startsWith(SEAM_DIR);
+			const allowedExternal = NODE_BUILTIN.test(target) || (options.isTest && /^vitest(\/|$)/.test(target));
+			if (!inside && !allowedExternal) {
+				report(
+					'seam-imports-task',
+					specifier,
+					'plugin-host is the extractable seam: it imports its own files and Node built-ins only, never a task module or a dependency'
+				);
+			}
+		}
+	} else if (file.startsWith(PLUGINS_DIR) && !options.isTest) {
+		const own = file.slice(PLUGINS_DIR.length).includes('/') ? file.slice(0, file.lastIndexOf('/') + 1) : undefined;
+		for (const specifier of specifiers) {
+			const target = landing(specifier, options.resolveRelative);
+			let allowed: boolean;
+			if (specifier.startsWith('.')) {
+				allowed =
+					target.startsWith(SEAM_DIR) ||
+					(own === undefined
+						? target.startsWith(PLUGINS_DIR)
+						: target.startsWith(own) || /^packages\/task-service\/src\/plugins\/kinds(\.|$)/.test(target));
+			} else {
+				allowed = NODE_BUILTIN.test(target) || target === '@wadeck-app/task-core';
+			}
+			if (!allowed) {
+				report(
+					'plugin-imports-outside-seam',
+					specifier,
+					'a built-in plugin imports the seam (plugin-host), plugins/kinds, its own files, task-core and Node built-ins only'
+				);
+			}
+		}
+	} else if (
+		file.startsWith('packages/task-service/src/') &&
+		!file.startsWith(PLUGINS_DIR) &&
+		!options.isTest &&
+		file !== BUILTIN_LIST
+	) {
+		for (const specifier of specifiers) {
+			const target = landing(specifier, options.resolveRelative);
+			if (specifier.startsWith('.') && /^packages\/task-service\/src\/plugins\/[^/]+\//.test(target)) {
+				report(
+					'plugin-folder-import',
+					specifier,
+					'only plugins/builtinPlugins.ts imports a plugin folder; ask the registry for the plugin'
+				);
+			}
+		}
+	}
+	return violations;
 }

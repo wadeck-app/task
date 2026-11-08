@@ -1,6 +1,7 @@
 import type { TaskBackend, TaskResolvedConfig } from '@wadeck-app/task-core';
 
 import type { TaskProjectEnv } from './events.js';
+import type { ResolvedStrategy } from './strategyResolve.js';
 import type { TaskStorage } from './storage.js';
 
 /** Everything an operation needs: the storage, the resolved project config and the project identity. */
@@ -18,6 +19,16 @@ export interface TaskServiceContext {
 	 * `path` is the main path of the project; absent for a virtual project (no folder).
 	 */
 	project: { id?: string; name: string; path?: string };
+	/**
+	 * The strategy the project's config selects (plugin, options, fills, fidelity). Set by `openTaskContext`; a hand-built
+	 * context (tests) may leave it out.
+	 */
+	strategy?: ResolvedStrategy;
+	/**
+	 * Releases what the backend holds (a connection, a cache); creates nothing. Callers that open a context for a command or a
+	 * request call it once at the end; safe to call twice. Absent on a hand-built context.
+	 */
+	dispose?: () => Promise<void>;
 }
 
 /**

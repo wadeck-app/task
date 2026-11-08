@@ -25,9 +25,9 @@ import { installUnhandledRejectionHandler } from './cli/unhandledRejection.js';
 import { printUpdateNotice } from './cli/updateNotice.js';
 import { runCliSubcommand } from './commands/CliSubcommands.js';
 import { describeProjectSelection, runListAllProjects } from './commands/GlobalViewCommands.js';
-import { runPluginsCommand } from './commands/PluginsCommand.js';
 import { runProjectsCommand } from './commands/ProjectsCommand.js';
 import { isStatusHelp } from './commands/StatusCommand.js';
+import { isStrategyHelp, parseStrategyInvocation, runStrategy, strategyHelp } from './commands/StrategyCommand.js';
 import { PROJECT_COMMANDS, VALID_COMMANDS_HINT } from './commands/projectCommands.js';
 import { VERSION } from './version.js';
 
@@ -72,9 +72,9 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 		command === '--version' ||
 		command === '-V' ||
 		command === 'cli' ||
-		command === 'plugins' ||
 		command === 'projects' ||
-		(command === 'status' && isStatusHelp(rest));
+		(command === 'status' && isStatusHelp(rest)) ||
+		(command === 'strategy' && isStrategyHelp(rest));
 	if (notScoped && projectOptionError === undefined && projectOption.flag !== undefined) {
 		const typed = typedProjectFlag(args);
 		if (typed !== undefined) process.stderr.write(ignoredProjectFlagNote(typed) + '\n');
@@ -89,15 +89,29 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 	if (command === 'cli') {
 		return runCliSubcommand(rest, jsonMode);
 	}
-	if (command === 'plugins') {
-		return runPluginsCommand(rest, jsonMode);
-	}
 	if (command === 'projects') {
 		return runProjectsCommand(rest, jsonMode);
 	}
 	// Help needs no project (the listing itself does: it goes through the handler below).
 	if (command === 'status' && isStatusHelp(rest)) {
 		return { exitCode: 0, output: STATUS_HELP };
+	}
+
+	// The strategy commands open the project themselves: a config problem is their answer (a line of the check), not a failure
+	// before the command ran. The subcommand is validated first, so a typo fails the same in any folder.
+	if (command === 'strategy') {
+		if (isStrategyHelp(rest)) return strategyHelp();
+		const invocation = parseStrategyInvocation(rest, jsonMode);
+		if ('exitCode' in invocation) return invocation;
+		let resolved: ResolvedProject;
+		try {
+			if (projectOptionError !== undefined) throw projectOptionError;
+			resolved = resolveProjectFromArgs({ cwd, argv: args }).project;
+			announceResolution(resolved);
+		} catch (error) {
+			return failure(jsonMode, error);
+		}
+		return runStrategy(invocation.sub, jsonMode, resolved, configDir);
 	}
 
 	// Across every registered project: needs no project here.
@@ -136,6 +150,28 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 	} finally {
 		// main() exits the process right after: let the queue SDK finish what it has in flight first.
 		await env.eventSink.flush?.();
+		await releaseStorage(env);
+	}
+}
+
+/** The backend of the context is released once the command is done; a failure to do so never changes the result, but is not silent. */
+async function releaseStorage(env: CommandEnv): Promise<void> {
+	try {
+		await env.ctx.dispose?.();
+	} catch (error) {
+		const reason = error instanceof Error ? error.message : String(error);
+		process.stderr.write(
+			`warning: could not release the storage of project ${env.ctx.project.name}: ${reason} (task cli logs has the details)\n`
+		);
+		try {
+			appendTaskLog(
+				getTaskLogDir(ConfigDir.get('task')),
+				'warn',
+				`dispose of project ${env.ctx.project.name} failed: ${reason}`
+			);
+		} catch {
+			/* the warning above was already given; a log that cannot be written must not hide the command result */
+		}
 	}
 }
 

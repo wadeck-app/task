@@ -58,6 +58,8 @@ export type {
 	WriteOptions,
 } from './backend/index.js';
 export {
+	BACKEND_CAPABILITY_NAMES,
+	BACKEND_KINDS,
 	LOCAL_CAPABILITIES,
 	LocalFileBackend,
 	createLocalBackend,

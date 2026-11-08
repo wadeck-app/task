@@ -15,6 +15,9 @@ import {
 	TaskNotFoundError,
 } from '@wadeck-app/task-core';
 
+import { PluginCreateError } from './plugin-host/index.js';
+import { PluginNotImplementedError } from './plugins/kinds.js';
+import { StrategyConfigError } from './strategyConfig.js';
 import {
 	AmbiguousDeletePrefixError,
 	InvalidLinkTypeError,
@@ -94,6 +97,11 @@ export function describeError(error: unknown): ErrorDescription {
 		return describe('internal', error, error.hint, { skipped: error.failures });
 	}
 	if (error instanceof TaskServiceError) return describe('internal', error, error.hint);
+	if (error instanceof PluginNotImplementedError) return describe('internal', error, error.hint);
+	// A plugin that failed to open: the reason is the cause's, so is the fix.
+	if (error instanceof PluginCreateError) {
+		return describe('internal', error, error.cause === undefined ? undefined : describeError(error.cause).hint);
+	}
 	if (error instanceof ProjectError) return describeProjectError(error);
 	return { kind: 'internal', message: error instanceof Error ? error.message : String(error), details: {} };
 }
@@ -112,7 +120,8 @@ function describeProjectError(error: ProjectError): ErrorDescription {
 		return describe(
 			'invalid',
 			error,
-			'Fix the config.yml named in the message (remove or rename the key), then retry.'
+			(error instanceof StrategyConfigError ? error.hint : undefined) ??
+				'Fix the config.yml named in the message (remove or rename the key), then retry.'
 		);
 	}
 	if (error instanceof ProjectOptionError) {

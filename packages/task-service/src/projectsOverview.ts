@@ -79,7 +79,13 @@ export async function summarizeProjects(options: ListKnownProjectsOptions = {}):
 			continue;
 		}
 		// Projects are read one after the other, in registration order: the answer order and the first failure do not depend on timing.
-		const figures = await summarizeProject(context);
+		// The context is released as soon as its project is read, whatever the outcome.
+		let figures: Awaited<ReturnType<typeof summarizeProject>>;
+		try {
+			figures = await summarizeProject(context);
+		} finally {
+			await context.dispose?.();
+		}
 		projects.push({ ...base, ...figures, error: null });
 		readableCount++;
 		open += figures.open;
@@ -151,7 +157,13 @@ export async function listTasksAcrossProjects(input: ListTasksAcrossProjectsInpu
 			});
 			continue;
 		}
-		for (const task of await listTasks(context, { showAll: input.showAll })) {
+		let listed: Awaited<ReturnType<typeof listTasks>>;
+		try {
+			listed = await listTasks(context, { showAll: input.showAll });
+		} finally {
+			await context.dispose?.();
+		}
+		for (const task of listed) {
 			tasks.push({ ...task, project: { id: known.id, name: context.project.name, path: known.path } });
 		}
 	}

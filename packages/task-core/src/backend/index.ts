@@ -11,7 +11,7 @@ export type {
 	SearchSupport,
 	StatusSupport,
 } from './capabilities.js';
-export { LOCAL_CAPABILITIES } from './capabilities.js';
+export { BACKEND_CAPABILITY_NAMES, BACKEND_KINDS, LOCAL_CAPABILITIES } from './capabilities.js';
 export { StaleRevisionError, UnsupportedByBackendError } from './backendErrors.js';
 export type {
 	BackendCommentChange,
