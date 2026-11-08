@@ -11,12 +11,17 @@
 #   <design>.yaml  one file per design with exactly three keys: `label`, `hint` (shown by the dock), `view` (ONE node).
 # A test fails when task-page.yaml is stale, so run the script after every edit here.
 #
-# THREE DESIGNS under ONE dock row "Task page" (dsl-ui AbTest, production renders `initial` only):
-#   issue  document first: title, the text, sub-tasks, relations; a sticky properties sidebar (GitHub / GitLab / Jira)
-#   bar    one row of labelled property pills, one narrow column (Linear)
-#   flow   for tasks made by a flow: status stepper, long prompt folded to 6 lines, steps checklist, activity open
-# No design has an option row of its own: the ones of the eleven old designs (title, header, controls, width, lists...) are gone.
-# Each fact (id, status, type, parent, labels, dates, title, body) is shown ONCE per design, where it is edited (a test counts).
+# THREE DESIGNS under ONE dock row "Task page" (dsl-ui AbTest, production renders `initial` only). Each is a LAYOUT CLONE of a
+# product, drawn from knowledge of it (no access to the real products), adapted to our data:
+#   github  (initial) header with the Open / Closed badge, the description in a bordered card, sub-tasks and relations as cards,
+#           the activity with the composer at the bottom, a right sidebar of sections separated by dividers
+#   jira    action row under the title (Add sub-task, Link, Actions), Description, Child items with a progress bar, Linked items,
+#           Activity with the composer on top, a sticky right "Details" panel with the status as a prominent button
+#   gitlab  header with the state badge and the actions on the right, Child items and Linked items cards, Activity with a
+#           filter dropdown, right collapsible sections with "Edit" links and a footer with the dates
+# No design has an option row of its own. Each fact (id, status, type, parent, labels, dates, title, body, activity, comments) is
+# shown ONCE per design, where it is edited (a test counts). The status is ONE task:StatusSelect, never a stepper or a visible list.
+# The sidebar stacks ABOVE the main column below 1024 px in the three designs (task:SplitLayout sideFirstWhenStacked).
 #
 # Add a design: create <name>.yaml here and add <name> to `variants` under `$experiment` below, then run the script.
 # BAKE THE WINNER: in this file keep $sources/$actions, replace the `AbTest` by the `view` of the chosen design (expand its
@@ -60,6 +65,21 @@ $sources:
             id: $route.id
             query: $source.projects.projectQuery
             reload: $urlParam.reload
+    # The Activity block: every row (status moves, recorded changes, comments), newest first; the tabs All / Comments / History
+    # filter them in the component and count them. `filter=all` keeps the answer the same whatever tab is open.
+    activity:
+        url: GET /api/modules/task/tasks/{id}/activity?{query}&filter=all&inlineErrors=true
+        params:
+            id: $route.id
+            query: $source.projects.projectQuery
+            reload: $urlParam.reload
+    # The comments (oldest first) for the Comments tab: edited and deleted in place (task:CommentThread).
+    comments:
+        url: GET /api/modules/task/tasks/{id}/comments?{query}&inlineErrors=true
+        params:
+            id: $route.id
+            query: $source.projects.projectQuery
+            reload: $urlParam.reload
     # The contributions of other modules to the slot task:project-header (declared in manifest.json `expose`).
     projectHeader:
         url: GET /api/slots/task:project-header
@@ -67,11 +87,6 @@ $sources:
 $actions:
     setStatus:
         url: POST /api/modules/task/tasks/{id}/status?project={projectParam}&inlineErrors=true
-        resultKey: statusResult
-        reloadSources: true
-    # The stepper of the flow design (task:SegmentedControl sends no body): the status is in the path.
-    setStatusTo:
-        url: POST /api/modules/task/tasks/{id}/status/{statusEncoded}?project={projectParam}&inlineErrors=true
         resultKey: statusResult
         reloadSources: true
     # An empty type (the "None" choice) clears the type.
@@ -130,6 +145,19 @@ $actions:
         url: POST /api/modules/task/tasks/{id}/status?project={projectParam}&inlineErrors=true
         resultKey: subtaskResult
         reloadSources: true
+    # The comments (task:CommentComposer: body { text }; task:CommentThread: {commentId} is the clicked comment, body { text }).
+    addComment:
+        url: POST /api/modules/task/tasks/{id}/comments?project={projectParam}&inlineErrors=true
+        resultKey: commentResult
+        reloadSources: true
+    editComment:
+        url: PATCH /api/modules/task/tasks/{id}/comments/{commentId}?project={projectParam}&inlineErrors=true
+        resultKey: commentResult
+        reloadSources: true
+    removeComment:
+        url: DELETE /api/modules/task/tasks/{id}/comments/{commentId}?project={projectParam}&inlineErrors=true
+        resultKey: commentResult
+        reloadSources: true
     # The confirmation dialog: the body is forms.delete ({ ids, cascade, confirm: true }). The answer is read by the page-level
     # notices, because the task is gone afterwards and the design is not drawn any more.
     deleteTask:
@@ -181,11 +209,848 @@ sections:
   - $type: AbTest
     id: task-design
     label: Task page
-    initial: issue
+    initial: github
     variants:
-      issue:
-        label: Issue
-        hint: Document first - the title and the text, sub-tasks as a checklist, relations grouped, with a sticky properties sidebar where each row opens its picker (GitHub, GitLab, Jira).
+      github:
+        label: GitHub
+        hint: Layout of a GitHub issue, from knowledge of it (no access to the product) - title, Open / Closed badge with the id and when it was opened, the description in a bordered card with a header strip, sub-tasks and relations as cards, the tabbed activity with the composer under it, and a right sidebar of sections separated by dividers.
+        view:
+          $type: VerticalStack
+          $if: $sources.detail.task
+          gap: gap-0
+          items:
+            - $type: task:WidthFrame
+              width: wide
+              items:
+                - $type: VerticalStack
+                  gap: gap-4
+                  items:
+                    - $type: VerticalStack
+                      gap: gap-2
+                      items:
+                        - $type: task:InlineText
+                          ariaLabel: Title
+                          value: $sources.detail.headline
+                          action: setText
+                          valueParam: title
+                          placeholder: Untitled
+                          textClass: text-xl font-semibold leading-snug
+                          params:
+                            id: $route.id
+                            projectParam: $sources.detail.projectParam
+                        - $type: task:ChipRow
+                          gap: gap-2
+                          align: center
+                          justify: between
+                          items:
+                            - $type: task:ChipRow
+                              gap: gap-2
+                              align: center
+                              items:
+                                - $type: task:StatusBadge
+                                  $if: $sources.detail.isOpen
+                                  label: Open
+                                  tone: $sources.detail.statusTone
+                                  icon: open
+                                  size: md
+                                - $type: task:StatusBadge
+                                  $if: $sources.detail.isTerminal
+                                  label: Closed
+                                  tone: $sources.detail.statusTone
+                                  icon: done
+                                  size: md
+                                - $type: Badge
+                                  label: $sources.detail.task.id
+                                  variant: default
+                                - $type: task:Caption
+                                  text: Opened
+                                - $type: RelativeDate
+                                  date: $sources.detail.createdAt
+                            - $type: task:PropertyPopover
+                              label: Menu
+                              appearance: pill
+                              valueText: Actions
+                              align: end
+                              items:
+                                - $type: Dialog
+                                  title: Delete this task?
+                                  trigger:
+                                    - $type: ButtonAction
+                                      label: Delete task...
+                                      variant: danger-outline
+                                      size: sm
+                                  items:
+                                    - $type: task:Notice
+                                      label: $sources.detail.deleteImpactText
+                                      variant: warning
+                                    - $type: Form
+                                      $if: $sources.detail.forms
+                                      onSubmit: $ctx.deleteTask
+                                      initialData: $sources.detail.forms.delete
+                                      fields:
+                                        - $type: Switch
+                                          $if: $sources.detail.hasDescendants
+                                          label: $sources.detail.deleteCascadeLabel
+                                          bind: cascade
+                                      actions:
+                                        - $type: ButtonAction
+                                          label: Delete task
+                                          variant: danger
+                                          type: submit
+                        - $type: task:Notice
+                          $if: $sources.detail.blockedText
+                          label: $sources.detail.blockedText
+                          variant: warning
+                    - $type: task:SplitLayout
+                      sidePosition: right
+                      sideWidth: normal
+                      sticky: true
+                      sideFirstWhenStacked: true
+                      main:
+                        - $type: VerticalStack
+                          gap: gap-4
+                          items:
+                            - $type: VerticalStack
+                              gap: gap-2
+                              items:
+                                - $type: task:Notice
+                                  $if: $ctx.statusResult.errorText
+                                  label: $ctx.statusResult.errorText
+                                  variant: danger
+                                - $type: task:Notice
+                                  $if: $ctx.statusResult.undeliveredText
+                                  label: $ctx.statusResult.undeliveredText
+                                  variant: warning
+                                - $type: task:Notice
+                                  $if: $ctx.typeResult.errorText
+                                  label: $ctx.typeResult.errorText
+                                  variant: danger
+                                - $type: task:Notice
+                                  $if: $ctx.typeResult.undeliveredText
+                                  label: $ctx.typeResult.undeliveredText
+                                  variant: warning
+                                - $type: task:Notice
+                                  $if: $ctx.labelResult.errorText
+                                  label: $ctx.labelResult.errorText
+                                  variant: danger
+                                - $type: task:Notice
+                                  $if: $ctx.labelResult.undeliveredText
+                                  label: $ctx.labelResult.undeliveredText
+                                  variant: warning
+                                - $type: task:Notice
+                                  $if: $ctx.metaResult.errorText
+                                  label: $ctx.metaResult.errorText
+                                  variant: danger
+                                - $type: task:Notice
+                                  $if: $ctx.metaResult.undeliveredText
+                                  label: $ctx.metaResult.undeliveredText
+                                  variant: warning
+                                - $type: task:Notice
+                                  $if: $ctx.parentResult.errorText
+                                  label: $ctx.parentResult.errorText
+                                  variant: danger
+                                - $type: task:Notice
+                                  $if: $ctx.parentResult.undeliveredText
+                                  label: $ctx.parentResult.undeliveredText
+                                  variant: warning
+                                - $type: task:Notice
+                                  $if: $ctx.linkResult.errorText
+                                  label: $ctx.linkResult.errorText
+                                  variant: danger
+                                - $type: task:Notice
+                                  $if: $ctx.linkResult.undeliveredText
+                                  label: $ctx.linkResult.undeliveredText
+                                  variant: warning
+                                - $type: task:Notice
+                                  $if: $ctx.linkRowResult.errorText
+                                  label: $ctx.linkRowResult.errorText
+                                  variant: danger
+                                - $type: task:Notice
+                                  $if: $ctx.linkRowResult.undeliveredText
+                                  label: $ctx.linkRowResult.undeliveredText
+                                  variant: warning
+                                - $type: task:Notice
+                                  $if: $ctx.textResult.errorText
+                                  label: $ctx.textResult.errorText
+                                  variant: danger
+                                - $type: task:Notice
+                                  $if: $ctx.textResult.undeliveredText
+                                  label: $ctx.textResult.undeliveredText
+                                  variant: warning
+                                - $type: task:Notice
+                                  $if: $ctx.subtaskResult.errorText
+                                  label: $ctx.subtaskResult.errorText
+                                  variant: danger
+                                - $type: task:Notice
+                                  $if: $ctx.subtaskResult.undeliveredText
+                                  label: $ctx.subtaskResult.undeliveredText
+                                  variant: warning
+                                - $type: task:Notice
+                                  $if: $ctx.commentResult.errorText
+                                  label: $ctx.commentResult.errorText
+                                  variant: danger
+                                - $type: task:Notice
+                                  $if: $ctx.commentResult.undeliveredText
+                                  label: $ctx.commentResult.undeliveredText
+                                  variant: warning
+                            - $type: task:Panel
+                              title: Description
+                              appearance: strip
+                              items:
+                                - $type: task:InlineText
+                                  $if: $sources.detail.bodyAddsInfo
+                                  multiline: true
+                                  ariaLabel: Description
+                                  value: $sources.detail.body
+                                  action: setText
+                                  valueParam: description
+                                  textClass: text-sm leading-relaxed
+                                  params:
+                                    id: $route.id
+                                    projectParam: $sources.detail.projectParam
+                                - $type: task:InlineText
+                                  $if: $sources.detail.noBodyInfo
+                                  multiline: true
+                                  ariaLabel: Description
+                                  value: ''
+                                  placeholder: Add a description
+                                  action: setText
+                                  valueParam: description
+                                  textClass: text-sm
+                                  params:
+                                    id: $route.id
+                                    projectParam: $sources.detail.projectParam
+                            - $type: task:Panel
+                              title: Sub-tasks
+                              appearance: strip
+                              items:
+                                - $type: task:TaskChecklist
+                                  rows: $sources.detail.checklistRows
+                                  doneAction: setChildStatus
+                                  reopenAction: setChildStatus
+                                  terminalStatus: $sources.detail.terminalStatus
+                                  reopenStatus: $sources.detail.reopenStatus
+                                  addAction: createSubtask
+                                  parentId: $route.id
+                                  titleKey: title
+                                  placeholder: Add a sub-task
+                                  emptyText: No sub-tasks yet
+                                  params:
+                                    projectParam: $sources.detail.projectParam
+                            - $type: task:Panel
+                              title: Relations
+                              appearance: strip
+                              actions:
+                                - $type: task:PropertyPopover
+                                  label: Link
+                                  appearance: pill
+                                  valueText: Add link
+                                  align: end
+                                  closeOnActions:
+                                    - addLink
+                                  params:
+                                    id: $route.id
+                                    projectParam: $sources.detail.projectParam
+                                  items:
+                                    - $type: task:TaskPicker
+                                      ariaLabel: Task to link
+                                      placeholder: Search a task to link
+                                      action: addLink
+                                      bodyKey: target
+                                      choices: $sources.detail.linkTypeOptions
+                                      choiceKey: type
+                                      choiceLabel: Relation
+                                      projectParam: $sources.detail.projectParam
+                                      excludeIds:
+                                        - $route.id
+                                      params:
+                                        id: $route.id
+                                        projectParam: $sources.detail.projectParam
+                              items:
+                                - $type: ExtensionSlot
+                                  $if: $sources.links.hasLinks
+                                  items: $sources.links.groupSections
+                                - $type: task:Caption
+                                  $if: $sources.links.noLinks
+                                  text: No links yet
+                            - $type: task:Panel
+                              title: Activity
+                              appearance: plain
+                              items:
+                                - $type: task:ActivityFeed
+                                  rows: $sources.activity.rows
+                                  filters:
+                                    - all
+                                    - comments
+                                    - history
+                                  composerPosition: bottom
+                                  emptyText: No activity yet
+                                  commentsContent:
+                                    - $type: task:CommentThread
+                                      comments: $sources.comments.comments
+                                      editAction: editComment
+                                      removeAction: removeComment
+                                      emptyText: No comments yet
+                                      params:
+                                        id: $route.id
+                                        projectParam: $sources.detail.projectParam
+                                  composer:
+                                    - $type: task:CommentComposer
+                                      action: addComment
+                                      placeholder: Add a comment...
+                                      params:
+                                        id: $route.id
+                                        projectParam: $sources.detail.projectParam
+                      side:
+                        - $type: VerticalStack
+                          gap: gap-4
+                          items:
+                            - $type: task:Panel
+                              title: Status
+                              appearance: plain
+                              items:
+                                - $type: task:StatusSelect
+                                  options: $sources.detail.statusOptions
+                                  current: $sources.detail.task.status
+                                  action: setStatus
+                                  bodyKey: status
+                                  params:
+                                    id: $route.id
+                                    projectParam: $sources.detail.projectParam
+                            - $type: Divider
+                            - $type: task:Panel
+                              title: Type
+                              appearance: plain
+                              items:
+                                - $type: task:PropertyPopover
+                                  $if: $sources.detail.hasTypes
+                                  label: Type
+                                  appearance: field
+                                  valueText: $sources.detail.task.type
+                                  empty: None
+                                  options: $sources.detail.typeOptions
+                                  value: $sources.detail.forms.type.type
+                                  action: setType
+                                  bodyKey: type
+                                  params:
+                                    id: $route.id
+                                    projectParam: $sources.detail.projectParam
+                                - $type: task:InlineText
+                                  $if: $sources.detail.noTypes
+                                  ariaLabel: Type
+                                  value: $sources.detail.forms.type.type
+                                  placeholder: Set a type
+                                  allowEmpty: true
+                                  action: setType
+                                  valueParam: type
+                                  params:
+                                    id: $route.id
+                                    projectParam: $sources.detail.projectParam
+                            - $type: Divider
+                            - $type: task:Panel
+                              title: Parent
+                              appearance: plain
+                              items:
+                                - $type: task:PropertyPopover
+                                  label: Parent
+                                  appearance: field
+                                  valueText: $sources.detail.parentRow.titleText
+                                  empty: None
+                                  closeOnActions:
+                                    - setParent
+                                    - removeParent
+                                  params:
+                                    id: $route.id
+                                    projectParam: $sources.detail.projectParam
+                                  items:
+                                    - $type: ButtonLink
+                                      $if: $sources.detail.hasParent
+                                      label: Open parent
+                                      size: sm
+                                      to: $sources.detail.parentRow.href
+                                    - $type: task:TaskPicker
+                                      ariaLabel: New parent
+                                      placeholder: Search a task to make the parent
+                                      action: setParent
+                                      bodyKey: parent
+                                      projectParam: $sources.detail.projectParam
+                                      excludeDescendantsOf: $route.id
+                                      params:
+                                        id: $route.id
+                                        projectParam: $sources.detail.projectParam
+                                    - $type: Form
+                                      $if: $sources.detail.canDetach
+                                      onSubmit: $ctx.removeParent
+                                      initialData: $sources.detail.forms.empty
+                                      fields: []
+                                      actions:
+                                        - $type: ButtonAction
+                                          label: Detach from its parent
+                                          variant: danger-outline
+                                          size: sm
+                                          type: submit
+                            - $type: Divider
+                            - $type: task:Panel
+                              title: Labels
+                              appearance: plain
+                              items:
+                                - $type: task:LabelCombobox
+                                  labels: $sources.detail.labelList
+                                  labelKeys: $sources.detail.labelKeys
+                                  addAction: addLabel
+                                  removeAction: removeLabelChip
+                                  labelParam: label
+                                  projectParam: $sources.detail.projectParam
+                                  placeholder: Add a label
+                                  emptyText: No labels
+                                  params:
+                                    id: $route.id
+                                    projectParam: $sources.detail.projectParam
+                            - $type: Divider
+                            - $type: task:Panel
+                              title: Metadata
+                              appearance: plain
+                              items:
+                                - $type: task:MetaEditor
+                                  entries: $sources.detail.metaEntries
+                                  setAction: setMeta
+                                  removeAction: removeMetaKey
+                                  keyParam: key
+                                  valueParam: value
+                                  collapseAfter: 3
+                                  emptyText: No metadata
+                                  params:
+                                    id: $route.id
+                                    projectParam: $sources.detail.projectParam
+      jira:
+        label: Jira
+        hint: Layout of a Jira work item, from knowledge of it (no access to the product) - id and editable summary, an action row (Add sub-task, Link, Actions), Description, Child items with a progress bar, Linked items, Activity with the composer on top, and a sticky right Details panel with the status as a prominent button.
+        view:
+          $type: VerticalStack
+          $if: $sources.detail.task
+          gap: gap-0
+          items:
+            - $type: task:WidthFrame
+              width: wide
+              items:
+                - $type: VerticalStack
+                  gap: gap-4
+                  items:
+                    - $type: VerticalStack
+                      gap: gap-2
+                      items:
+                        - $type: task:ChipRow
+                          gap: gap-2
+                          align: center
+                          items:
+                            - $type: Badge
+                              label: $sources.detail.task.id
+                              variant: default
+                        - $type: task:InlineText
+                          ariaLabel: Title
+                          value: $sources.detail.headline
+                          action: setText
+                          valueParam: title
+                          placeholder: Untitled
+                          textClass: text-xl font-semibold leading-snug
+                          params:
+                            id: $route.id
+                            projectParam: $sources.detail.projectParam
+                        - $type: task:Notice
+                          $if: $sources.detail.blockedText
+                          label: $sources.detail.blockedText
+                          variant: warning
+                        - $type: task:ChipRow
+                          gap: gap-2
+                          align: center
+                          items:
+                            - $type: task:PropertyPopover
+                              label: Sub-task
+                              appearance: pill
+                              valueText: Add sub-task
+                              closeOnActions:
+                                - createSubtask
+                              params:
+                                id: $route.id
+                                projectParam: $sources.detail.projectParam
+                              items:
+                                - $type: task:TaskChecklist
+                                  rows: []
+                                  progress: none
+                                  addAction: createSubtask
+                                  parentId: $route.id
+                                  titleKey: title
+                                  placeholder: Title of the sub-task
+                                  params:
+                                    projectParam: $sources.detail.projectParam
+                            - $type: task:PropertyPopover
+                              label: Link
+                              appearance: pill
+                              valueText: Add link
+                              closeOnActions:
+                                - addLink
+                              params:
+                                id: $route.id
+                                projectParam: $sources.detail.projectParam
+                              items:
+                                - $type: task:TaskPicker
+                                  ariaLabel: Task to link
+                                  placeholder: Search a task to link
+                                  action: addLink
+                                  bodyKey: target
+                                  choices: $sources.detail.linkTypeOptions
+                                  choiceKey: type
+                                  choiceLabel: Relation
+                                  projectParam: $sources.detail.projectParam
+                                  excludeIds:
+                                    - $route.id
+                                  params:
+                                    id: $route.id
+                                    projectParam: $sources.detail.projectParam
+                            - $type: task:PropertyPopover
+                              label: Menu
+                              appearance: pill
+                              valueText: Actions
+                              align: end
+                              items:
+                                - $type: Dialog
+                                  title: Delete this task?
+                                  trigger:
+                                    - $type: ButtonAction
+                                      label: Delete task...
+                                      variant: danger-outline
+                                      size: sm
+                                  items:
+                                    - $type: task:Notice
+                                      label: $sources.detail.deleteImpactText
+                                      variant: warning
+                                    - $type: Form
+                                      $if: $sources.detail.forms
+                                      onSubmit: $ctx.deleteTask
+                                      initialData: $sources.detail.forms.delete
+                                      fields:
+                                        - $type: Switch
+                                          $if: $sources.detail.hasDescendants
+                                          label: $sources.detail.deleteCascadeLabel
+                                          bind: cascade
+                                      actions:
+                                        - $type: ButtonAction
+                                          label: Delete task
+                                          variant: danger
+                                          type: submit
+                    - $type: task:SplitLayout
+                      sidePosition: right
+                      sideWidth: normal
+                      sticky: true
+                      sideFirstWhenStacked: true
+                      main:
+                        - $type: VerticalStack
+                          gap: gap-4
+                          items:
+                            - $type: VerticalStack
+                              gap: gap-2
+                              items:
+                                - $type: task:Notice
+                                  $if: $ctx.statusResult.errorText
+                                  label: $ctx.statusResult.errorText
+                                  variant: danger
+                                - $type: task:Notice
+                                  $if: $ctx.statusResult.undeliveredText
+                                  label: $ctx.statusResult.undeliveredText
+                                  variant: warning
+                                - $type: task:Notice
+                                  $if: $ctx.typeResult.errorText
+                                  label: $ctx.typeResult.errorText
+                                  variant: danger
+                                - $type: task:Notice
+                                  $if: $ctx.typeResult.undeliveredText
+                                  label: $ctx.typeResult.undeliveredText
+                                  variant: warning
+                                - $type: task:Notice
+                                  $if: $ctx.labelResult.errorText
+                                  label: $ctx.labelResult.errorText
+                                  variant: danger
+                                - $type: task:Notice
+                                  $if: $ctx.labelResult.undeliveredText
+                                  label: $ctx.labelResult.undeliveredText
+                                  variant: warning
+                                - $type: task:Notice
+                                  $if: $ctx.metaResult.errorText
+                                  label: $ctx.metaResult.errorText
+                                  variant: danger
+                                - $type: task:Notice
+                                  $if: $ctx.metaResult.undeliveredText
+                                  label: $ctx.metaResult.undeliveredText
+                                  variant: warning
+                                - $type: task:Notice
+                                  $if: $ctx.parentResult.errorText
+                                  label: $ctx.parentResult.errorText
+                                  variant: danger
+                                - $type: task:Notice
+                                  $if: $ctx.parentResult.undeliveredText
+                                  label: $ctx.parentResult.undeliveredText
+                                  variant: warning
+                                - $type: task:Notice
+                                  $if: $ctx.linkResult.errorText
+                                  label: $ctx.linkResult.errorText
+                                  variant: danger
+                                - $type: task:Notice
+                                  $if: $ctx.linkResult.undeliveredText
+                                  label: $ctx.linkResult.undeliveredText
+                                  variant: warning
+                                - $type: task:Notice
+                                  $if: $ctx.linkRowResult.errorText
+                                  label: $ctx.linkRowResult.errorText
+                                  variant: danger
+                                - $type: task:Notice
+                                  $if: $ctx.linkRowResult.undeliveredText
+                                  label: $ctx.linkRowResult.undeliveredText
+                                  variant: warning
+                                - $type: task:Notice
+                                  $if: $ctx.textResult.errorText
+                                  label: $ctx.textResult.errorText
+                                  variant: danger
+                                - $type: task:Notice
+                                  $if: $ctx.textResult.undeliveredText
+                                  label: $ctx.textResult.undeliveredText
+                                  variant: warning
+                                - $type: task:Notice
+                                  $if: $ctx.subtaskResult.errorText
+                                  label: $ctx.subtaskResult.errorText
+                                  variant: danger
+                                - $type: task:Notice
+                                  $if: $ctx.subtaskResult.undeliveredText
+                                  label: $ctx.subtaskResult.undeliveredText
+                                  variant: warning
+                                - $type: task:Notice
+                                  $if: $ctx.commentResult.errorText
+                                  label: $ctx.commentResult.errorText
+                                  variant: danger
+                                - $type: task:Notice
+                                  $if: $ctx.commentResult.undeliveredText
+                                  label: $ctx.commentResult.undeliveredText
+                                  variant: warning
+                            - $type: task:Panel
+                              title: Description
+                              appearance: plain
+                              items:
+                                - $type: task:InlineText
+                                  $if: $sources.detail.bodyAddsInfo
+                                  multiline: true
+                                  ariaLabel: Description
+                                  value: $sources.detail.body
+                                  action: setText
+                                  valueParam: description
+                                  textClass: text-sm leading-relaxed
+                                  params:
+                                    id: $route.id
+                                    projectParam: $sources.detail.projectParam
+                                - $type: task:InlineText
+                                  $if: $sources.detail.noBodyInfo
+                                  multiline: true
+                                  ariaLabel: Description
+                                  value: ''
+                                  placeholder: Add a description
+                                  action: setText
+                                  valueParam: description
+                                  textClass: text-sm
+                                  params:
+                                    id: $route.id
+                                    projectParam: $sources.detail.projectParam
+                            - $type: task:Panel
+                              title: Child items
+                              appearance: plain
+                              items:
+                                - $type: task:TaskChecklist
+                                  rows: $sources.detail.checklistRows
+                                  progress: bar
+                                  doneAction: setChildStatus
+                                  reopenAction: setChildStatus
+                                  terminalStatus: $sources.detail.terminalStatus
+                                  reopenStatus: $sources.detail.reopenStatus
+                                  emptyText: No sub-tasks yet
+                                  params:
+                                    projectParam: $sources.detail.projectParam
+                            - $type: task:Panel
+                              title: Linked items
+                              appearance: plain
+                              items:
+                                - $type: ExtensionSlot
+                                  $if: $sources.links.hasLinks
+                                  items: $sources.links.groupSections
+                                - $type: task:Caption
+                                  $if: $sources.links.noLinks
+                                  text: No links yet
+                            - $type: task:Panel
+                              title: Activity
+                              appearance: plain
+                              items:
+                                - $type: task:ActivityFeed
+                                  rows: $sources.activity.rows
+                                  filters:
+                                    - all
+                                    - comments
+                                    - history
+                                  composerPosition: top
+                                  emptyText: No activity yet
+                                  commentsContent:
+                                    - $type: task:CommentThread
+                                      comments: $sources.comments.comments
+                                      editAction: editComment
+                                      removeAction: removeComment
+                                      emptyText: No comments yet
+                                      params:
+                                        id: $route.id
+                                        projectParam: $sources.detail.projectParam
+                                  composer:
+                                    - $type: task:CommentComposer
+                                      action: addComment
+                                      placeholder: Add a comment...
+                                      params:
+                                        id: $route.id
+                                        projectParam: $sources.detail.projectParam
+                      side:
+                        - $type: task:Panel
+                          title: Details
+                          appearance: card
+                          items:
+                            - $type: VerticalStack
+                              gap: gap-4
+                              items:
+                                - $type: task:StatusSelect
+                                  appearance: button
+                                  options: $sources.detail.statusOptions
+                                  current: $sources.detail.task.status
+                                  action: setStatus
+                                  bodyKey: status
+                                  params:
+                                    id: $route.id
+                                    projectParam: $sources.detail.projectParam
+                                - $type: task:PropertyList
+                                  density: comfortable
+                                  labelPlacement: inline
+                                  labelWidth: narrow
+                                  items:
+                                    - $type: task:PropertyRow
+                                      label: Type
+                                      align: control
+                                      items:
+                                        - $type: task:PropertyPopover
+                                          $if: $sources.detail.hasTypes
+                                          label: Type
+                                          appearance: field
+                                          valueText: $sources.detail.task.type
+                                          empty: None
+                                          options: $sources.detail.typeOptions
+                                          value: $sources.detail.forms.type.type
+                                          action: setType
+                                          bodyKey: type
+                                          params:
+                                            id: $route.id
+                                            projectParam: $sources.detail.projectParam
+                                        - $type: task:InlineText
+                                          $if: $sources.detail.noTypes
+                                          ariaLabel: Type
+                                          value: $sources.detail.forms.type.type
+                                          placeholder: Set a type
+                                          allowEmpty: true
+                                          action: setType
+                                          valueParam: type
+                                          params:
+                                            id: $route.id
+                                            projectParam: $sources.detail.projectParam
+                                    - $type: task:PropertyRow
+                                      label: Parent
+                                      align: control
+                                      items:
+                                        - $type: task:PropertyPopover
+                                          label: Parent
+                                          appearance: field
+                                          valueText: $sources.detail.parentRow.titleText
+                                          empty: None
+                                          closeOnActions:
+                                            - setParent
+                                            - removeParent
+                                          params:
+                                            id: $route.id
+                                            projectParam: $sources.detail.projectParam
+                                          items:
+                                            - $type: ButtonLink
+                                              $if: $sources.detail.hasParent
+                                              label: Open parent
+                                              size: sm
+                                              to: $sources.detail.parentRow.href
+                                            - $type: task:TaskPicker
+                                              ariaLabel: New parent
+                                              placeholder: Search a task to make the parent
+                                              action: setParent
+                                              bodyKey: parent
+                                              projectParam: $sources.detail.projectParam
+                                              excludeDescendantsOf: $route.id
+                                              params:
+                                                id: $route.id
+                                                projectParam: $sources.detail.projectParam
+                                            - $type: Form
+                                              $if: $sources.detail.canDetach
+                                              onSubmit: $ctx.removeParent
+                                              initialData: $sources.detail.forms.empty
+                                              fields: []
+                                              actions:
+                                                - $type: ButtonAction
+                                                  label: Detach from its parent
+                                                  variant: danger-outline
+                                                  size: sm
+                                                  type: submit
+                                    - $type: task:PropertyRow
+                                      label: Labels
+                                      align: control
+                                      items:
+                                        - $type: task:LabelCombobox
+                                          labels: $sources.detail.labelList
+                                          labelKeys: $sources.detail.labelKeys
+                                          addAction: addLabel
+                                          removeAction: removeLabelChip
+                                          labelParam: label
+                                          projectParam: $sources.detail.projectParam
+                                          placeholder: Add a label
+                                          emptyText: No labels
+                                          params:
+                                            id: $route.id
+                                            projectParam: $sources.detail.projectParam
+                                    - $type: task:PropertyRow
+                                      label: Metadata
+                                      align: control
+                                      items:
+                                        - $type: task:MetaEditor
+                                          entries: $sources.detail.metaEntries
+                                          setAction: setMeta
+                                          removeAction: removeMetaKey
+                                          keyParam: key
+                                          valueParam: value
+                                          collapseAfter: 3
+                                          emptyText: No metadata
+                                          params:
+                                            id: $route.id
+                                            projectParam: $sources.detail.projectParam
+                                - $type: Divider
+                                - $type: task:PropertyList
+                                  density: compact
+                                  labelPlacement: inline
+                                  labelWidth: narrow
+                                  items:
+                                    - $type: task:PropertyRow
+                                      label: Created
+                                      items:
+                                        - $type: RelativeDate
+                                          date: $sources.detail.createdAt
+                                    - $type: task:PropertyRow
+                                      label: Updated
+                                      items:
+                                        - $type: RelativeDate
+                                          date: $sources.detail.updatedAt
+      gitlab:
+        label: GitLab
+        hint: Layout of a GitLab work item, from knowledge of it (no access to the product) - Open / Closed badge and the actions menu on the right of the header, the description, Child items and Linked items cards, Activity with a filter dropdown, and a right sidebar of collapsible sections with Edit links and the dates as a footer.
         view:
           $type: VerticalStack
           $if: $sources.detail.task
@@ -205,17 +1070,30 @@ sections:
                           align: center
                           justify: between
                           items:
-                            - $type: Badge
-                              label: $sources.detail.task.id
-                              variant: default
-                            - $type: Popover
+                            - $type: task:ChipRow
+                              gap: gap-2
+                              align: center
+                              items:
+                                - $type: task:StatusBadge
+                                  $if: $sources.detail.isOpen
+                                  label: Open
+                                  tone: $sources.detail.statusTone
+                                  icon: open
+                                  size: md
+                                - $type: task:StatusBadge
+                                  $if: $sources.detail.isTerminal
+                                  label: Closed
+                                  tone: $sources.detail.statusTone
+                                  icon: done
+                                  size: md
+                                - $type: Badge
+                                  label: $sources.detail.task.id
+                                  variant: default
+                            - $type: task:PropertyPopover
+                              label: Menu
+                              appearance: pill
+                              valueText: Actions
                               align: end
-                              trigger:
-                                - $type: ButtonAction
-                                  label: Actions
-                                  icon: MoreHorizontal
-                                  variant: secondary
-                                  size: sm
                               items:
                                 - $type: Dialog
                                   title: Delete this task?
@@ -340,6 +1218,14 @@ sections:
                                   $if: $ctx.subtaskResult.undeliveredText
                                   label: $ctx.subtaskResult.undeliveredText
                                   variant: warning
+                                - $type: task:Notice
+                                  $if: $ctx.commentResult.errorText
+                                  label: $ctx.commentResult.errorText
+                                  variant: danger
+                                - $type: task:Notice
+                                  $if: $ctx.commentResult.undeliveredText
+                                  label: $ctx.commentResult.undeliveredText
+                                  variant: warning
                             - $type: task:InlineText
                               $if: $sources.detail.bodyAddsInfo
                               multiline: true
@@ -364,28 +1250,50 @@ sections:
                                 id: $route.id
                                 projectParam: $sources.detail.projectParam
                             - $type: task:Panel
-                              title: Sub-tasks
+                              title: Child items
+                              appearance: card
+                              count: $sources.detail.childrenSummary.total
+                              actions:
+                                - $type: task:PropertyPopover
+                                  label: Sub-task
+                                  appearance: pill
+                                  valueText: Add sub-task
+                                  align: end
+                                  closeOnActions:
+                                    - createSubtask
+                                  params:
+                                    id: $route.id
+                                    projectParam: $sources.detail.projectParam
+                                  items:
+                                    - $type: task:TaskChecklist
+                                      rows: []
+                                      progress: none
+                                      addAction: createSubtask
+                                      parentId: $route.id
+                                      titleKey: title
+                                      placeholder: Title of the sub-task
+                                      params:
+                                        projectParam: $sources.detail.projectParam
                               items:
                                 - $type: task:TaskChecklist
                                   rows: $sources.detail.checklistRows
+                                  progress: bar
                                   doneAction: setChildStatus
                                   reopenAction: setChildStatus
                                   terminalStatus: $sources.detail.terminalStatus
                                   reopenStatus: $sources.detail.reopenStatus
-                                  addAction: createSubtask
-                                  parentId: $route.id
-                                  titleKey: title
-                                  placeholder: Add a sub-task
                                   emptyText: No sub-tasks yet
                                   params:
                                     projectParam: $sources.detail.projectParam
                             - $type: task:Panel
-                              title: Relations
+                              title: Linked items
+                              appearance: card
                               actions:
                                 - $type: task:PropertyPopover
                                   label: Link
                                   appearance: pill
                                   valueText: Add link
+                                  align: end
                                   closeOnActions:
                                     - addLink
                                   params:
@@ -410,70 +1318,76 @@ sections:
                                 - $type: ExtensionSlot
                                   $if: $sources.links.hasLinks
                                   items: $sources.links.groupSections
-                                - $type: Badge
+                                - $type: task:Caption
                                   $if: $sources.links.noLinks
-                                  label: No links yet
-                                  variant: info
-                            - $type: task:Panel
-                              title: Metadata
-                              count: $sources.detail.metaCount
-                              collapsible: true
-                              defaultOpen: false
-                              items:
-                                - $type: task:MetaEditor
-                                  entries: $sources.detail.metaEntries
-                                  setAction: setMeta
-                                  removeAction: removeMetaKey
-                                  keyParam: key
-                                  valueParam: value
-                                  collapseAfter: 3
-                                  emptyText: No metadata
-                                  params:
-                                    id: $route.id
-                                    projectParam: $sources.detail.projectParam
+                                  text: No links yet
                             - $type: task:Panel
                               title: Activity
-                              collapsible: true
-                              defaultOpen: false
+                              appearance: plain
                               items:
-                                - $type: task:Timeline
-                                  $if: $sources.detail.hasActivity
-                                  entries: $sources.detail.activity
-                                  groupByDay: false
-                                  order: newest-first
+                                - $type: task:ActivityFeed
+                                  rows: $sources.activity.rows
+                                  filters:
+                                    - all
+                                    - comments
+                                    - history
+                                  filterAppearance: select
+                                  composerPosition: bottom
+                                  emptyText: No activity yet
+                                  commentsContent:
+                                    - $type: task:CommentThread
+                                      comments: $sources.comments.comments
+                                      editAction: editComment
+                                      removeAction: removeComment
+                                      emptyText: No comments yet
+                                      params:
+                                        id: $route.id
+                                        projectParam: $sources.detail.projectParam
+                                  composer:
+                                    - $type: task:CommentComposer
+                                      action: addComment
+                                      placeholder: Add a comment...
+                                      params:
+                                        id: $route.id
+                                        projectParam: $sources.detail.projectParam
                       side:
                         - $type: VerticalStack
                           gap: gap-2
                           items:
-                            - $type: task:PropertyPopover
-                              label: Status
-                              appearance: row
-                              valueText: $sources.detail.task.status
-                              options: $sources.detail.statusOptions
-                              value: $sources.detail.task.status
-                              action: setStatus
-                              bodyKey: status
-                              params:
-                                id: $route.id
-                                projectParam: $sources.detail.projectParam
-                            - $type: task:PropertyPopover
-                              $if: $sources.detail.hasTypes
-                              label: Type
-                              appearance: row
-                              valueText: $sources.detail.task.type
-                              empty: none
-                              options: $sources.detail.typeOptions
-                              value: $sources.detail.forms.type.type
-                              action: setType
-                              bodyKey: type
-                              params:
-                                id: $route.id
-                                projectParam: $sources.detail.projectParam
-                            - $type: task:PropertyRow
-                              $if: $sources.detail.noTypes
-                              label: Type
+                            - $type: task:Panel
+                              title: Status
+                              appearance: card
+                              collapsible: true
                               items:
+                                - $type: task:StatusSelect
+                                  options: $sources.detail.statusOptions
+                                  current: $sources.detail.task.status
+                                  action: setStatus
+                                  bodyKey: status
+                                  params:
+                                    id: $route.id
+                                    projectParam: $sources.detail.projectParam
+                            - $type: task:Panel
+                              title: Type
+                              appearance: card
+                              collapsible: true
+                              items:
+                                - $type: task:PropertyPopover
+                                  $if: $sources.detail.hasTypes
+                                  label: Type
+                                  appearance: field
+                                  actionLabel: Edit
+                                  valueText: $sources.detail.task.type
+                                  empty: None
+                                  options: $sources.detail.typeOptions
+                                  value: $sources.detail.forms.type.type
+                                  action: setType
+                                  bodyKey: type
+                                  params:
+                                    id: $route.id
+                                    projectParam: $sources.detail.projectParam
                                 - $type: task:InlineText
+                                  $if: $sources.detail.noTypes
                                   ariaLabel: Type
                                   value: $sources.detail.forms.type.type
                                   placeholder: Set a type
@@ -483,46 +1397,54 @@ sections:
                                   params:
                                     id: $route.id
                                     projectParam: $sources.detail.projectParam
-                            - $type: task:PropertyPopover
-                              label: Parent
-                              appearance: row
-                              valueText: $sources.detail.parentRow.titleText
-                              empty: none
-                              closeOnActions:
-                                - setParent
-                                - removeParent
-                              params:
-                                id: $route.id
-                                projectParam: $sources.detail.projectParam
+                            - $type: task:Panel
+                              title: Parent
+                              appearance: card
+                              collapsible: true
                               items:
-                                - $type: ButtonLink
-                                  $if: $sources.detail.hasParent
-                                  label: Open parent
-                                  size: sm
-                                  to: $sources.detail.parentRow.href
-                                - $type: task:TaskPicker
-                                  ariaLabel: New parent
-                                  placeholder: Search a task to make the parent
-                                  action: setParent
-                                  bodyKey: parent
-                                  projectParam: $sources.detail.projectParam
-                                  excludeDescendantsOf: $route.id
+                                - $type: task:PropertyPopover
+                                  label: Parent
+                                  appearance: field
+                                  actionLabel: Edit
+                                  valueText: $sources.detail.parentRow.titleText
+                                  empty: None
+                                  closeOnActions:
+                                    - setParent
+                                    - removeParent
                                   params:
                                     id: $route.id
                                     projectParam: $sources.detail.projectParam
-                                - $type: Form
-                                  $if: $sources.detail.canDetach
-                                  onSubmit: $ctx.removeParent
-                                  initialData: $sources.detail.forms.empty
-                                  fields: []
-                                  actions:
-                                    - $type: ButtonAction
-                                      label: Detach from its parent
-                                      variant: danger-outline
+                                  items:
+                                    - $type: ButtonLink
+                                      $if: $sources.detail.hasParent
+                                      label: Open parent
                                       size: sm
-                                      type: submit
-                            - $type: task:PropertyRow
-                              label: Labels
+                                      to: $sources.detail.parentRow.href
+                                    - $type: task:TaskPicker
+                                      ariaLabel: New parent
+                                      placeholder: Search a task to make the parent
+                                      action: setParent
+                                      bodyKey: parent
+                                      projectParam: $sources.detail.projectParam
+                                      excludeDescendantsOf: $route.id
+                                      params:
+                                        id: $route.id
+                                        projectParam: $sources.detail.projectParam
+                                    - $type: Form
+                                      $if: $sources.detail.canDetach
+                                      onSubmit: $ctx.removeParent
+                                      initialData: $sources.detail.forms.empty
+                                      fields: []
+                                      actions:
+                                        - $type: ButtonAction
+                                          label: Detach from its parent
+                                          variant: danger-outline
+                                          size: sm
+                                          type: submit
+                            - $type: task:Panel
+                              title: Labels
+                              appearance: card
+                              collapsible: true
                               items:
                                 - $type: task:LabelCombobox
                                   labels: $sources.detail.labelList
@@ -536,7 +1458,22 @@ sections:
                                   params:
                                     id: $route.id
                                     projectParam: $sources.detail.projectParam
-                            - $type: Divider
+                            - $type: task:Panel
+                              title: Metadata
+                              appearance: card
+                              collapsible: true
+                              items:
+                                - $type: task:MetaEditor
+                                  entries: $sources.detail.metaEntries
+                                  setAction: setMeta
+                                  removeAction: removeMetaKey
+                                  keyParam: key
+                                  valueParam: value
+                                  collapseAfter: 3
+                                  emptyText: No metadata
+                                  params:
+                                    id: $route.id
+                                    projectParam: $sources.detail.projectParam
                             - $type: task:PropertyList
                               density: compact
                               labelPlacement: inline
@@ -552,706 +1489,3 @@ sections:
                                   items:
                                     - $type: RelativeDate
                                       date: $sources.detail.updatedAt
-      bar:
-        label: Bar
-        hint: One row of labelled property pills under the title (status, type, labels, parent, blocked, link, metadata), each opening its picker; one narrow column (Linear).
-        view:
-          $type: VerticalStack
-          $if: $sources.detail.task
-          gap: gap-0
-          items:
-            - $type: task:WidthFrame
-              width: reading
-              items:
-                - $type: VerticalStack
-                  gap: gap-4
-                  items:
-                    - $type: VerticalStack
-                      gap: gap-2
-                      items:
-                        - $type: task:ChipRow
-                          gap: gap-2
-                          align: center
-                          justify: between
-                          items:
-                            - $type: Badge
-                              label: $sources.detail.task.id
-                              variant: default
-                            - $type: Popover
-                              align: end
-                              trigger:
-                                - $type: ButtonAction
-                                  label: Actions
-                                  icon: MoreHorizontal
-                                  variant: secondary
-                                  size: sm
-                              items:
-                                - $type: Dialog
-                                  title: Delete this task?
-                                  trigger:
-                                    - $type: ButtonAction
-                                      label: Delete task...
-                                      variant: danger-outline
-                                      size: sm
-                                  items:
-                                    - $type: task:Notice
-                                      label: $sources.detail.deleteImpactText
-                                      variant: warning
-                                    - $type: Form
-                                      $if: $sources.detail.forms
-                                      onSubmit: $ctx.deleteTask
-                                      initialData: $sources.detail.forms.delete
-                                      fields:
-                                        - $type: Switch
-                                          $if: $sources.detail.hasDescendants
-                                          label: $sources.detail.deleteCascadeLabel
-                                          bind: cascade
-                                      actions:
-                                        - $type: ButtonAction
-                                          label: Delete task
-                                          variant: danger
-                                          type: submit
-                        - $type: task:InlineText
-                          ariaLabel: Title
-                          value: $sources.detail.headline
-                          action: setText
-                          valueParam: title
-                          placeholder: Untitled
-                          textClass: text-xl font-semibold leading-snug
-                          params:
-                            id: $route.id
-                            projectParam: $sources.detail.projectParam
-                    - $type: task:ChipRow
-                      gap: gap-2
-                      align: center
-                      items:
-                        - $type: task:PropertyPopover
-                          label: Status
-                          appearance: pill
-                          valueText: $sources.detail.pillTexts.status
-                          tone: $sources.detail.statusTone
-                          options: $sources.detail.statusOptions
-                          value: $sources.detail.task.status
-                          action: setStatus
-                          bodyKey: status
-                          params:
-                            id: $route.id
-                            projectParam: $sources.detail.projectParam
-                        - $type: task:PropertyPopover
-                          $if: $sources.detail.hasTypes
-                          label: Type
-                          appearance: pill
-                          valueText: $sources.detail.pillTexts.type
-                          options: $sources.detail.typeOptions
-                          value: $sources.detail.forms.type.type
-                          action: setType
-                          bodyKey: type
-                          params:
-                            id: $route.id
-                            projectParam: $sources.detail.projectParam
-                        - $type: task:PropertyRow
-                          $if: $sources.detail.noTypes
-                          label: Type
-                          items:
-                            - $type: task:InlineText
-                              ariaLabel: Type
-                              value: $sources.detail.forms.type.type
-                              placeholder: Set a type
-                              allowEmpty: true
-                              action: setType
-                              valueParam: type
-                              params:
-                                id: $route.id
-                                projectParam: $sources.detail.projectParam
-                        - $type: task:LabelCombobox
-                          labels: $sources.detail.labelList
-                          labelKeys: $sources.detail.labelKeys
-                          addAction: addLabel
-                          removeAction: removeLabelChip
-                          labelParam: label
-                          projectParam: $sources.detail.projectParam
-                          placeholder: Add a label
-                          emptyText: No labels
-                          params:
-                            id: $route.id
-                            projectParam: $sources.detail.projectParam
-                        - $type: task:PropertyPopover
-                          label: Parent
-                          appearance: pill
-                          valueText: $sources.detail.pillTexts.parent
-                          closeOnActions:
-                            - setParent
-                            - removeParent
-                          params:
-                            id: $route.id
-                            projectParam: $sources.detail.projectParam
-                          items:
-                            - $type: ButtonLink
-                              $if: $sources.detail.hasParent
-                              label: Open parent
-                              size: sm
-                              to: $sources.detail.parentRow.href
-                            - $type: task:TaskPicker
-                              ariaLabel: New parent
-                              placeholder: Search a task to make the parent
-                              action: setParent
-                              bodyKey: parent
-                              projectParam: $sources.detail.projectParam
-                              excludeDescendantsOf: $route.id
-                              params:
-                                id: $route.id
-                                projectParam: $sources.detail.projectParam
-                            - $type: Form
-                              $if: $sources.detail.canDetach
-                              onSubmit: $ctx.removeParent
-                              initialData: $sources.detail.forms.empty
-                              fields: []
-                              actions:
-                                - $type: ButtonAction
-                                  label: Detach from its parent
-                                  variant: danger-outline
-                                  size: sm
-                                  type: submit
-                        - $type: Badge
-                          $if: $sources.detail.pillTexts.blocked
-                          label: $sources.detail.pillTexts.blocked
-                          variant: danger
-                        - $type: task:PropertyPopover
-                          label: Link
-                          appearance: pill
-                          valueText: Add link
-                          closeOnActions:
-                            - addLink
-                          params:
-                            id: $route.id
-                            projectParam: $sources.detail.projectParam
-                          items:
-                            - $type: task:TaskPicker
-                              ariaLabel: Task to link
-                              placeholder: Search a task to link
-                              action: addLink
-                              bodyKey: target
-                              choices: $sources.detail.linkTypeOptions
-                              choiceKey: type
-                              choiceLabel: Relation
-                              projectParam: $sources.detail.projectParam
-                              excludeIds:
-                                - $route.id
-                              params:
-                                id: $route.id
-                                projectParam: $sources.detail.projectParam
-                        - $type: task:PropertyPopover
-                          label: Metadata
-                          appearance: pill
-                          valueText: Metadata
-                          items:
-                            - $type: task:MetaEditor
-                              entries: $sources.detail.metaEntries
-                              setAction: setMeta
-                              removeAction: removeMetaKey
-                              keyParam: key
-                              valueParam: value
-                              collapseAfter: 3
-                              emptyText: No metadata
-                              params:
-                                id: $route.id
-                                projectParam: $sources.detail.projectParam
-                    - $type: VerticalStack
-                      gap: gap-2
-                      items:
-                        - $type: task:Notice
-                          $if: $ctx.statusResult.errorText
-                          label: $ctx.statusResult.errorText
-                          variant: danger
-                        - $type: task:Notice
-                          $if: $ctx.statusResult.undeliveredText
-                          label: $ctx.statusResult.undeliveredText
-                          variant: warning
-                        - $type: task:Notice
-                          $if: $ctx.typeResult.errorText
-                          label: $ctx.typeResult.errorText
-                          variant: danger
-                        - $type: task:Notice
-                          $if: $ctx.typeResult.undeliveredText
-                          label: $ctx.typeResult.undeliveredText
-                          variant: warning
-                        - $type: task:Notice
-                          $if: $ctx.labelResult.errorText
-                          label: $ctx.labelResult.errorText
-                          variant: danger
-                        - $type: task:Notice
-                          $if: $ctx.labelResult.undeliveredText
-                          label: $ctx.labelResult.undeliveredText
-                          variant: warning
-                        - $type: task:Notice
-                          $if: $ctx.metaResult.errorText
-                          label: $ctx.metaResult.errorText
-                          variant: danger
-                        - $type: task:Notice
-                          $if: $ctx.metaResult.undeliveredText
-                          label: $ctx.metaResult.undeliveredText
-                          variant: warning
-                        - $type: task:Notice
-                          $if: $ctx.parentResult.errorText
-                          label: $ctx.parentResult.errorText
-                          variant: danger
-                        - $type: task:Notice
-                          $if: $ctx.parentResult.undeliveredText
-                          label: $ctx.parentResult.undeliveredText
-                          variant: warning
-                        - $type: task:Notice
-                          $if: $ctx.linkResult.errorText
-                          label: $ctx.linkResult.errorText
-                          variant: danger
-                        - $type: task:Notice
-                          $if: $ctx.linkResult.undeliveredText
-                          label: $ctx.linkResult.undeliveredText
-                          variant: warning
-                        - $type: task:Notice
-                          $if: $ctx.linkRowResult.errorText
-                          label: $ctx.linkRowResult.errorText
-                          variant: danger
-                        - $type: task:Notice
-                          $if: $ctx.linkRowResult.undeliveredText
-                          label: $ctx.linkRowResult.undeliveredText
-                          variant: warning
-                        - $type: task:Notice
-                          $if: $ctx.textResult.errorText
-                          label: $ctx.textResult.errorText
-                          variant: danger
-                        - $type: task:Notice
-                          $if: $ctx.textResult.undeliveredText
-                          label: $ctx.textResult.undeliveredText
-                          variant: warning
-                        - $type: task:Notice
-                          $if: $ctx.subtaskResult.errorText
-                          label: $ctx.subtaskResult.errorText
-                          variant: danger
-                        - $type: task:Notice
-                          $if: $ctx.subtaskResult.undeliveredText
-                          label: $ctx.subtaskResult.undeliveredText
-                          variant: warning
-                    - $type: task:InlineText
-                      $if: $sources.detail.bodyAddsInfo
-                      multiline: true
-                      ariaLabel: Description
-                      value: $sources.detail.body
-                      action: setText
-                      valueParam: description
-                      textClass: text-sm leading-relaxed
-                      params:
-                        id: $route.id
-                        projectParam: $sources.detail.projectParam
-                    - $type: task:InlineText
-                      $if: $sources.detail.noBodyInfo
-                      multiline: true
-                      ariaLabel: Description
-                      value: ''
-                      placeholder: Add a description
-                      action: setText
-                      valueParam: description
-                      textClass: text-sm
-                      params:
-                        id: $route.id
-                        projectParam: $sources.detail.projectParam
-                    - $type: task:Panel
-                      title: Sub-tasks
-                      appearance: plain
-                      items:
-                        - $type: task:TaskChecklist
-                          rows: $sources.detail.checklistRows
-                          doneAction: setChildStatus
-                          reopenAction: setChildStatus
-                          terminalStatus: $sources.detail.terminalStatus
-                          reopenStatus: $sources.detail.reopenStatus
-                          addAction: createSubtask
-                          parentId: $route.id
-                          titleKey: title
-                          placeholder: Add a sub-task
-                          emptyText: No sub-tasks yet
-                          params:
-                            projectParam: $sources.detail.projectParam
-                    - $type: task:Panel
-                      $if: $sources.links.hasLinks
-                      title: Relations
-                      appearance: plain
-                      items:
-                        - $type: ExtensionSlot
-                          $if: $sources.links.hasLinks
-                          items: $sources.links.groupSections
-                    - $type: task:Panel
-                      title: Activity
-                      appearance: plain
-                      collapsible: true
-                      defaultOpen: false
-                      items:
-                        - $type: task:Timeline
-                          $if: $sources.detail.hasActivity
-                          entries: $sources.detail.activity
-                          groupByDay: false
-                          order: newest-first
-                        - $type: task:PropertyList
-                          density: compact
-                          labelPlacement: inline
-                          labelWidth: narrow
-                          items:
-                            - $type: task:PropertyRow
-                              label: Created
-                              items:
-                                - $type: RelativeDate
-                                  date: $sources.detail.createdAt
-                            - $type: task:PropertyRow
-                              label: Updated
-                              items:
-                                - $type: RelativeDate
-                                  date: $sources.detail.updatedAt
-      flow:
-        label: Flow
-        hint: For tasks made by a flow - a one-click status stepper, the long prompt folded to 6 lines, the steps as a checklist with a progress ring, the activity open under it.
-        view:
-          $type: VerticalStack
-          $if: $sources.detail.task
-          gap: gap-0
-          items:
-            - $type: task:WidthFrame
-              width: reading
-              items:
-                - $type: VerticalStack
-                  gap: gap-4
-                  items:
-                    - $type: VerticalStack
-                      gap: gap-2
-                      items:
-                        - $type: task:ChipRow
-                          gap: gap-2
-                          align: center
-                          justify: between
-                          items:
-                            - $type: Badge
-                              label: $sources.detail.task.id
-                              variant: default
-                            - $type: Popover
-                              align: end
-                              trigger:
-                                - $type: ButtonAction
-                                  label: Actions
-                                  icon: MoreHorizontal
-                                  variant: secondary
-                                  size: sm
-                              items:
-                                - $type: Dialog
-                                  title: Delete this task?
-                                  trigger:
-                                    - $type: ButtonAction
-                                      label: Delete task...
-                                      variant: danger-outline
-                                      size: sm
-                                  items:
-                                    - $type: task:Notice
-                                      label: $sources.detail.deleteImpactText
-                                      variant: warning
-                                    - $type: Form
-                                      $if: $sources.detail.forms
-                                      onSubmit: $ctx.deleteTask
-                                      initialData: $sources.detail.forms.delete
-                                      fields:
-                                        - $type: Switch
-                                          $if: $sources.detail.hasDescendants
-                                          label: $sources.detail.deleteCascadeLabel
-                                          bind: cascade
-                                      actions:
-                                        - $type: ButtonAction
-                                          label: Delete task
-                                          variant: danger
-                                          type: submit
-                        - $type: task:InlineText
-                          ariaLabel: Title
-                          value: $sources.detail.headline
-                          action: setText
-                          valueParam: title
-                          placeholder: Untitled
-                          textClass: text-xl font-semibold leading-snug
-                          params:
-                            id: $route.id
-                            projectParam: $sources.detail.projectParam
-                        - $type: task:SegmentedControl
-                          ariaLabel: Status
-                          appearance: pills
-                          options: $sources.detail.statusChoices
-                          value: $sources.detail.task.status
-                          action: setStatusTo
-                          valueParam: status
-                          params:
-                            id: $route.id
-                            projectParam: $sources.detail.projectParam
-                        - $type: task:Notice
-                          $if: $sources.detail.blockedText
-                          label: $sources.detail.blockedText
-                          variant: warning
-                    - $type: VerticalStack
-                      gap: gap-2
-                      items:
-                        - $type: task:Notice
-                          $if: $ctx.statusResult.errorText
-                          label: $ctx.statusResult.errorText
-                          variant: danger
-                        - $type: task:Notice
-                          $if: $ctx.statusResult.undeliveredText
-                          label: $ctx.statusResult.undeliveredText
-                          variant: warning
-                        - $type: task:Notice
-                          $if: $ctx.typeResult.errorText
-                          label: $ctx.typeResult.errorText
-                          variant: danger
-                        - $type: task:Notice
-                          $if: $ctx.typeResult.undeliveredText
-                          label: $ctx.typeResult.undeliveredText
-                          variant: warning
-                        - $type: task:Notice
-                          $if: $ctx.labelResult.errorText
-                          label: $ctx.labelResult.errorText
-                          variant: danger
-                        - $type: task:Notice
-                          $if: $ctx.labelResult.undeliveredText
-                          label: $ctx.labelResult.undeliveredText
-                          variant: warning
-                        - $type: task:Notice
-                          $if: $ctx.metaResult.errorText
-                          label: $ctx.metaResult.errorText
-                          variant: danger
-                        - $type: task:Notice
-                          $if: $ctx.metaResult.undeliveredText
-                          label: $ctx.metaResult.undeliveredText
-                          variant: warning
-                        - $type: task:Notice
-                          $if: $ctx.parentResult.errorText
-                          label: $ctx.parentResult.errorText
-                          variant: danger
-                        - $type: task:Notice
-                          $if: $ctx.parentResult.undeliveredText
-                          label: $ctx.parentResult.undeliveredText
-                          variant: warning
-                        - $type: task:Notice
-                          $if: $ctx.linkResult.errorText
-                          label: $ctx.linkResult.errorText
-                          variant: danger
-                        - $type: task:Notice
-                          $if: $ctx.linkResult.undeliveredText
-                          label: $ctx.linkResult.undeliveredText
-                          variant: warning
-                        - $type: task:Notice
-                          $if: $ctx.linkRowResult.errorText
-                          label: $ctx.linkRowResult.errorText
-                          variant: danger
-                        - $type: task:Notice
-                          $if: $ctx.linkRowResult.undeliveredText
-                          label: $ctx.linkRowResult.undeliveredText
-                          variant: warning
-                        - $type: task:Notice
-                          $if: $ctx.textResult.errorText
-                          label: $ctx.textResult.errorText
-                          variant: danger
-                        - $type: task:Notice
-                          $if: $ctx.textResult.undeliveredText
-                          label: $ctx.textResult.undeliveredText
-                          variant: warning
-                        - $type: task:Notice
-                          $if: $ctx.subtaskResult.errorText
-                          label: $ctx.subtaskResult.errorText
-                          variant: danger
-                        - $type: task:Notice
-                          $if: $ctx.subtaskResult.undeliveredText
-                          label: $ctx.subtaskResult.undeliveredText
-                          variant: warning
-                    - $type: task:InlineText
-                      $if: $sources.detail.bodyAddsInfo
-                      multiline: true
-                      collapsedLines: 6
-                      ariaLabel: Description
-                      value: $sources.detail.body
-                      action: setText
-                      valueParam: description
-                      textClass: text-sm leading-relaxed
-                      params:
-                        id: $route.id
-                        projectParam: $sources.detail.projectParam
-                    - $type: task:InlineText
-                      $if: $sources.detail.noBodyInfo
-                      multiline: true
-                      ariaLabel: Description
-                      value: ''
-                      placeholder: Add a description
-                      action: setText
-                      valueParam: description
-                      textClass: text-sm
-                      params:
-                        id: $route.id
-                        projectParam: $sources.detail.projectParam
-                    - $type: task:Panel
-                      title: Steps
-                      appearance: plain
-                      items:
-                        - $type: task:TaskChecklist
-                          rows: $sources.detail.checklistRows
-                          doneAction: setChildStatus
-                          reopenAction: setChildStatus
-                          terminalStatus: $sources.detail.terminalStatus
-                          reopenStatus: $sources.detail.reopenStatus
-                          addAction: createSubtask
-                          parentId: $route.id
-                          titleKey: title
-                          placeholder: Add a sub-task
-                          emptyText: No sub-tasks yet
-                          params:
-                            projectParam: $sources.detail.projectParam
-                    - $type: task:ChipRow
-                      gap: gap-2
-                      align: center
-                      items:
-                        - $type: task:PropertyPopover
-                          $if: $sources.detail.hasTypes
-                          label: Type
-                          appearance: pill
-                          valueText: $sources.detail.pillTexts.type
-                          options: $sources.detail.typeOptions
-                          value: $sources.detail.forms.type.type
-                          action: setType
-                          bodyKey: type
-                          params:
-                            id: $route.id
-                            projectParam: $sources.detail.projectParam
-                        - $type: task:PropertyRow
-                          $if: $sources.detail.noTypes
-                          label: Type
-                          items:
-                            - $type: task:InlineText
-                              ariaLabel: Type
-                              value: $sources.detail.forms.type.type
-                              placeholder: Set a type
-                              allowEmpty: true
-                              action: setType
-                              valueParam: type
-                              params:
-                                id: $route.id
-                                projectParam: $sources.detail.projectParam
-                        - $type: task:LabelCombobox
-                          labels: $sources.detail.labelList
-                          labelKeys: $sources.detail.labelKeys
-                          addAction: addLabel
-                          removeAction: removeLabelChip
-                          labelParam: label
-                          projectParam: $sources.detail.projectParam
-                          placeholder: Add a label
-                          emptyText: No labels
-                          params:
-                            id: $route.id
-                            projectParam: $sources.detail.projectParam
-                        - $type: task:PropertyPopover
-                          label: Parent
-                          appearance: pill
-                          valueText: $sources.detail.pillTexts.parent
-                          closeOnActions:
-                            - setParent
-                            - removeParent
-                          params:
-                            id: $route.id
-                            projectParam: $sources.detail.projectParam
-                          items:
-                            - $type: ButtonLink
-                              $if: $sources.detail.hasParent
-                              label: Open parent
-                              size: sm
-                              to: $sources.detail.parentRow.href
-                            - $type: task:TaskPicker
-                              ariaLabel: New parent
-                              placeholder: Search a task to make the parent
-                              action: setParent
-                              bodyKey: parent
-                              projectParam: $sources.detail.projectParam
-                              excludeDescendantsOf: $route.id
-                              params:
-                                id: $route.id
-                                projectParam: $sources.detail.projectParam
-                            - $type: Form
-                              $if: $sources.detail.canDetach
-                              onSubmit: $ctx.removeParent
-                              initialData: $sources.detail.forms.empty
-                              fields: []
-                              actions:
-                                - $type: ButtonAction
-                                  label: Detach from its parent
-                                  variant: danger-outline
-                                  size: sm
-                                  type: submit
-                        - $type: task:PropertyPopover
-                          label: Link
-                          appearance: pill
-                          valueText: Add link
-                          closeOnActions:
-                            - addLink
-                          params:
-                            id: $route.id
-                            projectParam: $sources.detail.projectParam
-                          items:
-                            - $type: task:TaskPicker
-                              ariaLabel: Task to link
-                              placeholder: Search a task to link
-                              action: addLink
-                              bodyKey: target
-                              choices: $sources.detail.linkTypeOptions
-                              choiceKey: type
-                              choiceLabel: Relation
-                              projectParam: $sources.detail.projectParam
-                              excludeIds:
-                                - $route.id
-                              params:
-                                id: $route.id
-                                projectParam: $sources.detail.projectParam
-                        - $type: task:PropertyPopover
-                          label: Metadata
-                          appearance: pill
-                          valueText: Metadata
-                          items:
-                            - $type: task:MetaEditor
-                              entries: $sources.detail.metaEntries
-                              setAction: setMeta
-                              removeAction: removeMetaKey
-                              keyParam: key
-                              valueParam: value
-                              collapseAfter: 3
-                              emptyText: No metadata
-                              params:
-                                id: $route.id
-                                projectParam: $sources.detail.projectParam
-                    - $type: task:Panel
-                      $if: $sources.links.hasLinks
-                      title: Relations
-                      appearance: plain
-                      items:
-                        - $type: ExtensionSlot
-                          $if: $sources.links.hasLinks
-                          items: $sources.links.groupSections
-                    - $type: task:Panel
-                      title: Activity
-                      appearance: plain
-                      items:
-                        - $type: task:Timeline
-                          $if: $sources.detail.hasActivity
-                          entries: $sources.detail.activity
-                          groupByDay: false
-                          order: newest-first
-                        - $type: task:PropertyList
-                          density: compact
-                          labelPlacement: inline
-                          labelWidth: narrow
-                          items:
-                            - $type: task:PropertyRow
-                              label: Created
-                              items:
-                                - $type: RelativeDate
-                                  date: $sources.detail.createdAt
-                            - $type: task:PropertyRow
-                              label: Updated
-                              items:
-                                - $type: RelativeDate
-                                  date: $sources.detail.updatedAt

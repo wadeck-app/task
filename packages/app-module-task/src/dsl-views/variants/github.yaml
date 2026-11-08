@@ -1,0 +1,109 @@
+label: GitHub
+hint: Layout of a GitHub issue, from knowledge of it (no access to the product) - title, Open / Closed badge with the id and when it was opened, the description in a bordered card with a header strip, sub-tasks and relations as cards, the tabbed activity with the composer under it, and a right sidebar of sections separated by dividers.
+view:
+    $type: task:WidthFrame
+    width: wide
+    items:
+        - $type: VerticalStack
+          gap: gap-4
+          items:
+              - $type: VerticalStack
+                gap: gap-2
+                items:
+                    - $use: title.edit
+                    - $type: task:ChipRow
+                      gap: gap-2
+                      align: center
+                      justify: between
+                      items:
+                          - $type: task:ChipRow
+                            gap: gap-2
+                            align: center
+                            items:
+                                - $use: state.open
+                                - $use: state.closed
+                                - $use: id.badge
+                                - $use: created.caption
+                                - $use: created.date
+                          - $use: menu.more
+                    - $use: blocked.notice
+              - $type: task:SplitLayout
+                sidePosition: right
+                sideWidth: normal
+                sticky: true
+                sideFirstWhenStacked: true
+                main:
+                    - $type: VerticalStack
+                      gap: gap-4
+                      items:
+                          # In the main column: a message that appears after a change in the sidebar must not push the sidebar down.
+                          - $use: feedback.all
+                          - $type: task:Panel
+                            title: Description
+                            appearance: strip
+                            items:
+                                - $use: body.edit
+                                - $use: body.add
+                          - $type: task:Panel
+                            title: Sub-tasks
+                            appearance: strip
+                            items:
+                                - $use: subtasks.checklist.add
+                          - $type: task:Panel
+                            title: Relations
+                            appearance: strip
+                            actions:
+                                - $use: links.add.end
+                            items:
+                                - $use: links.groups
+                                - $use: links.none
+                          - $type: task:Panel
+                            title: Activity
+                            appearance: plain
+                            items:
+                                - $type: task:ActivityFeed
+                                  rows: $sources.activity.rows
+                                  filters:
+                                      - all
+                                      - comments
+                                      - history
+                                  composerPosition: bottom
+                                  emptyText: No activity yet
+                                  commentsContent:
+                                      - $use: comments.thread
+                                  composer:
+                                      - $use: comments.composer
+                side:
+                    - $type: VerticalStack
+                      gap: gap-4
+                      items:
+                          - $type: task:Panel
+                            title: Status
+                            appearance: plain
+                            items:
+                                - $use: status.select
+                          - $type: Divider
+                          - $type: task:Panel
+                            title: Type
+                            appearance: plain
+                            items:
+                                - $use: prop.type.field
+                                - $use: prop.type.free
+                          - $type: Divider
+                          - $type: task:Panel
+                            title: Parent
+                            appearance: plain
+                            items:
+                                - $use: prop.parent.field
+                          - $type: Divider
+                          - $type: task:Panel
+                            title: Labels
+                            appearance: plain
+                            items:
+                                - $use: prop.labels
+                          - $type: Divider
+                          - $type: task:Panel
+                            title: Metadata
+                            appearance: plain
+                            items:
+                                - $use: prop.meta

@@ -13,7 +13,7 @@ const ROWS = [
 ];
 
 describe('ActivityFeed comments', () => {
-	it('offers the tabs All activity, Comments and History, in the order given, with counts', () => {
+	it('offers the tabs All, Comments and History, in the order given, with counts', () => {
 		render(
 			<ActivityFeed
 				rows={ROWS}
@@ -23,7 +23,7 @@ describe('ActivityFeed comments', () => {
 		);
 
 		const tabs = screen.getAllByRole('tab').map(tab => tab.textContent);
-		expect(tabs[0]).toContain('All activity');
+		expect(tabs[0]).toContain('All');
 		expect(tabs[1]).toContain('Comments');
 		expect(tabs[1]).toContain('1');
 		expect(tabs[2]).toContain('History');

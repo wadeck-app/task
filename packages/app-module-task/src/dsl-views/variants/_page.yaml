@@ -9,12 +9,17 @@
 #   <design>.yaml  one file per design with exactly three keys: `label`, `hint` (shown by the dock), `view` (ONE node).
 # A test fails when task-page.yaml is stale, so run the script after every edit here.
 #
-# THREE DESIGNS under ONE dock row "Task page" (dsl-ui AbTest, production renders `initial` only):
-#   issue  document first: title, the text, sub-tasks, relations; a sticky properties sidebar (GitHub / GitLab / Jira)
-#   bar    one row of labelled property pills, one narrow column (Linear)
-#   flow   for tasks made by a flow: status stepper, long prompt folded to 6 lines, steps checklist, activity open
-# No design has an option row of its own: the ones of the eleven old designs (title, header, controls, width, lists...) are gone.
-# Each fact (id, status, type, parent, labels, dates, title, body) is shown ONCE per design, where it is edited (a test counts).
+# THREE DESIGNS under ONE dock row "Task page" (dsl-ui AbTest, production renders `initial` only). Each is a LAYOUT CLONE of a
+# product, drawn from knowledge of it (no access to the real products), adapted to our data:
+#   github  (initial) header with the Open / Closed badge, the description in a bordered card, sub-tasks and relations as cards,
+#           the activity with the composer at the bottom, a right sidebar of sections separated by dividers
+#   jira    action row under the title (Add sub-task, Link, Actions), Description, Child items with a progress bar, Linked items,
+#           Activity with the composer on top, a sticky right "Details" panel with the status as a prominent button
+#   gitlab  header with the state badge and the actions on the right, Child items and Linked items cards, Activity with a
+#           filter dropdown, right collapsible sections with "Edit" links and a footer with the dates
+# No design has an option row of its own. Each fact (id, status, type, parent, labels, dates, title, body, activity, comments) is
+# shown ONCE per design, where it is edited (a test counts). The status is ONE task:StatusSelect, never a stepper or a visible list.
+# The sidebar stacks ABOVE the main column below 1024 px in the three designs (task:SplitLayout sideFirstWhenStacked).
 #
 # Add a design: create <name>.yaml here and add <name> to `variants` under `$experiment` below, then run the script.
 # BAKE THE WINNER: in this file keep $sources/$actions, replace the `AbTest` by the `view` of the chosen design (expand its
@@ -58,6 +63,21 @@ $sources:
             id: $route.id
             query: $source.projects.projectQuery
             reload: $urlParam.reload
+    # The Activity block: every row (status moves, recorded changes, comments), newest first; the tabs All / Comments / History
+    # filter them in the component and count them. `filter=all` keeps the answer the same whatever tab is open.
+    activity:
+        url: GET /api/modules/task/tasks/{id}/activity?{query}&filter=all&inlineErrors=true
+        params:
+            id: $route.id
+            query: $source.projects.projectQuery
+            reload: $urlParam.reload
+    # The comments (oldest first) for the Comments tab: edited and deleted in place (task:CommentThread).
+    comments:
+        url: GET /api/modules/task/tasks/{id}/comments?{query}&inlineErrors=true
+        params:
+            id: $route.id
+            query: $source.projects.projectQuery
+            reload: $urlParam.reload
     # The contributions of other modules to the slot task:project-header (declared in manifest.json `expose`).
     projectHeader:
         url: GET /api/slots/task:project-header
@@ -65,11 +85,6 @@ $sources:
 $actions:
     setStatus:
         url: POST /api/modules/task/tasks/{id}/status?project={projectParam}&inlineErrors=true
-        resultKey: statusResult
-        reloadSources: true
-    # The stepper of the flow design (task:SegmentedControl sends no body): the status is in the path.
-    setStatusTo:
-        url: POST /api/modules/task/tasks/{id}/status/{statusEncoded}?project={projectParam}&inlineErrors=true
         resultKey: statusResult
         reloadSources: true
     # An empty type (the "None" choice) clears the type.
@@ -127,6 +142,19 @@ $actions:
     setChildStatus:
         url: POST /api/modules/task/tasks/{id}/status?project={projectParam}&inlineErrors=true
         resultKey: subtaskResult
+        reloadSources: true
+    # The comments (task:CommentComposer: body { text }; task:CommentThread: {commentId} is the clicked comment, body { text }).
+    addComment:
+        url: POST /api/modules/task/tasks/{id}/comments?project={projectParam}&inlineErrors=true
+        resultKey: commentResult
+        reloadSources: true
+    editComment:
+        url: PATCH /api/modules/task/tasks/{id}/comments/{commentId}?project={projectParam}&inlineErrors=true
+        resultKey: commentResult
+        reloadSources: true
+    removeComment:
+        url: DELETE /api/modules/task/tasks/{id}/comments/{commentId}?project={projectParam}&inlineErrors=true
+        resultKey: commentResult
         reloadSources: true
     # The confirmation dialog: the body is forms.delete ({ ids, cascade, confirm: true }). The answer is read by the page-level
     # notices, because the task is gone afterwards and the design is not drawn any more.
@@ -188,11 +216,11 @@ $notices:
 $experiment:
     id: task-design
     label: Task page
-    initial: issue
+    initial: github
     variants:
-        - issue
-        - bar
-        - flow
+        - github
+        - jira
+        - gitlab
 # Each design wraps itself in task:WidthFrame (its own width): the PageContent is told `maxWidth: full`, else its own 72rem
 # centred column would cap every design at the same width.
 $page:

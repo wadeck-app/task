@@ -5,7 +5,7 @@
 // A list is never tested for emptiness in the DSL (`[]` is truthy): use the boolean next to it.
 //
 // Pre-existing: task, parent (null when root or dangling), children (rows), links, labelRows, metaRows, statusOptions,
-//   typeOptions, hasTypes, noTypes, hasLabels, labelOptions, linkTypeOptions, hrefs, taskHrefs.{detail,history,childrenList},
+//   typeOptions, hasTypes, noTypes, hasLabels, labelOptions, linkTypeOptions, hrefs, taskHrefs.{detail,childrenList,deleteTasks},
 //   projectParam, forms.*, canDetach, warnings, warningText, project, projectText.
 //
 // | field                   | type                                   | meaning                                                              | consumer |
@@ -57,7 +57,7 @@ import type { ActivityRow, BlockerSummary, ChildrenSummary, DanglingLink } from 
 import { shortUtcTime } from './display.js';
 import { labelKey } from './labelKey.js';
 import { metaKey } from './metaKey.js';
-import { detailHref, encodedProject, historyHref, pageHrefs, pageLink, projectText, showAllToggle } from './hrefs.js';
+import { detailHref, encodedProject, pageHrefs, pageLink, projectText, showAllToggle } from './hrefs.js';
 import type { OpenedProject } from './projects.js';
 import { flattenTree, withRowLinks, withTreeLinks } from './rowViews.js';
 import {
@@ -257,7 +257,6 @@ export function taskDetailBody(
 		hrefs: pageHrefs(project),
 		taskHrefs: {
 			detail: detailHref(project, record.id),
-			history: historyHref(project, record.id),
 			childrenList: pageLink(project, 'tasks', { parent: record.id, showAll: 'true' }),
 			deleteTasks: pageHrefs(project)['deleteTasks'],
 		},

@@ -6,9 +6,10 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { DEFAULT_VIEWS_DIR, generateTaskPage, taskPageFile } from '../../../../scripts/generate-task-page.mjs';
 
 /*
- * The task page is an experiment between THREE designs (issue, bar, flow): task-page.yaml is GENERATED from
- * src/dsl-views/variants/* and holds one AbTest. These tests are the contract every design keeps, so that no design
- * silently drops a control of the page or shows a fact twice. See variants/_page.yaml.
+ * The task page is an experiment between THREE designs, layout clones (from knowledge of the products, no access to them) of
+ * GitHub (initial), Jira and GitLab: task-page.yaml is GENERATED from src/dsl-views/variants/* and holds one AbTest. These
+ * tests are the contract every design keeps, so that no design silently drops a control of the page or shows a fact twice.
+ * See variants/_page.yaml.
  */
 
 type Node = Record<string, unknown>;
@@ -67,19 +68,19 @@ describe('the generated task-page.yaml', () => {
 		expect(readFileSync(taskPageFile(), 'utf8')).not.toMatch(/(^|\s)[&*][A-Za-z0-9_-]+(\s|$)/m);
 	});
 
-	it('stays small: the three designs are not multiplied by option rows any more (the eleven designs were 1 MB)', () => {
-		expect(readFileSync(taskPageFile(), 'utf8').length).toBeLessThan(150_000);
+	it('stays small: the three designs are not multiplied by option rows (the eleven designs were 1 MB)', () => {
+		expect(readFileSync(taskPageFile(), 'utf8').length).toBeLessThan(200_000);
 	});
 });
 
 describe('the experiment', () => {
-	it('is ONE AbTest "Task page" at the page root: issue (initial), bar, flow, in that order', () => {
+	it('is ONE AbTest "Task page" at the page root: github (initial), jira, gitlab, in that order', () => {
 		expect(sections.filter(s => s.$type === 'AbTest')).toHaveLength(1);
 		expect(switcher.$type).toBe('AbTest');
 		expect(switcher.id).toBe('task-design');
 		expect(switcher.label).toBe('Task page');
-		expect(switcher.initial).toBe('issue');
-		expect(designNames).toEqual(['issue', 'bar', 'flow']);
+		expect(switcher.initial).toBe('github');
+		expect(designNames).toEqual(['github', 'jira', 'gitlab']);
 		// The PageContent must not cap the designs at its own 72rem centred column: each design sets its width.
 		expect(page.maxWidth).toBe('full');
 	});
@@ -104,9 +105,21 @@ describe('the experiment', () => {
 		]) {
 			expect(text, gone).not.toContain(gone);
 		}
-		// The eleven old designs.
-		for (const gone of ['github-a', 'github-b', 'gitlab-a', 'jira-b', 'linear-a', 'notion-b', 'current']) {
+		// The eleven old designs and the three that replaced them (issue, bar, flow).
+		for (const gone of [
+			'github-a',
+			'github-b',
+			'gitlab-a',
+			'jira-b',
+			'linear-a',
+			'notion-b',
+			'current',
+			'issue',
+			'bar',
+			'flow',
+		]) {
 			expect(designNames).not.toContain(gone);
+			expect(existsSync(join(viewsDir, 'variants', `${gone}.yaml`)), gone).toBe(false);
 		}
 	});
 
@@ -123,12 +136,8 @@ describe('the experiment', () => {
 			expect(root.$if, `${name}: the root needs $if: $sources.detail.task`).toBe('$sources.detail.task');
 			const frame = nodesOf(root).find(n => n.$type === 'task:WidthFrame');
 			expect(frame, `${name}: no WidthFrame`).toBeDefined();
-			expect(['wide', 'reading'], `${name}: width`).toContain(frame!.width);
+			expect(['wide', 'full'], `${name}: width`).toContain(frame!.width);
 		}
-		// Issue is the wide document (sidebar); bar and flow are one narrow column.
-		const widthOf = (name: string): unknown =>
-			nodesOf(variants[name]!.view).find(n => n.$type === 'task:WidthFrame')!.width;
-		expect([widthOf('issue'), widthOf('bar'), widthOf('flow')]).toEqual(['wide', 'reading', 'reading']);
 	});
 
 	// The extension point task:project-header sits OUTSIDE the switcher: every design has it by construction.
@@ -227,7 +236,8 @@ describe('every fact is shown once per design (single source of truth)', () => {
 			exactlyOnce: true,
 		},
 		{ fact: 'created', bindings: ['$sources.detail.createdAt', '$sources.detail.createdText'], exactlyOnce: true },
-		{ fact: 'updated', bindings: ['$sources.detail.updatedAt', '$sources.detail.updatedText'], exactlyOnce: true },
+		// GitHub shows when the issue was opened, not when it was last updated.
+		{ fact: 'updated', bindings: ['$sources.detail.updatedAt', '$sources.detail.updatedText'], exactlyOnce: false },
 		{
 			fact: 'sub-tasks',
 			bindings: ['$sources.detail.checklistRows', '$sources.detail.children'],
@@ -238,7 +248,10 @@ describe('every fact is shown once per design (single source of truth)', () => {
 			bindings: ['$sources.detail.metaEntries', '$sources.detail.metaList', '$sources.detail.metaRows'],
 			exactlyOnce: true,
 		},
-		{ fact: 'activity', bindings: ['$sources.detail.activity'], exactlyOnce: true },
+		// The activity (one feed, filtered by its tabs) and the comments (the Comments tab) come from their own sources; the
+		// old Timeline of the detail answer is not drawn any more.
+		{ fact: 'activity', bindings: ['$sources.activity.rows'], exactlyOnce: true },
+		{ fact: 'comments', bindings: ['$sources.comments.comments'], exactlyOnce: true },
 		{
 			fact: 'blocked',
 			bindings: ['$sources.detail.blockedText', '$sources.detail.pillTexts.blocked'],
@@ -284,7 +297,7 @@ describe('every fact is shown once per design (single source of truth)', () => {
 	);
 
 	it.each(designs)(
-		'%s: the status is edited where it is shown, the type too (a type with a "None" choice)',
+		'%s: the status is ONE compact task:StatusSelect (no stepper, no visible list of statuses), the type a popover with a "None" choice',
 		(name, view) => {
 			const nodes = nodesOf(view);
 			const statusControls = nodes.filter(
@@ -293,7 +306,22 @@ describe('every fact is shown once per design (single source of truth)', () => {
 			expect(
 				statusControls.map(n => n.$type),
 				name
-			).toHaveLength(1);
+			).toEqual(['task:StatusSelect']);
+			expect(statusControls[0], name).toMatchObject({
+				options: '$sources.detail.statusOptions',
+				current: '$sources.detail.task.status',
+				action: 'setStatus',
+				bodyKey: 'status',
+			});
+			// A stepper or any always-visible list of the statuses is pollution: the list only matters at transition time.
+			expect(
+				nodes.filter(n => n.$type === 'task:SegmentedControl'),
+				name
+			).toEqual([]);
+			const text = JSON.stringify(view);
+			for (const gone of ['statusChoices', 'setStatusTo', 'detail.pillTexts']) {
+				expect(text, `${name}: ${gone}`).not.toContain(gone);
+			}
 			const typePopovers = nodes.filter(n => n.$type === 'task:PropertyPopover' && n.action === 'setType');
 			for (const popover of typePopovers) expect(popover.options, name).toBe('$sources.detail.typeOptions');
 		}
@@ -304,7 +332,15 @@ describe('every fact is shown once per design (single source of truth)', () => {
 describe.each(designs)('design %s keeps every control of the task page', (name, view) => {
 	const nodes = nodesOf(view);
 	const strings = new Set(stringsOf(view));
-	const actionProps = ['action', 'addAction', 'removeAction', 'setAction', 'doneAction', 'reopenAction'];
+	const actionProps = [
+		'action',
+		'addAction',
+		'editAction',
+		'removeAction',
+		'setAction',
+		'doneAction',
+		'reopenAction',
+	];
 	const actionsRun = new Set<string>();
 	for (const node of nodes) {
 		for (const prop of actionProps) if (typeof node[prop] === 'string') actionsRun.add(node[prop] as string);
@@ -316,7 +352,10 @@ describe.each(designs)('design %s keeps every control of the task page', (name, 
 	if (strings.has('$sources.links.groupSections')) actionsRun.add('removeLinkRow');
 
 	it.each([
-		['change the status', ['setStatus', 'setStatusTo']],
+		['change the status', ['setStatus']],
+		['add a comment', ['addComment']],
+		['edit a comment', ['editComment']],
+		['delete a comment', ['removeComment']],
 		['change the type (or clear it)', ['setType']],
 		['add a label', ['addLabel']],
 		['remove a label', ['removeLabelChip']],
@@ -392,19 +431,59 @@ describe.each(designs)('design %s keeps every control of the task page', (name, 
 		}
 	});
 
-	it('sub-tasks: a checklist with an add row (title and parent in the body) and the statuses of the config', () => {
-		const list = nodes.filter(n => n.$type === 'task:TaskChecklist');
-		expect(list).toHaveLength(1);
-		expect(list[0]).toMatchObject({
-			rows: '$sources.detail.checklistRows',
+	// The list of the sub-tasks is ONE checklist (rows, boxes, statuses of the config); the add row (title and parent in the
+	// body) is either in it or, in an "Add sub-task" popover, in a checklist without rows: the sub-tasks are never listed twice.
+	it('sub-tasks: one checklist lists them, one add row creates them (title and parent in the body)', () => {
+		const lists = nodes.filter(n => n.$type === 'task:TaskChecklist');
+		const listing = lists.filter(n => n.rows === '$sources.detail.checklistRows');
+		expect(listing, name).toHaveLength(1);
+		expect(listing[0]).toMatchObject({
 			doneAction: 'setChildStatus',
 			reopenAction: 'setChildStatus',
 			terminalStatus: '$sources.detail.terminalStatus',
 			reopenStatus: '$sources.detail.reopenStatus',
-			addAction: 'createSubtask',
-			parentId: '$route.id',
-			titleKey: 'title',
 		});
+		const others = lists.filter(n => n !== listing[0]);
+		for (const other of others) expect(other.rows, `${name}: an add-only checklist has no rows`).toEqual([]);
+		const adders = lists.filter(n => n.addAction === 'createSubtask');
+		expect(adders, `${name}: exactly one add row`).toHaveLength(1);
+		expect(adders[0]).toMatchObject({ parentId: '$route.id', titleKey: 'title' });
+	});
+
+	it('the activity is ONE task:ActivityFeed (All / Comments / History) fed by the activity source, with the comments in its Comments tab', () => {
+		const feeds = nodes.filter(n => n.$type === 'task:ActivityFeed');
+		expect(feeds, name).toHaveLength(1);
+		expect(feeds[0]).toMatchObject({
+			rows: '$sources.activity.rows',
+			filters: ['all', 'comments', 'history'],
+		});
+		// The shell renders a slot prop from a LIST of nodes (a single object drew nothing: found in the browser).
+		expect(Array.isArray(feeds[0]!.commentsContent), `${name}: commentsContent is a list`).toBe(true);
+		expect(Array.isArray(feeds[0]!.composer), `${name}: composer is a list`).toBe(true);
+		const thread = nodesOf(feeds[0]!.commentsContent).filter(n => n.$type === 'task:CommentThread');
+		expect(thread, `${name}: the Comments tab holds the thread`).toHaveLength(1);
+		expect(thread[0]).toMatchObject({
+			comments: '$sources.comments.comments',
+			editAction: 'editComment',
+			removeAction: 'removeComment',
+			emptyText: 'No comments yet',
+		});
+		expect(JSON.stringify(thread[0]!.params), name).toContain('$route.id');
+		// The old Timeline is gone.
+		expect(
+			nodes.filter(n => n.$type === 'task:Timeline'),
+			name
+		).toEqual([]);
+		expect(JSON.stringify(view), name).not.toContain('$sources.detail.activity');
+	});
+
+	it('the comment composer is present exactly once, runs addComment, and sits inside the activity block', () => {
+		const composers = nodes.filter(n => n.$type === 'task:CommentComposer');
+		expect(composers, name).toHaveLength(1);
+		expect(composers[0]).toMatchObject({ action: 'addComment' });
+		const feed = nodes.find(n => n.$type === 'task:ActivityFeed')!;
+		expect(nodesOf(feed.composer), `${name}: the composer is the feed's slot`).toContain(composers[0]);
+		expect(['top', 'bottom'], name).toContain(feed.composerPosition);
 	});
 
 	it('the relations are the groups of the links route (an x per row), never a second remove form', () => {
@@ -431,7 +510,7 @@ describe.each(designs)('design %s keeps every control of the task page', (name, 
 		const submit = inside.find(n => n.$type === 'ButtonAction' && n.type === 'submit')!;
 		expect(submit).toMatchObject({ variant: 'danger' });
 		// The dialog sits behind a menu, not in the toolbar.
-		expect(nodes.some(n => n.$type === 'Popover' && nodesOf(n).includes(dialog))).toBe(true);
+		expect(nodes.some(n => n.$type === 'task:PropertyPopover' && nodesOf(n).includes(dialog))).toBe(true);
 		expect(nodes.filter(n => n.$type === 'ButtonLink' && n.to === '$sources.detail.taskHrefs.deleteTasks')).toEqual(
 			[]
 		);
@@ -442,7 +521,10 @@ describe.each(designs)('design %s keeps every control of the task page', (name, 
 		expect(parents.length).toBe(1);
 		const pill = parents[0]!;
 		// A pill carries "Parent: none" itself (pillTexts); a row says `empty: none`.
-		expect(pill.empty === 'none' || pill.valueText === '$sources.detail.pillTexts.parent', name).toBe(true);
+		expect(
+			String(pill.empty).toLowerCase() === 'none' || pill.valueText === '$sources.detail.pillTexts.parent',
+			name
+		).toBe(true);
 	});
 });
 
@@ -457,6 +539,7 @@ describe('feedback: the error and the undelivered events of every action are sho
 		'linkRowResult',
 		'textResult',
 		'subtaskResult',
+		'commentResult',
 	];
 	it.each(designs)(
 		'%s: one task:Notice for the error and one for the undelivered events of each result key',
@@ -509,7 +592,15 @@ describe('actions', () => {
 	const used = new Set<string>();
 	for (const tree of everything) {
 		for (const node of nodesOf(tree)) {
-			for (const prop of ['action', 'addAction', 'removeAction', 'setAction', 'doneAction', 'reopenAction']) {
+			for (const prop of [
+				'action',
+				'addAction',
+				'editAction',
+				'removeAction',
+				'setAction',
+				'doneAction',
+				'reopenAction',
+			]) {
 				if (typeof node[prop] === 'string') used.add(node[prop] as string);
 			}
 			if (Array.isArray(node.closeOnActions)) (node.closeOnActions as string[]).forEach(a => used.add(a));
@@ -581,11 +672,20 @@ describe('actions', () => {
 			'subtaskResult',
 		],
 		['deleteTask', 'POST /api/modules/task/tasks/delete?project={projectParam}&inlineErrors=true', 'deleteResult'],
-		// The stepper: the shell sends no body from task:SegmentedControl, so the status is in the path.
 		[
-			'setStatusTo',
-			'POST /api/modules/task/tasks/{id}/status/{statusEncoded}?project={projectParam}&inlineErrors=true',
-			'statusResult',
+			'addComment',
+			'POST /api/modules/task/tasks/{id}/comments?project={projectParam}&inlineErrors=true',
+			'commentResult',
+		],
+		[
+			'editComment',
+			'PATCH /api/modules/task/tasks/{id}/comments/{commentId}?project={projectParam}&inlineErrors=true',
+			'commentResult',
+		],
+		[
+			'removeComment',
+			'DELETE /api/modules/task/tasks/{id}/comments/{commentId}?project={projectParam}&inlineErrors=true',
+			'commentResult',
 		],
 	])('%s calls %s and publishes %s', (name, url, resultKey) => {
 		expect(actions[name]!.url).toBe(url);
@@ -608,10 +708,10 @@ describe('actions', () => {
 });
 
 describe('sources', () => {
-	it('are the project list, the task, its links and the slot; the three read through projectQuery (never an empty query: the shell keeps the last answer of a skipped source)', () => {
+	it('are the project list, the task, its links, its activity, its comments and the slot; the four read through projectQuery (never an empty query: the shell keeps the last answer of a skipped source)', () => {
 		const sources = page.$sources as Record<string, { params?: Record<string, unknown> }>;
-		expect(Object.keys(sources)).toEqual(['projects', 'detail', 'links', 'projectHeader']);
-		for (const name of ['detail', 'links']) {
+		expect(Object.keys(sources)).toEqual(['projects', 'detail', 'links', 'activity', 'comments', 'projectHeader']);
+		for (const name of ['detail', 'links', 'activity', 'comments']) {
 			expect(sources[name]!.params?.query, name).toBe('$source.projects.projectQuery');
 		}
 	});
@@ -619,7 +719,7 @@ describe('sources', () => {
 	it.each(designs)('%s: reads its data only from the sources of the page', (name, view) => {
 		for (const s of stringsOf(view)) {
 			const m = /^\$sources\.([A-Za-z]+)/.exec(s);
-			if (m) expect(['projects', 'detail', 'links'], `${name}: ${s}`).toContain(m[1]);
+			if (m) expect(['projects', 'detail', 'links', 'activity', 'comments'], `${name}: ${s}`).toContain(m[1]);
 		}
 		expect(
 			nodesOf(view).some(n => '$sources' in n || '$actions' in n),
@@ -711,6 +811,160 @@ describe('constructs of the shell', () => {
 			const chips = (node.items as Node[]).filter(item => CHIPS.includes(String(item.$type)));
 			expect(chips.length, name).toBeLessThanOrEqual(1);
 		}
+	});
+});
+
+// The layouts are clones of the products (from knowledge, no access to them), adapted to our data.
+describe('the layouts of the products', () => {
+	const side = (name: string): Node[] => {
+		const split = nodesOf(variants[name]!.view).find(n => n.$type === 'task:SplitLayout')!;
+		return nodesOf(split.side);
+	};
+	const main = (name: string): Node[] => {
+		const split = nodesOf(variants[name]!.view).find(n => n.$type === 'task:SplitLayout')!;
+		return nodesOf(split.main);
+	};
+	const panelTitles = (nodes: Node[]): unknown[] => nodes.filter(n => n.$type === 'task:Panel').map(n => n.title);
+	const feedOf = (name: string): Node => nodesOf(variants[name]!.view).find(n => n.$type === 'task:ActivityFeed')!;
+
+	it.each(designNames)(
+		'%s: a main column and a sticky right sidebar that stacks ABOVE the main column on small screens',
+		name => {
+			const splits = nodesOf(variants[name]!.view).filter(n => n.$type === 'task:SplitLayout');
+			expect(splits, name).toHaveLength(1);
+			expect(splits[0]).toMatchObject({ sidePosition: 'right', sticky: true, sideFirstWhenStacked: true });
+		}
+	);
+
+	it.each(designNames)(
+		'%s: the delete dialog is behind an "Actions" overflow menu, the feedback block is in the main column',
+		name => {
+			const menu = nodesOf(variants[name]!.view).find(
+				n => n.$type === 'task:PropertyPopover' && n.valueText === 'Actions'
+			)!;
+			expect(menu, name).toMatchObject({ appearance: 'pill', align: 'end' });
+			expect(
+				nodesOf(menu).some(n => n.$type === 'Dialog'),
+				name
+			).toBe(true);
+			expect(
+				main(name).filter(n => n.$type === 'task:Notice' && n.label === '$ctx.statusResult.errorText'),
+				name
+			).toHaveLength(1);
+			expect(
+				side(name).filter(n => n.$type === 'task:Notice'),
+				name
+			).toEqual([]);
+		}
+	);
+
+	describe('jira', () => {
+		it('has the Details panel on the right: the status as a prominent button first, then Type, Parent, Labels, Metadata, the dates', () => {
+			const details = side('jira').find(n => n.$type === 'task:Panel')!;
+			expect(details.title).toBe('Details');
+			const inside = nodesOf(details.items);
+			const status = inside.find(n => n.$type === 'task:StatusSelect')!;
+			expect(status.appearance).toBe('button');
+			const order = inside
+				.filter(n =>
+					[
+						'task:StatusSelect',
+						'task:PropertyPopover',
+						'task:LabelCombobox',
+						'task:MetaEditor',
+						'RelativeDate',
+					].includes(String(n.$type))
+				)
+				.map(n => (n.$type === 'task:PropertyPopover' ? n.label : n.$type));
+			expect(order).toEqual([
+				'task:StatusSelect',
+				'Type',
+				'Parent',
+				'task:LabelCombobox',
+				'task:MetaEditor',
+				'RelativeDate',
+				'RelativeDate',
+			]);
+		});
+
+		it('has an action row under the title (Add sub-task, Link, Actions), the description, Child items with a progress bar, Linked items', () => {
+			const strings = stringsOf(variants.jira!.view);
+			for (const label of ['Add sub-task', 'Add link', 'Actions']) expect(strings, label).toContain(label);
+			expect(panelTitles(main('jira'))).toEqual(['Description', 'Child items', 'Linked items', 'Activity']);
+			const checklist = main('jira').find(
+				n => n.$type === 'task:TaskChecklist' && n.rows === '$sources.detail.checklistRows'
+			)!;
+			expect(checklist.progress).toBe('bar');
+		});
+
+		it('puts the comment composer on top of the activity block, like Jira', () => {
+			expect(feedOf('jira')).toMatchObject({ composerPosition: 'top' });
+			expect(feedOf('jira').filterAppearance ?? 'tabs').toBe('tabs');
+		});
+	});
+
+	describe('github', () => {
+		it('has a header with the Open / Closed state badge in the tone of the status, the short id and when it was opened', () => {
+			const badges = nodesOf(variants.github!.view).filter(n => n.$type === 'task:StatusBadge');
+			expect(badges.map(n => [n.label, n.$if]).sort()).toEqual([
+				['Closed', '$sources.detail.isTerminal'],
+				['Open', '$sources.detail.isOpen'],
+			]);
+			for (const badge of badges) expect(badge.tone).toBe('$sources.detail.statusTone');
+			expect(
+				nodesOf(variants.github!.view).some(
+					n => n.$type === 'RelativeDate' && n.date === '$sources.detail.createdAt'
+				)
+			).toBe(true);
+		});
+
+		it('draws the description in a bordered card with a header strip, then the sub-tasks and relations as cards', () => {
+			expect(panelTitles(main('github'))).toEqual(['Description', 'Sub-tasks', 'Relations', 'Activity']);
+			expect(main('github').find(n => n.$type === 'task:Panel')).toMatchObject({ appearance: 'strip' });
+		});
+
+		it('has a sidebar of sections separated by dividers, and the composer at the bottom of the activity', () => {
+			const dividers = side('github').filter(n => n.$type === 'Divider');
+			expect(dividers.length).toBeGreaterThanOrEqual(4);
+			expect(panelTitles(side('github'))).toEqual(['Status', 'Type', 'Parent', 'Labels', 'Metadata']);
+			expect(feedOf('github')).toMatchObject({ composerPosition: 'bottom' });
+		});
+	});
+
+	describe('gitlab', () => {
+		it('has the state badge and the actions on the right of the header, Child items with a count and a progress bar, Linked items', () => {
+			const badges = nodesOf(variants.gitlab!.view).filter(n => n.$type === 'task:StatusBadge');
+			expect(badges.map(n => n.label).sort()).toEqual(['Closed', 'Open']);
+			expect(panelTitles(main('gitlab'))).toEqual(['Child items', 'Linked items', 'Activity']);
+			const child = main('gitlab').find(n => n.$type === 'task:Panel' && n.title === 'Child items')!;
+			expect(child.count).toBe('$sources.detail.childrenSummary.total');
+			expect(
+				nodesOf(child).find(
+					n =>
+						n.$type === 'task:TaskChecklist' &&
+						n.rows !== undefined &&
+						n.rows !== '$sources.detail.checklistRows'
+				)
+			).toBeDefined();
+			expect(
+				main('gitlab').find(
+					n => n.$type === 'task:TaskChecklist' && n.rows === '$sources.detail.checklistRows'
+				)!.progress
+			).toBe('bar');
+		});
+
+		it('has a filter dropdown (All activity / Comments only / History only) and the composer under the feed', () => {
+			expect(feedOf('gitlab')).toMatchObject({ filterAppearance: 'select', composerPosition: 'bottom' });
+		});
+
+		it('has collapsible sidebar sections with an Edit link, and a footer with the dates', () => {
+			const sections = side('gitlab').filter(n => n.$type === 'task:Panel');
+			expect(sections.map(n => n.title)).toEqual(['Status', 'Type', 'Parent', 'Labels', 'Metadata']);
+			for (const section of sections) expect(section.collapsible, String(section.title)).toBe(true);
+			const edits = side('gitlab').filter(n => n.$type === 'task:PropertyPopover' && n.actionLabel === 'Edit');
+			expect(edits.length).toBeGreaterThanOrEqual(2);
+			expect(side('gitlab').filter(n => n.$type === 'RelativeDate')).toHaveLength(2);
+		});
 	});
 });
 

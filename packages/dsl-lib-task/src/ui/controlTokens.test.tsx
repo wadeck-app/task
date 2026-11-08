@@ -18,6 +18,7 @@ const TOKENIZED = [
 	'components/PropertyPopover.tsx',
 	'components/StatusSelect.tsx',
 	'components/TaskChecklist.tsx',
+	'components/Caption.tsx',
 	'components/TaskPicker.tsx',
 	'ui/ChipField.tsx',
 	'ui/SuggestBox.tsx',

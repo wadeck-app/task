@@ -2869,12 +2869,11 @@ describe('view data: page links, filters and form defaults', () => {
 			expect(answer.body['hasLabels']).toBe(false);
 		});
 
-		it('links to the history, the tree of the task and the list of its children', async () => {
+		it('links to the list of its children and the delete page (there is no history page: the Activity block of the task page holds it)', async () => {
 			const id = await createTask('t');
 			const answer = await h.call('GET /tasks/:id', { params: { id }, query: { project } });
 			expect(answer.body['taskHrefs']).toEqual({
 				detail: `/modules/task/tasks/p/${project}/${id}`,
-				history: `/modules/task/tasks/p/${project}/${id}/history`,
 				childrenList: page('tasks', `?parent=${id}&showAll=true`),
 				deleteTasks: page('delete'),
 			});
@@ -4171,7 +4170,7 @@ describe('GET /tasks/:id presentation contract', () => {
 		const id = await createTask('t');
 		const { body } = await detail(id);
 		expect(body['taskHrefs']['deleteTasks']).toBe(`/modules/task/tasks/p/${project}/delete`);
-		expect(body['taskHrefs']['history']).toContain('/history');
+		expect(body['taskHrefs']).not.toHaveProperty('history');
 	});
 
 	it('the blank and missing-task answers do not gain the fields', async () => {

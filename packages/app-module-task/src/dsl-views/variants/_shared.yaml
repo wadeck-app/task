@@ -87,6 +87,15 @@ feedback.all:
           $if: $ctx.subtaskResult.undeliveredText
           label: $ctx.subtaskResult.undeliveredText
           variant: warning
+        # addComment, editComment and removeComment share one key: the comment actions of the Activity block.
+        - $type: task:Notice
+          $if: $ctx.commentResult.errorText
+          label: $ctx.commentResult.errorText
+          variant: danger
+        - $type: task:Notice
+          $if: $ctx.commentResult.undeliveredText
+          label: $ctx.commentResult.undeliveredText
+          variant: warning
 
 # ---- the identity of the task: the id once, the title once (editable in place) --------------------------------------------
 # The id is shown here and nowhere else (the shell breadcrumb carries it too, but it is the shell's).
@@ -111,24 +120,35 @@ blocked.notice:
     $if: $sources.detail.blockedText
     label: $sources.detail.blockedText
     variant: warning
+# The STATE (Open / Closed) in the colour of the status: a derived fact (is the status terminal), not the status itself, which
+# is edited by the one StatusSelect of the design. The DSL has no negation: one badge per flag.
+state.open:
+    $type: task:StatusBadge
+    $if: $sources.detail.isOpen
+    label: Open
+    tone: $sources.detail.statusTone
+    icon: open
+    size: md
+state.closed:
+    $type: task:StatusBadge
+    $if: $sources.detail.isTerminal
+    label: Closed
+    tone: $sources.detail.statusTone
+    icon: done
+    size: md
+# "Opened 3 days ago": the creation date, shown once (the tooltip of the date holds the exact instant).
+created.caption:
+    $type: task:Caption
+    text: Opened
+created.date:
+    $type: RelativeDate
+    date: $sources.detail.createdAt
 
 # ---- the body: shown when it says more than the headline; else an invitation to add one -----------------------------------
 body.edit:
     $type: task:InlineText
     $if: $sources.detail.bodyAddsInfo
     multiline: true
-    ariaLabel: Description
-    value: $sources.detail.body
-    action: setText
-    valueParam: description
-    textClass: text-sm leading-relaxed
-    params:
-        $use: params.task
-body.edit.folded:
-    $type: task:InlineText
-    $if: $sources.detail.bodyAddsInfo
-    multiline: true
-    collapsedLines: 6
     ariaLabel: Description
     value: $sources.detail.body
     action: setText
@@ -176,62 +196,58 @@ delete.dialog:
                 label: Delete task
                 variant: danger
                 type: submit
-# The overflow menu of the header: a popover holding the dialog.
+# The overflow menu of the header: a popover holding the dialog. A PropertyPopover, so its trigger has the height of every other
+# pill of the page (a ButtonAction is shorter), and it opens towards the left (it sits at the right edge).
 menu.more:
-    $type: Popover
+    $type: task:PropertyPopover
+    label: Menu
+    appearance: pill
+    valueText: Actions
     align: end
-    trigger:
-        - $type: ButtonAction
-          label: Actions
-          icon: MoreHorizontal
-          variant: secondary
-          size: sm
     items:
         - $use: delete.dialog
 
-# ---- the properties: ONE editor each, the pill / row shows the value --------------------------------------------------
-prop.status.row:
-    $type: task:PropertyPopover
-    label: Status
-    appearance: row
-    valueText: $sources.detail.task.status
+# ---- the properties: ONE editor each ------------------------------------------------------------------------------------
+# The status: ONE compact select (the current status, tinted); its list opens only on click. Never a stepper.
+status.select:
+    $type: task:StatusSelect
     options: $sources.detail.statusOptions
-    value: $sources.detail.task.status
+    current: $sources.detail.task.status
     action: setStatus
     bodyKey: status
     params:
         $use: params.task
-prop.status.pill:
-    $type: task:PropertyPopover
-    label: Status
-    appearance: pill
-    valueText: $sources.detail.pillTexts.status
-    tone: $sources.detail.statusTone
+status.select.button:
+    $type: task:StatusSelect
+    appearance: button
     options: $sources.detail.statusOptions
-    value: $sources.detail.task.status
+    current: $sources.detail.task.status
     action: setStatus
     bodyKey: status
     params:
         $use: params.task
-prop.type.row:
+# The type: a "None" choice clears it. Where the property has its own heading (a row label, a section title) only the value shows.
+prop.type.field:
     $type: task:PropertyPopover
     $if: $sources.detail.hasTypes
     label: Type
-    appearance: row
+    appearance: field
     valueText: $sources.detail.task.type
-    empty: none
+    empty: None
     options: $sources.detail.typeOptions
     value: $sources.detail.forms.type.type
     action: setType
     bodyKey: type
     params:
         $use: params.task
-prop.type.pill:
+prop.type.field.edit:
     $type: task:PropertyPopover
     $if: $sources.detail.hasTypes
     label: Type
-    appearance: pill
-    valueText: $sources.detail.pillTexts.type
+    appearance: field
+    actionLabel: Edit
+    valueText: $sources.detail.task.type
+    empty: None
     options: $sources.detail.typeOptions
     value: $sources.detail.forms.type.type
     action: setType
@@ -240,19 +256,16 @@ prop.type.pill:
         $use: params.task
 # No type configured for the project: any text is a type, so the type is a text edited in place (empty clears it).
 prop.type.free:
-    $type: task:PropertyRow
+    $type: task:InlineText
     $if: $sources.detail.noTypes
-    label: Type
-    items:
-        - $type: task:InlineText
-          ariaLabel: Type
-          value: $sources.detail.forms.type.type
-          placeholder: Set a type
-          allowEmpty: true
-          action: setType
-          valueParam: type
-          params:
-              $use: params.task
+    ariaLabel: Type
+    value: $sources.detail.forms.type.type
+    placeholder: Set a type
+    allowEmpty: true
+    action: setType
+    valueParam: type
+    params:
+        $use: params.task
 prop.labels:
     $type: task:LabelCombobox
     labels: $sources.detail.labelList
@@ -265,11 +278,6 @@ prop.labels:
     emptyText: No labels
     params:
         $use: params.task
-prop.labels.row:
-    $type: task:PropertyRow
-    label: Labels
-    items:
-        - $use: prop.labels
 # The picker of a parent: search by id or title, never offering the task or its descendants; "Open parent" is navigation.
 parent.picker:
     - $type: ButtonLink
@@ -297,12 +305,12 @@ parent.picker:
             variant: danger-outline
             size: sm
             type: submit
-prop.parent.row:
+prop.parent.field:
     $type: task:PropertyPopover
     label: Parent
-    appearance: row
+    appearance: field
     valueText: $sources.detail.parentRow.titleText
-    empty: none
+    empty: None
     closeOnActions:
         - setParent
         - removeParent
@@ -310,11 +318,13 @@ prop.parent.row:
         $use: params.task
     items:
         $use: parent.picker
-prop.parent.pill:
+prop.parent.field.edit:
     $type: task:PropertyPopover
     label: Parent
-    appearance: pill
-    valueText: $sources.detail.pillTexts.parent
+    appearance: field
+    actionLabel: Edit
+    valueText: $sources.detail.parentRow.titleText
+    empty: None
     closeOnActions:
         - setParent
         - removeParent
@@ -322,13 +332,7 @@ prop.parent.pill:
         $use: params.task
     items:
         $use: parent.picker
-# Blocked by N: a danger pill, only while blockers are open (the blockers are listed in the relations).
-prop.blocked.pill:
-    $type: Badge
-    $if: $sources.detail.pillTexts.blocked
-    label: $sources.detail.pillTexts.blocked
-    variant: danger
-# Metadata: key/value rows, click a value to edit it, x removes, "+ Add property" adds.
+# Metadata: key/value chips, click a value to edit it, x removes, "+ Add" adds.
 prop.meta:
     $type: task:MetaEditor
     entries: $sources.detail.metaEntries
@@ -340,13 +344,6 @@ prop.meta:
     emptyText: No metadata
     params:
         $use: params.task
-prop.meta.pill:
-    $type: task:PropertyPopover
-    label: Metadata
-    appearance: pill
-    valueText: Metadata
-    items:
-        - $use: prop.meta
 
 # ---- links: the groups with an x per row, and the picker that adds one ---------------------------------------------------
 links.groups:
@@ -354,10 +351,9 @@ links.groups:
     $if: $sources.links.hasLinks
     items: $sources.links.groupSections
 links.none:
-    $type: Badge
+    $type: task:Caption
     $if: $sources.links.noLinks
-    label: No links yet
-    variant: info
+    text: No links yet
 # Relation select, then a search by id or title: pick a task and the link is made. Closes after the action.
 links.add:
     $type: task:PropertyPopover
@@ -383,8 +379,35 @@ links.add:
           params:
               $use: params.task
 
-# ---- the sub-tasks: a checklist with its progress ring and an add row ------------------------------------------------------
-subtasks.checklist:
+# The same picker where the trigger sits at the right edge of a card header: the panel opens towards the left.
+links.add.end:
+    $type: task:PropertyPopover
+    label: Link
+    appearance: pill
+    valueText: Add link
+    align: end
+    closeOnActions:
+        - addLink
+    params:
+        $use: params.task
+    items:
+        - $type: task:TaskPicker
+          ariaLabel: Task to link
+          placeholder: Search a task to link
+          action: addLink
+          bodyKey: target
+          choices: $sources.detail.linkTypeOptions
+          choiceKey: type
+          choiceLabel: Relation
+          projectParam: $sources.detail.projectParam
+          excludeIds:
+              - $route.id
+          params:
+              $use: params.task
+
+# ---- the sub-tasks: ONE checklist lists them; the add row is in it, or in an "Add sub-task" popover ----------------------
+# The list with its add row and a progress ring.
+subtasks.checklist.add:
     $type: task:TaskChecklist
     rows: $sources.detail.checklistRows
     doneAction: setChildStatus
@@ -398,27 +421,89 @@ subtasks.checklist:
     emptyText: No sub-tasks yet
     params:
         projectParam: $sources.detail.projectParam
+# The list with a progress bar, no add row (the add row is in the popover below).
+subtasks.checklist.bar:
+    $type: task:TaskChecklist
+    rows: $sources.detail.checklistRows
+    progress: bar
+    doneAction: setChildStatus
+    reopenAction: setChildStatus
+    terminalStatus: $sources.detail.terminalStatus
+    reopenStatus: $sources.detail.reopenStatus
+    emptyText: No sub-tasks yet
+    params:
+        projectParam: $sources.detail.projectParam
+# The add row alone: a checklist without rows.
+subtasks.add.only:
+    $type: task:TaskChecklist
+    rows: []
+    progress: none
+    addAction: createSubtask
+    parentId: $route.id
+    titleKey: title
+    placeholder: Title of the sub-task
+    params:
+        projectParam: $sources.detail.projectParam
+subtasks.add.popover:
+    $type: task:PropertyPopover
+    label: Sub-task
+    appearance: pill
+    valueText: Add sub-task
+    closeOnActions:
+        - createSubtask
+    params:
+        $use: params.task
+    items:
+        - $use: subtasks.add.only
+# At the right edge of a card header: the panel opens towards the left.
+subtasks.add.popover.end:
+    $type: task:PropertyPopover
+    label: Sub-task
+    appearance: pill
+    valueText: Add sub-task
+    align: end
+    closeOnActions:
+        - createSubtask
+    params:
+        $use: params.task
+    items:
+        - $use: subtasks.add.only
 
-# ---- activity and dates ----------------------------------------------------------------------------------------------------
-activity.timeline:
-    $type: task:Timeline
-    $if: $sources.detail.hasActivity
-    entries: $sources.detail.activity
-    groupByDay: false
-    order: newest-first
+# ---- the activity block: the comments of the Comments tab and the composer ----------------------------------------------------
+# The Comments tab: edited in place (check / cross), deleted after a confirmation. {commentId} is the clicked comment.
+comments.thread:
+    $type: task:CommentThread
+    comments: $sources.comments.comments
+    editAction: editComment
+    removeAction: removeComment
+    emptyText: No comments yet
+    params:
+        $use: params.task
+# One new plain-text comment: Ctrl+Enter sends, the field clears itself after success.
+comments.composer:
+    $type: task:CommentComposer
+    action: addComment
+    placeholder: Add a comment...
+    params:
+        $use: params.task
+
+# ---- dates -------------------------------------------------------------------------------------------------------------------------------
+dates.created.row:
+    $type: task:PropertyRow
+    label: Created
+    items:
+        - $use: created.date
+dates.updated.row:
+    $type: task:PropertyRow
+    label: Updated
+    items:
+        - $type: RelativeDate
+          date: $sources.detail.updatedAt
 dates:
     $type: task:PropertyList
     density: compact
     labelPlacement: inline
     labelWidth: narrow
     items:
-        - $type: task:PropertyRow
-          label: Created
-          items:
-              - $type: RelativeDate
-                date: $sources.detail.createdAt
-        - $type: task:PropertyRow
-          label: Updated
-          items:
-              - $type: RelativeDate
-                date: $sources.detail.updatedAt
+        - $use: dates.created.row
+        - $use: dates.updated.row

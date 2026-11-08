@@ -98,3 +98,14 @@ describe('StatusSelect', () => {
 		expect(error).not.toHaveBeenCalled();
 	});
 });
+
+describe('StatusSelect appearance', () => {
+	it('button: a rectangular tinted button of the same height', () => {
+		setup({ appearance: 'button' });
+
+		const trigger = screen.getByRole('button', { name: 'Status: In progress' });
+		expect(trigger.className).toContain(CONTROL_H);
+		expect(trigger.className).toContain('rounded-md');
+		expect(trigger.className).not.toContain('rounded-full');
+	});
+});

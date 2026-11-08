@@ -9,8 +9,8 @@ export interface PanelProps {
 	collapsible?: boolean;
 	/** Initial state when collapsible. The state then lives in the component, across re-renders of the page. */
 	defaultOpen?: boolean;
-	/** `card`: bordered box. `plain`: no border, header and content only. `flush`: bordered, no inner padding for the content. */
-	appearance?: 'card' | 'plain' | 'flush';
+	/** `card`: bordered box. `plain`: no border, header and content only. `flush`: bordered, no inner padding for the content. `strip`: bordered, the header sits in a tinted strip above a line (the GitHub comment box). */
+	appearance?: 'card' | 'plain' | 'flush' | 'strip';
 	/**
 	 * Controls on the right of the header.
 	 * @slot tag:layout, tag:display, tag:composite, tag:atomic
@@ -28,16 +28,19 @@ const FRAME: Record<NonNullable<PanelProps['appearance']>, string> = {
 	card: 'rounded-lg border border-border bg-surface',
 	plain: '',
 	flush: 'rounded-lg border border-border bg-surface overflow-hidden',
+	strip: 'rounded-lg border border-border bg-surface overflow-hidden',
 };
 const BODY: Record<NonNullable<PanelProps['appearance']>, string> = {
 	card: 'px-4 pb-4',
 	plain: 'pt-2',
 	flush: '',
+	strip: 'px-4 py-3',
 };
 const HEADER: Record<NonNullable<PanelProps['appearance']>, string> = {
 	card: 'px-4 py-3',
 	plain: 'py-1',
 	flush: 'px-4 py-3',
+	strip: 'border-b border-border bg-muted-bg px-4 py-2',
 };
 // @formatter:on
 

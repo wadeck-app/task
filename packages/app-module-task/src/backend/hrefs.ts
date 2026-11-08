@@ -67,10 +67,6 @@ export function detailHref(project: ProjectIdentity, taskId: string): string {
 	return projectAddress(project, 'tasks', `/${taskId}`);
 }
 
-export function historyHref(project: ProjectIdentity, taskId: string): string {
-	return `${detailHref(project, taskId)}/history`;
-}
-
 /** Hrefs of the module pages that act on the project (the views link to them), and the project list. */
 export function pageHrefs(project: ProjectIdentity): Record<string, string> {
 	return {

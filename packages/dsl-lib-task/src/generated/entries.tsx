@@ -8,6 +8,7 @@ import type { ComponentRegistryEntry, RegistryRenderProps } from '@wadeck-app/ds
 import { ActionSelect } from '../components/ActionSelect.js'
 import { ActivityFeed } from '../components/ActivityFeed.js'
 import { BreadcrumbTrail } from '../components/BreadcrumbTrail.js'
+import { Caption } from '../components/Caption.js'
 import { ChipRow } from '../components/ChipRow.js'
 import { CommentComposer } from '../components/CommentComposer.js'
 import { CommentThread } from '../components/CommentThread.js'
@@ -58,14 +59,19 @@ export const ActionSelectEntry: ComponentRegistryEntry = {
 export const ActivityFeedEntry: ComponentRegistryEntry = {
 	name: 'ActivityFeed', category: 'composite', tags: ["activity","history","feed","timeline","filter","tabs"],
 	nodeSchema: null as never,
-	render: ({ node, ctx }: RegistryRenderProps) => {
+	render: ({ node, registry, ctx }: RegistryRenderProps) => {
 		const rows = coerceProp(resolveExpressionValue(node['rows'], ctx), 'ActivityFeed.rows', 'array', true) as import('../components/ActivityFeed.js').ActivityFeedProps['rows']
 		const filters = coerceProp(resolveExpressionValue(node['filters'], ctx), 'ActivityFeed.filters', 'array', false) as import('../components/ActivityFeed.js').ActivityFeedProps['filters']
 		const counts = coerceProp(resolveExpressionValue(node['counts'], ctx), 'ActivityFeed.counts', 'object', false) as import('../components/ActivityFeed.js').ActivityFeedProps['counts']
 		const pageSize = coerceProp(resolveExpressionValue(node['pageSize'], ctx), 'ActivityFeed.pageSize', 'primitive', false) as import('../components/ActivityFeed.js').ActivityFeedProps['pageSize']
 		const emptyText = coerceProp(resolveExpressionValue(node['emptyText'], ctx), 'ActivityFeed.emptyText', 'string', false) as import('../components/ActivityFeed.js').ActivityFeedProps['emptyText']
 		const now = coerceProp(resolveExpressionValue(node['now'], ctx), 'ActivityFeed.now', 'string', false) as import('../components/ActivityFeed.js').ActivityFeedProps['now']
-		return <ActivityFeed rows={rows} filters={filters} counts={counts} pageSize={pageSize} emptyText={emptyText} now={now} />
+		const filterAppearance = coerceProp(resolveExpressionValue(node['filterAppearance'], ctx), 'ActivityFeed.filterAppearance', 'primitive', false) as import('../components/ActivityFeed.js').ActivityFeedProps['filterAppearance']
+		const defaultFilter = coerceProp(resolveExpressionValue(node['defaultFilter'], ctx), 'ActivityFeed.defaultFilter', 'string', false) as import('../components/ActivityFeed.js').ActivityFeedProps['defaultFilter']
+		const commentsContent = node['commentsContent'] as unknown[] | undefined
+		const composer = node['composer'] as unknown[] | undefined
+		const composerPosition = coerceProp(resolveExpressionValue(node['composerPosition'], ctx), 'ActivityFeed.composerPosition', 'primitive', false) as import('../components/ActivityFeed.js').ActivityFeedProps['composerPosition']
+		return <ActivityFeed rows={rows} filters={filters} counts={counts} pageSize={pageSize} emptyText={emptyText} now={now} filterAppearance={filterAppearance} defaultFilter={defaultFilter} commentsContent={commentsContent ? renderChildren(commentsContent, registry, ctx) : null} composer={composer ? renderChildren(composer, registry, ctx) : null} composerPosition={composerPosition} />
 	},
 }
 
@@ -78,6 +84,17 @@ export const BreadcrumbTrailEntry: ComponentRegistryEntry = {
 		const maxItems = coerceProp(resolveExpressionValue(node['maxItems'], ctx), 'BreadcrumbTrail.maxItems', 'primitive', false) as import('../components/BreadcrumbTrail.js').BreadcrumbTrailProps['maxItems']
 		const currentLabel = coerceProp(resolveExpressionValue(node['currentLabel'], ctx), 'BreadcrumbTrail.currentLabel', 'string', false) as import('../components/BreadcrumbTrail.js').BreadcrumbTrailProps['currentLabel']
 		return <BreadcrumbTrail items={items} separator={separator} maxItems={maxItems} currentLabel={currentLabel} />
+	},
+}
+
+export const CaptionEntry: ComponentRegistryEntry = {
+	name: 'Caption', category: 'atomic', tags: ["caption","text","label","muted"],
+	nodeSchema: null as never,
+	render: ({ node, ctx }: RegistryRenderProps) => {
+		const text = coerceProp(resolveExpressionValue(node['text'], ctx), 'Caption.text', 'string', true) as import('../components/Caption.js').CaptionProps['text']
+		const tone = coerceProp(resolveExpressionValue(node['tone'], ctx), 'Caption.tone', 'primitive', false) as import('../components/Caption.js').CaptionProps['tone']
+		const mono = coerceProp(resolveExpressionValue(node['mono'], ctx), 'Caption.mono', 'primitive', false) as import('../components/Caption.js').CaptionProps['mono']
+		return <Caption text={text} tone={tone} mono={mono} />
 	},
 }
 
@@ -293,6 +310,8 @@ export const PropertyPopoverEntry: ComponentRegistryEntry = {
 		const empty = coerceProp(resolveExpressionValue(node['empty'], ctx), 'PropertyPopover.empty', 'string', false) as import('../components/PropertyPopover.js').PropertyPopoverProps['empty']
 		const tone = coerceProp(resolveExpressionValue(node['tone'], ctx), 'PropertyPopover.tone', 'primitive', false) as import('../components/PropertyPopover.js').PropertyPopoverProps['tone']
 		const appearance = coerceProp(resolveExpressionValue(node['appearance'], ctx), 'PropertyPopover.appearance', 'primitive', false) as import('../components/PropertyPopover.js').PropertyPopoverProps['appearance']
+		const actionLabel = coerceProp(resolveExpressionValue(node['actionLabel'], ctx), 'PropertyPopover.actionLabel', 'string', false) as import('../components/PropertyPopover.js').PropertyPopoverProps['actionLabel']
+		const align = coerceProp(resolveExpressionValue(node['align'], ctx), 'PropertyPopover.align', 'primitive', false) as import('../components/PropertyPopover.js').PropertyPopoverProps['align']
 		const options = coerceProp(resolveExpressionValue(node['options'], ctx), 'PropertyPopover.options', 'array', false) as import('../components/PropertyPopover.js').PropertyPopoverProps['options']
 		const value = coerceProp(resolveExpressionValue(node['value'], ctx), 'PropertyPopover.value', 'string', false) as import('../components/PropertyPopover.js').PropertyPopoverProps['value']
 		const action = coerceProp(resolveExpressionValue(node['action'], ctx), 'PropertyPopover.action', 'string', false) as import('../components/PropertyPopover.js').PropertyPopoverProps['action']
@@ -304,7 +323,7 @@ export const PropertyPopoverEntry: ComponentRegistryEntry = {
 		const items = node['items'] as unknown[] | undefined
 		const onAction = coerceProp(resolveExpressionValue(node['onAction'], ctx) ?? pageActionHandler(ctx), 'PropertyPopover.onAction', 'function', false) as import('../components/PropertyPopover.js').PropertyPopoverProps['onAction']
 		const actionPending = coerceProp(resolveExpressionValue(node['actionPending'], ctx) ?? ctx['$actionPending'], 'PropertyPopover.actionPending', 'object', false) as import('../components/PropertyPopover.js').PropertyPopoverProps['actionPending']
-		return <PropertyPopover label={label} valueText={valueText} empty={empty} tone={tone} appearance={appearance} options={options} value={value} action={action} valueParam={valueParam} bodyKey={bodyKey} params={params} closeOnActions={closeOnActions} disabled={disabled} items={items ? renderChildren(items, registry, ctx) : null} onAction={onAction} actionPending={actionPending} />
+		return <PropertyPopover label={label} valueText={valueText} empty={empty} tone={tone} appearance={appearance} actionLabel={actionLabel} align={align} options={options} value={value} action={action} valueParam={valueParam} bodyKey={bodyKey} params={params} closeOnActions={closeOnActions} disabled={disabled} items={items ? renderChildren(items, registry, ctx) : null} onAction={onAction} actionPending={actionPending} />
 	},
 }
 
@@ -314,8 +333,9 @@ export const PropertyRowEntry: ComponentRegistryEntry = {
 	render: ({ node, registry, ctx }: RegistryRenderProps) => {
 		const label = coerceProp(resolveExpressionValue(node['label'], ctx), 'PropertyRow.label', 'string', true) as import('../components/PropertyRow.js').PropertyRowProps['label']
 		const hint = coerceProp(resolveExpressionValue(node['hint'], ctx), 'PropertyRow.hint', 'string', false) as import('../components/PropertyRow.js').PropertyRowProps['hint']
+		const align = coerceProp(resolveExpressionValue(node['align'], ctx), 'PropertyRow.align', 'primitive', false) as import('../components/PropertyRow.js').PropertyRowProps['align']
 		const items = node['items'] as unknown[] | undefined
-		return <PropertyRow label={label} hint={hint} items={items ? renderChildren(items, registry, ctx) : null} />
+		return <PropertyRow label={label} hint={hint} align={align} items={items ? renderChildren(items, registry, ctx) : null} />
 	},
 }
 
@@ -375,12 +395,13 @@ export const StatusSelectEntry: ComponentRegistryEntry = {
 		const action = coerceProp(resolveExpressionValue(node['action'], ctx), 'StatusSelect.action', 'string', true) as import('../components/StatusSelect.js').StatusSelectProps['action']
 		const label = coerceProp(resolveExpressionValue(node['label'], ctx), 'StatusSelect.label', 'string', false) as import('../components/StatusSelect.js').StatusSelectProps['label']
 		const valueParam = coerceProp(resolveExpressionValue(node['valueParam'], ctx), 'StatusSelect.valueParam', 'string', false) as import('../components/StatusSelect.js').StatusSelectProps['valueParam']
+		const appearance = coerceProp(resolveExpressionValue(node['appearance'], ctx), 'StatusSelect.appearance', 'primitive', false) as import('../components/StatusSelect.js').StatusSelectProps['appearance']
 		const bodyKey = coerceProp(resolveExpressionValue(node['bodyKey'], ctx), 'StatusSelect.bodyKey', 'string', false) as import('../components/StatusSelect.js').StatusSelectProps['bodyKey']
 		const params = coerceProp(resolveExpressionsDeep(node['params'], ctx), 'StatusSelect.params', 'object', false) as import('../components/StatusSelect.js').StatusSelectProps['params']
 		const disabled = coerceProp(resolveExpressionValue(node['disabled'], ctx), 'StatusSelect.disabled', 'primitive', false) as import('../components/StatusSelect.js').StatusSelectProps['disabled']
 		const onAction = coerceProp(resolveExpressionValue(node['onAction'], ctx) ?? pageActionHandler(ctx), 'StatusSelect.onAction', 'function', false) as import('../components/StatusSelect.js').StatusSelectProps['onAction']
 		const actionPending = coerceProp(resolveExpressionValue(node['actionPending'], ctx) ?? ctx['$actionPending'], 'StatusSelect.actionPending', 'object', false) as import('../components/StatusSelect.js').StatusSelectProps['actionPending']
-		return <StatusSelect options={options} current={current} action={action} label={label} valueParam={valueParam} bodyKey={bodyKey} params={params} disabled={disabled} onAction={onAction} actionPending={actionPending} />
+		return <StatusSelect options={options} current={current} action={action} label={label} valueParam={valueParam} appearance={appearance} bodyKey={bodyKey} params={params} disabled={disabled} onAction={onAction} actionPending={actionPending} />
 	},
 }
 
@@ -413,10 +434,11 @@ export const TaskChecklistEntry: ComponentRegistryEntry = {
 		const parentKey = coerceProp(resolveExpressionValue(node['parentKey'], ctx), 'TaskChecklist.parentKey', 'string', false) as import('../components/TaskChecklist.js').TaskChecklistProps['parentKey']
 		const params = coerceProp(resolveExpressionsDeep(node['params'], ctx), 'TaskChecklist.params', 'object', false) as import('../components/TaskChecklist.js').TaskChecklistProps['params']
 		const placeholder = coerceProp(resolveExpressionValue(node['placeholder'], ctx), 'TaskChecklist.placeholder', 'string', false) as import('../components/TaskChecklist.js').TaskChecklistProps['placeholder']
+		const progress = coerceProp(resolveExpressionValue(node['progress'], ctx), 'TaskChecklist.progress', 'primitive', false) as import('../components/TaskChecklist.js').TaskChecklistProps['progress']
 		const emptyText = coerceProp(resolveExpressionValue(node['emptyText'], ctx), 'TaskChecklist.emptyText', 'string', false) as import('../components/TaskChecklist.js').TaskChecklistProps['emptyText']
 		const onAction = coerceProp(resolveExpressionValue(node['onAction'], ctx) ?? pageActionHandler(ctx), 'TaskChecklist.onAction', 'function', false) as import('../components/TaskChecklist.js').TaskChecklistProps['onAction']
 		const actionPending = coerceProp(resolveExpressionValue(node['actionPending'], ctx) ?? ctx['$actionPending'], 'TaskChecklist.actionPending', 'object', false) as import('../components/TaskChecklist.js').TaskChecklistProps['actionPending']
-		return <TaskChecklist rows={rows} doneAction={doneAction} reopenAction={reopenAction} terminalStatus={terminalStatus} reopenStatus={reopenStatus} addAction={addAction} parentId={parentId} idParam={idParam} statusParam={statusParam} titleKey={titleKey} parentKey={parentKey} params={params} placeholder={placeholder} emptyText={emptyText} onAction={onAction} actionPending={actionPending} />
+		return <TaskChecklist rows={rows} doneAction={doneAction} reopenAction={reopenAction} terminalStatus={terminalStatus} reopenStatus={reopenStatus} addAction={addAction} parentId={parentId} idParam={idParam} statusParam={statusParam} titleKey={titleKey} parentKey={parentKey} params={params} placeholder={placeholder} progress={progress} emptyText={emptyText} onAction={onAction} actionPending={actionPending} />
 	},
 }
 
@@ -506,6 +528,7 @@ export const allEntries: ComponentRegistryEntry[] = [
 	ActionSelectEntry,
 	ActivityFeedEntry,
 	BreadcrumbTrailEntry,
+	CaptionEntry,
 	ChipRowEntry,
 	CommentComposerEntry,
 	CommentThreadEntry,
@@ -537,8 +560,10 @@ export const allEntries: ComponentRegistryEntry[] = [
 // ─── Auto-detected metadata (allowedChildren, providesContext, requiresContext) ─
 // Generated from @slot JSDoc tags and createContext/useContext calls in component sources.
 ActionSelectEntry.knownKeys = ["action","actionPending","allowEmpty","appearance","ariaLabel","disabled","onAction","options","params","placeholder","value","valueParam"];
-ActivityFeedEntry.knownKeys = ["counts","emptyText","filters","now","pageSize","rows"];
+ActivityFeedEntry.allowedChildren = {"commentsContent":["layout","display","composite","atomic","form"],"composer":["layout","display","composite","atomic","form"]};
+ActivityFeedEntry.knownKeys = ["commentsContent","composer","composerPosition","counts","defaultFilter","emptyText","filterAppearance","filters","now","pageSize","rows"];
 BreadcrumbTrailEntry.knownKeys = ["currentLabel","items","maxItems","separator"];
+CaptionEntry.knownKeys = ["mono","text","tone"];
 ChipRowEntry.allowedChildren = {"items":["atomic","composite","display"]};
 ChipRowEntry.knownKeys = ["align","gap","items","justify"];
 CommentComposerEntry.knownKeys = ["action","actionPending","author","buttonLabel","maxLength","onAction","params","placeholder"];
@@ -557,17 +582,17 @@ PropertyListEntry.allowedChildren = {"items":["composite"]};
 PropertyListEntry.knownKeys = ["density","dividers","items","labelPlacement","labelWidth"];
 PropertyListEntry.providesContext = ["PropertyLayoutContext"];
 PropertyPopoverEntry.allowedChildren = {"items":["layout","display","composite","atomic","form"]};
-PropertyPopoverEntry.knownKeys = ["action","actionPending","appearance","bodyKey","closeOnActions","disabled","empty","items","label","onAction","options","params","tone","value","valueParam","valueText"];
+PropertyPopoverEntry.knownKeys = ["action","actionLabel","actionPending","align","appearance","bodyKey","closeOnActions","disabled","empty","items","label","onAction","options","params","tone","value","valueParam","valueText"];
 PropertyPopoverEntry.providesContext = ["InsidePopoverContext"];
 PropertyRowEntry.allowedChildren = {"items":["layout","display","composite","atomic","form"]};
-PropertyRowEntry.knownKeys = ["hint","items","label"];
+PropertyRowEntry.knownKeys = ["align","hint","items","label"];
 PropertyRowEntry.requiresContext = ["PropertyLayoutContext"];
 SegmentedControlEntry.knownKeys = ["action","actionPending","appearance","ariaLabel","fullWidth","onAction","options","params","size","value","valueParam"];
 SplitLayoutEntry.knownKeys = ["gap","main","side","sideFirstWhenStacked","sidePosition","sideWidth","sticky"];
 StatusBadgeEntry.knownKeys = ["appearance","icon","label","size","tone"];
-StatusSelectEntry.knownKeys = ["action","actionPending","bodyKey","current","disabled","label","onAction","options","params","valueParam"];
+StatusSelectEntry.knownKeys = ["action","actionPending","appearance","bodyKey","current","disabled","label","onAction","options","params","valueParam"];
 TabPanelsEntry.knownKeys = ["counts","defaultTab","tabs"];
-TaskChecklistEntry.knownKeys = ["actionPending","addAction","doneAction","emptyText","idParam","onAction","params","parentId","parentKey","placeholder","reopenAction","reopenStatus","rows","statusParam","terminalStatus","titleKey"];
+TaskChecklistEntry.knownKeys = ["actionPending","addAction","doneAction","emptyText","idParam","onAction","params","parentId","parentKey","placeholder","progress","reopenAction","reopenStatus","rows","statusParam","terminalStatus","titleKey"];
 TaskPickerEntry.knownKeys = ["action","actionPending","apiBase","ariaLabel","bodyKey","choiceKey","choiceLabel","choices","clearable","debounceMs","disabled","excludeDescendantsOf","excludeIds","limit","onAction","params","placeholder","projectParam"];
 TaskRowListEntry.knownKeys = ["actionPending","appearance","density","emptyText","maxRows","onAction","removeAction","removeLabel","rows","showId","showStatus"];
 TimelineEntry.knownKeys = ["emptyText","entries","groupByDay","order","showIcons"];

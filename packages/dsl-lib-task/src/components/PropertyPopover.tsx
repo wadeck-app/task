@@ -37,8 +37,16 @@ export interface PropertyPopoverProps {
 	empty?: string;
 	/** Colour of the trigger. Without it the trigger is a bordered button. */
 	tone?: Tone;
-	/** `pill`: tinted capsule. `row`: label and value on one line, full width. */
-	appearance?: 'pill' | 'row';
+	/**
+	 * `pill`: tinted capsule. `row`: label and value on one line, full width. `field`: the value only and a chevron, full
+	 * width, the border shows on hover (the label is the accessible name, not drawn). `button`: like `pill` with the
+	 * radius of a button.
+	 */
+	appearance?: 'pill' | 'row' | 'field' | 'button';
+	/** `field` only: this text, muted and right aligned, replaces the chevron (`Edit`). */
+	actionLabel?: string;
+	/** `end`: the panel is anchored to the right edge of the trigger (a popover at the right edge of a header). */
+	align?: 'start' | 'end';
 	/** The choices. Without them the popover shows its `items`. */
 	options?: PropertyPopoverOption[];
 	/** The value of the current choice (marked, and picking it again only closes). */
@@ -89,6 +97,8 @@ export function PropertyPopover({
 	empty = 'none',
 	tone,
 	appearance = 'pill',
+	actionLabel,
+	align = 'start',
 	options,
 	value,
 	action,
@@ -214,17 +224,29 @@ export function PropertyPopover({
 		}
 	};
 
-	const look =
-		appearance === 'row'
-			? `${CONTROL_H} w-full justify-between ${CONTROL_RADIUS} border border-transparent px-2 ${CONTROL_TEXT} hover:border-border`
-			: `${CONTROL_H} ${PILL_RADIUS} px-3 ${PILL_TEXT} ${resolvedTone ? TONE_PILL[resolvedTone] : `${CONTROL_BORDER} bg-surface text-content`}`;
+	const full = appearance === 'row' || appearance === 'field';
+	const tinted = resolvedTone ? TONE_PILL[resolvedTone] : `${CONTROL_BORDER} bg-surface text-content`;
+	let look: string;
+	if (full) {
+		look = `${CONTROL_H} w-full justify-between ${CONTROL_RADIUS} border border-transparent px-2 ${CONTROL_TEXT} hover:border-border`;
+	} else if (appearance === 'button') {
+		look = `${CONTROL_H} ${CONTROL_RADIUS} px-3 ${CONTROL_TEXT} font-semibold ${tinted}`;
+	} else {
+		look = `${CONTROL_H} ${PILL_RADIUS} px-3 ${PILL_TEXT} ${tinted}`;
+	}
+	// A field panel is at least as wide as the trigger (and as a plain panel).
+	const widthBase =
+		appearance === 'field'
+			? POPOVER_PANEL_CLASS.replace('min-w-[12rem]', 'min-w-[max(100%,12rem)]')
+			: POPOVER_PANEL_CLASS;
+	const panelBase = align === 'end' ? widthBase.replace('left-0', 'right-0') : widthBase;
 
 	return (
 		<span
 			ref={root}
 			data-testid="property-popover"
 			data-tone={resolvedTone}
-			className={`relative ${appearance === 'row' ? 'flex w-full' : 'inline-flex'}`}
+			className={`relative ${full ? 'flex w-full' : 'inline-flex'}`}
 			onKeyDown={event => {
 				if (event.key === 'Escape' && open) {
 					event.stopPropagation();
@@ -245,8 +267,14 @@ export function PropertyPopover({
 				className={`inline-flex min-w-0 items-center ${GAP_CONTROLS} ${FOCUS_RING} disabled:cursor-not-allowed disabled:opacity-60 ${look}`}
 			>
 				{appearance === 'row' ? <span className="shrink-0 text-muted">{label}</span> : null}
-				<span className="truncate">{text}</span>
-				<ChevronDown size={ICON_SIZE} aria-hidden="true" className="shrink-0 opacity-70" />
+				<span className={appearance === 'field' ? 'min-w-0 flex-1 truncate text-left' : 'truncate'}>
+					{text}
+				</span>
+				{appearance === 'field' && actionLabel ? (
+					<span className="ml-auto shrink-0 text-muted">{actionLabel}</span>
+				) : (
+					<ChevronDown size={ICON_SIZE} aria-hidden="true" className="shrink-0 opacity-70" />
+				)}
 			</button>
 			{open ? (
 				<>
@@ -260,7 +288,7 @@ export function PropertyPopover({
 						ref={panel}
 						id={`${id}-panel`}
 						data-testid="property-popover-panel"
-						className={`${POPOVER_PANEL_CLASS} ${hasOptions ? '' : 'w-80'}`}
+						className={`${panelBase} ${hasOptions ? '' : 'w-80'}`}
 					>
 						{hasOptions ? (
 							<div

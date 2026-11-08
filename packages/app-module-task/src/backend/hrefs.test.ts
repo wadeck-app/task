@@ -2,7 +2,6 @@ import {
 	allProjectsPageHref,
 	detailHref,
 	encodedProject,
-	historyHref,
 	pageHrefs,
 	pageLink,
 	selectedQuery,
@@ -20,7 +19,6 @@ describe('hrefs: the project of a page is a segment of its address (the breadcru
 	it('puts the registry id of the project in every per-project page address, never ?project= and never the directory', () => {
 		expect(tasksPageHref(project)).toBe('/modules/task/tasks/p/a1b2c3d4');
 		expect(detailHref(project, 'abc')).toBe('/modules/task/tasks/p/a1b2c3d4/abc');
-		expect(historyHref(project, 'abc')).toBe('/modules/task/tasks/p/a1b2c3d4/abc/history');
 		expect(pageLink(project, 'tree')).toBe('/modules/task/tree/p/a1b2c3d4');
 		expect(pageLink(project, 'types')).toBe('/modules/task/types/p/a1b2c3d4');
 		expect(pageLink(project, 'new')).toBe('/modules/task/tasks/p/a1b2c3d4/new');

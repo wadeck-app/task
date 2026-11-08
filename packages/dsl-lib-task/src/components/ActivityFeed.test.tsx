@@ -142,12 +142,12 @@ describe('ActivityFeed', () => {
 });
 
 describe('ActivityFeed filters', () => {
-	it('is a keyboard accessible tablist with "All activity" and "History" and their counts', () => {
+	it('is a keyboard accessible tablist with "All" and "History" and their counts', () => {
 		render(<ActivityFeed rows={MIXED} now={NOW} />);
 
 		expect(screen.getByRole('tablist', { name: 'Activity filter' })).toBeInTheDocument();
 		const tabs = screen.getAllByRole('tab');
-		expect(tabs.map(t => t.textContent)).toEqual(['All activity5', 'History2']);
+		expect(tabs.map(t => t.textContent)).toEqual(['All5', 'History2']);
 		expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
 		expect(tabs[0]).toHaveAttribute('tabindex', '0');
 		expect(tabs[1]).toHaveAttribute('tabindex', '-1');
@@ -181,18 +181,18 @@ describe('ActivityFeed filters', () => {
 		expect(screen.getByRole('tab', { name: /History/ })).toHaveFocus();
 		expect(screen.getByRole('tab', { name: /History/ })).toHaveAttribute('aria-selected', 'true');
 		await user.keyboard('{ArrowRight}');
-		expect(screen.getByRole('tab', { name: /All activity/ })).toHaveFocus();
+		expect(screen.getByRole('tab', { name: /^All/ })).toHaveFocus();
 		await user.keyboard('{End}');
 		expect(screen.getByRole('tab', { name: /History/ })).toHaveAttribute('aria-selected', 'true');
 		await user.keyboard('{Home}');
-		expect(screen.getByRole('tab', { name: /All activity/ })).toHaveAttribute('aria-selected', 'true');
+		expect(screen.getByRole('tab', { name: /^All/ })).toHaveAttribute('aria-selected', 'true');
 	});
 
 	it('uses the filters the route lists and its counts when given; an unknown filter matches the kind of the same name', async () => {
 		const user = userEvent.setup();
 		render(<ActivityFeed rows={MIXED} filters={['all', 'label']} counts={{ all: 9, label: 1 }} now={NOW} />);
 
-		expect(screen.getAllByRole('tab').map(t => t.textContent)).toEqual(['All activity9', 'Label1']);
+		expect(screen.getAllByRole('tab').map(t => t.textContent)).toEqual(['All9', 'Label1']);
 		await user.click(screen.getByRole('tab', { name: /Label/ }));
 		expect(screen.getAllByTestId('activity-row')).toHaveLength(1);
 	});

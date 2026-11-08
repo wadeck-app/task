@@ -24,6 +24,8 @@ export interface StatusSelectProps {
 	label?: string;
 	/** Name of the parameter that carries the picked value (a `{placeholder}` of the action url). */
 	valueParam?: string;
+	/** `pill` (default): a capsule. `button`: the same tint with the radius of a button. */
+	appearance?: 'pill' | 'button';
 	/** When set, the picked value travels in the JSON body under this key instead of in the params. */
 	bodyKey?: string;
 	/**
@@ -60,6 +62,7 @@ export function StatusSelect({
 	action,
 	label = 'Status',
 	valueParam = 'status',
+	appearance = 'pill',
 	bodyKey,
 	params,
 	disabled = false,
@@ -77,7 +80,7 @@ export function StatusSelect({
 	return (
 		<PropertyPopover
 			label={label}
-			appearance="pill"
+			appearance={appearance === 'button' ? 'button' : 'pill'}
 			valueText={active ? active.label : current}
 			tone={active?.tone === undefined ? undefined : toneOf(active.tone)}
 			options={choices}

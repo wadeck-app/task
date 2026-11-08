@@ -4,6 +4,7 @@ import { configureTaskUi } from './runtime-config.js';
 import {
 	ActionSelectEntry,
 	BreadcrumbTrailEntry,
+	CaptionEntry,
 	CommentComposerEntry,
 	CommentThreadEntry,
 	InlineTextEntry,
@@ -51,6 +52,7 @@ export function createTaskLibEntries(config: TaskLibConfig): ComponentRegistryEn
 	const registry = createRegistry([
 		ActionSelectEntry,
 		BreadcrumbTrailEntry,
+		CaptionEntry,
 		CommentComposerEntry,
 		CommentThreadEntry,
 		InlineTextEntry,

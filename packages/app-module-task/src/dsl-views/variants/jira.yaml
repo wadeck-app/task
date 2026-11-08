@@ -1,0 +1,107 @@
+label: Jira
+hint: Layout of a Jira work item, from knowledge of it (no access to the product) - id and editable summary, an action row (Add sub-task, Link, Actions), Description, Child items with a progress bar, Linked items, Activity with the composer on top, and a sticky right Details panel with the status as a prominent button.
+view:
+    $type: task:WidthFrame
+    width: wide
+    items:
+        - $type: VerticalStack
+          gap: gap-4
+          items:
+              - $type: VerticalStack
+                gap: gap-2
+                items:
+                    - $type: task:ChipRow
+                      gap: gap-2
+                      align: center
+                      items:
+                          - $use: id.badge
+                    - $use: title.edit
+                    - $use: blocked.notice
+                    - $type: task:ChipRow
+                      gap: gap-2
+                      align: center
+                      items:
+                          - $use: subtasks.add.popover
+                          - $use: links.add
+                          - $use: menu.more
+              - $type: task:SplitLayout
+                sidePosition: right
+                sideWidth: normal
+                sticky: true
+                sideFirstWhenStacked: true
+                main:
+                    - $type: VerticalStack
+                      gap: gap-4
+                      items:
+                          # In the main column: a message that appears after a change in the sidebar must not push the sidebar down.
+                          - $use: feedback.all
+                          - $type: task:Panel
+                            title: Description
+                            appearance: plain
+                            items:
+                                - $use: body.edit
+                                - $use: body.add
+                          - $type: task:Panel
+                            title: Child items
+                            appearance: plain
+                            items:
+                                - $use: subtasks.checklist.bar
+                          - $type: task:Panel
+                            title: Linked items
+                            appearance: plain
+                            items:
+                                - $use: links.groups
+                                - $use: links.none
+                          - $type: task:Panel
+                            title: Activity
+                            appearance: plain
+                            items:
+                                - $type: task:ActivityFeed
+                                  rows: $sources.activity.rows
+                                  filters:
+                                      - all
+                                      - comments
+                                      - history
+                                  composerPosition: top
+                                  emptyText: No activity yet
+                                  commentsContent:
+                                      - $use: comments.thread
+                                  composer:
+                                      - $use: comments.composer
+                side:
+                    - $type: task:Panel
+                      title: Details
+                      appearance: card
+                      items:
+                          - $type: VerticalStack
+                            gap: gap-4
+                            items:
+                                - $use: status.select.button
+                                - $type: task:PropertyList
+                                  density: comfortable
+                                  labelPlacement: inline
+                                  labelWidth: narrow
+                                  items:
+                                      - $type: task:PropertyRow
+                                        label: Type
+                                        align: control
+                                        items:
+                                            - $use: prop.type.field
+                                            - $use: prop.type.free
+                                      - $type: task:PropertyRow
+                                        label: Parent
+                                        align: control
+                                        items:
+                                            - $use: prop.parent.field
+                                      - $type: task:PropertyRow
+                                        label: Labels
+                                        align: control
+                                        items:
+                                            - $use: prop.labels
+                                      - $type: task:PropertyRow
+                                        label: Metadata
+                                        align: control
+                                        items:
+                                            - $use: prop.meta
+                                - $type: Divider
+                                - $use: dates

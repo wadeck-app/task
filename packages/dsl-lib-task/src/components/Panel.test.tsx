@@ -69,4 +69,18 @@ describe('Panel', () => {
 		rerender(<Panel title="T" appearance="plain" items="x" />);
 		expect(screen.getByTestId('panel')).not.toHaveClass('border');
 	});
+
+	// The GitHub "comment" box: a bordered card whose title sits in a tinted strip, separated from the body by a line.
+	it('strip: a bordered card with a tinted header strip and a padded body', () => {
+		render(
+			<Panel title="Description" appearance="strip" actions={<button type="button">Act</button>} items="body" />
+		);
+		const panel = screen.getByTestId('panel');
+		expect(panel).toHaveClass('border', 'rounded-lg', 'overflow-hidden');
+		const strip = screen.getByText('Description').closest('div[class*="border-b"]');
+		expect(strip).not.toBeNull();
+		expect(strip).toHaveClass('bg-muted-bg');
+		expect(screen.getByText('body')).toHaveClass('px-4', 'py-3');
+		expect(screen.getByRole('button', { name: 'Act' })).toBeInTheDocument();
+	});
 });

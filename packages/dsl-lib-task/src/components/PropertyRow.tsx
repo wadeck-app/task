@@ -7,6 +7,8 @@ export interface PropertyRowProps {
 	label: string;
 	/** Explains the property; shown as a tooltip on the label. */
 	hint?: string;
+	/** Inline labels only: `text` (default) lines the label up with a line of text, `control` with the text of a 32 px control (a picker, a chip row). */
+	align?: 'text' | 'control';
 	/**
 	 * The value: any nodes.
 	 * @slot tag:layout, tag:display, tag:composite, tag:atomic, tag:form
@@ -32,7 +34,7 @@ const ROW_PADDING: Record<PropertyDensity, string> = {
  * @registryCategory composite
  * @registryTags property row details
  */
-export function PropertyRow({ label, hint, items }: PropertyRowProps): React.ReactElement {
+export function PropertyRow({ label, hint, align = 'text', items }: PropertyRowProps): React.ReactElement {
 	const { density, labelPlacement, labelWidth } = useContext(PropertyLayoutContext);
 	const inline = labelPlacement === 'inline';
 	return (
@@ -42,7 +44,7 @@ export function PropertyRow({ label, hint, items }: PropertyRowProps): React.Rea
 		>
 			<span
 				title={hint}
-				className={`shrink-0 text-xs font-medium tracking-wide text-muted${inline ? ` ${LABEL_WIDTH[labelWidth]} pt-0.5` : ''}`}
+				className={`shrink-0 text-xs font-medium tracking-wide text-muted${inline ? ` ${LABEL_WIDTH[labelWidth]} ${align === 'control' ? 'pt-2' : 'pt-0.5'}` : ''}`}
 			>
 				{label}
 			</span>

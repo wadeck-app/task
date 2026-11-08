@@ -109,29 +109,9 @@
 			"slot": "route",
 			"label": "Task",
 			"path": "/tasks/p/:project/:id",
-			"tab": {
-				"group": "task",
-				"label": "Details",
-				"order": 10
-			},
 			"view": {
 				"type": "path",
 				"value": "./src/dsl-views/task-page.yaml"
-			}
-		},
-		{
-			"kind": "page",
-			"slot": "route",
-			"label": "Task history",
-			"path": "/tasks/p/:project/:id/history",
-			"tab": {
-				"group": "task",
-				"label": "History",
-				"order": 20
-			},
-			"view": {
-				"type": "path",
-				"value": "./src/dsl-views/task-history-page.yaml"
 			}
 		},
 		{

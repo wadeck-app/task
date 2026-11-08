@@ -46,6 +46,18 @@ describe('PropertyList', () => {
 		expect(screen.getByTestId('property-list')).toHaveClass('divide-y');
 	});
 
+	// An inline label sits next to a 32 px control: its text must line up with the control's text, not with its top edge.
+	it('inline: align="control" centres the label on a control-high first line, text (default) keeps it at the top', () => {
+		const { rerender } = render(
+			<PropertyList labelPlacement="inline" items={<PropertyRow label="A" items="x" />} />
+		);
+		expect(screen.getByText('A')).toHaveClass('pt-0.5');
+
+		rerender(<PropertyList labelPlacement="inline" items={<PropertyRow label="A" align="control" items="x" />} />);
+		expect(screen.getByText('A')).toHaveClass('pt-2');
+		expect(screen.getByText('A')).not.toHaveClass('pt-0.5');
+	});
+
 	it('shows the hint of a row as a tooltip on its label', () => {
 		render(<PropertyList items={<PropertyRow label="Parent" hint="The task above this one" items="x" />} />);
 

@@ -1,6 +1,7 @@
 import {
 	ArrowRight,
 	ArrowRightLeft,
+	FileText,
 	GitBranch,
 	Link2,
 	LockOpen,
@@ -20,6 +21,7 @@ import { TONE_DOT, TONE_TEXT, toneOf } from '../tones.js';
 import type { Tone } from '../tones.js';
 import {
 	CONTROL_H,
+	FIELD_CLASS,
 	CONTROL_RADIUS,
 	CONTROL_TEXT,
 	FOCUS_RING,
@@ -33,6 +35,10 @@ export interface ActivityDetails {
 	old?: string;
 	/** The value after. */
 	new?: string;
+	/** The value before, as the route names it (same as `old`). */
+	oldValue?: string;
+	/** The value after, as the route names it (same as `new`). */
+	newValue?: string;
 }
 
 export interface ActivityRow {
@@ -67,12 +73,28 @@ export interface ActivityFeedProps {
 	emptyText?: string;
 	/** The instant "now" for the relative times (ISO 8601). Defaults to the clock. */
 	now?: string;
+	/** `tabs` (default): a tab strip. `select`: ONE native select, for a narrow column. */
+	filterAppearance?: 'tabs' | 'select';
+	/** The filter selected first; the first filter when it is not one of the filters. */
+	defaultFilter?: string;
+	/**
+	 * Shown INSTEAD of the comment rows while the `comments` filter is selected (a thread with its own actions).
+	 * @slot tag:layout, tag:display, tag:composite, tag:atomic, tag:form
+	 */
+	commentsContent?: React.ReactNode;
+	/**
+	 * Always shown, whatever the filter (a comment composer).
+	 * @slot tag:layout, tag:display, tag:composite, tag:atomic, tag:form
+	 */
+	composer?: React.ReactNode;
+	/** `bottom` (default): after the list. `top`: above the filter. */
+	composerPosition?: 'top' | 'bottom';
 }
 
 /**
  * The HISTORY filter: changes to the properties of the task, i.e. who/what it is linked to and how it is classified.
  * It leaves out the creation, the edits of the title and the description (text, not properties) and any kind this
- * component does not know (those stay under All activity).
+ * component does not know (those stay under All).
  */
 export const HISTORY_KINDS: readonly string[] = [
 	'status',
@@ -97,7 +119,7 @@ const KIND_ICON: Record<string, LucideIcon> = {
 	meta: SlidersHorizontal,
 	unblocked: LockOpen,
 	title: Pencil,
-	description: Pencil,
+	description: FileText,
 	text: Pencil,
 	comment: MessageSquare,
 	'comment-edited': Pencil,
@@ -125,7 +147,7 @@ const KIND_TONE: Record<string, Tone> = {
 };
 
 const FILTER_LABEL: Record<string, string> = {
-	all: 'All activity',
+	all: 'All',
 	history: 'History',
 };
 // @formatter:on
@@ -158,6 +180,33 @@ export function relativeTime(at: string, nowMs: number): string {
 	return new Date(time).toISOString().slice(0, 10);
 }
 
+/** The kinds the route sends per side of a change, folded onto the kind that picks the icon, the tone and the filter. */
+// @formatter:off
+const KIND_ALIAS: Record<string, string> = {
+	'label-added': 'label',
+	'label-removed': 'label',
+	'meta-set': 'meta',
+	'meta-removed': 'meta',
+	'link-added': 'link',
+	'link-removed': 'unlink',
+};
+// @formatter:on
+
+function normalKind(kind: string): string {
+	return KIND_ALIAS[kind] ?? kind;
+}
+
+/** The text of the select option of a filter. */
+function selectLabel(id: string, count: number): string {
+	if (id === 'all') {
+		return `All activity (${count})`;
+	}
+	if (id === 'comments' || id === 'history') {
+		return `${filterLabel(id)} only (${count})`;
+	}
+	return `${filterLabel(id)} (${count})`;
+}
+
 function filterLabel(id: string): string {
 	return FILTER_LABEL[id] ?? id.charAt(0).toUpperCase() + id.slice(1);
 }
@@ -167,23 +216,30 @@ function matches(filter: string, row: ActivityRow): boolean {
 		return true;
 	}
 	if (filter === 'history') {
-		return HISTORY_KINDS.includes(row.kind);
+		return HISTORY_KINDS.includes(normalKind(row.kind));
 	}
 	// The comments themselves (not the notes that one was edited or removed, which stay under All activity).
 	if (filter === 'comments') {
 		return row.kind === 'comment';
 	}
-	return row.kind === filter;
+	return row.kind === filter || normalKind(row.kind) === filter;
 }
 
 function detailsLength(details: ActivityRow['details']): number {
 	if (typeof details === 'string') {
 		return details.length + (details.split('\n').length > 3 ? COLLAPSE_CHARS : 0);
 	}
-	return (details?.old?.length ?? 0) + (details?.new?.length ?? 0);
+	const { before, after } = details === undefined ? ({} as { before?: string; after?: string }) : sides(details);
+	return (before?.length ?? 0) + (after?.length ?? 0);
+}
+
+/** The two values of a change, whichever pair of names the route used. */
+function sides(details: ActivityDetails): { before?: string; after?: string } {
+	return { before: details.old ?? details.oldValue, after: details.new ?? details.newValue };
 }
 
 function Details({ details }: { details: NonNullable<ActivityRow['details']> }): React.ReactElement {
+	const { before, after } = typeof details === 'string' ? { before: undefined, after: undefined } : sides(details);
 	const long = detailsLength(details) > COLLAPSE_CHARS;
 	const [open, setOpen] = useState(false);
 	const collapsed = long && !open;
@@ -208,13 +264,11 @@ function Details({ details }: { details: NonNullable<ActivityRow['details']> }):
 					details
 				) : (
 					<>
-						{details.old !== undefined ? (
-							<span className="text-muted line-through">{details.old}</span>
-						) : null}
-						{details.old !== undefined && details.new !== undefined ? (
+						{before !== undefined ? <span className="text-muted line-through">{before}</span> : null}
+						{before !== undefined && after !== undefined ? (
 							<ArrowRight size={12} aria-hidden="true" className="mx-1 inline text-muted" />
 						) : null}
-						{details.new !== undefined ? <span className="font-medium">{details.new}</span> : null}
+						{after !== undefined ? <span className="font-medium">{after}</span> : null}
 					</>
 				)}
 			</div>
@@ -233,8 +287,9 @@ function Details({ details }: { details: NonNullable<ActivityRow['details']> }):
 }
 
 function Row({ row, nowMs }: { row: ActivityRow; nowMs: number }): React.ReactElement {
-	const Icon = KIND_ICON[row.kind];
-	const tone = toneOf(row.tone ?? KIND_TONE[row.kind] ?? 'neutral');
+	const kind = normalKind(row.kind);
+	const Icon = KIND_ICON[kind];
+	const tone = toneOf(row.tone ?? KIND_TONE[kind] ?? 'neutral');
 	return (
 		<li data-testid="activity-row" data-kind={row.kind} className={`flex ${GAP_CONTROLS} pb-4`}>
 			<span className="mt-0.5 flex w-5 shrink-0 justify-center">
@@ -287,7 +342,7 @@ function Row({ row, nowMs }: { row: ActivityRow; nowMs: number }): React.ReactEl
 
 /**
  * The activity of a task: one feed with a lucide icon per kind, day headings, relative times (the absolute UTC
- * instant in the tooltip), collapsible change previews, filter tabs with counts ("All activity", "History") and
+ * instant in the tooltip), collapsible change previews, filter tabs with counts ("All", "Comments", "History") and
  * "Show more" after 15 rows. Filtering is client side, from `rows[].kind` (see HISTORY_KINDS).
  *
  * IN SCOPE: reading what happened to one task. OUT OF SCOPE: adding a comment, server paging.
@@ -302,13 +357,20 @@ export function ActivityFeed({
 	pageSize = 15,
 	emptyText = 'No activity yet',
 	now,
+	filterAppearance = 'tabs',
+	defaultFilter,
+	commentsContent,
+	composer,
+	composerPosition = 'bottom',
 }: ActivityFeedProps): React.ReactElement {
 	const baseId = useId();
 	const list = (Array.isArray(rows) ? rows : []).filter(
 		(row): row is ActivityRow => typeof row === 'object' && row !== null && typeof row.text === 'string'
 	);
 	const tabs = (Array.isArray(filters) && filters.length > 0 ? filters : ['all']).filter(f => typeof f === 'string');
-	const [selected, setSelected] = useState(tabs[0] ?? 'all');
+	const [selected, setSelected] = useState(
+		defaultFilter !== undefined && tabs.includes(defaultFilter) ? defaultFilter : (tabs[0] ?? 'all')
+	);
 	const [shown, setShown] = useState(pageSize);
 	const filter = tabs.includes(selected) ? selected : (tabs[0] ?? 'all');
 	const parsedNow = now === undefined ? Number.NaN : Date.parse(now);
@@ -339,6 +401,10 @@ export function ActivityFeed({
 	};
 	const tabId = (id: string): string => `${baseId}-tab-${id}`;
 	const showTabs = tabs.length > 1;
+	const asSelect = filterAppearance === 'select';
+	const countOf = (id: string): number => counts?.[id] ?? list.filter(row => matches(id, row)).length;
+	const slotted = filter === 'comments' && commentsContent !== undefined && commentsContent !== null;
+	const composerNode = composer === undefined || composer === null ? null : composer;
 
 	const onTabKey = (event: React.KeyboardEvent, index: number): void => {
 		let target = -1;
@@ -361,11 +427,26 @@ export function ActivityFeed({
 
 	return (
 		<div data-testid="activity-feed" className={`flex flex-col ${GAP_BLOCKS}`}>
-			{showTabs ? (
+			{composerPosition === 'top' ? composerNode : null}
+			{showTabs && asSelect ? (
+				<select
+					aria-label="Activity filter"
+					value={filter}
+					onChange={event => choose(event.target.value)}
+					className={FIELD_CLASS}
+				>
+					{tabs.map(id => (
+						<option key={id} value={id}>
+							{selectLabel(id, countOf(id))}
+						</option>
+					))}
+				</select>
+			) : null}
+			{showTabs && !asSelect ? (
 				<div role="tablist" aria-label="Activity filter" className={`flex flex-wrap ${GAP_CONTROLS}`}>
 					{tabs.map((id, index) => {
 						const active = id === filter;
-						const count = counts?.[id] ?? list.filter(row => matches(id, row)).length;
+						const count = countOf(id);
 						return (
 							<button
 								key={id}
@@ -388,11 +469,13 @@ export function ActivityFeed({
 			) : null}
 			<div
 				id={`${baseId}-panel`}
-				role={showTabs ? 'tabpanel' : undefined}
-				aria-labelledby={showTabs ? tabId(filter) : undefined}
+				role={showTabs && !asSelect ? 'tabpanel' : undefined}
+				aria-labelledby={showTabs && !asSelect ? tabId(filter) : undefined}
 				className={`flex flex-col ${GAP_BLOCKS}`}
 			>
-				{filtered.length === 0 ? (
+				{slotted ? (
+					commentsContent
+				) : filtered.length === 0 ? (
 					<p data-testid="activity-empty" className="text-sm text-muted">
 						{filter === 'all' ? emptyText : `No ${filterLabel(filter).toLowerCase()} yet`}
 					</p>
@@ -408,7 +491,7 @@ export function ActivityFeed({
 						</section>
 					))
 				)}
-				{left > 0 ? (
+				{left > 0 && !slotted ? (
 					<button
 						type="button"
 						onClick={() => setShown(current => current + pageSize)}
@@ -418,6 +501,7 @@ export function ActivityFeed({
 					</button>
 				) : null}
 			</div>
+			{composerPosition === 'top' ? null : composerNode}
 		</div>
 	);
 }

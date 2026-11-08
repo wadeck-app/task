@@ -50,6 +50,8 @@ export interface TaskChecklistProps {
 	 */
 	params?: Record<string, unknown>;
 	placeholder?: string;
+	/** `ring` (default): a circle with the percentage. `bar`: a bar with "done of total". `none`: nothing. */
+	progress?: 'ring' | 'bar' | 'none';
 	/** Shown when there is no row. */
 	emptyText?: string;
 	/**
@@ -85,6 +87,7 @@ export function TaskChecklist({
 	parentKey = 'parent',
 	params,
 	placeholder = 'Add sub-task',
+	progress = 'ring',
 	emptyText,
 	onAction,
 	actionPending,
@@ -146,7 +149,13 @@ export function TaskChecklist({
 	return (
 		<div data-testid="task-checklist" className="flex flex-col gap-2">
 			{list.length > 0 ? (
-				<ProgressSummary done={doneCount} total={list.length} appearance="ring" />
+				progress === 'none' ? null : (
+					<ProgressSummary
+						done={doneCount}
+						total={list.length}
+						appearance={progress === 'bar' ? 'bar' : 'ring'}
+					/>
+				)
 			) : emptyText ? (
 				<p className="text-sm text-muted">{emptyText}</p>
 			) : null}

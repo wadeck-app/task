@@ -14,6 +14,7 @@ const EXPECTED = [
 	'ActionSelect',
 	'ActivityFeed',
 	'BreadcrumbTrail',
+	'Caption',
 	'ChipRow',
 	'CommentComposer',
 	'CommentThread',

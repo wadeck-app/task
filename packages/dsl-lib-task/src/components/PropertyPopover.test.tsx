@@ -273,3 +273,64 @@ describe('PropertyPopover', () => {
 		expect(screen.queryByRole('listbox')).toBeNull();
 	});
 });
+
+describe('PropertyPopover field and button appearances', () => {
+	it('field: value and chevron, full width, label only as the accessible name', () => {
+		setup({ appearance: 'field' });
+
+		const trigger = screen.getByRole('button', { name: 'Status: In progress' });
+		expect(trigger.className).toContain('h-8');
+		expect(trigger.className).toContain('w-full');
+		expect(trigger.className).toContain('border-transparent');
+		expect(trigger.className).toContain('hover:border-border');
+		expect(trigger).toHaveTextContent('In progress');
+		expect(trigger).not.toHaveTextContent('Status');
+		expect(trigger.querySelector('svg')).not.toBeNull();
+	});
+
+	it('field with actionLabel: the text replaces the chevron, muted and right aligned', () => {
+		setup({ appearance: 'field', actionLabel: 'Edit' });
+
+		const trigger = screen.getByRole('button', { name: 'Status: In progress' });
+		expect(trigger.querySelector('svg')).toBeNull();
+		const action = screen.getByText('Edit');
+		expect(action.className).toContain('text-muted');
+		expect(action.className).toContain('ml-auto');
+	});
+
+	it('field: the panel aligns left and is at least as wide as the trigger', async () => {
+		const user = userEvent.setup();
+		setup({ appearance: 'field', options: undefined, items: <span>content</span> });
+
+		await user.click(screen.getByRole('button', { name: 'Status: In progress' }));
+
+		const panel = screen.getByTestId('property-popover-panel');
+		expect(panel.className).toContain('left-0');
+		expect(panel.className).toContain('min-w-[max(100%,12rem)]');
+		expect(panel.className).toContain('w-80');
+	});
+
+	// A popover at the right edge of a header (the Actions menu) must open towards the left, or it leaves the screen.
+	it('align end: the panel is anchored to the right edge of the trigger', async () => {
+		const user = userEvent.setup();
+		setup({ align: 'end', options: undefined, items: <span>content</span> });
+
+		await user.click(screen.getByRole('button', { name: 'Status: In progress' }));
+
+		const panel = screen.getByTestId('property-popover-panel');
+		expect(panel.className).toContain('right-0');
+		expect(panel.className).not.toContain('left-0');
+	});
+
+	it('button: tinted by tone, rectangular, px-3 semibold, same height', () => {
+		setup({ appearance: 'button', tone: 'success' });
+
+		const trigger = screen.getByRole('button', { name: 'Status: In progress' });
+		expect(trigger.className).toContain('h-8');
+		expect(trigger.className).toContain('rounded-md');
+		expect(trigger.className).not.toContain('rounded-full');
+		expect(trigger.className).toContain('px-3');
+		expect(trigger.className).toContain('font-semibold');
+		expect(trigger.className).toContain('text-success-text');
+	});
+});
