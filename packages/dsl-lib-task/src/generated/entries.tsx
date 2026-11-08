@@ -12,6 +12,7 @@ import { Caption } from '../components/Caption.js'
 import { ChipRow } from '../components/ChipRow.js'
 import { CommentComposer } from '../components/CommentComposer.js'
 import { CommentThread } from '../components/CommentThread.js'
+import { ControlButton } from '../components/ControlButton.js'
 import { InlineText } from '../components/InlineText.js'
 import { KeyValueList } from '../components/KeyValueList.js'
 import { LabelChips } from '../components/LabelChips.js'
@@ -141,6 +142,23 @@ export const CommentThreadEntry: ComponentRegistryEntry = {
 		const onAction = coerceProp(resolveExpressionValue(node['onAction'], ctx) ?? pageActionHandler(ctx), 'CommentThread.onAction', 'function', false) as import('../components/CommentThread.js').CommentThreadProps['onAction']
 		const actionPending = coerceProp(resolveExpressionValue(node['actionPending'], ctx) ?? ctx['$actionPending'], 'CommentThread.actionPending', 'object', false) as import('../components/CommentThread.js').CommentThreadProps['actionPending']
 		return <CommentThread comments={comments} newestFirst={newestFirst} editAction={editAction} removeAction={removeAction} params={params} readOnly={readOnly} emptyText={emptyText} now={now} onAction={onAction} actionPending={actionPending} />
+	},
+}
+
+export const ControlButtonEntry: ComponentRegistryEntry = {
+	name: 'ControlButton', category: 'atomic', tags: ["button","control","delete","danger","secondary"],
+	nodeSchema: null as never,
+	render: ({ node, ctx }: RegistryRenderProps) => {
+		const label = coerceProp(resolveExpressionValue(node['label'], ctx), 'ControlButton.label', 'string', true) as import('../components/ControlButton.js').ControlButtonProps['label']
+		const icon = coerceProp(resolveExpressionValue(node['icon'], ctx), 'ControlButton.icon', 'primitive', false) as import('../components/ControlButton.js').ControlButtonProps['icon']
+		const variant = coerceProp(resolveExpressionValue(node['variant'], ctx), 'ControlButton.variant', 'primitive', false) as import('../components/ControlButton.js').ControlButtonProps['variant']
+		const hint = coerceProp(resolveExpressionValue(node['hint'], ctx), 'ControlButton.hint', 'string', false) as import('../components/ControlButton.js').ControlButtonProps['hint']
+		const action = coerceProp(resolveExpressionValue(node['action'], ctx), 'ControlButton.action', 'string', false) as import('../components/ControlButton.js').ControlButtonProps['action']
+		const params = coerceProp(resolveExpressionsDeep(node['params'], ctx), 'ControlButton.params', 'object', false) as import('../components/ControlButton.js').ControlButtonProps['params']
+		const disabled = coerceProp(resolveExpressionValue(node['disabled'], ctx), 'ControlButton.disabled', 'primitive', false) as import('../components/ControlButton.js').ControlButtonProps['disabled']
+		const onAction = coerceProp(resolveExpressionValue(node['onAction'], ctx) ?? pageActionHandler(ctx), 'ControlButton.onAction', 'function', false) as import('../components/ControlButton.js').ControlButtonProps['onAction']
+		const actionPending = coerceProp(resolveExpressionValue(node['actionPending'], ctx) ?? ctx['$actionPending'], 'ControlButton.actionPending', 'object', false) as import('../components/ControlButton.js').ControlButtonProps['actionPending']
+		return <ControlButton label={label} icon={icon} variant={variant} hint={hint} action={action} params={params} disabled={disabled} onAction={onAction} actionPending={actionPending} />
 	},
 }
 
@@ -313,6 +331,7 @@ export const PropertyPopoverEntry: ComponentRegistryEntry = {
 		const tone = coerceProp(resolveExpressionValue(node['tone'], ctx), 'PropertyPopover.tone', 'primitive', false) as import('../components/PropertyPopover.js').PropertyPopoverProps['tone']
 		const appearance = coerceProp(resolveExpressionValue(node['appearance'], ctx), 'PropertyPopover.appearance', 'primitive', false) as import('../components/PropertyPopover.js').PropertyPopoverProps['appearance']
 		const actionLabel = coerceProp(resolveExpressionValue(node['actionLabel'], ctx), 'PropertyPopover.actionLabel', 'string', false) as import('../components/PropertyPopover.js').PropertyPopoverProps['actionLabel']
+		const icon = coerceProp(resolveExpressionValue(node['icon'], ctx), 'PropertyPopover.icon', 'primitive', false) as import('../components/PropertyPopover.js').PropertyPopoverProps['icon']
 		const align = coerceProp(resolveExpressionValue(node['align'], ctx), 'PropertyPopover.align', 'primitive', false) as import('../components/PropertyPopover.js').PropertyPopoverProps['align']
 		const options = coerceProp(resolveExpressionValue(node['options'], ctx), 'PropertyPopover.options', 'array', false) as import('../components/PropertyPopover.js').PropertyPopoverProps['options']
 		const value = coerceProp(resolveExpressionValue(node['value'], ctx), 'PropertyPopover.value', 'string', false) as import('../components/PropertyPopover.js').PropertyPopoverProps['value']
@@ -325,7 +344,7 @@ export const PropertyPopoverEntry: ComponentRegistryEntry = {
 		const items = node['items'] as unknown[] | undefined
 		const onAction = coerceProp(resolveExpressionValue(node['onAction'], ctx) ?? pageActionHandler(ctx), 'PropertyPopover.onAction', 'function', false) as import('../components/PropertyPopover.js').PropertyPopoverProps['onAction']
 		const actionPending = coerceProp(resolveExpressionValue(node['actionPending'], ctx) ?? ctx['$actionPending'], 'PropertyPopover.actionPending', 'object', false) as import('../components/PropertyPopover.js').PropertyPopoverProps['actionPending']
-		return <PropertyPopover label={label} valueText={valueText} empty={empty} tone={tone} appearance={appearance} actionLabel={actionLabel} align={align} options={options} value={value} action={action} valueParam={valueParam} bodyKey={bodyKey} params={params} closeOnActions={closeOnActions} disabled={disabled} items={items ? renderChildren(items, registry, ctx) : null} onAction={onAction} actionPending={actionPending} />
+		return <PropertyPopover label={label} valueText={valueText} empty={empty} tone={tone} appearance={appearance} actionLabel={actionLabel} icon={icon} align={align} options={options} value={value} action={action} valueParam={valueParam} bodyKey={bodyKey} params={params} closeOnActions={closeOnActions} disabled={disabled} items={items ? renderChildren(items, registry, ctx) : null} onAction={onAction} actionPending={actionPending} />
 	},
 }
 
@@ -421,7 +440,7 @@ export const TabPanelsEntry: ComponentRegistryEntry = {
 }
 
 export const TaskChecklistEntry: ComponentRegistryEntry = {
-	name: 'TaskChecklist', category: 'composite', tags: ["checklist","subtasks","children","progress","steps"],
+	name: 'TaskChecklist', category: 'composite', tags: ["checklist","subtasks","children","progress","steps","table","detach"],
 	nodeSchema: null as never,
 	render: ({ node, ctx }: RegistryRenderProps) => {
 		const rows = coerceProp(resolveExpressionValue(node['rows'], ctx), 'TaskChecklist.rows', 'array', true) as import('../components/TaskChecklist.js').TaskChecklistProps['rows']
@@ -430,6 +449,9 @@ export const TaskChecklistEntry: ComponentRegistryEntry = {
 		const terminalStatus = coerceProp(resolveExpressionValue(node['terminalStatus'], ctx), 'TaskChecklist.terminalStatus', 'string', false) as import('../components/TaskChecklist.js').TaskChecklistProps['terminalStatus']
 		const reopenStatus = coerceProp(resolveExpressionValue(node['reopenStatus'], ctx), 'TaskChecklist.reopenStatus', 'string', false) as import('../components/TaskChecklist.js').TaskChecklistProps['reopenStatus']
 		const addAction = coerceProp(resolveExpressionValue(node['addAction'], ctx), 'TaskChecklist.addAction', 'string', false) as import('../components/TaskChecklist.js').TaskChecklistProps['addAction']
+		const detachAction = coerceProp(resolveExpressionValue(node['detachAction'], ctx), 'TaskChecklist.detachAction', 'string', false) as import('../components/TaskChecklist.js').TaskChecklistProps['detachAction']
+		const detachLabel = coerceProp(resolveExpressionValue(node['detachLabel'], ctx), 'TaskChecklist.detachLabel', 'string', false) as import('../components/TaskChecklist.js').TaskChecklistProps['detachLabel']
+		const detachIdParam = coerceProp(resolveExpressionValue(node['detachIdParam'], ctx), 'TaskChecklist.detachIdParam', 'string', false) as import('../components/TaskChecklist.js').TaskChecklistProps['detachIdParam']
 		const parentId = coerceProp(resolveExpressionValue(node['parentId'], ctx), 'TaskChecklist.parentId', 'string', false) as import('../components/TaskChecklist.js').TaskChecklistProps['parentId']
 		const idParam = coerceProp(resolveExpressionValue(node['idParam'], ctx), 'TaskChecklist.idParam', 'string', false) as import('../components/TaskChecklist.js').TaskChecklistProps['idParam']
 		const statusParam = coerceProp(resolveExpressionValue(node['statusParam'], ctx), 'TaskChecklist.statusParam', 'string', false) as import('../components/TaskChecklist.js').TaskChecklistProps['statusParam']
@@ -438,10 +460,14 @@ export const TaskChecklistEntry: ComponentRegistryEntry = {
 		const params = coerceProp(resolveExpressionsDeep(node['params'], ctx), 'TaskChecklist.params', 'object', false) as import('../components/TaskChecklist.js').TaskChecklistProps['params']
 		const placeholder = coerceProp(resolveExpressionValue(node['placeholder'], ctx), 'TaskChecklist.placeholder', 'string', false) as import('../components/TaskChecklist.js').TaskChecklistProps['placeholder']
 		const progress = coerceProp(resolveExpressionValue(node['progress'], ctx), 'TaskChecklist.progress', 'primitive', false) as import('../components/TaskChecklist.js').TaskChecklistProps['progress']
+		const appearance = coerceProp(resolveExpressionValue(node['appearance'], ctx), 'TaskChecklist.appearance', 'primitive', false) as import('../components/TaskChecklist.js').TaskChecklistProps['appearance']
+		const addStyle = coerceProp(resolveExpressionValue(node['addStyle'], ctx), 'TaskChecklist.addStyle', 'primitive', false) as import('../components/TaskChecklist.js').TaskChecklistProps['addStyle']
+		const addHeading = coerceProp(resolveExpressionValue(node['addHeading'], ctx), 'TaskChecklist.addHeading', 'string', false) as import('../components/TaskChecklist.js').TaskChecklistProps['addHeading']
+		const addButton = coerceProp(resolveExpressionValue(node['addButton'], ctx), 'TaskChecklist.addButton', 'string', false) as import('../components/TaskChecklist.js').TaskChecklistProps['addButton']
 		const emptyText = coerceProp(resolveExpressionValue(node['emptyText'], ctx), 'TaskChecklist.emptyText', 'string', false) as import('../components/TaskChecklist.js').TaskChecklistProps['emptyText']
 		const onAction = coerceProp(resolveExpressionValue(node['onAction'], ctx) ?? pageActionHandler(ctx), 'TaskChecklist.onAction', 'function', false) as import('../components/TaskChecklist.js').TaskChecklistProps['onAction']
 		const actionPending = coerceProp(resolveExpressionValue(node['actionPending'], ctx) ?? ctx['$actionPending'], 'TaskChecklist.actionPending', 'object', false) as import('../components/TaskChecklist.js').TaskChecklistProps['actionPending']
-		return <TaskChecklist rows={rows} doneAction={doneAction} reopenAction={reopenAction} terminalStatus={terminalStatus} reopenStatus={reopenStatus} addAction={addAction} parentId={parentId} idParam={idParam} statusParam={statusParam} titleKey={titleKey} parentKey={parentKey} params={params} placeholder={placeholder} progress={progress} emptyText={emptyText} onAction={onAction} actionPending={actionPending} />
+		return <TaskChecklist rows={rows} doneAction={doneAction} reopenAction={reopenAction} terminalStatus={terminalStatus} reopenStatus={reopenStatus} addAction={addAction} detachAction={detachAction} detachLabel={detachLabel} detachIdParam={detachIdParam} parentId={parentId} idParam={idParam} statusParam={statusParam} titleKey={titleKey} parentKey={parentKey} params={params} placeholder={placeholder} progress={progress} appearance={appearance} addStyle={addStyle} addHeading={addHeading} addButton={addButton} emptyText={emptyText} onAction={onAction} actionPending={actionPending} />
 	},
 }
 
@@ -455,6 +481,9 @@ export const TaskPickerEntry: ComponentRegistryEntry = {
 		const choices = coerceProp(resolveExpressionValue(node['choices'], ctx), 'TaskPicker.choices', 'array', false) as import('../components/TaskPicker.js').TaskPickerProps['choices']
 		const choiceKey = coerceProp(resolveExpressionValue(node['choiceKey'], ctx), 'TaskPicker.choiceKey', 'string', false) as import('../components/TaskPicker.js').TaskPickerProps['choiceKey']
 		const choiceLabel = coerceProp(resolveExpressionValue(node['choiceLabel'], ctx), 'TaskPicker.choiceLabel', 'string', false) as import('../components/TaskPicker.js').TaskPickerProps['choiceLabel']
+		const choiceStyle = coerceProp(resolveExpressionValue(node['choiceStyle'], ctx), 'TaskPicker.choiceStyle', 'primitive', false) as import('../components/TaskPicker.js').TaskPickerProps['choiceStyle']
+		const layout = coerceProp(resolveExpressionValue(node['layout'], ctx), 'TaskPicker.layout', 'primitive', false) as import('../components/TaskPicker.js').TaskPickerProps['layout']
+		const heading = coerceProp(resolveExpressionValue(node['heading'], ctx), 'TaskPicker.heading', 'string', false) as import('../components/TaskPicker.js').TaskPickerProps['heading']
 		const projectParam = coerceProp(resolveExpressionValue(node['projectParam'], ctx), 'TaskPicker.projectParam', 'string', false) as import('../components/TaskPicker.js').TaskPickerProps['projectParam']
 		const placeholder = coerceProp(resolveExpressionValue(node['placeholder'], ctx), 'TaskPicker.placeholder', 'string', false) as import('../components/TaskPicker.js').TaskPickerProps['placeholder']
 		const ariaLabel = coerceProp(resolveExpressionValue(node['ariaLabel'], ctx), 'TaskPicker.ariaLabel', 'string', false) as import('../components/TaskPicker.js').TaskPickerProps['ariaLabel']
@@ -467,7 +496,7 @@ export const TaskPickerEntry: ComponentRegistryEntry = {
 		const apiBase = coerceProp(resolveExpressionValue(node['apiBase'], ctx), 'TaskPicker.apiBase', 'string', false) as import('../components/TaskPicker.js').TaskPickerProps['apiBase']
 		const onAction = coerceProp(resolveExpressionValue(node['onAction'], ctx) ?? pageActionHandler(ctx), 'TaskPicker.onAction', 'function', false) as import('../components/TaskPicker.js').TaskPickerProps['onAction']
 		const actionPending = coerceProp(resolveExpressionValue(node['actionPending'], ctx) ?? ctx['$actionPending'], 'TaskPicker.actionPending', 'object', false) as import('../components/TaskPicker.js').TaskPickerProps['actionPending']
-		return <TaskPicker action={action} params={params} bodyKey={bodyKey} choices={choices} choiceKey={choiceKey} choiceLabel={choiceLabel} projectParam={projectParam} placeholder={placeholder} ariaLabel={ariaLabel} excludeIds={excludeIds} excludeDescendantsOf={excludeDescendantsOf} limit={limit} debounceMs={debounceMs} clearable={clearable} disabled={disabled} apiBase={apiBase} onAction={onAction} actionPending={actionPending} />
+		return <TaskPicker action={action} params={params} bodyKey={bodyKey} choices={choices} choiceKey={choiceKey} choiceLabel={choiceLabel} choiceStyle={choiceStyle} layout={layout} heading={heading} projectParam={projectParam} placeholder={placeholder} ariaLabel={ariaLabel} excludeIds={excludeIds} excludeDescendantsOf={excludeDescendantsOf} limit={limit} debounceMs={debounceMs} clearable={clearable} disabled={disabled} apiBase={apiBase} onAction={onAction} actionPending={actionPending} />
 	},
 }
 
@@ -535,6 +564,7 @@ export const allEntries: ComponentRegistryEntry[] = [
 	ChipRowEntry,
 	CommentComposerEntry,
 	CommentThreadEntry,
+	ControlButtonEntry,
 	InlineTextEntry,
 	KeyValueListEntry,
 	LabelChipsEntry,
@@ -571,6 +601,7 @@ ChipRowEntry.allowedChildren = {"items":["atomic","composite","display"]};
 ChipRowEntry.knownKeys = ["align","gap","items","justify"];
 CommentComposerEntry.knownKeys = ["action","actionPending","author","buttonLabel","maxLength","onAction","params","placeholder"];
 CommentThreadEntry.knownKeys = ["actionPending","comments","editAction","emptyText","newestFirst","now","onAction","params","readOnly","removeAction"];
+ControlButtonEntry.knownKeys = ["action","actionPending","disabled","hint","icon","label","onAction","params","variant"];
 InlineTextEntry.knownKeys = ["action","actionPending","allowEmpty","ariaLabel","collapsedLines","maxLength","multiline","onAction","params","placeholder","readOnly","textClass","value","valueParam"];
 KeyValueListEntry.knownKeys = ["density","emptyText","entries"];
 LabelChipsEntry.knownKeys = ["actionPending","addAction","colors","emptyText","labelKeys","labelParam","labels","onAction","params","placeholder","readOnly","removeAction","size"];
@@ -585,7 +616,7 @@ PropertyListEntry.allowedChildren = {"items":["composite"]};
 PropertyListEntry.knownKeys = ["density","dividers","hideTipsOnNarrow","items","labelPlacement","labelWidth"];
 PropertyListEntry.providesContext = ["PropertyLayoutContext"];
 PropertyPopoverEntry.allowedChildren = {"items":["layout","display","composite","atomic","form"]};
-PropertyPopoverEntry.knownKeys = ["action","actionLabel","actionPending","align","appearance","bodyKey","closeOnActions","disabled","empty","items","label","onAction","options","params","tone","value","valueParam","valueText"];
+PropertyPopoverEntry.knownKeys = ["action","actionLabel","actionPending","align","appearance","bodyKey","closeOnActions","disabled","empty","icon","items","label","onAction","options","params","tone","value","valueParam","valueText"];
 PropertyPopoverEntry.providesContext = ["InsidePopoverContext"];
 PropertyRowEntry.allowedChildren = {"items":["layout","display","composite","atomic","form"]};
 PropertyRowEntry.knownKeys = ["align","hint","items","label"];
@@ -595,8 +626,8 @@ SplitLayoutEntry.knownKeys = ["gap","main","side","sideFirstWhenStacked","sidePo
 StatusBadgeEntry.knownKeys = ["appearance","icon","label","mono","size","tone"];
 StatusSelectEntry.knownKeys = ["action","actionPending","appearance","bodyKey","current","disabled","label","onAction","options","params","valueParam"];
 TabPanelsEntry.knownKeys = ["counts","defaultTab","tabs"];
-TaskChecklistEntry.knownKeys = ["actionPending","addAction","doneAction","emptyText","idParam","onAction","params","parentId","parentKey","placeholder","progress","reopenAction","reopenStatus","rows","statusParam","terminalStatus","titleKey"];
-TaskPickerEntry.knownKeys = ["action","actionPending","apiBase","ariaLabel","bodyKey","choiceKey","choiceLabel","choices","clearable","debounceMs","disabled","excludeDescendantsOf","excludeIds","limit","onAction","params","placeholder","projectParam"];
+TaskChecklistEntry.knownKeys = ["actionPending","addAction","addButton","addHeading","addStyle","appearance","detachAction","detachIdParam","detachLabel","doneAction","emptyText","idParam","onAction","params","parentId","parentKey","placeholder","progress","reopenAction","reopenStatus","rows","statusParam","terminalStatus","titleKey"];
+TaskPickerEntry.knownKeys = ["action","actionPending","apiBase","ariaLabel","bodyKey","choiceKey","choiceLabel","choiceStyle","choices","clearable","debounceMs","disabled","excludeDescendantsOf","excludeIds","heading","layout","limit","onAction","params","placeholder","projectParam"];
 TaskRowListEntry.knownKeys = ["actionPending","appearance","density","emptyText","maxRows","onAction","removeAction","removeLabel","rows","showId","showStatus"];
 TimelineEntry.knownKeys = ["emptyText","entries","groupByDay","order","showIcons"];
 TitleTextEntry.knownKeys = ["expandable","lines","size","text","tooltip"];

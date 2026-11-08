@@ -18,7 +18,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { TaskConfigLoader, TaskStore } from '@wadeck-app/task-core';
+import { TaskConfigLoader, createLocalBackend } from '@wadeck-app/task-core';
 
 import { attemptStagedRegistration, type AppCoreAttempt } from '../AppCoreRegistration.js';
 import { resolveAppModuleManifest } from '../appModuleManifest.js';
@@ -175,10 +175,10 @@ export async function runTaskCliRollback(deps: Partial<RollbackAppCoreDeps> = {}
 
 export async function runTaskCliSelfCheck(): Promise<void> {
 	await runSelfCheck([
-		// Check 1: Bundle integrity -- verify TaskStore is accessible (task CLI core module)
+		// Check 1: Bundle integrity -- verify the local task backend is accessible (task CLI core module)
 		async () => {
 			try {
-				if (typeof TaskStore !== 'function') throw new Error('TaskStore is not a constructor');
+				if (typeof createLocalBackend !== 'function') throw new Error('createLocalBackend is not a function');
 				return { name: 'Bundle integrity', ok: true };
 			} catch (err) {
 				return { name: 'Bundle integrity', ok: false, detail: String(err) };
@@ -207,20 +207,20 @@ export async function runTaskCliSelfCheck(): Promise<void> {
 				return { name: 'YAML parsing', ok: false, detail: String(err) };
 			}
 		},
-		// Check 4: TaskStore (temp dir) -- create, read, and delete a task in an isolated temp directory
+		// Check 4: local task backend (temp dir; the label keeps its historical name) -- create and read a task in an isolated temp directory
 		async () => {
 			let tmpDir: string | undefined;
 			try {
 				tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-self-check-'));
-				// TaskStore writes its index to `<tasksDir>/../task-index.json`, so the directory handed
+				// The local backend writes its index to `<tasksDir>/../task-index.json`, so the directory handed
 				// to it must be nested inside tmpDir. Passing tmpDir itself would append every
 				// self-check run to a shared `<os.tmpdir()>/task-index.json` that nothing cleans up,
 				// and findByPrefix below would then search that accumulated index.
 				const tasksDir = path.join(tmpDir, 'tasks');
 				fs.mkdirSync(tasksDir, { recursive: true });
-				const store = new TaskStore(tasksDir);
-				const task = store.create('test task', 'backlog');
-				const found = store.findByPrefix(task.id.slice(0, 4));
+				const store = createLocalBackend(tasksDir);
+				const task = await store.create({ title: 'test task', status: 'backlog' });
+				const found = await store.findByPrefix(task.id.slice(0, 4));
 				if (found.id !== task.id)
 					throw new Error(`findByPrefix returned wrong task: expected ${task.id}, got ${found.id}`);
 				return { name: 'TaskStore (temp)', ok: true };

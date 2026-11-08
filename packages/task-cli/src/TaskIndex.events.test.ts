@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { addProject as addSharedProject, defaultRegistryDir } from '@wadeck-app/project-sdk';
-import { TaskStore } from '@wadeck-app/task-core';
+import { LocalFileBackend } from '@wadeck-app/task-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { registerTestProject } from './testHelpers.js';
 
@@ -941,9 +941,12 @@ describe('queue events - a delete that fails partway through its plan', () => {
 	it('delivers the events of the tasks already deleted, then fails (exit 1) naming how many were deleted', async () => {
 		const tasks = [await newTask('one'), await newTask('two'), await newTask('three'), await newTask('four')];
 		publishMock.mockClear();
-		const original = TaskStore.prototype.deleteTask;
+		const original = LocalFileBackend.prototype.deleteTask;
 		let calls = 0;
-		vi.spyOn(TaskStore.prototype, 'deleteTask').mockImplementation(function (this: TaskStore, id: string) {
+		vi.spyOn(LocalFileBackend.prototype, 'deleteTask').mockImplementation(async function (
+			this: LocalFileBackend,
+			id: string
+		) {
 			calls++;
 			if (calls === 3) throw new Error('EPERM: operation not permitted');
 			return original.call(this, id);
@@ -969,7 +972,7 @@ describe('queue events - a delete that fails partway through its plan', () => {
 	it('still fails with the original error and pushes nothing when the very first deletion fails', async () => {
 		await newTask('one');
 		publishMock.mockClear();
-		vi.spyOn(TaskStore.prototype, 'deleteTask').mockImplementation(() => {
+		vi.spyOn(LocalFileBackend.prototype, 'deleteTask').mockImplementation(async () => {
 			throw new Error('EPERM: operation not permitted');
 		});
 
@@ -1097,5 +1100,80 @@ describe('queue events - text, metadata removal, type clearing, split at creatio
 		expect(result.exitCode).toBe(0);
 		expect(stderr.join('')).toContain(`'onTaskTextChanged' for task ${task.id} not delivered: no queue`);
 		expect(stderr.join('')).toContain('task cli logs');
+	});
+});
+
+// Stage 0 of the storage-strategies design: the backend is async. An event reaches the queue only after the change it
+// reports is saved, and several events of one command go out one at a time, in the order the command produced them.
+describe('queue events - saved first, delivered after, in order (async backend)', () => {
+	const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
+
+	it('publishes onStatusChange only after a slow write has landed', async () => {
+		const task = await newTask('slow write');
+		publishMock.mockClear();
+		const order: string[] = [];
+		const original = LocalFileBackend.prototype.updateStatus;
+		vi.spyOn(LocalFileBackend.prototype, 'updateStatus').mockImplementation(async function (
+			this: LocalFileBackend,
+			...args: Parameters<LocalFileBackend['updateStatus']>
+		) {
+			order.push('write-start');
+			await sleep(40);
+			const saved = await original.apply(this, args);
+			order.push('write-end');
+			return saved;
+		});
+		publishMock.mockImplementation(() => {
+			order.push('publish');
+			return Promise.resolve(queuedOutcome);
+		});
+
+		const result = await runTaskCommand(['set-status', task.id, 'done'], tmpDir);
+
+		expect(result.exitCode, result.output).toBe(0);
+		expect(order).toEqual(['write-start', 'write-end', 'publish']);
+		const list = JSON.parse((await runTaskCommand(['list', '--all'], tmpDir)).output) as Array<{ status: string }>;
+		expect(list.map(t => t.status)).toEqual(['done']);
+	});
+
+	it('does not publish anything when the slow write is refused', async () => {
+		const task = await newTask('refused write');
+		publishMock.mockClear();
+		vi.spyOn(LocalFileBackend.prototype, 'updateStatus').mockImplementation(async () => {
+			await sleep(20);
+			throw new Error('EPERM: operation not permitted');
+		});
+
+		const result = await runTaskCommand(['set-status', task.id, 'done'], tmpDir);
+
+		expect(result.exitCode).toBe(1);
+		expect(pushedEvents()).toEqual([]);
+	});
+
+	it('delivers the events of a cascade delete one at a time in deletion order (leaves first) even when publishing is slow and jittery', async () => {
+		const root = await newTask('root');
+		const mid = JSON.parse((await runTaskCommand(['new', 'mid', '--parent', root.id], tmpDir)).output) as {
+			id: string;
+		};
+		const leaf = JSON.parse((await runTaskCommand(['new', 'leaf', '--parent', mid.id], tmpDir)).output) as {
+			id: string;
+		};
+		publishMock.mockClear();
+		let inFlight = 0;
+		let maxInFlight = 0;
+		let call = 0;
+		publishMock.mockImplementation(async () => {
+			inFlight++;
+			maxInFlight = Math.max(maxInFlight, inFlight);
+			await sleep(call++ % 2 === 0 ? 25 : 1);
+			inFlight--;
+			return queuedOutcome;
+		});
+
+		const result = await runTaskCommand(['delete', root.id, '--cascade-delete'], tmpDir);
+
+		expect(result.exitCode, result.output).toBe(0);
+		expect(pushedEvents().map(e => e.payload['taskId'])).toEqual([leaf.id, mid.id, root.id]);
+		expect(maxInFlight).toBe(1);
 	});
 });

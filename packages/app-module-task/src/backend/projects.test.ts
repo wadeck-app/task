@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { TaskStore } from '@wadeck-app/task-core';
+import { createLocalBackend } from '@wadeck-app/task-core';
 
 import { RequestError } from './errors.js';
 import { listProjects, openProject, readProjects } from './projects.js';
@@ -30,7 +30,7 @@ describe('openProject', () => {
 		const ctx = openProject(id);
 		expect(ctx.project).toEqual({ id, name: 'alpha', path: world.dirOf(id) });
 		expect(ctx.config.statuses).toEqual(['backlog', 'in-progress', 'done']);
-		expect(ctx.store.list()).toEqual([]);
+		expect(await ctx.store.list()).toEqual([]);
 	});
 
 	it('opens a registered project by name (case-insensitive) and by a unique id prefix', async () => {
@@ -102,7 +102,7 @@ describe('openProject', () => {
 
 	it('a registered project with no data yet opens an empty store: its data is in the registry', async () => {
 		const id = await world.createProject('alpha');
-		expect(openProject(id).store.list()).toEqual([]);
+		expect(await openProject(id).store.list()).toEqual([]);
 	});
 
 	it('propagates a corrupt registry as the registry error (mapped to 500 with its fix), never as an empty list', () => {
@@ -116,7 +116,7 @@ describe('listProjects', () => {
 	it('reports each registered project with its open count and the link to its tasks page (by id)', async () => {
 		const a = await world.createProject('alpha');
 		const b = await world.createProject('beta');
-		expect(listProjects()).toEqual([
+		expect(await listProjects()).toEqual([
 			{
 				id: a,
 				name: 'alpha',
@@ -142,31 +142,31 @@ describe('listProjects', () => {
 		const id = await world.createProject('alpha', {
 			configYml: 'statuses:\n  - backlog\n  - name: done\n    terminal: true\n',
 		});
-		const store = new TaskStore(path.join(world.dataDirOf(id), 'tasks'));
-		store.create('open', 'backlog');
-		store.create('closed', 'done');
-		expect(listProjects()[0]).toMatchObject({ openCount: 1, error: null });
+		const store = createLocalBackend(path.join(world.dataDirOf(id), 'tasks'));
+		await store.create({ title: 'open', status: 'backlog' });
+		await store.create({ title: 'closed', status: 'done' });
+		expect((await listProjects())[0]).toMatchObject({ openCount: 1, error: null });
 	});
 
 	it('reports an unreadable project (corrupt config.yml) with its reason instead of a zero count', async () => {
 		const id = await world.createProject('alpha', { configYml: 'statuses: [unclosed' });
-		const [listing] = listProjects();
+		const [listing] = await listProjects();
 		expect(listing).toMatchObject({ id, path: world.dirOf(id), openCount: null, href: null });
 		expect(listing!.error).toEqual(expect.any(String));
 		expect(listing!.error).not.toBe('');
 	});
 
-	it('is empty when nothing is registered', () => {
-		expect(listProjects()).toEqual([]);
+	it('is empty when nothing is registered', async () => {
+		expect(await listProjects()).toEqual([]);
 	});
 
-	it('ignores a projects.json next to the module config, corrupt or not', () => {
+	it('ignores a projects.json next to the module config, corrupt or not', async () => {
 		fs.mkdirSync(world.configDir, { recursive: true });
 		const stray = path.join(world.root, 'stray');
 		fs.mkdirSync(stray);
 		fs.writeFileSync(path.join(world.configDir, 'projects.json'), JSON.stringify([stray]));
-		expect(listProjects()).toEqual([]);
+		expect(await listProjects()).toEqual([]);
 		fs.writeFileSync(path.join(world.configDir, 'projects.json'), '{not json');
-		expect(readProjects()).toEqual({ projects: [], registryProblem: null });
+		expect(await readProjects()).toEqual({ projects: [], registryProblem: null });
 	});
 });

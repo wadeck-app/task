@@ -66,8 +66,8 @@ const LINK_WORDS: Record<LinkType, string> = {
 /** `<id> <headline>` of a readable task, else the id alone (the task was deleted, or never existed here). */
 type TaskLabel = (id: string) => string;
 
-function taskLabeler(ctx: TaskServiceContext): TaskLabel {
-	const byId = new Map(ctx.store.list().map(task => [task.id, task.title]));
+async function taskLabeler(ctx: TaskServiceContext): Promise<TaskLabel> {
+	const byId = new Map((await ctx.store.list()).map(task => [task.id, task.title]));
 	return id => {
 		const title = byId.get(id);
 		return title === undefined ? id : `${id} ${headlineOf(title)}`;
@@ -153,8 +153,8 @@ function statusTone(ctx: TaskServiceContext, status: string): ActivityTone {
  * recorded order, the activity after the history). Ids of other tasks read `<id> <headline>` when the task is readable.
  * A task written before the log existed shows its status history only.
  */
-export function describeTaskActivity(ctx: TaskServiceContext, record: TaskRecord): ActivityRow[] {
-	const label = taskLabeler(ctx);
+export async function describeTaskActivity(ctx: TaskServiceContext, record: TaskRecord): Promise<ActivityRow[]> {
+	const label = await taskLabeler(ctx);
 	const history = record.history ?? [];
 	const chronological: ActivityRow[] = [
 		...history.map((entry, index): ActivityRow => {
@@ -209,7 +209,7 @@ export interface TaskActivity {
 }
 
 /** The merged activity of a task (see {@link describeTaskActivity}). */
-export function getTaskActivity(ctx: TaskServiceContext, input: { id: string }): TaskActivity {
-	const task = ctx.store.findByPrefix(input.id);
-	return { id: task.id, rows: describeTaskActivity(ctx, task) };
+export async function getTaskActivity(ctx: TaskServiceContext, input: { id: string }): Promise<TaskActivity> {
+	const task = await ctx.store.findByPrefix(input.id);
+	return { id: task.id, rows: await describeTaskActivity(ctx, task) };
 }

@@ -4,7 +4,7 @@ import * as path from 'node:path';
 
 import { addProject as addSharedProject, defaultRegistryDir } from '@wadeck-app/project-sdk';
 import type { Project } from '@wadeck-app/project-sdk';
-import { TaskStore } from '@wadeck-app/task-core';
+import { createLocalBackend } from '@wadeck-app/task-core';
 import type { TaskResolvedConfig } from '@wadeck-app/task-core';
 
 import type { TaskServiceContext } from './context.js';
@@ -33,7 +33,7 @@ export function createTestContext(configOverrides: Partial<TaskResolvedConfig> =
 	fs.mkdirSync(tasksDir, { recursive: true });
 	return {
 		ctx: {
-			store: new TaskStore(tasksDir),
+			store: createLocalBackend(tasksDir),
 			config: { ...DEFAULT_TEST_CONFIG, ...configOverrides },
 			storage: { dataDir: path.join(rootDir, 'data'), configFiles: [path.join(rootDir, 'data', 'config.yml')] },
 			project: { name: 'proj', path: rootDir },
@@ -82,7 +82,7 @@ export function createSharedRegistrySandbox(): SharedRegistrySandbox {
 }
 
 /**
- * Writes `count` task files and their index straight to disk (a store.create per task rewrites the growing index every
+ * Writes `count` task files and their index straight to disk (a backend create per task rewrites the growing index every
  * time, far too slow for 1 000 tasks). Task `n` is titled `Task n about topic k`, carries the labels `common`, `group-k`
  * and `solo-n` (k = n % 20), and every 10th task has a parent (the previous task).
  */

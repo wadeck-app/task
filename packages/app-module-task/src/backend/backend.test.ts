@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { TaskStore } from '@wadeck-app/task-core';
+import { LocalFileBackend } from '@wadeck-app/task-core';
 import type { TaskTreeNode } from '@wadeck-app/task-core';
 import { projectToolDir, removeProject } from '@wadeck-app/project-sdk';
 import { listForest } from '@wadeck-app/task-service';
@@ -1867,7 +1867,7 @@ describe('GET /tree nested forest (same structure as the service forest the CLI 
 		for (const showAll of [false, true]) {
 			const rows = (await h.call('GET /tree', { query: { project, ...(showAll ? { showAll: 'true' } : {}) } }))
 				.body['rows'] as Row[];
-			expect(rows.map(r => [r.id, r.depth])).toEqual(flat(listForest(ctx, { showAll })));
+			expect(rows.map(r => [r.id, r.depth])).toEqual(flat(await listForest(ctx, { showAll })));
 		}
 		const all = (await h.call('GET /tree', { query: { project, showAll: 'true' } })).body['rows'] as Row[];
 		expect(all.map(r => r.label).slice(-2)).toEqual(['closed root', `${branch} closed leaf`]);
@@ -2597,9 +2597,12 @@ describe('delete', () => {
 
 	describe('when the store fails partway through the plan', () => {
 		function failOnNthDelete(failOn: number): void {
-			const original = TaskStore.prototype.deleteTask;
+			const original = LocalFileBackend.prototype.deleteTask;
 			let calls = 0;
-			vi.spyOn(TaskStore.prototype, 'deleteTask').mockImplementation(function (this: TaskStore, id: string) {
+			vi.spyOn(LocalFileBackend.prototype, 'deleteTask').mockImplementation(async function (
+				this: LocalFileBackend,
+				id: string
+			) {
 				calls++;
 				if (calls === failOn) throw new Error('EPERM: operation not permitted');
 				return original.call(this, id);

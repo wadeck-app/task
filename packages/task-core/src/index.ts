@@ -22,7 +22,9 @@ export type {
 	TaskLinks,
 } from './TaskStore.js';
 export type { TaskStoreOptions } from './TaskStore.js';
-export { TaskStore, LINK_TYPES, INVERSE_LINK_NAMES, ACTIVITY_PREVIEW_MAX, activityPreview } from './TaskStore.js';
+// The synchronous TaskStore class is NOT exported: it is the local backend's rules engine, reached through
+// createLocalBackend / LocalFileBackend only (architecture.test.ts, NO_TASK_STORE_OUTSIDE_CORE).
+export { LINK_TYPES, INVERSE_LINK_NAMES, ACTIVITY_PREVIEW_MAX, activityPreview } from './TaskStore.js';
 export type {
 	TypeValidationResult,
 	TypeValidationError,
@@ -33,7 +35,7 @@ export { OpenTypeStrategy, FixedListTypeStrategy, resolveTypeValidationStrategy 
 export { TaskNotFoundError, AmbiguousTaskPrefixError, TaskConflictError } from './errors.js';
 export type { CommentChange, CommentEdit, TaskComment } from './taskComments.js';
 export { COMMENT_AUTHOR_MAX, COMMENT_TEXT_MAX, CommentNotFoundError, InvalidCommentTextError } from './taskComments.js';
-// The async port (stage 0 of the storage-strategies design): not used by any caller yet.
+// The async port (stage 0 of the storage-strategies design): every caller reads and writes tasks through it.
 export type {
 	ActivitySupport,
 	BackendCapabilities,
@@ -58,6 +60,7 @@ export type {
 export {
 	LOCAL_CAPABILITIES,
 	LocalFileBackend,
+	createLocalBackend,
 	StaleRevisionError,
 	UnsupportedByBackendError,
 	revisionOf,

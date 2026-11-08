@@ -35,12 +35,12 @@ const ROW_PADDING: Record<PropertyDensity, string> = {
  * @registryTags property row details
  */
 export function PropertyRow({ label, hint, align = 'text', items }: PropertyRowProps): React.ReactElement {
-	const { density, labelPlacement, labelWidth } = useContext(PropertyLayoutContext);
+	const { density, labelPlacement, labelWidth, dividers } = useContext(PropertyLayoutContext);
 	const inline = labelPlacement === 'inline';
 	return (
 		<div
 			data-testid="property-row"
-			className={`flex ${inline ? 'flex-row items-start gap-3' : 'flex-col gap-0.5'} ${ROW_PADDING[density]}`}
+			className={`flex ${inline ? 'flex-row items-start gap-3' : 'flex-col gap-0.5'} ${dividers ? 'py-2 text-sm' : ROW_PADDING[density]}`}
 		>
 			<span
 				title={hint}

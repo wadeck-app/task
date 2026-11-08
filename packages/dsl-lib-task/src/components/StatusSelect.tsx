@@ -9,8 +9,10 @@ export interface StatusSelectOption {
 	label: string;
 	/** Colour of the pill while this status is the current one, and of its dot in the list. */
 	tone?: Tone;
-	/** A terminal status (done, cancelled): the list says so. */
+	/** A terminal status (done, rejected). Informational: the tone (dot and pill colour) says it, the list prints no word. */
 	terminal?: boolean;
+	/** How a terminal status ended. Informational: the route already gives the tone (`danger` for negative). */
+	outcome?: 'positive' | 'negative';
 }
 
 export interface StatusSelectProps {
@@ -74,8 +76,8 @@ export function StatusSelect({
 	const choices = list.map(option => ({
 		value: option.value,
 		label: option.label,
+		// Only the coloured dot says how a status ended (success: green, `outcome: negative`: red): no word in the list.
 		tone: option.tone,
-		hint: option.terminal === true ? 'terminal' : undefined,
 	}));
 	return (
 		<PropertyPopover

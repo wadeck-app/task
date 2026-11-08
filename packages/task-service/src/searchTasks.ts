@@ -91,8 +91,8 @@ function subtreeIds(tasks: readonly TaskSummary[], rootId: string): Set<string> 
  * Finds tasks by id prefix or title text for a picker: reads the INDEX only (never a task file).
  * Ranking: id prefix, then title word prefix, then substring; inside a rank the index order is kept.
  */
-export function searchTasks(ctx: TaskServiceContext, input: SearchTasksInput): TaskSearchHit[] {
-	const tasks = ctx.store.list();
+export async function searchTasks(ctx: TaskServiceContext, input: SearchTasksInput): Promise<TaskSearchHit[]> {
+	const tasks = await ctx.store.list();
 	const query = input.q.trim().toLowerCase();
 	const limit = Math.min(SEARCH_MAX_LIMIT, Math.max(1, Math.floor(input.limit ?? SEARCH_DEFAULT_LIMIT)));
 	const excluded = new Set(input.exclude ?? []);

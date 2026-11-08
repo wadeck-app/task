@@ -8,6 +8,8 @@ export interface PropertyLayout {
 	density: PropertyDensity;
 	labelPlacement: PropertyLabelPlacement;
 	labelWidth: PropertyLabelWidth;
+	/** Rows are separated by a line: the line has its own padding on both sides, so the list adds no gap. */
+	dividers?: boolean;
 }
 
 /** What a PropertyList tells its rows; a row alone uses the defaults. */

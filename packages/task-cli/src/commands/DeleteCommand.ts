@@ -81,7 +81,7 @@ export const runDelete: ProjectCommand = async (rest, { jsonMode, ctx, eventSink
 		if ('problem' in selection) {
 			return selectionProblemOutput(jsonMode, selection.problem);
 		}
-		plan = planDelete(ctx, { selector: selection.selector, cascade });
+		plan = await planDelete(ctx, { selector: selection.selector, cascade });
 	} catch (error) {
 		if (error instanceof TaskServiceError) {
 			return failure(jsonMode, error);
@@ -101,7 +101,7 @@ export const runDelete: ProjectCommand = async (rest, { jsonMode, ctx, eventSink
 	}
 	let result: ExecuteDeleteResult;
 	try {
-		result = executeDelete(ctx, plan);
+		result = await executeDelete(ctx, plan);
 	} catch (error) {
 		// Tasks deleted before the failure are gone for good: their events are delivered before the failure is reported.
 		if (error instanceof PartialDeleteError) {

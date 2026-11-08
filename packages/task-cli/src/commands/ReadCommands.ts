@@ -86,10 +86,10 @@ export const runShow: ProjectCommand = (rest, { jsonMode, ctx }) => {
 		return errorOutput(jsonMode, 'missing id', SHOW_USAGE);
 	}
 	const taskId = id;
-	return runJson(jsonMode, () => {
-		const detail = showTask(ctx, { id: taskId, withParent, withChildren });
+	return runJson(jsonMode, async () => {
+		const detail = await showTask(ctx, { id: taskId, withParent, withChildren });
 		// A link to a vanished task is marked in the answer and warned about, never a failure: the task must stay readable.
-		const report = readTaskLinks(ctx, { id: taskId });
+		const report = await readTaskLinks(ctx, { id: taskId });
 		warnDangling(report);
 		return report.dangling.length > 0 ? { ...detail, dangling: report.dangling } : detail;
 	});
@@ -117,7 +117,7 @@ export const runHistory: ProjectCommand = async (rest, { jsonMode, ctx }) => {
 			);
 		}
 		try {
-			const { rows } = getTaskActivity(ctx, { id });
+			const { rows } = await getTaskActivity(ctx, { id });
 			return jsonMode ? jsonResult(rows) : { exitCode: 0, output: rows.map(activityLine).join('\n') };
 		} catch (error) {
 			return failure(jsonMode, error);
@@ -125,7 +125,7 @@ export const runHistory: ProjectCommand = async (rest, { jsonMode, ctx }) => {
 	}
 	let task: TaskHistory;
 	try {
-		task = getTaskHistory(ctx, { id });
+		task = await getTaskHistory(ctx, { id });
 	} catch (error) {
 		return failure(jsonMode, error);
 	}
@@ -141,8 +141,8 @@ export const runLinks: ProjectCommand = (rest, { jsonMode, ctx }) => {
 	if (!id) {
 		return errorOutput(jsonMode, 'missing id', 'Usage: task links <id>');
 	}
-	return runJson(jsonMode, () => {
-		const report = readTaskLinks(ctx, { id });
+	return runJson(jsonMode, async () => {
+		const report = await readTaskLinks(ctx, { id });
 		warnDangling(report);
 		// The six relations as before; `dangling` (relation, targetId, fix) only when a link points to a vanished task.
 		return report.dangling.length > 0 ? { ...report.links, dangling: report.dangling } : report.links;
@@ -176,7 +176,7 @@ export const runTree: ProjectCommand = (rest, { jsonMode, ctx }) => {
 const FIND_USAGE = 'Usage: task find <query> [--limit N] [--json]';
 
 /** `task find`: tasks whose id starts with, or whose title contains, the query (best match first; reads the index only). */
-export const runFind: ProjectCommand = (rest, { jsonMode, ctx }) => {
+export const runFind: ProjectCommand = async (rest, { jsonMode, ctx }) => {
 	const words: string[] = [];
 	let limit: number | undefined;
 	for (let i = 0; i < rest.length; i++) {
@@ -206,7 +206,7 @@ export const runFind: ProjectCommand = (rest, { jsonMode, ctx }) => {
 		return errorOutput(jsonMode, 'missing query', FIND_USAGE);
 	}
 	try {
-		const hits = searchTasks(ctx, { q: query, limit });
+		const hits = await searchTasks(ctx, { q: query, limit });
 		if (jsonMode) {
 			return jsonResult(hits);
 		}
@@ -223,12 +223,12 @@ export const runFind: ProjectCommand = (rest, { jsonMode, ctx }) => {
 };
 
 /** `task labels`: the labels in use with the number of tasks carrying each, most used first. */
-export const runLabels: ProjectCommand = (rest, { jsonMode, ctx }) => {
+export const runLabels: ProjectCommand = async (rest, { jsonMode, ctx }) => {
 	if (rest.length > 0) {
 		return errorOutput(jsonMode, `unexpected argument: ${rest[0]}`, 'Usage: task labels [--json]');
 	}
 	try {
-		const labels = listLabels(ctx);
+		const labels = await listLabels(ctx);
 		if (jsonMode) {
 			return jsonResult(labels);
 		}

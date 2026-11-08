@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 import { addProject, defaultRegistryDir, projectToolDir } from '@wadeck-app/project-sdk';
-import { TaskStore } from '@wadeck-app/task-core';
+import { createLocalBackend } from '@wadeck-app/task-core';
 
 /**
  * Builds the module with `app-core-cli package` and serves the result through a REAL app-core server
@@ -168,7 +168,12 @@ describe('the packaged module through a real app-core server', () => {
 			mkdirSync(configDir, { recursive: true });
 			writeFileSync(join(configDir, 'config.yml'), 'statuses:\n  - backlog\n  - done\n');
 			dataDir = projectToolDir(registryDir, projectId, 'task', 'data');
-			taskId = new TaskStore(join(dataDir, 'tasks')).create('seeded over the filesystem', 'backlog').id;
+			taskId = (
+				await createLocalBackend(join(dataDir, 'tasks')).create({
+					title: 'seeded over the filesystem',
+					status: 'backlog',
+				})
+			).id;
 			const builtModule = join(workDir, 'module');
 			packageModule(builtModule);
 			baseUrl = await startServer(builtModule, xdg);
@@ -300,8 +305,10 @@ describe('the packaged module through a real app-core server', () => {
 	describe('hierarchy, links, types, meta and delete (event-free routes)', () => {
 		let childId: string;
 
-		beforeAll(() => {
-			childId = new TaskStore(join(dataDir, 'tasks')).create('child seeded', 'backlog').id;
+		beforeAll(async () => {
+			childId = (
+				await createLocalBackend(join(dataDir, 'tasks')).create({ title: 'child seeded', status: 'backlog' })
+			).id;
 		});
 
 		it('POST /tasks/:id/parent reads the id param and the JSON body, then GET /tree, /children and /ancestors show it', async () => {

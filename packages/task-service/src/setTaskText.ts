@@ -1,6 +1,7 @@
 import { projectEnv, type TaskServiceContext } from './context.js';
 import { InvalidTaskTextError } from './errors.js';
 import type { TaskEvent } from './events.js';
+import { plain } from './plainRecord.js';
 import type { TaskChangeResult } from './taskFields.js';
 import { taskDescription } from './taskText.js';
 
@@ -18,7 +19,7 @@ export interface SetTaskTextInput {
  * for the description, `oldValue` is absent when the task had no description of its own and `newValue` is empty when it was cleared.
  * A title change rewrites the index entry. Setting a description equal to the title is the same as having none.
  */
-export function setTaskText(ctx: TaskServiceContext, input: SetTaskTextInput): TaskChangeResult {
+export async function setTaskText(ctx: TaskServiceContext, input: SetTaskTextInput): Promise<TaskChangeResult> {
 	if (input.title === undefined && input.description === undefined) {
 		throw new InvalidTaskTextError(
 			'nothing to change: give a title and/or a description',
@@ -32,10 +33,10 @@ export function setTaskText(ctx: TaskServiceContext, input: SetTaskTextInput): T
 		);
 	}
 	const events: TaskEvent[] = [];
-	let task = ctx.store.findByPrefix(input.id);
+	let task = plain(await ctx.store.findByPrefix(input.id));
 	if (input.title !== undefined && input.title !== task.title) {
 		const oldValue = task.title;
-		task = ctx.store.setTitle(task.id, input.title);
+		task = plain(await ctx.store.setTitle(task.id, input.title));
 		events.push({
 			name: 'onTaskTextChanged',
 			payload: { taskId: task.id, field: 'title', oldValue, newValue: input.title, ...projectEnv(ctx) },
@@ -46,7 +47,7 @@ export function setTaskText(ctx: TaskServiceContext, input: SetTaskTextInput): T
 		const newBody = newDescription === '' ? task.title : newDescription;
 		if (newBody !== taskDescription(task)) {
 			const oldValue = task.description;
-			task = ctx.store.setDescription(task.id, newDescription);
+			task = plain(await ctx.store.setDescription(task.id, newDescription));
 			events.push({
 				name: 'onTaskTextChanged',
 				payload: {

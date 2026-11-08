@@ -1127,6 +1127,7 @@ describe('views: every mutating action that produces queue events shows what the
 			'task-page.yaml:addLink',
 			'task-page.yaml:createSubtask',
 			'task-page.yaml:deleteTask',
+			'task-page.yaml:detachChild',
 			'task-page.yaml:editComment',
 			'task-page.yaml:removeComment',
 			'task-page.yaml:removeLabelChip',
@@ -1181,8 +1182,16 @@ describe('extension point task:project-header', () => {
 		expect(exposed?.slots).toEqual({ 'project-header': { accepts: ['ButtonLink', 'IconButton', 'Badge'] } });
 	});
 
-	// The pages whose address names the project ($route.project): the list, the task page (generated, variants included) and the tree.
-	it.each(['tasks-page.yaml', 'task-page.yaml', 'tree-page.yaml'])(
+	// The task page does NOT draw the slot: a "Project" link at the top is forbidden there (the breadcrumb carries the project).
+	it('task-page.yaml does not embed the slot (no source, no ExtensionSlot of it, no mention)', () => {
+		const text = view('task-page.yaml');
+		expect(text).not.toContain('/api/slots/task:project-header');
+		expect(text).not.toContain('$sources.projectHeader');
+		expect(text).not.toMatch(/\$type: ExtensionSlot\n\s+\$if: \$sources\.projectHeader/);
+	});
+
+	// The pages whose address names the project ($route.project) and that keep the slot: the list and the tree.
+	it.each(['tasks-page.yaml', 'tree-page.yaml'])(
 		'%s embeds the slot once, from the app-core endpoint, only when the address names a project',
 		name => {
 			const text = view(name);
@@ -1198,11 +1207,11 @@ describe('extension point task:project-header', () => {
 		}
 	);
 
-	it('is on every project-scoped page of the manifest that shows one project (list, task, tree)', () => {
+	it('is on the project-scoped list and tree pages only (not on the task detail page, nor the new/delete pages)', () => {
 		const owners = manifest.extensionPoints
 			.filter(p => p.path?.includes(':project') === true)
 			.filter(p => view(p.view.value.replace('./src/dsl-views/', '')).includes('/api/slots/task:project-header'))
 			.map(p => p.path);
-		expect(owners).toEqual(['/tasks/p/:project', '/tasks/p/:project/:id', '/tree/p/:project']);
+		expect(owners).toEqual(['/tasks/p/:project', '/tree/p/:project']);
 	});
 });

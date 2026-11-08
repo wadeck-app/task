@@ -62,7 +62,11 @@ function table(header: string[], rows: string[][]): string {
  * stderr (the others are still listed); `--json`: the service answer as it is (tasks tagged with their project,
  * `readableCount`, `unreadable`). Exit 1 only when projects are registered and none can be read.
  */
-export function runListAllProjects(rest: string[], jsonMode: boolean, selection: ProjectSelection = {}): CommandResult {
+export async function runListAllProjects(
+	rest: string[],
+	jsonMode: boolean,
+	selection: ProjectSelection = {}
+): Promise<CommandResult> {
 	let showAll = false;
 	for (const arg of rest) {
 		if (arg === '--all-projects') continue;
@@ -88,7 +92,7 @@ export function runListAllProjects(rest: string[], jsonMode: boolean, selection:
 	}
 	let answer: TasksAcrossProjects;
 	try {
-		answer = listTasksAcrossProjects({ showAll });
+		answer = await listTasksAcrossProjects({ showAll });
 	} catch (error) {
 		return failure(jsonMode, error);
 	}
@@ -135,12 +139,12 @@ function summaryText(summary: ProjectsSummary): string {
  * `task projects summary`: totals, then one line per registered project (an unreadable one with its reason). Exit 1
  * only when projects are registered and none can be read.
  */
-export function runProjectsSummary(rest: string[], jsonMode: boolean): CommandResult {
+export async function runProjectsSummary(rest: string[], jsonMode: boolean): Promise<CommandResult> {
 	if (rest.length > 0) {
 		return errorOutput(jsonMode, `unexpected argument: ${rest[0]}`, SUMMARY_USAGE);
 	}
 	try {
-		const summary = summarizeProjects();
+		const summary = await summarizeProjects();
 		if (jsonMode) return jsonResult(summary);
 		registryNote(summary.registryProblem);
 		return { exitCode: 0, output: summaryText(summary) };

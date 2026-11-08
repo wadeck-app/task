@@ -84,9 +84,9 @@ export const runComment: ProjectCommand = async (rest, { jsonMode, ctx, eventSin
 	if (text === undefined) {
 		return errorOutput(jsonMode, 'missing text', COMMENT_USAGE);
 	}
-	let result: ReturnType<typeof addComment>;
+	let result: Awaited<ReturnType<typeof addComment>>;
 	try {
-		result = addComment(ctx, { id, text, ...(parsed.author === undefined ? {} : { author: parsed.author }) });
+		result = await addComment(ctx, { id, text, ...(parsed.author === undefined ? {} : { author: parsed.author }) });
 	} catch (error) {
 		return failure(jsonMode, error);
 	}
@@ -107,7 +107,7 @@ function commentBlock(comment: TaskComment): string {
 	return [header, ...comment.text.split('\n').map(line => (line === '' ? '' : `  ${line}`))].join('\n');
 }
 
-export const runComments: ProjectCommand = (rest, { jsonMode, ctx }) => {
+export const runComments: ProjectCommand = async (rest, { jsonMode, ctx }) => {
 	const id = rest[0];
 	if (!id) {
 		return errorOutput(jsonMode, 'missing id', COMMENTS_USAGE);
@@ -116,7 +116,7 @@ export const runComments: ProjectCommand = (rest, { jsonMode, ctx }) => {
 		return errorOutput(jsonMode, `unexpected argument: ${rest[1]}`, COMMENTS_USAGE);
 	}
 	try {
-		const { id: taskId, comments } = listComments(ctx, { id });
+		const { id: taskId, comments } = await listComments(ctx, { id });
 		if (jsonMode) return jsonResult(comments);
 		return {
 			exitCode: 0,
@@ -143,9 +143,9 @@ export const runCommentEdit: ProjectCommand = async (rest, { jsonMode, ctx, even
 	if (text === undefined) {
 		return errorOutput(jsonMode, 'missing text', EDIT_USAGE);
 	}
-	let result: ReturnType<typeof editComment>;
+	let result: Awaited<ReturnType<typeof editComment>>;
 	try {
-		result = editComment(ctx, { id, commentId, text });
+		result = await editComment(ctx, { id, commentId, text });
 	} catch (error) {
 		return failure(jsonMode, error);
 	}
@@ -167,9 +167,9 @@ export const runCommentRemove: ProjectCommand = async (rest, { jsonMode, ctx, ev
 	if (rest.length > 2) {
 		return errorOutput(jsonMode, `unexpected argument: ${rest[2]}`, REMOVE_USAGE);
 	}
-	let result: ReturnType<typeof removeComment>;
+	let result: Awaited<ReturnType<typeof removeComment>>;
 	try {
-		result = removeComment(ctx, { id, commentId });
+		result = await removeComment(ctx, { id, commentId });
 	} catch (error) {
 		return failure(jsonMode, error);
 	}

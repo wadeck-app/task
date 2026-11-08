@@ -52,7 +52,7 @@ describe('openTaskContext', () => {
 		expect(open(projectDir).project).toEqual({ name: 'my-project', path: projectDir });
 	});
 
-	it('takes the identity of a registered project (id and name of the shared registry)', () => {
+	it('takes the identity of a registered project (id and name of the shared registry)', async () => {
 		const projectDir = initProject('statuses:\n  - todo\n');
 
 		const { project, store } = openTaskContext({
@@ -61,7 +61,7 @@ describe('openTaskContext', () => {
 		});
 
 		expect(project).toEqual({ id: 'a1b2c3d4', name: 'shop', path: projectDir });
-		expect(store.create('x', 'todo').id).toBeTruthy();
+		expect((await store.create({ title: 'x', status: 'todo' })).id).toBeTruthy();
 		expect(fs.readdirSync(path.join(projectDir, 'data', 'tasks'))).not.toEqual([]);
 	});
 
@@ -78,10 +78,10 @@ describe('openTaskContext', () => {
 		expect(config.terminalStatuses).toEqual(['done']);
 	});
 
-	it('stores tasks under <data>/tasks', () => {
+	it('stores tasks under <data>/tasks', async () => {
 		const projectDir = initProject('statuses:\n  - todo\n');
 		const { store } = open(projectDir);
-		const task = store.create('hello', 'todo');
+		const task = await store.create({ title: 'hello', status: 'todo' });
 		expect(fs.readdirSync(path.join(projectDir, 'data', 'tasks')).some(file => file.includes(task.id))).toBe(true);
 	});
 
@@ -123,7 +123,7 @@ describe('openTaskContext: a project of the shared registry', () => {
 		const { store, storage: used } = openTaskContext({ storage, project: { id: project.id, name: 'shop' } });
 		expect(fs.existsSync(storage.dataDir)).toBe(false);
 
-		const task = store.create('first', 'backlog');
+		const task = await store.create({ title: 'first', status: 'backlog' });
 
 		expect(used).toBe(storage);
 		expect(fs.existsSync(path.join(storage.dataDir, 'tasks', `${task.id}.json`))).toBe(true);
@@ -137,7 +137,7 @@ describe('openTaskContext: a project of the shared registry', () => {
 
 		const { store } = openTaskContext({ storage, project: { id: project.id, name: 'shop' } });
 
-		expect(store.list()).toEqual([]);
+		expect(await store.list()).toEqual([]);
 		expect(fs.existsSync(path.join(sandbox.registryDir, 'projects', project.id))).toBe(false);
 	});
 
@@ -160,7 +160,7 @@ describe('openTaskContext: a project of the shared registry', () => {
 
 		const ctx = openTaskContext({ storage, project: { id: project.id, name: 'shop', path: dir } });
 
-		expect(ctx.store.list()).toEqual([]);
+		expect(await ctx.store.list()).toEqual([]);
 		expect(ctx.config.types).toEqual([]);
 		expect(fs.existsSync(storage.dataDir)).toBe(false);
 		expect(fs.readdirSync(path.join(dir, '.task', 'tasks'))).toEqual(['one.json']);
@@ -178,7 +178,7 @@ describe('openTaskContext: a project of the shared registry', () => {
 		const { project, storage } = await registryStorageOf('notes', undefined);
 
 		const { project: identity, store } = openTaskContext({ storage, project: { id: project.id, name: 'notes' } });
-		store.create('t', 'backlog');
+		await store.create({ title: 't', status: 'backlog' });
 
 		expect(identity).toEqual({ id: project.id, name: 'notes' });
 		expect(fs.readdirSync(path.join(storage.dataDir, 'tasks'))).toHaveLength(1);

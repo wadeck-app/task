@@ -54,6 +54,25 @@ describe('ActivityFeed real kinds', () => {
 		]);
 	});
 
+	it('child-added and child-removed (the parent side of a parent change) are History, with the git-branch icon and a neutral tone', async () => {
+		const user = userEvent.setup();
+		const rows = [r('child-added', 1), r('child-removed', 2), r('parent', 3), r('comment', 4)];
+		render(<ActivityFeed rows={rows} now={NOW} />);
+
+		for (const item of screen.getAllByTestId('activity-row').slice(0, 2)) {
+			const icon = item.querySelector('[data-testid="activity-icon"]');
+			expect(icon, item.getAttribute('data-kind') ?? '').not.toBeNull();
+			expect(icon!.querySelector('svg')!.getAttribute('class')).toContain('lucide-git-branch');
+			expect(icon!.className).not.toContain('text-primary');
+		}
+		await user.click(screen.getByRole('tab', { name: /History/ }));
+		expect(screen.getAllByTestId('activity-row').map(i => i.getAttribute('data-kind'))).toEqual([
+			'child-added',
+			'child-removed',
+			'parent',
+		]);
+	});
+
 	it('a filter named label matches label-added and label-removed', async () => {
 		const user = userEvent.setup();
 		render(<ActivityFeed rows={REAL} filters={['all', 'label']} now={NOW} />);

@@ -83,7 +83,7 @@ export const runNew: ProjectCommand = async (rest, { jsonMode, ctx, eventSink })
 	}
 	let created: CreateTaskResult;
 	try {
-		created = createTask(ctx, { title, description, parent: parentArg });
+		created = await createTask(ctx, { title, description, parent: parentArg });
 	} catch (error) {
 		return failure(jsonMode, error);
 	}
@@ -104,7 +104,7 @@ export const runSetStatus: ProjectCommand = async (rest, { jsonMode, ctx, eventS
 	}
 	let result: SetStatusResult;
 	try {
-		result = setStatus(ctx, { id, status });
+		result = await setStatus(ctx, { id, status });
 	} catch (error) {
 		return failure(jsonMode, error);
 	}
@@ -131,7 +131,7 @@ Types: ${ALL_LINK_NAMES.join(', ')} (an inverse name such as blocks acts on the 
 	let result: LinkTasksResult;
 	try {
 		const input = { id, type, target };
-		result = command === 'link' ? linkTasks(ctx, input) : unlinkTasks(ctx, input);
+		result = command === 'link' ? await linkTasks(ctx, input) : await unlinkTasks(ctx, input);
 	} catch (error) {
 		return failure(jsonMode, error);
 	}
@@ -143,11 +143,11 @@ Types: ${ALL_LINK_NAMES.join(', ')} (an inverse name such as blocks acts on the 
 async function changeOutput(
 	jsonMode: boolean,
 	eventSink: EventSink,
-	useCase: () => TaskChangeResult
+	useCase: () => Promise<TaskChangeResult>
 ): Promise<CommandResult> {
 	let result: TaskChangeResult;
 	try {
-		result = useCase();
+		result = await useCase();
 	} catch (error) {
 		return failure(jsonMode, error);
 	}
@@ -158,7 +158,7 @@ async function changeOutput(
 /** A command taking exactly two positional arguments, running a use case that returns events and printing the task. */
 function twoArgsChangeCommand(
 	usage: string,
-	useCase: (ctx: TaskServiceContext, first: string, second: string) => TaskChangeResult
+	useCase: (ctx: TaskServiceContext, first: string, second: string) => Promise<TaskChangeResult>
 ): ProjectCommand {
 	return (rest, { jsonMode, ctx, eventSink }) => {
 		const [first, second] = rest;

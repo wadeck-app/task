@@ -119,7 +119,14 @@ export function TaskRowList({
 							<span title={row.title} className="min-w-[6rem] flex-1 truncate text-sm text-content">
 								{row.titleText ?? row.title}
 							</span>
-							{row.meta ? <span className="shrink-0 text-xs text-muted">{row.meta}</span> : null}
+							{row.meta ? (
+								<span
+									data-testid="task-row-meta"
+									className="shrink-0 whitespace-nowrap rounded-full border border-border px-2 py-0.5 text-xs text-muted"
+								>
+									{row.meta}
+								</span>
+							) : null}
 							{showStatus ? <StatusBadge label={row.status} tone={row.tone} /> : null}
 						</>
 					);

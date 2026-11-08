@@ -7,10 +7,10 @@ import type { TaskServiceContext } from '@wadeck-app/task-service';
  * Every metadata key of the project, sorted. Metadata lives in the task files, not in the index, so this reads every task
  * file (O(tasks), like task-service `listLabels`).
  */
-export function listMetaKeys(ctx: TaskServiceContext): string[] {
+export async function listMetaKeys(ctx: TaskServiceContext): Promise<string[]> {
 	const keys = new Set<string>();
-	for (const summary of ctx.store.list()) {
-		for (const key of Object.keys(ctx.store.get(summary.id).meta ?? {})) {
+	for (const summary of await ctx.store.list()) {
+		for (const key of Object.keys((await ctx.store.get(summary.id)).meta ?? {})) {
 			keys.add(key);
 		}
 	}
@@ -22,6 +22,6 @@ function countNodes(nodes: readonly TaskTreeNode[]): number {
 }
 
 /** The number of tasks below a task, at any depth. */
-export function countDescendants(ctx: TaskServiceContext, id: string): number {
-	return countNodes(listChildren(ctx, { id, recursive: true }) as TaskTreeNode[]);
+export async function countDescendants(ctx: TaskServiceContext, id: string): Promise<number> {
+	return countNodes((await listChildren(ctx, { id, recursive: true })) as TaskTreeNode[]);
 }

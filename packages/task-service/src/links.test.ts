@@ -30,15 +30,19 @@ describe('linkTasks / unlinkTasks / getTaskLinks', () => {
 	let t: TestContext;
 	let a: string;
 	let b: string;
-	beforeEach(() => {
+	beforeEach(async () => {
 		t = createTestContext();
-		a = t.ctx.store.create('a', 'backlog').id;
-		b = t.ctx.store.create('b', 'backlog').id;
+		a = (await t.ctx.store.create({ title: 'a', status: 'backlog' })).id;
+		b = (await t.ctx.store.create({ title: 'b', status: 'backlog' })).id;
 	});
 	afterEach(() => t.cleanup());
 
-	it('stores a stored-name link on the first task and returns an onTaskLinked event', () => {
-		const { task, events } = linkTasks(t.ctx, { id: a.slice(0, 4), type: 'blockedBy', target: b.slice(0, 4) });
+	it('stores a stored-name link on the first task and returns an onTaskLinked event', async () => {
+		const { task, events } = await linkTasks(t.ctx, {
+			id: a.slice(0, 4),
+			type: 'blockedBy',
+			target: b.slice(0, 4),
+		});
 
 		expect(task.id).toBe(a);
 		expect(task.links).toEqual([{ type: 'blockedBy', target: b }]);
@@ -56,21 +60,21 @@ describe('linkTasks / unlinkTasks / getTaskLinks', () => {
 		]);
 	});
 
-	it('an inverse name stores the link on the other task ("a blocks b" = "b blockedBy a")', () => {
-		const { task, events } = linkTasks(t.ctx, { id: a, type: 'blocks', target: b });
+	it('an inverse name stores the link on the other task ("a blocks b" = "b blockedBy a")', async () => {
+		const { task, events } = await linkTasks(t.ctx, { id: a, type: 'blocks', target: b });
 
 		expect(task.id).toBe(b);
-		expect(t.ctx.store.get(b).links).toEqual([{ type: 'blockedBy', target: a }]);
+		expect((await t.ctx.store.get(b)).links).toEqual([{ type: 'blockedBy', target: a }]);
 		expect(events[0]).toMatchObject({
 			name: 'onTaskLinked',
 			payload: { taskId: b, linkType: 'blockedBy', targetId: a },
 		});
 	});
 
-	it('unlink removes the link and returns an onTaskUnlinked event', () => {
-		linkTasks(t.ctx, { id: a, type: 'blockedBy', target: b });
+	it('unlink removes the link and returns an onTaskUnlinked event', async () => {
+		await linkTasks(t.ctx, { id: a, type: 'blockedBy', target: b });
 
-		const { task, events } = unlinkTasks(t.ctx, { id: b, type: 'blocks', target: a });
+		const { task, events } = await unlinkTasks(t.ctx, { id: b, type: 'blocks', target: a });
 
 		expect(task.id).toBe(a);
 		expect(task.links ?? []).toEqual([]);
@@ -80,10 +84,10 @@ describe('linkTasks / unlinkTasks / getTaskLinks', () => {
 		});
 	});
 
-	it('throws InvalidLinkTypeError with valid types and a suggestion, before touching the store', () => {
+	it('throws InvalidLinkTypeError with valid types and a suggestion, before touching the store', async () => {
 		let caught: unknown;
 		try {
-			linkTasks(t.ctx, { id: 'zzzz', type: 'blockedBi', target: 'yyyy' });
+			await linkTasks(t.ctx, { id: 'zzzz', type: 'blockedBi', target: 'yyyy' });
 		} catch (error) {
 			caught = error;
 		}
@@ -94,23 +98,27 @@ describe('linkTasks / unlinkTasks / getTaskLinks', () => {
 		expect(err.hint).toBe(`Valid types: ${ALL_LINK_NAMES.join(', ')}\nDid you mean: blockedBy?`);
 	});
 
-	it('throws TaskNotFoundError for an unknown id or target, and no event is returned', () => {
-		expect(() => linkTasks(t.ctx, { id: a, type: 'blockedBy', target: 'zzzz' })).toThrow(TaskNotFoundError);
-		expect(() => unlinkTasks(t.ctx, { id: 'zzzz', type: 'blockedBy', target: a })).toThrow(TaskNotFoundError);
+	it('throws TaskNotFoundError for an unknown id or target, and no event is returned', async () => {
+		await expect(linkTasks(t.ctx, { id: a, type: 'blockedBy', target: 'zzzz' })).rejects.toThrow(TaskNotFoundError);
+		await expect(unlinkTasks(t.ctx, { id: 'zzzz', type: 'blockedBy', target: a })).rejects.toThrow(
+			TaskNotFoundError
+		);
 	});
 
-	it('propagates the store error for a self-link or duplicate link', () => {
-		expect(() => linkTasks(t.ctx, { id: a, type: 'blockedBy', target: a })).toThrow('cannot be linked to itself');
-		linkTasks(t.ctx, { id: a, type: 'blockedBy', target: b });
-		expect(() => linkTasks(t.ctx, { id: a, type: 'blockedBy', target: b })).toThrow('already');
+	it('propagates the store error for a self-link or duplicate link', async () => {
+		await expect(linkTasks(t.ctx, { id: a, type: 'blockedBy', target: a })).rejects.toThrow(
+			'cannot be linked to itself'
+		);
+		await linkTasks(t.ctx, { id: a, type: 'blockedBy', target: b });
+		await expect(linkTasks(t.ctx, { id: a, type: 'blockedBy', target: b })).rejects.toThrow('already');
 	});
 
-	it('getTaskLinks returns outgoing links and derived inverses', () => {
-		linkTasks(t.ctx, { id: a, type: 'blockedBy', target: b });
+	it('getTaskLinks returns outgoing links and derived inverses', async () => {
+		await linkTasks(t.ctx, { id: a, type: 'blockedBy', target: b });
 
-		expect(getTaskLinks(t.ctx, { id: a }).blockedBy.map(x => x.id)).toEqual([b]);
-		expect(getTaskLinks(t.ctx, { id: b }).blocks.map(x => x.id)).toEqual([a]);
-		expect(() => getTaskLinks(t.ctx, { id: 'zzzz' })).toThrow(TaskNotFoundError);
+		expect((await getTaskLinks(t.ctx, { id: a })).blockedBy.map(x => x.id)).toEqual([b]);
+		expect((await getTaskLinks(t.ctx, { id: b })).blocks.map(x => x.id)).toEqual([a]);
+		await expect(getTaskLinks(t.ctx, { id: 'zzzz' })).rejects.toThrow(TaskNotFoundError);
 	});
 });
 
@@ -118,11 +126,11 @@ describe('a link to a task that no longer exists (the index was edited outside t
 	let t: TestContext;
 	let a: string;
 	let b: string;
-	beforeEach(() => {
+	beforeEach(async () => {
 		t = createTestContext();
-		a = t.ctx.store.create('a', 'backlog').id;
-		b = t.ctx.store.create('b', 'backlog').id;
-		linkTasks(t.ctx, { id: a, type: 'blockedBy', target: b });
+		a = (await t.ctx.store.create({ title: 'a', status: 'backlog' })).id;
+		b = (await t.ctx.store.create({ title: 'b', status: 'backlog' })).id;
+		await linkTasks(t.ctx, { id: a, type: 'blockedBy', target: b });
 		// b leaves the index only: a keeps its link.
 		const indexPath = `${t.rootDir}/data/task-index.json`;
 		const index = JSON.parse(fs.readFileSync(indexPath, 'utf8')) as { tasks: Array<{ id: string }> };
@@ -131,10 +139,10 @@ describe('a link to a task that no longer exists (the index was edited outside t
 	});
 	afterEach(() => t.cleanup());
 
-	it('getTaskLinks says which link dangles and how to remove it (a conflict with a fix, not an index crash)', () => {
+	it('getTaskLinks says which link dangles and how to remove it (a conflict with a fix, not an index crash)', async () => {
 		let caught: unknown;
 		try {
-			getTaskLinks(t.ctx, { id: a });
+			await getTaskLinks(t.ctx, { id: a });
 		} catch (error) {
 			caught = error;
 		}
@@ -145,11 +153,11 @@ describe('a link to a task that no longer exists (the index was edited outside t
 		expect(description.hint).toBe(`Fix with: task unlink ${a} blockedBy ${b}`);
 	});
 
-	it('readTaskLinks reports the dangling entry instead of throwing, keeps the other links and words the fix', () => {
-		const c = t.ctx.store.create('c', 'backlog').id;
-		linkTasks(t.ctx, { id: a, type: 'causedBy', target: c });
+	it('readTaskLinks reports the dangling entry instead of throwing, keeps the other links and words the fix', async () => {
+		const c = (await t.ctx.store.create({ title: 'c', status: 'backlog' })).id;
+		await linkTasks(t.ctx, { id: a, type: 'causedBy', target: c });
 
-		const report = readTaskLinks(t.ctx, { id: a });
+		const report = await readTaskLinks(t.ctx, { id: a });
 
 		expect(report.links.causedBy.map(x => x.id)).toEqual([c]);
 		expect(report.links.blockedBy).toEqual([]);
@@ -161,14 +169,16 @@ describe('a link to a task that no longer exists (the index was edited outside t
 		]);
 	});
 
-	it('readTaskLinks of a consistent task has no dangling entry and no warning', () => {
-		const report = readTaskLinks(t.ctx, { id: t.ctx.store.create('d', 'backlog').id });
+	it('readTaskLinks of a consistent task has no dangling entry and no warning', async () => {
+		const report = await readTaskLinks(t.ctx, {
+			id: (await t.ctx.store.create({ title: 'd', status: 'backlog' })).id,
+		});
 		expect(report.dangling).toEqual([]);
 		expect(report.warnings).toEqual([]);
 	});
 
-	it('unlink removes it by the full id of the vanished task, and emits the event', () => {
-		const { task, events } = unlinkTasks(t.ctx, { id: a, type: 'blockedBy', target: b });
+	it('unlink removes it by the full id of the vanished task, and emits the event', async () => {
+		const { task, events } = await unlinkTasks(t.ctx, { id: a, type: 'blockedBy', target: b });
 
 		expect(task.links ?? []).toEqual([]);
 		expect(events[0]).toMatchObject({
@@ -177,7 +187,9 @@ describe('a link to a task that no longer exists (the index was edited outside t
 		});
 	});
 
-	it('unlink still refuses an unknown id that is not a link of the task', () => {
-		expect(() => unlinkTasks(t.ctx, { id: a, type: 'blockedBy', target: 'zzzzzzzz' })).toThrow(TaskNotFoundError);
+	it('unlink still refuses an unknown id that is not a link of the task', async () => {
+		await expect(unlinkTasks(t.ctx, { id: a, type: 'blockedBy', target: 'zzzzzzzz' })).rejects.toThrow(
+			TaskNotFoundError
+		);
 	});
 });

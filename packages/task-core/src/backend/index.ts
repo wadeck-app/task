@@ -24,4 +24,4 @@ export type {
 	VersionedRecord,
 	WriteOptions,
 } from './TaskBackend.js';
-export { LocalFileBackend, revisionOf } from './LocalFileBackend.js';
+export { LocalFileBackend, createLocalBackend, revisionOf } from './LocalFileBackend.js';

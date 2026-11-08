@@ -15,13 +15,14 @@ export function registerRelatedRoutes(kit: RouteKit): void {
 	// Read only (no event). The project is the registry id of the page address; the project module sends nothing else, but
 	// the same resolution as every route applies (id prefix, name, alias), and its errors: unknown 404 with the registry
 	// message, virtual project 409 (the module addresses projects by folder, its pages answer 409 too), unreadable 4xx.
-	kit.route('GET', '/related/project/:projectId', req => {
+	kit.route('GET', '/related/project/:projectId', async req => {
 		const ctx = openProject(req.params?.['projectId']);
-		const open = listTasks(ctx, {});
+		const open = await listTasks(ctx, {});
 		// `updatedAt` is only in the task file, not in the index: one read per open task. Cheap for the usual hundreds of
 		// tasks, and the only way to order by last change.
+		const records = await ctx.store.getMany(open.map(task => task.id));
 		const items = open
-			.map(task => ({ task, updatedAt: ctx.store.findByPrefix(task.id).updatedAt }))
+			.map((task, index) => ({ task, updatedAt: records[index]!.updatedAt }))
 			.sort(
 				(a, b) =>
 					b.updatedAt.localeCompare(a.updatedAt) ||

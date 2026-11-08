@@ -52,7 +52,7 @@ function openKnown(known: KnownProject): OpenedProject {
 	}) as OpenedProject;
 }
 
-function listingOf(known: KnownProject): ProjectListing {
+async function listingOf(known: KnownProject): Promise<ProjectListing> {
 	const base = {
 		id: known.id,
 		name: known.name,
@@ -60,7 +60,7 @@ function listingOf(known: KnownProject): ProjectListing {
 		exists: fs.existsSync(known.path),
 	};
 	try {
-		const openCount = listTasks(openKnown(known), {}).length;
+		const openCount = (await listTasks(openKnown(known), {})).length;
 		return { ...base, openCount, error: null, href: tasksPageHref(base) };
 	} catch (error) {
 		// One unreadable project must not hide the others, nor read as "0 open": it is listed with its reason and fix.
@@ -72,16 +72,18 @@ function listingOf(known: KnownProject): ProjectListing {
  * The projects the module shows: every project of the shared registry that has a folder. Read at every call (never cached).
  * `registryProblem` says why the shared registry could not be read (then no project is listed).
  */
-export function readProjects(): { projects: ProjectListing[]; registryProblem: string | null } {
+export async function readProjects(): Promise<{ projects: ProjectListing[]; registryProblem: string | null }> {
 	const known = listKnownProjects();
-	return {
-		projects: known.projects.map(entry => listingOf(entry)),
-		registryProblem: known.registryProblem,
-	};
+	const projects: ProjectListing[] = [];
+	// One project after the other (registry order): a slow or failing project never reorders the listing.
+	for (const entry of known.projects) {
+		projects.push(await listingOf(entry));
+	}
+	return { projects, registryProblem: known.registryProblem };
 }
 
-export function listProjects(): ProjectListing[] {
-	return readProjects().projects;
+export async function listProjects(): Promise<ProjectListing[]> {
+	return (await readProjects()).projects;
 }
 
 /**

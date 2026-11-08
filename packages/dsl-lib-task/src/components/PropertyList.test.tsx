@@ -46,6 +46,13 @@ describe('PropertyList', () => {
 		expect(screen.getByTestId('property-list')).toHaveClass('divide-y');
 	});
 
+	it('with dividers the rows carry the same padding above and below the line and the list adds no gap', () => {
+		render(<PropertyList dividers labelPlacement="inline" items={<PropertyRow label="A" items="x" />} />);
+
+		expect(screen.getByTestId('property-list').className).not.toContain('gap-y');
+		expect(screen.getByTestId('property-row')).toHaveClass('py-2');
+	});
+
 	it('hides the hover tips of its values below 640 px only when asked (a tip sticks out of a narrow page)', () => {
 		const { rerender } = render(<PropertyList items={<PropertyRow label="A" items="x" />} />);
 		expect(screen.getByTestId('property-list').className).not.toContain('role=tooltip');

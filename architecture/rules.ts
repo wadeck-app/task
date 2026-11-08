@@ -24,6 +24,14 @@ interface PackageRule {
 	allowedImports?: { patterns: RegExp[]; why: string };
 	/** Patterns forbidden in the non-test source text of this package. */
 	forbiddenSource: { pattern: RegExp; why: string }[];
+	/** Names that must never be imported (`import { Name } from ...`), in any file of the package, tests included. */
+	forbiddenImportedNames?: { name: string; why: string }[];
+	/**
+	 * The non-test files that may import the Node file system API (repo-relative path -> why), any other non-test file
+	 * importing `fs` is a violation. Tasks are read and written through the backend port, so a use case never
+	 * touches a file; what is listed is logs, configuration, the updater and the test harnesses.
+	 */
+	fsAllowlist?: { files: Record<string, string>; why: string };
 }
 
 /** Specifier of a workspace package: its npm name, or the path of its folder (a relative import resolved from the repository root). */
@@ -86,6 +94,21 @@ const NO_REGISTRY_WRITE = [
 	},
 ];
 
+/**
+ * The synchronous TaskStore is the local backend's rules engine and stays inside task-core (step 0.6 of the storage design,
+ * .claude/plans/2026-11-08_storage-strategies.md): every other package asks the backend (`createLocalBackend`,
+ * `LocalFileBackend`, the `TaskBackend` port) and never names the store, tests included.
+ */
+const NO_TASK_STORE_OUTSIDE_CORE = [
+	{
+		name: 'TaskStore',
+		why: 'tasks are reached through the async TaskBackend port (createLocalBackend for the local one); the synchronous TaskStore is internal to task-core',
+	},
+];
+
+const FS_WHY =
+	'tasks are read and written through the TaskBackend port; a file that needs the Node file system API is listed here on purpose, with its reason';
+
 export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 	'task-core': {
 		forbiddenImports: [
@@ -100,6 +123,13 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 			...NO_REGISTRY_WRITE,
 			NO_PROJECT_DATA_DIR,
 		],
+		fsAllowlist: {
+			why: FS_WHY,
+			files: {
+				'packages/task-core/src/TaskStore.ts': 'the local backend: task files and the index',
+				'packages/task-core/src/TaskConfigLoader.ts': 'the global config file',
+			},
+		},
 	},
 	'task-service': {
 		forbiddenImports: [
@@ -111,6 +141,15 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 			{ pattern: DSL_LIB, why: 'the service is caller-agnostic: it must not know browser components' },
 		],
 		forbiddenSource: [...NO_CONSOLE_NO_EXIT, ...NO_REGISTRY_WRITE, NO_PROJECT_DATA_DIR],
+		forbiddenImportedNames: NO_TASK_STORE_OUTSIDE_CORE,
+		fsAllowlist: {
+			why: FS_WHY,
+			files: {
+				'packages/task-service/src/projectsHealth.ts': 'existence of the registered folders',
+				'packages/task-service/src/queueEventSink.ts': 'the queue publisher configuration files',
+				'packages/task-service/src/taskLog.ts': 'the task log files',
+			},
+		},
 	},
 	'task-cli': {
 		forbiddenImports: [
@@ -118,6 +157,21 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 			{ pattern: DSL_LIB, why: 'the CLI has no browser components' },
 		],
 		forbiddenSource: [NO_PROJECT_SDK_OUTSIDE_SERVICE, ...NO_REGISTRY_WRITE, NO_PROJECT_DATA_DIR],
+		forbiddenImportedNames: NO_TASK_STORE_OUTSIDE_CORE,
+		fsAllowlist: {
+			why: FS_WHY,
+			files: {
+				'packages/task-cli/src/appModuleManifest.ts': 'finds the app-module manifest next to the bundle',
+				'packages/task-cli/src/appModuleStaging.ts': 'copies the app-module to the config dir for app-core',
+				'packages/task-cli/src/cli/readText.ts': '--description-file / standard input',
+				'packages/task-cli/src/commands/TaskCliCommand.ts': 'self-check temp dir, update state and logs',
+				'packages/task-cli/src/commands/updateLog.ts': 'the updater log files',
+				'packages/task-cli/src/isolatedCliEnv.ts': 'the temp tree of spawned test processes',
+				'packages/task-cli/src/QueueEventsDeclaration.ts': 'the queue-events marker file',
+				'packages/task-cli/src/registerAfterUpdate.ts': 'the app-module registration after an update',
+				'packages/task-cli/src/task-updater-entry.ts': 'the updater process',
+			},
+		},
 	},
 	'app-module-task': {
 		forbiddenImports: [
@@ -125,6 +179,17 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 			{ pattern: SHARED_CLI, why: 'CLI libraries belong to task-cli; share through task-service' },
 		],
 		forbiddenSource: [NO_PROJECT_SDK_OUTSIDE_SERVICE, ...NO_REGISTRY_WRITE, NO_PROJECT_DATA_DIR],
+		forbiddenImportedNames: NO_TASK_STORE_OUTSIDE_CORE,
+		fsAllowlist: {
+			why: FS_WHY,
+			files: {
+				'packages/app-module-task/src/backend/lastProject.ts': 'the last created-in project file of the module',
+				'packages/app-module-task/src/backend/projects.ts': 'existence of the registered folders',
+				'packages/app-module-task/src/backend/routeHarness.ts': 'the route test harness',
+				'packages/app-module-task/src/backend/serverErrorLog.ts': 'the 5xx log file',
+				'packages/app-module-task/src/backend/vitest.setup.ts': 'the test environment',
+			},
+		},
 	},
 	'dsl-lib-task': {
 		forbiddenImports: [
@@ -168,6 +233,27 @@ export function importedModules(source: string): string[] {
 	return [...found];
 }
 
+/** Every name an `import { A, B as C }` clause brings in from its module (the name as exported: `A`, `B`). */
+export function importedNames(source: string): string[] {
+	const names: string[] = [];
+	for (const match of source.matchAll(/\bimport\s*(?:type\s*)?\{([^}]*)\}\s*from\s*['"][^'"]+['"]/g)) {
+		for (const part of match[1]!.split(',')) {
+			const name = part
+				.trim()
+				.replace(/^type\s+/, '')
+				.split(/\s+as\s+/)[0]!
+				.trim();
+			if (name !== '') names.push(name);
+		}
+	}
+	return names;
+}
+
+/** True when the source imports the Node file system API (`fs`, `node:fs`, `fs/promises`, `node:fs/promises`). */
+export function importsNodeFs(source: string): boolean {
+	return importedModules(source).some(specifier => /^(node:)?fs(\/promises)?$/.test(specifier));
+}
+
 function stripComments(source: string): string {
 	return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
 }
@@ -202,8 +288,20 @@ export function checkSource(
 			});
 		}
 	}
+	const code = stripComments(source);
+	for (const { name, why } of rule.forbiddenImportedNames ?? []) {
+		if (importedNames(code).includes(name)) {
+			violations.push({ file, rule: 'forbidden-imported-name', detail: `imports "${name}": ${why}` });
+		}
+	}
+	if (!options.isTest && rule.fsAllowlist && importsNodeFs(source) && !(file in rule.fsAllowlist.files)) {
+		violations.push({
+			file,
+			rule: 'fs-outside-allowlist',
+			detail: `imports the Node file system API: ${rule.fsAllowlist.why}. Add the file to fsAllowlist in architecture/rules.ts only for a reason that is not task data`,
+		});
+	}
 	if (!options.isTest) {
-		const code = stripComments(source);
 		for (const { pattern, why } of rule.forbiddenSource) {
 			if (pattern.test(code)) {
 				violations.push({ file, rule: 'forbidden-source', detail: `matches ${pattern}: ${why}` });

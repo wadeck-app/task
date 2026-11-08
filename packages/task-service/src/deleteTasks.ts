@@ -47,20 +47,20 @@ export interface DeletePlan {
 }
 
 /** Resolves the selection into a plan without deleting anything (this is the `--dry-run` data). */
-export function planDelete(ctx: TaskServiceContext, input: PlanDeleteInput): DeletePlan {
+export async function planDelete(ctx: TaskServiceContext, input: PlanDeleteInput): Promise<DeletePlan> {
 	const { store } = ctx;
 	const { selector } = input;
 	let tasks: TaskSummary[] = [];
 	const notFound: string[] = [];
 
 	if (selector.kind === 'all') {
-		tasks = store.list();
+		tasks = await store.list();
 	} else if (selector.kind === 'filter') {
 		const { field, values } = selector;
 		// A root task has no parentId: it never matches a parentId pattern.
-		tasks = store.list().filter(t => t[field] !== undefined && values.some(v => matchGlob(v, t[field]!)));
+		tasks = (await store.list()).filter(t => t[field] !== undefined && values.some(v => matchGlob(v, t[field]!)));
 	} else {
-		const all = store.list();
+		const all = await store.list();
 		// Several prefixes (or a repeated id) can resolve to the same task: plan it once, in first-occurrence order.
 		const seen = new Set<string>();
 		for (const rawId of selector.ids) {
@@ -82,7 +82,7 @@ export function planDelete(ctx: TaskServiceContext, input: PlanDeleteInput): Del
 	if (input.cascade) {
 		const selected = new Set(tasks.map(t => t.id));
 		for (const t of [...tasks]) {
-			for (const descendant of store.getDescendants(t.id)) {
+			for (const descendant of await store.getDescendants(t.id)) {
 				if (!selected.has(descendant.id)) {
 					selected.add(descendant.id);
 					tasks.push(descendant);
@@ -93,7 +93,7 @@ export function planDelete(ctx: TaskServiceContext, input: PlanDeleteInput): Del
 
 	// Children that survive the deletion lose their parent and become root tasks.
 	const deletedIds = new Set(tasks.map(t => t.id));
-	const remaining = store.list();
+	const remaining = await store.list();
 	const orphanCount = remaining.filter(
 		t => t.parentId !== undefined && deletedIds.has(t.parentId) && !deletedIds.has(t.id)
 	).length;
@@ -128,18 +128,18 @@ function depthOf(id: string, parentOf: ReadonlyMap<string, string | undefined>):
  * The index only has the title; if the file cannot be read the title is reported (the deletion itself does not need the file).
  */
 // Comments the task holds (they go with its file); 0 for a task that vanished since the plan (it gets no event anyway).
-function commentCountOf(ctx: TaskServiceContext, id: string): number {
+async function commentCountOf(ctx: TaskServiceContext, id: string): Promise<number> {
 	try {
-		return ctx.store.get(id).comments?.length ?? 0;
+		return (await ctx.store.get(id)).comments?.length ?? 0;
 	} catch (error) {
 		if (error instanceof TaskNotFoundError) return 0;
 		throw error;
 	}
 }
 
-function fullTextOf(ctx: TaskServiceContext, task: TaskSummary): string {
+async function fullTextOf(ctx: TaskServiceContext, task: TaskSummary): Promise<string> {
 	try {
-		return taskDescription(ctx.store.get(task.id));
+		return taskDescription(await ctx.store.get(task.id));
 	} catch {
 		return task.title;
 	}
@@ -154,8 +154,8 @@ function fullTextOf(ctx: TaskServiceContext, task: TaskSummary): string {
  * A store failure after at least one deletion throws a {@link PartialDeleteError} carrying the events of the tasks already
  * deleted (they are gone: the caller must still deliver them); with nothing deleted yet the original error propagates.
  */
-export function executeDelete(ctx: TaskServiceContext, plan: DeletePlan): ExecuteDeleteResult {
-	const parentOf = new Map(ctx.store.list().map(t => [t.id, t.parentId]));
+export async function executeDelete(ctx: TaskServiceContext, plan: DeletePlan): Promise<ExecuteDeleteResult> {
+	const parentOf = new Map((await ctx.store.list()).map(t => [t.id, t.parentId]));
 	const ordered = plan.tasks
 		.map((task, index) => ({ task, index, depth: depthOf(task.id, parentOf) }))
 		.sort((a, b) => b.depth - a.depth || a.index - b.index);
@@ -164,18 +164,19 @@ export function executeDelete(ctx: TaskServiceContext, plan: DeletePlan): Execut
 	const events: TaskEvent[] = [];
 	for (const { task: planned } of ordered) {
 		// Read just before the deletion: earlier deletions of the plan may have changed the surroundings.
-		const present = ctx.store.list();
+		const present = await ctx.store.list();
 		const task = present.find(t => t.id === planned.id) ?? planned;
 		const orphanedChildIds = present.filter(t => t.parentId === task.id).map(t => t.id);
 		const removedLinkCount = present
 			.filter(t => t.id !== task.id)
 			.flatMap(t => t.links ?? [])
 			.filter(link => link.target === task.id).length;
-		const description = fullTextOf(ctx, task);
-		const commentCount = commentCountOf(ctx, task.id);
+		const description = await fullTextOf(ctx, task);
+		const commentCount = await commentCountOf(ctx, task.id);
 		let removed: boolean;
 		try {
-			removed = ctx.store.deleteTask(task.id);
+			// One awaited deletion at a time, never in parallel: the order is the event order and the partial-failure semantics.
+			removed = await ctx.store.deleteTask(task.id);
 		} catch (error) {
 			if (deletedCount === 0) throw error;
 			throw new PartialDeleteError(deletedCount, ordered.length, task.id, events, error);

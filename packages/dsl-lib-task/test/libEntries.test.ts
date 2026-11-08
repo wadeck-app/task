@@ -18,6 +18,7 @@ const EXPECTED = [
 	'ChipRow',
 	'CommentComposer',
 	'CommentThread',
+	'ControlButton',
 	'InlineText',
 	'KeyValueList',
 	'LabelChips',

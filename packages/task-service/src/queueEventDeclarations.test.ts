@@ -171,47 +171,47 @@ describe('queueEventDeclarations', () => {
 			}
 		}
 
-		it('onTaskCreated, with and without parent and type', () => {
-			const root = createTask(t.ctx, { description: 'root' });
+		it('onTaskCreated, with and without parent and type', async () => {
+			const root = await createTask(t.ctx, { description: 'root' });
 			expectConform(root.events);
-			t.ctx.store.setType(root.task.id, 'bug');
-			t.ctx.store.addLabel(root.task.id, 'x');
-			const child = createTask(t.ctx, { description: 'child', parent: root.task.id });
+			await t.ctx.store.setType(root.task.id, 'bug');
+			await t.ctx.store.addLabel(root.task.id, 'x');
+			const child = await createTask(t.ctx, { description: 'child', parent: root.task.id });
 			expect(child.events[0]!.payload).toMatchObject({ parentId: root.task.id });
 			expectConform(child.events);
 		});
 
-		it('onStatusChange and onTaskUnblocked, with type and labels set and unset', () => {
-			const blocker = createTask(t.ctx, { description: 'blocker' }).task;
-			const blocked = createTask(t.ctx, { description: 'blocked' }).task;
-			t.ctx.store.setType(blocked.id, 'bug');
-			t.ctx.store.addLabel(blocked.id, 'urgent');
-			linkTasks(t.ctx, { id: blocked.id, type: 'blockedBy', target: blocker.id });
+		it('onStatusChange and onTaskUnblocked, with type and labels set and unset', async () => {
+			const blocker = (await createTask(t.ctx, { description: 'blocker' })).task;
+			const blocked = (await createTask(t.ctx, { description: 'blocked' })).task;
+			await t.ctx.store.setType(blocked.id, 'bug');
+			await t.ctx.store.addLabel(blocked.id, 'urgent');
+			await linkTasks(t.ctx, { id: blocked.id, type: 'blockedBy', target: blocker.id });
 
-			const progress = setStatus(t.ctx, { id: blocker.id, status: 'in-progress' });
+			const progress = await setStatus(t.ctx, { id: blocker.id, status: 'in-progress' });
 			expect(progress.events[0]!.payload).toMatchObject({ newStatus: 'in-progress', status: 'in-progress' });
 			expectConform(progress.events);
-			const done = setStatus(t.ctx, { id: blocker.id, status: 'done' });
+			const done = await setStatus(t.ctx, { id: blocker.id, status: 'done' });
 			expect(done.events.map(event => event.name)).toEqual(['onStatusChange', 'onTaskUnblocked']);
 			expect(done.events[1]!.payload).toMatchObject({ taskId: blocked.id, blockerId: blocker.id });
 			expectConform(done.events);
 		});
 
-		it('onTaskLinked and onTaskUnlinked, with a stored type and with an inverse spelling', () => {
-			const a = createTask(t.ctx, { description: 'a' }).task;
-			const b = createTask(t.ctx, { description: 'b' }).task;
-			expectConform(linkTasks(t.ctx, { id: a.id, type: 'blockedBy', target: b.id }).events);
-			expectConform(unlinkTasks(t.ctx, { id: a.id, type: 'blockedBy', target: b.id }).events);
+		it('onTaskLinked and onTaskUnlinked, with a stored type and with an inverse spelling', async () => {
+			const a = (await createTask(t.ctx, { description: 'a' })).task;
+			const b = (await createTask(t.ctx, { description: 'b' })).task;
+			expectConform((await linkTasks(t.ctx, { id: a.id, type: 'blockedBy', target: b.id })).events);
+			expectConform((await unlinkTasks(t.ctx, { id: a.id, type: 'blockedBy', target: b.id })).events);
 
 			// "b blocks a" is stored on a as blockedBy: the holder (taskId) is the blocked one.
-			const inverse = linkTasks(t.ctx, { id: b.id, type: 'blocks', target: a.id });
+			const inverse = await linkTasks(t.ctx, { id: b.id, type: 'blocks', target: a.id });
 			expect(inverse.events[0]!.payload).toMatchObject({ taskId: a.id, linkType: 'blockedBy', targetId: b.id });
 			expectConform(inverse.events);
-			expectConform(unlinkTasks(t.ctx, { id: b.id, type: 'blocks', target: a.id }).events);
+			expectConform((await unlinkTasks(t.ctx, { id: b.id, type: 'blocks', target: a.id })).events);
 
 			for (const type of ['duplicateOf', 'causedBy']) {
-				const other = createTask(t.ctx, { description: type }).task;
-				expectConform(linkTasks(t.ctx, { id: a.id, type, target: other.id }).events);
+				const other = (await createTask(t.ctx, { description: type })).task;
+				expectConform((await linkTasks(t.ctx, { id: a.id, type, target: other.id })).events);
 			}
 		});
 	});
@@ -234,107 +234,114 @@ describe('queueEventDeclarations', () => {
 			}
 		}
 
-		it('onTaskTypeChanged, from no type and from a type', () => {
-			const task = createTask(t.ctx, { description: 'a' }).task;
-			const first = setType(t.ctx, { id: task.id, type: 'bug' });
+		it('onTaskTypeChanged, from no type and from a type', async () => {
+			const task = (await createTask(t.ctx, { description: 'a' })).task;
+			const first = await setType(t.ctx, { id: task.id, type: 'bug' });
 			expect(first.events.map(event => event.name)).toEqual(['onTaskTypeChanged']);
 			expectConform(first.events);
-			expectConform(setType(t.ctx, { id: task.id, type: 'feature' }).events);
+			expectConform((await setType(t.ctx, { id: task.id, type: 'feature' })).events);
 		});
 
-		it('onTaskTypeChanged with newType absent (type cleared)', () => {
-			const task = createTask(t.ctx, { description: 'a' }).task;
-			setType(t.ctx, { id: task.id, type: 'bug' });
-			const cleared = unsetType(t.ctx, { id: task.id });
+		it('onTaskTypeChanged with newType absent (type cleared)', async () => {
+			const task = (await createTask(t.ctx, { description: 'a' })).task;
+			await setType(t.ctx, { id: task.id, type: 'bug' });
+			const cleared = await unsetType(t.ctx, { id: task.id });
 			expect(throughJson(cleared.events[0]!.payload)).not.toHaveProperty('newType');
 			expectConform(cleared.events);
 		});
 
-		it('onTaskMetaChanged with newValue absent (key removed)', () => {
-			const task = createTask(t.ctx, { description: 'a' }).task;
-			setMeta(t.ctx, { id: task.id, key: 'owner', value: 'ann' });
-			setMeta(t.ctx, { id: task.id, key: 'blank', value: '' });
-			const removed = unsetMeta(t.ctx, { id: task.id, key: 'owner' });
+		it('onTaskMetaChanged with newValue absent (key removed)', async () => {
+			const task = (await createTask(t.ctx, { description: 'a' })).task;
+			await setMeta(t.ctx, { id: task.id, key: 'owner', value: 'ann' });
+			await setMeta(t.ctx, { id: task.id, key: 'blank', value: '' });
+			const removed = await unsetMeta(t.ctx, { id: task.id, key: 'owner' });
 			expect(throughJson(removed.events[0]!.payload)).not.toHaveProperty('newValue');
 			expectConform(removed.events);
-			expectConform(unsetMeta(t.ctx, { id: task.id, key: 'blank' }).events);
+			expectConform((await unsetMeta(t.ctx, { id: task.id, key: 'blank' })).events);
 		});
 
-		it('onTaskTextChanged, for the title, a first description, a changed one and a cleared one', () => {
-			const task = createTask(t.ctx, { description: 'a' }).task;
-			expectConform(setTaskText(t.ctx, { id: task.id, title: 'b' }).events);
-			const first = setTaskText(t.ctx, { id: task.id, description: 'body' });
+		it('onTaskTextChanged, for the title, a first description, a changed one and a cleared one', async () => {
+			const task = (await createTask(t.ctx, { description: 'a' })).task;
+			expectConform((await setTaskText(t.ctx, { id: task.id, title: 'b' })).events);
+			const first = await setTaskText(t.ctx, { id: task.id, description: 'body' });
 			expect(throughJson(first.events[0]!.payload)).not.toHaveProperty('oldValue');
 			expectConform(first.events);
-			expectConform(setTaskText(t.ctx, { id: task.id, description: 'other' }).events);
-			expectConform(setTaskText(t.ctx, { id: task.id, description: '' }).events);
+			expectConform((await setTaskText(t.ctx, { id: task.id, description: 'other' })).events);
+			expectConform((await setTaskText(t.ctx, { id: task.id, description: '' })).events);
 		});
 
-		it('onTaskDeleted, for a root task, a child with orphans and links, and a cascade', () => {
-			const parent = createTask(t.ctx, { description: 'parent' }).task;
-			createTask(t.ctx, { description: 'child', parent: parent.id });
-			const holder = createTask(t.ctx, { description: 'holder' }).task;
-			linkTasks(t.ctx, { id: holder.id, type: 'blockedBy', target: parent.id });
-			const loose = createTask(t.ctx, { description: 'loose' }).task;
+		it('onTaskDeleted, for a root task, a child with orphans and links, and a cascade', async () => {
+			const parent = (await createTask(t.ctx, { description: 'parent' })).task;
+			await createTask(t.ctx, { description: 'child', parent: parent.id });
+			const holder = (await createTask(t.ctx, { description: 'holder' })).task;
+			await linkTasks(t.ctx, { id: holder.id, type: 'blockedBy', target: parent.id });
+			const loose = (await createTask(t.ctx, { description: 'loose' })).task;
 
-			const deleted = executeDelete(t.ctx, planDelete(t.ctx, { selector: { kind: 'ids', ids: [parent.id] } }));
+			const deleted = await executeDelete(
+				t.ctx,
+				await planDelete(t.ctx, { selector: { kind: 'ids', ids: [parent.id] } })
+			);
 			expect(deleted.events.map(event => event.name)).toEqual(['onTaskDeleted']);
 			expect(deleted.events[0]!.payload).toMatchObject({ removedLinkCount: 1 });
 			expectConform(deleted.events);
 			expectConform(
-				executeDelete(t.ctx, planDelete(t.ctx, { selector: { kind: 'ids', ids: [loose.id] } })).events
+				(await executeDelete(t.ctx, await planDelete(t.ctx, { selector: { kind: 'ids', ids: [loose.id] } })))
+					.events
 			);
 
-			const root = createTask(t.ctx, { description: 'root' }).task;
-			createTask(t.ctx, { description: 'kid', parent: root.id });
-			const cascade = executeDelete(
+			const root = (await createTask(t.ctx, { description: 'root' })).task;
+			await createTask(t.ctx, { description: 'kid', parent: root.id });
+			const cascade = await executeDelete(
 				t.ctx,
-				planDelete(t.ctx, { selector: { kind: 'ids', ids: [root.id] }, cascade: true })
+				await planDelete(t.ctx, { selector: { kind: 'ids', ids: [root.id] }, cascade: true })
 			);
 			expect(cascade.events).toHaveLength(2);
 			expectConform(cascade.events);
 		});
 
-		it('onTaskCommentAdded / Edited / Removed, with and without author, multi-line text', () => {
-			const task = createTask(t.ctx, { description: 'a' }).task;
-			const plain = addComment(t.ctx, { id: task.id, text: 'line 1\nline 2' });
+		it('onTaskCommentAdded / Edited / Removed, with and without author, multi-line text', async () => {
+			const task = (await createTask(t.ctx, { description: 'a' })).task;
+			const plain = await addComment(t.ctx, { id: task.id, text: 'line 1\nline 2' });
 			expect(throughJson(plain.events[0]!.payload)).not.toHaveProperty('author');
 			expectConform(plain.events);
-			const named = addComment(t.ctx, { id: task.id, text: 'b', author: 'alice' });
+			const named = await addComment(t.ctx, { id: task.id, text: 'b', author: 'alice' });
 			expectConform(named.events);
-			const edited = editComment(t.ctx, { id: task.id, commentId: plain.comment.id, text: 'c' });
+			const edited = await editComment(t.ctx, { id: task.id, commentId: plain.comment.id, text: 'c' });
 			expect(edited.events[0]!.payload).toMatchObject({ oldText: 'line 1\nline 2', newText: 'c' });
 			expectConform(edited.events);
-			expectConform(removeComment(t.ctx, { id: task.id, commentId: named.comment.id }).events);
+			expectConform((await removeComment(t.ctx, { id: task.id, commentId: named.comment.id })).events);
 		});
 
-		it('onTaskDeleted with commentCount (a task that had comments)', () => {
-			const task = createTask(t.ctx, { description: 'a' }).task;
-			addComment(t.ctx, { id: task.id, text: 'x' });
-			const deleted = executeDelete(t.ctx, planDelete(t.ctx, { selector: { kind: 'ids', ids: [task.id] } }));
+		it('onTaskDeleted with commentCount (a task that had comments)', async () => {
+			const task = (await createTask(t.ctx, { description: 'a' })).task;
+			await addComment(t.ctx, { id: task.id, text: 'x' });
+			const deleted = await executeDelete(
+				t.ctx,
+				await planDelete(t.ctx, { selector: { kind: 'ids', ids: [task.id] } })
+			);
 			expect(throughJson(deleted.events[0]!.payload)).toMatchObject({ commentCount: 1 });
 			expectConform(deleted.events);
 		});
 
-		it('onTaskParentChanged, attached, moved and detached', () => {
-			const a = createTask(t.ctx, { description: 'a' }).task;
-			const b = createTask(t.ctx, { description: 'b' }).task;
-			const c = createTask(t.ctx, { description: 'c' }).task;
-			expectConform(setParent(t.ctx, { id: c.id, parent: a.id }).events);
-			expectConform(setParent(t.ctx, { id: c.id, parent: b.id }).events);
-			expectConform(removeParent(t.ctx, { id: c.id }).events);
+		it('onTaskParentChanged, attached, moved and detached', async () => {
+			const a = (await createTask(t.ctx, { description: 'a' })).task;
+			const b = (await createTask(t.ctx, { description: 'b' })).task;
+			const c = (await createTask(t.ctx, { description: 'c' })).task;
+			expectConform((await setParent(t.ctx, { id: c.id, parent: a.id })).events);
+			expectConform((await setParent(t.ctx, { id: c.id, parent: b.id })).events);
+			expectConform((await removeParent(t.ctx, { id: c.id })).events);
 		});
 
-		it('onTaskMetaChanged, for a new key and for a changed value', () => {
-			const task = createTask(t.ctx, { description: 'a' }).task;
-			expectConform(setMeta(t.ctx, { id: task.id, key: 'owner', value: 'ann' }).events);
-			expectConform(setMeta(t.ctx, { id: task.id, key: 'owner', value: '' }).events);
+		it('onTaskMetaChanged, for a new key and for a changed value', async () => {
+			const task = (await createTask(t.ctx, { description: 'a' })).task;
+			expectConform((await setMeta(t.ctx, { id: task.id, key: 'owner', value: 'ann' })).events);
+			expectConform((await setMeta(t.ctx, { id: task.id, key: 'owner', value: '' })).events);
 		});
 
-		it('onTaskLabelAdded and onTaskLabelRemoved', () => {
-			const task = createTask(t.ctx, { description: 'a' }).task;
-			expectConform(addLabel(t.ctx, { id: task.id, label: 'urgent' }).events);
-			expectConform(removeLabel(t.ctx, { id: task.id, label: 'urgent' }).events);
+		it('onTaskLabelAdded and onTaskLabelRemoved', async () => {
+			const task = (await createTask(t.ctx, { description: 'a' })).task;
+			expectConform((await addLabel(t.ctx, { id: task.id, label: 'urgent' })).events);
+			expectConform((await removeLabel(t.ctx, { id: task.id, label: 'urgent' })).events);
 		});
 	});
 

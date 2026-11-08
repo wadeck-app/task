@@ -28,7 +28,9 @@ function compareText(a: string, b: string): number {
  * Runs `read` on every readable registered project. Nothing registered is an empty answer; projects registered but
  * none readable throw {@link NoReadableProjectsError} (an empty answer would read as "no tasks"); a corrupt registry throws its error.
  */
-export function readAcrossProjects<T>(read: (ctx: TaskServiceContext) => T): AcrossProjects<T> {
+export async function readAcrossProjects<T>(
+	read: (ctx: TaskServiceContext) => T | Promise<T>
+): Promise<AcrossProjects<T>> {
 	const { entries: inspected, registryProblem } = inspectKnownProjects();
 	const entries: ProjectRead<T>[] = [];
 	const unreadable: SkippedProject[] = [];
@@ -40,7 +42,11 @@ export function readAcrossProjects<T>(read: (ctx: TaskServiceContext) => T): Acr
 			unreadableProjects.push({ id: known.id, name: known.name, path: known.path, error });
 			continue;
 		}
-		entries.push({ project: { id: known.id, name: context.project.name, path: known.path }, value: read(context) });
+		// One project after the other: the first failure and the order of the entries do not depend on timing.
+		entries.push({
+			project: { id: known.id, name: context.project.name, path: known.path },
+			value: await read(context),
+		});
 	}
 	if (inspected.length > 0 && entries.length === 0) throw new NoReadableProjectsError(unreadable);
 	entries.sort((a, b) => compareText(a.project.name, b.project.name) || compareText(a.project.path, b.project.path));

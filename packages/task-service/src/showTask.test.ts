@@ -3,13 +3,14 @@ import * as fs from 'node:fs';
 import { TaskNotFoundError } from '@wadeck-app/task-core';
 
 import { DanglingParentError } from './errors.js';
+import { plain } from './plainRecord.js';
 import { getTaskHistory, showTask, showTaskWithRelations } from './showTask.js';
 import { createTestContext, type TestContext } from './testHelpers.js';
 
 /** A parent and its child, with the parent removed from the index only: the child's parentId dangles. */
-function createDanglingChild(t: TestContext): { parentId: string; childId: string } {
-	const parent = t.ctx.store.create('parent', 'backlog');
-	const child = t.ctx.store.create('child', 'backlog', parent.id);
+async function createDanglingChild(t: TestContext): Promise<{ parentId: string; childId: string }> {
+	const parent = await t.ctx.store.create({ title: 'parent', status: 'backlog' });
+	const child = await t.ctx.store.create({ title: 'child', status: 'backlog', parentId: parent.id });
 	const indexPath = `${t.rootDir}/data/task-index.json`;
 	const index = JSON.parse(fs.readFileSync(indexPath, 'utf8')) as { tasks: Array<{ id: string }> };
 	index.tasks = index.tasks.filter(x => x.id !== parent.id);
@@ -24,42 +25,42 @@ describe('showTask', () => {
 	});
 	afterEach(() => t.cleanup());
 
-	it('returns the full record plus childrenIds', () => {
-		const parent = t.ctx.store.create('parent', 'backlog');
-		const child = t.ctx.store.create('child', 'backlog', parent.id);
+	it('returns the full record plus childrenIds', async () => {
+		const parent = await t.ctx.store.create({ title: 'parent', status: 'backlog' });
+		const child = await t.ctx.store.create({ title: 'child', status: 'backlog', parentId: parent.id });
 
-		const detail = showTask(t.ctx, { id: parent.id.slice(0, 4) });
+		const detail = await showTask(t.ctx, { id: parent.id.slice(0, 4) });
 
-		expect(detail).toEqual({ ...parent, description: 'parent', childrenIds: [child.id], commentCount: 0 });
+		expect(detail).toEqual({ ...plain(parent), description: 'parent', childrenIds: [child.id], commentCount: 0 });
 		expect('parent' in detail).toBe(false);
 		expect('children' in detail).toBe(false);
 	});
 
-	it('adds the parent summary with withParent, and null for a root task', () => {
-		const parent = t.ctx.store.create('parent', 'backlog');
-		const child = t.ctx.store.create('child', 'backlog', parent.id);
+	it('adds the parent summary with withParent, and null for a root task', async () => {
+		const parent = await t.ctx.store.create({ title: 'parent', status: 'backlog' });
+		const child = await t.ctx.store.create({ title: 'child', status: 'backlog', parentId: parent.id });
 
-		expect(showTask(t.ctx, { id: child.id, withParent: true })['parent']).toEqual(
-			t.ctx.store.list().find(x => x.id === parent.id)
+		expect((await showTask(t.ctx, { id: child.id, withParent: true }))['parent']).toEqual(
+			(await t.ctx.store.list()).find(x => x.id === parent.id)
 		);
-		expect(showTask(t.ctx, { id: parent.id, withParent: true })['parent']).toBeNull();
+		expect((await showTask(t.ctx, { id: parent.id, withParent: true }))['parent']).toBeNull();
 	});
 
-	it('adds the children summaries with withChildren', () => {
-		const parent = t.ctx.store.create('parent', 'backlog');
-		t.ctx.store.create('child', 'backlog', parent.id);
+	it('adds the children summaries with withChildren', async () => {
+		const parent = await t.ctx.store.create({ title: 'parent', status: 'backlog' });
+		await t.ctx.store.create({ title: 'child', status: 'backlog', parentId: parent.id });
 
-		expect(showTask(t.ctx, { id: parent.id, withChildren: true })['children']).toEqual(
-			t.ctx.store.getChildren(parent.id)
+		expect((await showTask(t.ctx, { id: parent.id, withChildren: true }))['children']).toEqual(
+			await t.ctx.store.getChildren(parent.id)
 		);
 	});
 
-	it('throws DanglingParentError (with an actionable hint) when the parent no longer exists', () => {
-		const { parentId, childId } = createDanglingChild(t);
+	it('throws DanglingParentError (with an actionable hint) when the parent no longer exists', async () => {
+		const { parentId, childId } = await createDanglingChild(t);
 
 		let caught: unknown;
 		try {
-			showTask(t.ctx, { id: childId, withParent: true });
+			await showTask(t.ctx, { id: childId, withParent: true });
 		} catch (error) {
 			caught = error;
 		}
@@ -70,8 +71,8 @@ describe('showTask', () => {
 		expect((caught as DanglingParentError).hint).toBe(`Fix with: task remove-parent ${childId}`);
 	});
 
-	it('throws TaskNotFoundError for an unknown id', () => {
-		expect(() => showTask(t.ctx, { id: 'zzzz' })).toThrow(TaskNotFoundError);
+	it('throws TaskNotFoundError for an unknown id', async () => {
+		await expect(showTask(t.ctx, { id: 'zzzz' })).rejects.toThrow(TaskNotFoundError);
 	});
 });
 
@@ -82,18 +83,18 @@ describe('getTaskHistory', () => {
 	});
 	afterEach(() => t.cleanup());
 
-	it('returns the resolved task id and its status history', () => {
-		const task = t.ctx.store.create('a', 'backlog');
-		t.ctx.store.updateStatus(task.id, 'done');
+	it('returns the resolved task id and its status history', async () => {
+		const task = await t.ctx.store.create({ title: 'a', status: 'backlog' });
+		await t.ctx.store.updateStatus(task.id, 'done');
 
-		const result = getTaskHistory(t.ctx, { id: task.id.slice(0, 3) });
+		const result = await getTaskHistory(t.ctx, { id: task.id.slice(0, 3) });
 
 		expect(result.id).toBe(task.id);
 		expect(result.history.map(h => h.status)).toEqual(['backlog', 'done']);
 	});
 
-	it('throws TaskNotFoundError for an unknown id', () => {
-		expect(() => getTaskHistory(t.ctx, { id: 'zzzz' })).toThrow(TaskNotFoundError);
+	it('throws TaskNotFoundError for an unknown id', async () => {
+		await expect(getTaskHistory(t.ctx, { id: 'zzzz' })).rejects.toThrow(TaskNotFoundError);
 	});
 });
 
@@ -104,22 +105,22 @@ describe('showTaskWithRelations', () => {
 	});
 	afterEach(() => t.cleanup());
 
-	it('returns the record with its parent and children summaries and no warning', () => {
-		const parent = t.ctx.store.create('parent', 'backlog');
-		const child = t.ctx.store.create('child', 'backlog', parent.id);
+	it('returns the record with its parent and children summaries and no warning', async () => {
+		const parent = await t.ctx.store.create({ title: 'parent', status: 'backlog' });
+		const child = await t.ctx.store.create({ title: 'child', status: 'backlog', parentId: parent.id });
 
-		const { detail, warnings } = showTaskWithRelations(t.ctx, { id: child.id });
+		const { detail, warnings } = await showTaskWithRelations(t.ctx, { id: child.id });
 
 		expect(detail['id']).toBe(child.id);
-		expect(detail['parent']).toEqual(t.ctx.store.list().find(x => x.id === parent.id));
+		expect(detail['parent']).toEqual((await t.ctx.store.list()).find(x => x.id === parent.id));
 		expect(detail['children']).toEqual([]);
 		expect(warnings).toEqual([]);
 	});
 
-	it('keeps a task with a dangling parent reachable: parent null plus a warning carrying the fix', () => {
-		const { parentId, childId } = createDanglingChild(t);
+	it('keeps a task with a dangling parent reachable: parent null plus a warning carrying the fix', async () => {
+		const { parentId, childId } = await createDanglingChild(t);
 
-		const { detail, warnings } = showTaskWithRelations(t.ctx, { id: childId });
+		const { detail, warnings } = await showTaskWithRelations(t.ctx, { id: childId });
 
 		expect(detail['id']).toBe(childId);
 		expect(detail['parent']).toBeNull();
@@ -129,7 +130,7 @@ describe('showTaskWithRelations', () => {
 		]);
 	});
 
-	it('still throws TaskNotFoundError for an unknown id', () => {
-		expect(() => showTaskWithRelations(t.ctx, { id: 'zzzz' })).toThrow(TaskNotFoundError);
+	it('still throws TaskNotFoundError for an unknown id', async () => {
+		await expect(showTaskWithRelations(t.ctx, { id: 'zzzz' })).rejects.toThrow(TaskNotFoundError);
 	});
 });

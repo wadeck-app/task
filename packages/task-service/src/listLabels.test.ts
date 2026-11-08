@@ -8,16 +8,16 @@ describe('listLabels', () => {
 	});
 	afterEach(() => t.cleanup());
 
-	it('is empty for a project without labels', () => {
-		t.ctx.store.create('a', 'backlog');
+	it('is empty for a project without labels', async () => {
+		await t.ctx.store.create({ title: 'a', status: 'backlog' });
 
-		expect(listLabels(t.ctx)).toEqual([]);
+		expect(await listLabels(t.ctx)).toEqual([]);
 	});
 
-	it('counts the tasks carrying each label, sorted by count (desc) then name', () => {
-		const a = t.ctx.store.create('a', 'backlog');
-		const b = t.ctx.store.create('b', 'backlog');
-		const c = t.ctx.store.create('c', 'backlog');
+	it('counts the tasks carrying each label, sorted by count (desc) then name', async () => {
+		const a = await t.ctx.store.create({ title: 'a', status: 'backlog' });
+		const b = await t.ctx.store.create({ title: 'b', status: 'backlog' });
+		const c = await t.ctx.store.create({ title: 'c', status: 'backlog' });
 		for (const [task, label] of [
 			[a, 'zeta'],
 			[b, 'zeta'],
@@ -27,10 +27,10 @@ describe('listLabels', () => {
 			[a, 'alpha'],
 			[c, 'omega'],
 		] as const) {
-			t.ctx.store.addLabel(task.id, label);
+			await t.ctx.store.addLabel(task.id, label);
 		}
 
-		expect(listLabels(t.ctx)).toEqual([
+		expect(await listLabels(t.ctx)).toEqual([
 			{ label: 'zeta', count: 3 },
 			{ label: 'beta', count: 2 },
 			{ label: 'alpha', count: 1 },
@@ -38,36 +38,40 @@ describe('listLabels', () => {
 		]);
 	});
 
-	it('counts closed tasks too', () => {
-		const a = t.ctx.store.create('a', 'backlog');
-		t.ctx.store.addLabel(a.id, 'old');
-		t.ctx.store.updateStatus(a.id, 'done');
+	it('counts closed tasks too', async () => {
+		const a = await t.ctx.store.create({ title: 'a', status: 'backlog' });
+		await t.ctx.store.addLabel(a.id, 'old');
+		await t.ctx.store.updateStatus(a.id, 'done');
 
-		expect(listLabels(t.ctx)).toEqual([{ label: 'old', count: 1 }]);
+		expect(await listLabels(t.ctx)).toEqual([{ label: 'old', count: 1 }]);
 	});
 
-	it('is case-sensitive: labels are distinct strings', () => {
-		const a = t.ctx.store.create('a', 'backlog');
-		t.ctx.store.addLabel(a.id, 'Bug');
-		t.ctx.store.addLabel(a.id, 'bug');
+	it('is case-sensitive: labels are distinct strings', async () => {
+		const a = await t.ctx.store.create({ title: 'a', status: 'backlog' });
+		await t.ctx.store.addLabel(a.id, 'Bug');
+		await t.ctx.store.addLabel(a.id, 'bug');
 
-		expect(listLabels(t.ctx).map(entry => entry.label)).toEqual(['Bug', 'bug']);
+		expect((await listLabels(t.ctx)).map(entry => entry.label)).toEqual(['Bug', 'bug']);
 	});
 
-	it('measured on 1 000 tasks (cold call, then median of 9 warm calls, printed)', () => {
+	it('measured on 1 000 tasks (cold call, then median of 9 warm calls, printed)', async () => {
 		seedTasks(t, 1000);
-		const timed = (): number => {
+		const timed = async (): Promise<number> => {
 			const start = performance.now();
-			listLabels(t.ctx);
+			await listLabels(t.ctx);
 			return performance.now() - start;
 		};
-		const cold = timed();
-		const warm = Array.from({ length: 9 }, timed).sort((x, y) => x - y);
+		const cold = await timed();
+		const warm: number[] = [];
+		for (let run = 0; run < 9; run++) {
+			warm.push(await timed());
+		}
+		warm.sort((x, y) => x - y);
 		console.info(
 			`listLabels over 1000 tasks: cold ${cold.toFixed(1)} ms, warm min ${warm[0]!.toFixed(1)} / median ${warm[4]!.toFixed(1)} / max ${warm[8]!.toFixed(1)} ms`
 		);
 
-		const labels = listLabels(t.ctx);
+		const labels = await listLabels(t.ctx);
 		expect(labels[0]).toEqual({ label: 'common', count: 1000 });
 		expect(labels).toHaveLength(1 + 20 + 1000);
 	});

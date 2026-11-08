@@ -13,8 +13,8 @@ export interface ChildrenSummary {
  * How far a task's direct children are: the same terminal rule as `countTasksByStatus` and `setStatus` (the project's
  * `terminalStatuses`), so the CLI and the module never disagree on "done".
  */
-export function summarizeChildren(ctx: TaskServiceContext, input: { id: string }): ChildrenSummary {
-	const children = ctx.store.getChildren(ctx.store.findByPrefix(input.id).id);
+export async function summarizeChildren(ctx: TaskServiceContext, input: { id: string }): Promise<ChildrenSummary> {
+	const children = await ctx.store.getChildren((await ctx.store.findByPrefix(input.id)).id);
 	const terminal = children.filter(child => ctx.config.terminalStatuses.includes(child.status)).length;
 	return { total: children.length, terminal, open: children.length - terminal };
 }
@@ -35,9 +35,9 @@ export interface BlockerSummary {
  * The tasks that still block this one: its `blockedBy` links whose target is not in a terminal status. A closed
  * blocker does not block; the tasks this one blocks (the derived `blocks` inverse) are not reported.
  */
-export function describeBlockers(ctx: TaskServiceContext, input: { id: string }): BlockerSummary {
+export async function describeBlockers(ctx: TaskServiceContext, input: { id: string }): Promise<BlockerSummary> {
 	// A dangling link blocks nothing and has no task to show: it is left out (the task page reports it).
-	const { links } = ctx.store.getLinksLenient(ctx.store.findByPrefix(input.id).id);
+	const { links } = await ctx.store.getLinksLenient((await ctx.store.findByPrefix(input.id)).id);
 	const blockers = links.blockedBy
 		.filter(task => !ctx.config.terminalStatuses.includes(task.status))
 		.map(task => ({ id: task.id, title: task.title, status: task.status }));

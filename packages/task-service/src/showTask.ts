@@ -2,6 +2,7 @@ import type { TaskRecord } from '@wadeck-app/task-core';
 
 import type { TaskServiceContext } from './context.js';
 import { DanglingParentError } from './errors.js';
+import { plain } from './plainRecord.js';
 import { withDescription } from './taskText.js';
 
 export interface ShowTaskInput {
@@ -14,9 +15,9 @@ export interface ShowTaskInput {
 }
 
 /** Full task record plus `childrenIds`, and optionally `parent` / `children` summaries. */
-export function showTask(ctx: TaskServiceContext, input: ShowTaskInput): Record<string, unknown> {
-	const task = ctx.store.findByPrefix(input.id);
-	const children = ctx.store.getChildren(task.id);
+export async function showTask(ctx: TaskServiceContext, input: ShowTaskInput): Promise<Record<string, unknown>> {
+	const task = plain(await ctx.store.findByPrefix(input.id));
+	const children = await ctx.store.getChildren(task.id);
 	// `description` is always present (the resolved text), whatever is stored.
 	const detail: Record<string, unknown> = {
 		...withDescription(task),
@@ -24,7 +25,7 @@ export function showTask(ctx: TaskServiceContext, input: ShowTaskInput): Record<
 		commentCount: task.comments?.length ?? 0,
 	};
 	if (input.withParent) {
-		const parent = task.parentId === undefined ? null : ctx.store.list().find(t => t.id === task.parentId);
+		const parent = task.parentId === undefined ? null : (await ctx.store.list()).find(t => t.id === task.parentId);
 		if (parent === undefined) {
 			throw new DanglingParentError(task.id, task.parentId!);
 		}
@@ -47,13 +48,16 @@ export interface TaskWithRelations {
  * The detail of a task with its parent and children. A task must stay reachable to be repaired: when its parent no
  * longer exists the task is returned without parent and the corruption is reported as a warning (with the fix).
  */
-export function showTaskWithRelations(ctx: TaskServiceContext, input: { id: string }): TaskWithRelations {
+export async function showTaskWithRelations(
+	ctx: TaskServiceContext,
+	input: { id: string }
+): Promise<TaskWithRelations> {
 	try {
-		return { detail: showTask(ctx, { id: input.id, withParent: true, withChildren: true }), warnings: [] };
+		return { detail: await showTask(ctx, { id: input.id, withParent: true, withChildren: true }), warnings: [] };
 	} catch (error) {
 		if (!(error instanceof DanglingParentError)) throw error;
 		return {
-			detail: { ...showTask(ctx, { id: input.id, withChildren: true }), parent: null },
+			detail: { ...(await showTask(ctx, { id: input.id, withChildren: true })), parent: null },
 			warnings: [`${error.message}. ${error.hint}`],
 		};
 	}
@@ -66,7 +70,7 @@ export interface TaskHistory {
 }
 
 /** Status-change history of a task. */
-export function getTaskHistory(ctx: TaskServiceContext, input: { id: string }): TaskHistory {
-	const task = ctx.store.findByPrefix(input.id);
+export async function getTaskHistory(ctx: TaskServiceContext, input: { id: string }): Promise<TaskHistory> {
+	const task = await ctx.store.findByPrefix(input.id);
 	return { id: task.id, history: task.history };
 }

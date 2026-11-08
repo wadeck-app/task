@@ -3,6 +3,7 @@ import type { TaskRecord, TaskSummary } from '@wadeck-app/task-core';
 import { projectEnv, type TaskServiceContext } from './context.js';
 import { InvalidStatusError } from './errors.js';
 import type { TaskEvent } from './events.js';
+import { plain } from './plainRecord.js';
 import { suggest } from './text.js';
 
 export interface SetStatusInput {
@@ -26,16 +27,17 @@ export interface SetStatusResult {
 }
 
 /** Changes a task's status; the status must be one of the configured `statuses`. */
-export function setStatus(ctx: TaskServiceContext, input: SetStatusInput): SetStatusResult {
+export async function setStatus(ctx: TaskServiceContext, input: SetStatusInput): Promise<SetStatusResult> {
 	const { store, config } = ctx;
 	if (!config.statuses.includes(input.status)) {
 		const hint = suggest(input.status, config.statuses);
 		throw new InvalidStatusError(input.status, config.statuses, hint === undefined ? [] : [hint]);
 	}
-	const before = store.findByPrefix(input.id);
-	// updateStatus() mutates `before` in place: read the previous status first.
+	const before = await store.findByPrefix(input.id);
+	// The previous status is read before the write; the backend re-reads the record it updates.
 	const oldStatus = before.status;
-	const updated = store.updateStatus(before.id, input.status, before);
+	// Events are built only after the write is awaited: a failed or refused write never yields one.
+	const updated = plain(await store.updateStatus(before.id, input.status));
 	const events: TaskEvent[] = [
 		{
 			name: 'onStatusChange',
@@ -55,11 +57,11 @@ export function setStatus(ctx: TaskServiceContext, input: SetStatusInput): SetSt
 	let openBlockers: TaskSummary[] = [];
 	let unblocked: TaskSummary[] = [];
 	if (isTerminal(updated.status) && !isTerminal(oldStatus)) {
-		openBlockers = store.getOpenBlockers(updated.id, isTerminal);
+		openBlockers = await store.getOpenBlockers(updated.id, isTerminal);
 		// Tasks whose last open blocker was this one can now move forward.
-		unblocked = store.getUnblockedBy(updated.id, isTerminal);
+		unblocked = await store.getUnblockedBy(updated.id, isTerminal);
 		for (const summary of unblocked) {
-			const record = store.get(summary.id);
+			const record = await store.get(summary.id);
 			events.push({
 				name: 'onTaskUnblocked',
 				payload: {

@@ -31,7 +31,7 @@ describe('projects overview (every project of the shared registry that has a fol
 		fs.mkdirSync(path.dirname(ownConfigFile(resolved.storage)), { recursive: true });
 		fs.writeFileSync(ownConfigFile(resolved.storage), CONFIG_YML);
 		const ctx = openResolvedProject(resolved);
-		for (const [title, status] of tasks) ctx.store.create(title, status);
+		for (const [title, status] of tasks) await ctx.store.create({ title: title, status: status });
 		return { dir: path.resolve(dir), project };
 	}
 
@@ -44,8 +44,8 @@ describe('projects overview (every project of the shared registry that has a fol
 	}
 
 	describe('summarizeProjects', () => {
-		it('is empty (not an error) when nothing is registered', () => {
-			expect(summarizeProjects({ env: sandbox.env })).toEqual({
+		it('is empty (not an error) when nothing is registered', async () => {
+			expect(await summarizeProjects({ env: sandbox.env })).toEqual({
 				projects: [],
 				readableCount: 0,
 				open: 0,
@@ -62,7 +62,7 @@ describe('projects overview (every project of the shared registry that has a fol
 			const beta = await registeredWith('beta');
 			const gamma = await registeredWith('gamma', [['g1', 'backlog']]);
 
-			const summary = summarizeProjects({ env: sandbox.env });
+			const summary = await summarizeProjects({ env: sandbox.env });
 
 			expect(summary.projects.map(p => [p.id, p.name, p.path, p.open, p.total, p.error])).toEqual([
 				[alpha.project.id, 'alpha', alpha.dir, 1, 2, null],
@@ -84,7 +84,7 @@ describe('projects overview (every project of the shared registry that has a fol
 		it('a row has exactly the documented keys', async () => {
 			await registeredWith('alpha');
 
-			const [row] = summarizeProjects({ env: sandbox.env }).projects;
+			const [row] = (await summarizeProjects({ env: sandbox.env })).projects;
 
 			expect(Object.keys(row!).sort()).toEqual(
 				['byStatus', 'error', 'exists', 'id', 'name', 'open', 'path', 'total'].sort()
@@ -95,7 +95,7 @@ describe('projects overview (every project of the shared registry that has a fol
 			await registeredWith('alpha', [['a1', 'backlog']]);
 			const broken = await unreadable('broken');
 
-			const summary = summarizeProjects({ env: sandbox.env });
+			const summary = await summarizeProjects({ env: sandbox.env });
 
 			expect(summary).toMatchObject({ readableCount: 1, open: 1, total: 1 });
 			const brokenEntry = summary.projects[1];
@@ -114,7 +114,7 @@ describe('projects overview (every project of the shared registry that has a fol
 			const gone = await registeredWith('gone', [['g1', 'backlog']]);
 			fs.rmSync(gone.dir, { recursive: true });
 
-			const [row] = summarizeProjects({ env: sandbox.env }).projects;
+			const [row] = (await summarizeProjects({ env: sandbox.env })).projects;
 
 			expect(row).toMatchObject({ name: 'gone', exists: false, open: 1, total: 1, error: null });
 		});
@@ -125,7 +125,7 @@ describe('projects overview (every project of the shared registry that has a fol
 
 			let thrown: unknown;
 			try {
-				summarizeProjects({ env: sandbox.env });
+				await summarizeProjects({ env: sandbox.env });
 			} catch (error) {
 				thrown = error;
 			}
@@ -141,7 +141,7 @@ describe('projects overview (every project of the shared registry that has a fol
 		it('describeError classifies it as internal with the failures as details', async () => {
 			await unreadable('a');
 			try {
-				summarizeProjects({ env: sandbox.env });
+				await summarizeProjects({ env: sandbox.env });
 				expect.unreachable();
 			} catch (error) {
 				const described = describeError(error);
@@ -151,11 +151,11 @@ describe('projects overview (every project of the shared registry that has a fol
 			}
 		});
 
-		it('an unreadable shared registry is reported, and lists no project (there is no other source)', () => {
+		it('an unreadable shared registry is reported, and lists no project (there is no other source)', async () => {
 			fs.mkdirSync(sandbox.registryDir, { recursive: true });
 			fs.writeFileSync(path.join(sandbox.registryDir, 'registry.json'), '{ nope');
 
-			const summary = summarizeProjects({ env: sandbox.env });
+			const summary = await summarizeProjects({ env: sandbox.env });
 
 			expect(summary.registryProblem).toContain('registry.json');
 			expect(summary.projects).toEqual([]);
@@ -165,7 +165,7 @@ describe('projects overview (every project of the shared registry that has a fol
 			const fresh = await sandbox.register('fresh', sandbox.dir('fresh'));
 			await sandbox.register('notes', undefined);
 
-			const summary = summarizeProjects({ env: sandbox.env });
+			const summary = await summarizeProjects({ env: sandbox.env });
 
 			expect(summary.projects.map(p => [p.id, p.name, p.open, p.total, p.error])).toEqual([
 				[fresh.id, 'fresh', 0, 0, null],
@@ -178,15 +178,15 @@ describe('projects overview (every project of the shared registry that has a fol
 				['b', 'done'],
 			]);
 
-			const summary = summarizeProjects({ env: sandbox.env });
+			const summary = await summarizeProjects({ env: sandbox.env });
 
 			expect(summary.projects[0]).toMatchObject({ id: project.id, open: 1, total: 2 });
 		});
 	});
 
 	describe('listTasksAcrossProjects', () => {
-		it('is empty (not an error) when nothing is registered', () => {
-			expect(listTasksAcrossProjects({ env: sandbox.env })).toEqual({
+		it('is empty (not an error) when nothing is registered', async () => {
+			expect(await listTasksAcrossProjects({ env: sandbox.env })).toEqual({
 				tasks: [],
 				readableCount: 0,
 				unreadable: [],
@@ -202,7 +202,7 @@ describe('projects overview (every project of the shared registry that has a fol
 			]);
 			await registeredWith('empty');
 
-			const result = listTasksAcrossProjects({ env: sandbox.env });
+			const result = await listTasksAcrossProjects({ env: sandbox.env });
 
 			expect(result.tasks.map(t => [t.project.name, t.title])).toEqual([
 				['alpha', 'a1'],
@@ -225,7 +225,7 @@ describe('projects overview (every project of the shared registry that has a fol
 				['a-closed', 'done'],
 			]);
 
-			const titles = listTasksAcrossProjects({ env: sandbox.env, showAll: true }).tasks.map(t => t.title);
+			const titles = (await listTasksAcrossProjects({ env: sandbox.env, showAll: true })).tasks.map(t => t.title);
 
 			expect(titles).toEqual(['a1', 'a-closed']);
 		});
@@ -234,7 +234,7 @@ describe('projects overview (every project of the shared registry that has a fol
 			await registeredWith('alpha', [['a1', 'backlog']]);
 			const broken = await unreadable('broken');
 
-			const result = listTasksAcrossProjects({ env: sandbox.env });
+			const result = await listTasksAcrossProjects({ env: sandbox.env });
 
 			expect(result.tasks).toHaveLength(1);
 			expect(result.readableCount).toBe(1);
@@ -251,7 +251,7 @@ describe('projects overview (every project of the shared registry that has a fol
 		it('throws NoReadableProjectsError when every registered project is unreadable', async () => {
 			await unreadable('a');
 
-			expect(() => listTasksAcrossProjects({ env: sandbox.env })).toThrow(NoReadableProjectsError);
+			await expect(listTasksAcrossProjects({ env: sandbox.env })).rejects.toThrow(NoReadableProjectsError);
 		});
 	});
 });

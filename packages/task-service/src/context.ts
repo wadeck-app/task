@@ -1,11 +1,15 @@
-import type { TaskResolvedConfig, TaskStore } from '@wadeck-app/task-core';
+import type { TaskBackend, TaskResolvedConfig } from '@wadeck-app/task-core';
 
 import type { TaskProjectEnv } from './events.js';
 import type { TaskStorage } from './storage.js';
 
 /** Everything an operation needs: the storage, the resolved project config and the project identity. */
 export interface TaskServiceContext {
-	store: TaskStore;
+	/**
+	 * The task backend of the project (the async port). The field keeps its historical name `store`: callers read
+	 * `ctx.store`, and renaming it would touch every use case and test for nothing.
+	 */
+	store: TaskBackend;
 	config: TaskResolvedConfig;
 	/** Where the data and the config live (the shared registry): `type add|remove` writes the own config file from it. */
 	storage: TaskStorage;

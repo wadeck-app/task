@@ -46,13 +46,16 @@ export function PropertyList({
 	hideTipsOnNarrow = false,
 	items,
 }: PropertyListProps): React.ReactElement {
-	const layout = useMemo(() => ({ density, labelPlacement, labelWidth }), [density, labelPlacement, labelWidth]);
+	const layout = useMemo(
+		() => ({ density, labelPlacement, labelWidth, dividers }),
+		[density, labelPlacement, labelWidth, dividers]
+	);
 	return (
 		<PropertyLayoutContext.Provider value={layout}>
 			<div
 				data-testid="property-list"
 				data-density={density}
-				className={`flex flex-col ${DENSITY_GAP[density]}${dividers ? ' divide-y divide-border' : ''}${
+				className={`flex flex-col ${dividers ? '' : DENSITY_GAP[density]}${dividers ? ' divide-y divide-border' : ''}${
 					hideTipsOnNarrow ? ' max-sm:[&_[role=tooltip]]:hidden' : ''
 				}`}
 			>

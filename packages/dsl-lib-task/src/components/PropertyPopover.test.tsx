@@ -46,6 +46,21 @@ describe('PropertyPopover', () => {
 		expect(screen.queryByRole('listbox')).toBeNull();
 	});
 
+	it('a trigger with an icon is an action: the icon before the text and no chevron', () => {
+		const { unmount } = render(
+			<PropertyPopover label="Sub-task" valueText="Add sub-task" icon="plus" items={<p>x</p>} />
+		);
+		const trigger = screen.getByRole('button', { name: 'Sub-task: Add sub-task' });
+		expect(trigger.querySelectorAll('svg')).toHaveLength(1);
+		expect(trigger.querySelector('svg')!.getAttribute('class')).toContain('lucide-plus');
+		unmount();
+
+		render(<PropertyPopover label="Sub-task" valueText="Add sub-task" items={<p>x</p>} />);
+		expect(
+			screen.getByRole('button', { name: 'Sub-task: Add sub-task' }).querySelector('svg')!.getAttribute('class')
+		).toContain('chevron-down');
+	});
+
 	it('shows the empty text when there is no value', () => {
 		setup({ valueText: '', empty: 'none' });
 

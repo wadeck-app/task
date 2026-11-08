@@ -83,6 +83,33 @@ export default tseslint.config(
 		},
 	},
 	{
+		// Type-aware, and only for what needs types: the backend port is async, so a promise that is neither awaited nor
+		// handled would let a command or a route go on as if the operation had worked (a failed write reported as success).
+		files: ['packages/{task-core,task-service,task-cli,app-module-task}/src/**/*.ts'],
+		// The browser entry of the module is built by app-core-cli, outside the tsc program of the package.
+		ignores: ['packages/app-module-task/src/dsl-components/**'],
+		languageOptions: {
+			parserOptions: {
+				// `project` (a TypeScript program per package), not `projectService`: the service needs the tsserver library that
+				// TypeScript 7 does not ship (see scripts/setup-eslint-ts6.cjs).
+				projectService: false,
+				project: [
+					'packages/task-core/tsconfig.json',
+					'packages/task-service/tsconfig.json',
+					'packages/task-cli/tsconfig.json',
+					'packages/app-module-task/tsconfig.json',
+				],
+				tsconfigRootDir: import.meta.dirname,
+			},
+		},
+		rules: {
+			'@typescript-eslint/no-floating-promises': 'error',
+			// An async function where a plain callback is expected (forEach, a condition) or an await on a value that is no promise.
+			'@typescript-eslint/no-misused-promises': 'error',
+			'@typescript-eslint/await-thenable': 'error',
+		},
+	},
+	{
 		// Browser components (React): same rules as the node packages, with the browser globals instead of node's, plus JSX.
 		files: ['packages/dsl-lib-task/src/**/*.{ts,tsx}'],
 		languageOptions: {

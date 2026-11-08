@@ -7,9 +7,9 @@ import { createTestContext, type TestContext } from './testHelpers.js';
 describe('getTaskActivity with comments', () => {
 	let t: TestContext;
 	let id: string;
-	beforeEach(() => {
+	beforeEach(async () => {
 		t = createTestContext();
-		id = t.ctx.store.create('Fix login', 'backlog').id;
+		id = (await t.ctx.store.create({ title: 'Fix login', status: 'backlog' })).id;
 	});
 	afterEach(() => t.cleanup());
 
@@ -18,9 +18,9 @@ describe('getTaskActivity with comments', () => {
 	it('a comment is a row of kind comment with the full text, its author, and the comment id', async () => {
 		const long = `${'long words '.repeat(100)}end\nsecond line`;
 		await tick();
-		const { comment } = addComment(t.ctx, { id, text: long, author: 'alice' });
+		const { comment } = await addComment(t.ctx, { id, text: long, author: 'alice' });
 
-		const row = getTaskActivity(t.ctx, { id }).rows[0]!;
+		const row = (await getTaskActivity(t.ctx, { id })).rows[0]!;
 
 		expect(row).toMatchObject({
 			id: `comment-${comment.id}`,
@@ -36,27 +36,31 @@ describe('getTaskActivity with comments', () => {
 		expect(row).not.toHaveProperty('editedAt');
 	});
 
-	it('a comment without author has no actor key', () => {
-		addComment(t.ctx, { id, text: 'x' });
+	it('a comment without author has no actor key', async () => {
+		await addComment(t.ctx, { id, text: 'x' });
 
-		expect(getTaskActivity(t.ctx, { id }).rows[0]).not.toHaveProperty('actor');
+		expect((await getTaskActivity(t.ctx, { id })).rows[0]).not.toHaveProperty('actor');
 	});
 
 	it('comments are merged with the status history by instant, newest first', async () => {
 		await tick();
-		setStatus(t.ctx, { id, status: 'in-progress' });
+		await setStatus(t.ctx, { id, status: 'in-progress' });
 		await tick();
-		addComment(t.ctx, { id, text: 'after the move' });
+		await addComment(t.ctx, { id, text: 'after the move' });
 
-		expect(getTaskActivity(t.ctx, { id }).rows.map(row => row.kind)).toEqual(['comment', 'status', 'created']);
+		expect((await getTaskActivity(t.ctx, { id })).rows.map(row => row.kind)).toEqual([
+			'comment',
+			'status',
+			'created',
+		]);
 	});
 
 	it('an edited comment shows its current text with editedAt, plus a comment-edited row with previews', async () => {
-		const { comment } = addComment(t.ctx, { id, text: 'old words' });
+		const { comment } = await addComment(t.ctx, { id, text: 'old words' });
 		await tick();
-		const edited = editComment(t.ctx, { id, commentId: comment.id, text: 'new words' }).comment;
+		const edited = (await editComment(t.ctx, { id, commentId: comment.id, text: 'new words' })).comment;
 
-		const rows = getTaskActivity(t.ctx, { id }).rows;
+		const rows = (await getTaskActivity(t.ctx, { id })).rows;
 
 		expect(rows.map(row => row.kind)).toEqual(['comment-edited', 'comment', 'created']);
 		expect(rows[0]).toMatchObject({
@@ -69,11 +73,11 @@ describe('getTaskActivity with comments', () => {
 	});
 
 	it('a removed comment leaves a comment-removed row and its own row disappears', async () => {
-		const { comment } = addComment(t.ctx, { id, text: 'gone soon' });
+		const { comment } = await addComment(t.ctx, { id, text: 'gone soon' });
 		await tick();
-		removeComment(t.ctx, { id, commentId: comment.id });
+		await removeComment(t.ctx, { id, commentId: comment.id });
 
-		const rows = getTaskActivity(t.ctx, { id }).rows;
+		const rows = (await getTaskActivity(t.ctx, { id })).rows;
 
 		expect(rows.map(row => row.kind)).toEqual(['comment-removed', 'created']);
 		expect(rows[0]).toMatchObject({

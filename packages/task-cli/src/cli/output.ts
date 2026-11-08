@@ -28,10 +28,10 @@ export function jsonResult(value: unknown): CommandResult {
 	return { exitCode: 0, output: JSON.stringify(value, null, 2) };
 }
 
-/** Runs a use case and prints its result as JSON; a thrown error becomes the failure answer. */
-export function runJson(jsonMode: boolean, useCase: () => unknown): CommandResult {
+/** Runs a use case (sync or async) and prints its result as JSON; a thrown or rejected error becomes the failure answer. */
+export async function runJson(jsonMode: boolean, useCase: () => unknown): Promise<CommandResult> {
 	try {
-		return jsonResult(useCase());
+		return jsonResult(await useCase());
 	} catch (error) {
 		return failure(jsonMode, error);
 	}

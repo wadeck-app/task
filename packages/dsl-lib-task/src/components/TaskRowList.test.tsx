@@ -72,10 +72,11 @@ describe('TaskRowList', () => {
 		expect(screen.getByTestId('task-row-list')).toHaveAttribute('data-appearance', 'cards');
 	});
 
-	it('draws the meta text of a row', () => {
+	it('draws the meta of a row as a pill (the relation of a flat list of links)', () => {
 		render(<TaskRowList rows={[{ id: 'a', title: 'T', status: 'todo', meta: 'blocks 2' }]} />);
 
 		expect(screen.getByText('blocks 2')).toBeInTheDocument();
+		expect(screen.getByTestId('task-row-meta').className).toContain('rounded-full');
 	});
 
 	describe('removeAction (a button per row, beside the link, never inside it)', () => {

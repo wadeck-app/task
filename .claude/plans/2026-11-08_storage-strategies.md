@@ -95,15 +95,26 @@ Done (additive, no existing caller changed; steps 0.1 and 0.2, `packages/task-co
 
 Differences from the sketch in 1.2, kept on purpose: `create` takes one object; `updateStatus` has no `existing` record (`setStatus.ts` relies on the in-place mutation today: read the previous status before, re-read after); `removeParent` has no `mirror` option; `list` is kept next to `listPage`; `label` is not a `listPage` filter (labels are not in the index). `TaskConflictError.kind` itself (5.1) waits for `errors.ts` to be free.
 
+Done 2026-11-08 (steps 0.3 to 0.6; pure refactor, assertions unchanged except `await`):
+
+- 0.3 task-service: every use case that reads or writes a task is `async`; `ctx.store` keeps its name and is now a `TaskBackend`; `openTaskContext` builds it with `createLocalBackend(tasksDir, { writeFile })` (new in task-core, the only constructor of the store outside its tests). every `store.*` call site migrated.
+- `revision` never leaves the service: `plainRecord.ts` (`plain()`) drops it from every record a use case returns or spreads, so JSON, events and module bodies are byte-identical (`asyncPort.test.ts` guards it, and proves it is not vacuous).
+- 0.4 task-cli: handlers await the use cases (`try { x = await ... }` so rejections reach the catch); `follow.ts` is a self-scheduling loop (`pollUntilAborted`: pause, poll, pause; SIGINT aborts through an `AbortSignal`; a failing poll fails the command); `TaskCliCommand` self-check uses `createLocalBackend` (labels unchanged); `installUnhandledRejectionHandler` in the entry point: exit 1 with an actionable message.
+- 0.5 app-module-task: the route layer already accepted async handlers; 0 changes to `routeKit`. `readProjects`, `readAcrossProjects`, `listMetaKeys`, `countDescendants` are async; `relatedRoutes` reads the N records with `getMany`.
+- 0.6 `TaskStore` is no longer exported by the task-core barrel. Architecture rules enabled: `NO_TASK_STORE_OUTSIDE_CORE` (no import of `TaskStore` outside task-core, tests included) and `fsAllowlist` per package (a non-test file importing `fs` must be listed with its reason; a test checks that no entry rots). Lint: `@typescript-eslint/no-floating-promises`, `no-misused-promises`, `await-thenable` (type-aware through `parserOptions.project`; `projectService` needs the tsserver library TypeScript 7 does not ship).
+- Delicate points: save-then-emit (events are built after the awaited write; CLI test with a slow `updateStatus`: write-start, write-end, publish), `executeDelete` (sequential awaits, `PartialDeleteError`; slow and jittery backend test: leaves first, one call in flight), cross-project reads (sequential per project, registry order), follow (`follow.test.ts`: no overlapping poll, stop on abort, error propagates, SIGINT listener removed).
+- Evidence: a scripted 78-step CLI scenario (create, show, list, status, link, comments, history, delete, errors, cross-project) run against the bundle of `8991906` and of the working tree gives identical exit codes, stdout and stderr.
+
+Known consequences of the async port, not fixed here:
+
+- A use case is no longer atomic with respect to other requests of the same process (the module): two requests can interleave between the read and the write of one use case. Task data has no lock by design (Q30); a per-backend queue is a decision for 0.7 or later.
+- A failing `--follow` poll now ends the command with `Error: <message>` (exit 1) instead of an uncaught-exception stack.
+
 Remaining:
 
-- 0.3 task-service, 81 sites in 15 files, bottom-up: reads (`listTasks` 5, `showTask` 4, `searchTasks` 1, `listLabels` 2 -> `backend.listLabels()`, `taskStats` 1, `taskProgress` 4), writers (`setStatus` 5, `taskFields` 12, `setTaskText` 3, `links` 11, `hierarchy` 12, `comments` 7, `taskActivity` 2), then `deleteTasks` 10, `createTask` 2. Then `context.ts`, `openContext.ts` (`new LocalFileBackend(new TaskStore(...))`), `testHelpers.ts`.
-- 0.4 task-cli, 5 sites: `follow.ts` 3 (self-scheduling loop), `TaskCliCommand.ts` 2 (self-check builds a `TaskStore`); `ReadCommands.ts` passes `ctx.store` to follow (2).
-- 0.5 app-module-task, 3 sites: `projectVocabulary.ts` 2, `relatedRoutes.ts` 1, plus every route awaiting a use case.
-- 0.6 remove the sync surface, enable the two architecture rules, export `contract/` through a `package.json` subpath for other packages.
-- 0.7 lift the domain rules out of `TaskStore`.
-
-Must wait for the other agents' uncommitted work (check `git status` first): `TaskStore.ts` (0.7 and the `existing`/`mirror` decisions), `task-service` `taskActivity.ts`, `testHelpers.ts`, `setStatus.test.ts`, `listStatuses.ts`, `projectConfig.ts`; every modified `app-module-task/src/backend` file (0.5). Files with no pending change can go first: `listTasks`, `showTask`, `links`, `hierarchy`, `comments`, `deleteTasks`, `createTask`, `taskFields`, `setTaskText`, `searchTasks`, `taskStats`, `taskProgress`, `listLabels`, `follow.ts`, `TaskCliCommand.ts`.
+- 0.7 lift the domain rules out of `TaskStore` (not started: highest design risk).
+- Export `contract/` through a `package.json` subpath for the other packages (needed by the first non-local backend).
+- `TaskStore.updateStatus(existing)` and the other sync-only options can go with 0.7.
 
 Design choice inside the port (applies to step 0.7): do NOT mirror the 35 TaskStore methods 1:1. Remote backends cannot atomically do "setParent with cycle check + activity append". Split:
 

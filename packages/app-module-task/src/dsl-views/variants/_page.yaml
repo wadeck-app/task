@@ -3,32 +3,31 @@
 #
 # `src/dsl-views/task-page.yaml` is assembled by `npm run views --workspace=packages/app-module-task` (script:
 # scripts/generate-task-page.mjs at the repository root) from the files of this folder:
-#   _page.yaml     this file: the sources, the actions, the notices and the experiment (design order, `variants`).
-#                  Everything up to the line `$type: PageContent` is copied verbatim (comments included).
-#   _shared.yaml   named fragments, used anywhere as `{ $use: prop.status.row }` (one node each; no other key next to $use).
-#   <design>.yaml  one file per design with exactly three keys: `label`, `hint` (shown by the dock), `view` (ONE node).
+#   _page.yaml     this file: the sources, the actions, the notices and the base view (`$view`). Everything up to the line
+#                  `$type: PageContent` is copied verbatim (comments included).
+#   _shared.yaml   named fragments (the facts and their editors), used anywhere as `{ $use: prop.labels }` (one node, a list or
+#                  an object each; no other key next to $use).
+#   _options.yaml  the same kind of fragments, for the LOCALIZED options (one dsl-ui AbTest per element, see its header).
 # A test fails when task-page.yaml is stale, so run the script after every edit here.
 #
-# THREE DESIGNS under ONE dock row "Task page" (dsl-ui AbTest, production renders `initial` only). Each is a LAYOUT CLONE of a
-# product, drawn from knowledge of it (no access to the real products), adapted to our data:
-#   github  (initial) header with the Open / Closed badge, the description in a bordered card, sub-tasks and relations as cards,
-#           the activity with the composer at the bottom, a right sidebar of sections separated by dividers
-#   jira    action row under the title (Add sub-task, Link, Actions), Description, Child items with a progress bar, Linked items,
-#           Activity with the composer on top, a sticky right "Details" panel with the status as a prominent button
-#   gitlab  header with the state badge and the actions on the right, Child items and Linked items cards, Activity with a
-#           filter dropdown, right collapsible sections with "Edit" links and a footer with the dates
-# No design has an option row of its own. Each fact (id, status, type, parent, labels, dates, title, body, activity, comments) is
-# shown ONCE per design, where it is edited (a test counts). The status is ONE task:StatusSelect, never a stepper or a visible list.
-# The sidebar stacks ABOVE the main column below 1024 px in the three designs (task:SplitLayout sideFirstWhenStacked).
+# ONE BASE DESIGN, merged from the GitHub, Jira and GitLab layouts (user feedback): title, then a header line (Open / Closed state,
+# id, when it was opened, and on the right a direct Delete button); a main column (description, sub-tasks, relations, activity)
+# and a sticky right sidebar WITHOUT card or background: the Type and Status pills on one line (type to the left, no labels),
+# then rows with the label on the left and the value on the right, separated by dividers (Parent, Labels, Metadata, Updated).
+# The sidebar stacks ABOVE the main column below 1024 px (task:SplitLayout sideFirstWhenStacked).
+# Each fact (id, status, type, parent, labels, dates, title, body, activity, comments) is shown ONCE, where it is edited (a test
+# counts). The status is ONE task:StatusSelect pill, never a stepper or a visible list. No word "terminal" anywhere: the colour of
+# the pill and of the dots (green closed, red closed negatively) says it.
+# No "Project" link at the top: the breadcrumb carries it (the slot task:project-header is NOT drawn on this page, only on the
+# list and the tree pages).
 #
-# Add a design: create <name>.yaml here and add <name> to `variants` under `$experiment` below, then run the script.
-# BAKE THE WINNER: in this file keep $sources/$actions, replace the `AbTest` by the `view` of the chosen design (expand its
-# `$use`), delete the other designs, the generator, `npm run views` and taskPageVariants.test.ts.
+# Seven LOCALIZED A/B rows (dsl-ui AbTest, production renders the first option of each): see _options.yaml.
 #
 # Conventions for the components that run actions (dsl-ui >= 318: `onAction(name, params, { body })` sends a JSON body):
 #   params: { id: $route.id, projectParam: $sources.detail.projectParam }   (fragment params.task), plus what the component adds
 #   the value of a control travels in the body (status, type, label, parent, link, text, metadata, sub-task).
 # ============================================================================================================
+
 
 # Detail of one task (/modules/task/tasks/p/:project/:id). ":id" of the manifest path is $route.id, ":project" is
 # $route.project (the id of the project, resolved by GET /projects). The breadcrumb and the tab strip lead elsewhere: no link here.
@@ -78,9 +77,6 @@ $sources:
             id: $route.id
             query: $source.projects.projectQuery
             reload: $urlParam.reload
-    # The contributions of other modules to the slot task:project-header (declared in manifest.json `expose`).
-    projectHeader:
-        url: GET /api/slots/task:project-header
 
 $actions:
     setStatus:
@@ -117,6 +113,13 @@ $actions:
     removeParent:
         url: DELETE /api/modules/task/tasks/{id}/parent?project={projectParam}&inlineErrors=true
         resultKey: parentResult
+        reloadSources: true
+    # The detach button of a sub-task row: {childId} is the id of the CHILD (the clicked row), which leaves its parent. Not {id}:
+    # the shell fills the {id} of a body-less action from the page (measured: it detached the page's own task). The backend writes
+    # the activity of both tasks (`parent` on the child, `child-removed` on the parent) and queues onTaskParentChanged.
+    detachChild:
+        url: DELETE /api/modules/task/tasks/{childId}/parent?project={projectParam}&inlineErrors=true
+        resultKey: detachResult
         reloadSources: true
     addLink:
         url: POST /api/modules/task/tasks/{id}/links?project={projectParam}&inlineErrors=true
@@ -164,17 +167,9 @@ $actions:
         reloadSources: true
 
 $type: PageContent
-# Shown above whatever design is chosen, so every design has the same error and empty states by construction.
+# Shown above the view, so whatever the options chosen the page has the same error and empty states by construction.
+# NO task:project-header slot here (a "Project" link at the top is forbidden: the breadcrumb is for that).
 $notices:
-    # Extension point task:project-header, above whatever design is chosen (so every design has it by construction):
-    # other modules contribute links/buttons about THIS project; they render with this page's context ($route.project).
-    # The slot is shown once its source answered (items is not an array before); an empty slot draws nothing.
-    - $type: task:ChipRow
-      $if: $route.project
-      items:
-          - $type: ExtensionSlot
-            $if: $sources.projectHeader
-            items: $sources.projectHeader
     # task:Notice for every message (same radius, padding and text size as the controls; wraps, unlike a Badge).
     # Nothing registered yet: the welcome text of the route (the exact next step) instead of a blank page.
     - $type: task:Notice
@@ -215,15 +210,88 @@ $notices:
       $if: $sources.detail.warningText
       label: $sources.detail.warningText
       variant: warning
-$experiment:
-    id: task-design
-    label: Task page
-    initial: github
-    variants:
-        - github
-        - jira
-        - gitlab
-# Each design wraps itself in task:WidthFrame (its own width): the PageContent is told `maxWidth: full`, else its own 72rem
-# centred column would cap every design at the same width.
+# The base view (the generator draws nothing of it until the task is loaded).
+$view:
+    $type: task:WidthFrame
+    width: wide
+    items:
+        - $type: VerticalStack
+          gap: gap-4
+          items:
+              - $type: VerticalStack
+                gap: gap-2
+                items:
+                    - $use: title.edit
+                    # The header line: the state, the id and when it was opened on the left; the direct Delete button on the right.
+                    - $type: task:ChipRow
+                      gap: gap-2
+                      align: center
+                      justify: between
+                      items:
+                          - $type: task:ChipRow
+                            gap: gap-2
+                            align: center
+                            items:
+                                - $use: state.open
+                                - $use: state.closed
+                                - $use: id.badge
+                                - $use: created.caption
+                                - $use: created.date
+                          - $use: delete.dialog
+                    - $use: blocked.notice
+              - $type: task:SplitLayout
+                sidePosition: right
+                sideWidth: normal
+                sticky: true
+                sideFirstWhenStacked: true
+                main:
+                    - $type: VerticalStack
+                      gap: gap-4
+                      items:
+                          # In the main column: a message that appears after a change in the sidebar must not push the sidebar down.
+                          - $use: feedback.all
+                          - $use: opt.description
+                          - $use: opt.subtasks
+                          - $use: opt.links
+                          - $use: opt.activity
+                # The sidebar has no card and no background (GitHub), its properties are rows with the label on the left and the
+                # value on the right on ONE line (Jira). The pills of the top line carry no label.
+                side:
+                    - $type: VerticalStack
+                      gap: gap-4
+                      items:
+                          - $type: task:ChipRow
+                            gap: gap-2
+                            align: center
+                            items:
+                                - $use: prop.type.pill
+                                - $use: prop.type.free
+                                - $use: status.select
+                          - $type: Divider
+                          - $type: task:PropertyList
+                            density: comfortable
+                            labelPlacement: inline
+                            labelWidth: narrow
+                            dividers: true
+                            hideTipsOnNarrow: true
+                            items:
+                                - $type: task:PropertyRow
+                                  label: Parent
+                                  align: control
+                                  items:
+                                      - $use: prop.parent.field
+                                - $type: task:PropertyRow
+                                  label: Labels
+                                  align: control
+                                  items:
+                                      - $use: prop.labels
+                                - $type: task:PropertyRow
+                                  label: Metadata
+                                  align: control
+                                  items:
+                                      - $use: prop.meta
+                                - $use: updated.row
+# Each view wraps itself in task:WidthFrame (its own width): the PageContent is told `maxWidth: full`, else its own 72rem
+# centred column would cap the page.
 $page:
     maxWidth: full

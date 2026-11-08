@@ -38,7 +38,7 @@ describe('task data goes through the SDK writeFileAtomic', () => {
 		const storage = registryStorage(loadRegistry(sandbox.registryDir), sandbox.registryDir, project);
 		const ctx = openTaskContext({ storage, project: { id: project.id, name: 'shop' } });
 
-		const task = ctx.store.create('atomic', 'backlog');
+		const task = await ctx.store.create({ title: 'atomic', status: 'backlog' });
 		addType(ctx, { name: 'bug' });
 
 		expect(writtenFiles()).toEqual([`${task.id}.json`, 'task-index.json', 'config.yml']);

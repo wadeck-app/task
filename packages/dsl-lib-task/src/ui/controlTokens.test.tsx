@@ -21,6 +21,7 @@ const TOKENIZED = [
 	'components/StatusSelect.tsx',
 	'components/TaskChecklist.tsx',
 	'components/Caption.tsx',
+	'components/ControlButton.tsx',
 	'components/TaskPicker.tsx',
 	'ui/ChipField.tsx',
 	'ui/SuggestBox.tsx',

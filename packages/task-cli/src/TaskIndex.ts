@@ -21,6 +21,7 @@ import { STATUS_HELP, taskHelp } from './cli/help.js';
 import { ignoredProjectFlagNote, typedProjectFlag } from './cli/ignoredProjectFlag.js';
 import { errorOutput, failure } from './cli/output.js';
 import type { CommandResult } from './cli/output.js';
+import { installUnhandledRejectionHandler } from './cli/unhandledRejection.js';
 import { printUpdateNotice } from './cli/updateNotice.js';
 import { runCliSubcommand } from './commands/CliSubcommands.js';
 import { describeProjectSelection, runListAllProjects } from './commands/GlobalViewCommands.js';
@@ -166,6 +167,8 @@ const isEntryPoint =
 		process.argv[1].endsWith('TaskIndex.ts'));
 
 if (isEntryPoint) {
+	// The backend port is async: an operation nobody awaited must stop the command (exit 1, actionable message), not vanish.
+	installUnhandledRejectionHandler();
 	main().catch(error => {
 		process.stderr.write(`Error: ${String(error)}\n`);
 		process.exit(1);

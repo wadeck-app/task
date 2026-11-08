@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { checkManifest, checkSource, importedModules, PACKAGE_RULES } from './rules.js';
+import { checkManifest, checkSource, importedModules, importedNames, importsNodeFs, PACKAGE_RULES } from './rules.js';
 import type { PackageName, Violation } from './rules.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -337,8 +337,8 @@ describe('the adapters agree on the app-core module id without importing each ot
 // Stage 0 of the storage-strategies design (.claude/plans/2026-11-08_storage-strategies.md, 1.1): the async port is
 // types, errors and capability declarations only. A forge or remote adapter is written against it, so it must not drag
 // in the local file API. Only the local adapter (LocalFileBackend.ts) may use a Node module.
-// NOT enabled yet (callers are not migrated, step 0.6): "nothing outside task-core imports TaskStore directly" and
-// "fs only in the local adapter, storage.ts and the config loaders".
+// The two rules of step 0.6 ("nothing outside task-core imports TaskStore", "fs only where the allowlist says") are in rules.ts and
+// tested at the end of this file.
 describe('the backend port stays free of the local file API', () => {
 	const PORT_FILES = ['TaskBackend.ts', 'capabilities.ts', 'backendErrors.ts', 'index.ts'];
 	const nodeImports = (source: string): string[] =>
@@ -359,4 +359,81 @@ describe('the backend port stays free of the local file API', () => {
 		const source = fs.readFileSync(path.join(ROOT, 'packages/task-core/src/backend/LocalFileBackend.ts'), 'utf8');
 		expect(nodeImports(source)).toEqual(['node:crypto']);
 	});
+});
+
+// Step 0.6 of the same design: tasks are reached through the async TaskBackend port only.
+describe('tasks are reached through the backend port', () => {
+	const noRelative = (s: string): string => s;
+	const check = (pkg: PackageName, file: string, source: string, isTest = false): string[] =>
+		checkSource(file, source, PACKAGE_RULES[pkg], { isTest, resolveRelative: noRelative }).map(v => v.rule);
+
+	it('importedNames lists the names an import clause brings in, aliases and type modifiers resolved', () => {
+		expect(
+			importedNames("import { A, B as C, type D } from 'x'; import type { E } from 'y'; import F from 'z';")
+		).toEqual(['A', 'B', 'D', 'E']);
+	});
+
+	it.each(['task-service', 'task-cli', 'app-module-task'] as PackageName[])(
+		'%s must not import TaskStore, in a source or in a test',
+		pkg => {
+			const source = "import { TaskStore } from '@wadeck-app/task-core';";
+			expect(check(pkg, 'x.ts', source)).toContain('forbidden-imported-name');
+			expect(check(pkg, 'x.test.ts', source, true)).toContain('forbidden-imported-name');
+			expect(check(pkg, 'x.ts', "import type { TaskStore as Store } from '@wadeck-app/task-core';")).toContain(
+				'forbidden-imported-name'
+			);
+		}
+	);
+
+	it('asking for a backend, or for the store options type, is allowed', () => {
+		const source =
+			"import { createLocalBackend, LocalFileBackend } from '@wadeck-app/task-core';\nimport type { TaskStoreOptions } from '@wadeck-app/task-core';";
+		expect(check('task-service', 'x.ts', source)).toEqual([]);
+		expect(check('task-service', 'x.ts', '// import { TaskStore } from "x" in a comment')).toEqual([]);
+	});
+
+	it('task-core itself may use its store', () => {
+		expect(
+			check(
+				'task-core',
+				'packages/task-core/src/backend/LocalFileBackend.ts',
+				"import { TaskStore } from '../TaskStore.js';"
+			)
+		).toEqual([]);
+	});
+
+	it('the file system API is refused in a file that is not on the allowlist, accepted in one that is, and in tests', () => {
+		const source = "import * as fs from 'node:fs';";
+		expect(check('task-service', 'packages/task-service/src/setStatus.ts', source)).toEqual([
+			'fs-outside-allowlist',
+		]);
+		expect(
+			check('task-service', 'packages/task-service/src/setStatus.ts', "import { readFile } from 'fs/promises';")
+		).toEqual(['fs-outside-allowlist']);
+		expect(check('task-service', 'packages/task-service/src/taskLog.ts', source)).toEqual([]);
+		expect(check('task-service', 'packages/task-service/src/setStatus.test.ts', source, true)).toEqual([]);
+		expect(
+			check('app-module-task', 'packages/app-module-task/src/backend/routes/taskReadRoutes.ts', source)
+		).toEqual(['fs-outside-allowlist']);
+		expect(check('task-cli', 'packages/task-cli/src/commands/ReadCommands.ts', source)).toEqual([
+			'fs-outside-allowlist',
+		]);
+	});
+
+	it.each(PACKAGES.filter(pkg => PACKAGE_RULES[pkg].fsAllowlist !== undefined))(
+		'%s: every allowlisted file exists and really imports the file system API (the list does not rot)',
+		pkg => {
+			for (const file of Object.keys(PACKAGE_RULES[pkg].fsAllowlist!.files)) {
+				const full = path.join(ROOT, file);
+				expect(
+					fs.existsSync(full),
+					`${file} is allowlisted but does not exist: remove it from fsAllowlist`
+				).toBe(true);
+				expect(
+					importsNodeFs(fs.readFileSync(full, 'utf8')),
+					`${file} is allowlisted but no longer imports fs: remove it from fsAllowlist`
+				).toBe(true);
+			}
+		}
+	);
 });

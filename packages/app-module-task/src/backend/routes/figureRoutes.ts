@@ -21,8 +21,8 @@ export function registerFigureRoutes(kit: RouteKit): void {
 	// Menu entry "Tasks": open tasks (non terminal status of each project's config) across the registered projects with a
 	// path. An unreadable project is left out, like in the widget and on the Projects page (which name it); only when NONE can
 	// be read, or the registry itself cannot, the route fails (summarizeProjects throws), since 0 would read as "no tasks".
-	route('GET', '/tasks/open/count', () => {
-		const summary = summarizeProjects();
+	route('GET', '/tasks/open/count', async () => {
+		const summary = await summarizeProjects();
 		if (summary.registryProblem !== undefined && summary.registryProblem !== null) {
 			throw new RequestError(
 				500,
@@ -34,9 +34,9 @@ export function registerFigureRoutes(kit: RouteKit): void {
 	});
 
 	// Tab "Tasks" of the project group: the project is a path segment of the tab page (id, name or alias).
-	route('GET', '/tasks/p/:project/open/count', req => {
+	route('GET', '/tasks/p/:project/open/count', async req => {
 		const ctx = openProject(req.params?.['project'] ?? '');
-		return figure(summarizeProject(ctx).open);
+		return figure((await summarizeProject(ctx)).open);
 	});
 
 	// Tab "Types" of the project group.

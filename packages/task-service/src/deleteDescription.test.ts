@@ -9,19 +9,20 @@ describe('onTaskDeleted description', () => {
 	});
 	afterEach(() => t.cleanup());
 
-	const del = (id: string) => executeDelete(t.ctx, planDelete(t.ctx, { selector: { kind: 'ids', ids: [id] } }));
+	const del = async (id: string) =>
+		await executeDelete(t.ctx, await planDelete(t.ctx, { selector: { kind: 'ids', ids: [id] } }));
 
-	it('is the full text of a task that has a separate description, like onTaskCreated', () => {
+	it('is the full text of a task that has a separate description, like onTaskCreated', async () => {
 		const text = `Headline\n\n${'long body '.repeat(20)}`;
-		const { task } = createTask(t.ctx, { description: text });
+		const { task } = await createTask(t.ctx, { description: text });
 		expect(task.title).toBe('Headline');
 
-		expect(del(task.id).events[0]!.payload).toMatchObject({ description: text });
+		expect((await del(task.id)).events[0]!.payload).toMatchObject({ description: text });
 	});
 
-	it('is the title for a task without description of its own', () => {
-		const { task } = createTask(t.ctx, { title: 'Short' });
+	it('is the title for a task without description of its own', async () => {
+		const { task } = await createTask(t.ctx, { title: 'Short' });
 
-		expect(del(task.id).events[0]!.payload).toMatchObject({ description: 'Short' });
+		expect((await del(task.id)).events[0]!.payload).toMatchObject({ description: 'Short' });
 	});
 });

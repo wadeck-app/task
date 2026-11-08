@@ -116,7 +116,7 @@ export function registerTaskWriteRoutes(kit: RouteKit): void {
 			// A form sends an empty parent when none is chosen.
 			parent: body['parent'] === '' ? undefined : optionalString(body, 'parent', CREATE_USAGE),
 		};
-		const created = createTask(ctx, input);
+		const created = await createTask(ctx, input);
 		// The New task page preselects it next time; the task exists, so a failure to remember it is a warning only.
 		const lastProjectWarning = rememberLastProject(kit.dataDir, ctx.project.id);
 		const undelivered = await deliver(created.events);
@@ -133,7 +133,7 @@ export function registerTaskWriteRoutes(kit: RouteKit): void {
 	});
 
 	const answerStatus = async (req: RouteRequest, status: string): Promise<RouteAnswer> => {
-		const result = setStatus(open(req), { id: taskId(req), status });
+		const result = await setStatus(open(req), { id: taskId(req), status });
 		const undelivered = await deliver(result.events);
 		const { events: _events, ...answer } = result;
 		return { status: 200, body: { ...answer, ...undeliveredFields(undelivered) } };
@@ -149,53 +149,57 @@ export function registerTaskWriteRoutes(kit: RouteKit): void {
 		return answerStatus(req, pathValue(req, 'status', PATH_STATUS_USAGE));
 	});
 
-	route('POST', '/tasks/:id/type/:type', req => {
+	route('POST', '/tasks/:id/type/:type', async req => {
 		const type = pathValue(req, 'type', PATH_TYPE_USAGE);
-		return answerChange(setType(open(req), { id: taskId(req), type }));
+		return answerChange(await setType(open(req), { id: taskId(req), type }));
 	});
 
-	route('POST', '/tasks/:id/labels/:label', req => {
+	route('POST', '/tasks/:id/labels/:label', async req => {
 		const label = pathValue(req, 'label', PATH_LABEL_USAGE);
-		return answerChange(addLabel(open(req), { id: taskId(req), label }));
+		return answerChange(await addLabel(open(req), { id: taskId(req), label }));
 	});
 
-	route('POST', '/tasks/:id/labels', req => {
+	route('POST', '/tasks/:id/labels', async req => {
 		const ctx = open(req);
 		const body = bodyObject(req.body, LABEL_USAGE);
-		return answerChange(addLabel(ctx, { id: taskId(req), label: requiredString(body, 'label', LABEL_USAGE) }));
+		return answerChange(
+			await addLabel(ctx, { id: taskId(req), label: requiredString(body, 'label', LABEL_USAGE) })
+		);
 	});
 
-	route('DELETE', '/tasks/:id/labels/:label', req => {
-		return answerChange(removeLabel(open(req), { id: taskId(req), label: req.params?.['label'] ?? '' }));
+	route('DELETE', '/tasks/:id/labels/:label', async req => {
+		return answerChange(await removeLabel(open(req), { id: taskId(req), label: req.params?.['label'] ?? '' }));
 	});
 
 	// Same removal, the label given as its base64url key: a label with "/" or "%" cannot travel in the path (see labelKey.ts).
-	route('DELETE', '/tasks/:id/label-keys/:key', req => {
+	route('DELETE', '/tasks/:id/label-keys/:key', async req => {
 		const label = labelFromKey(req.params?.['key'] ?? '');
-		return answerChange(removeLabel(open(req), { id: taskId(req), label }));
+		return answerChange(await removeLabel(open(req), { id: taskId(req), label }));
 	});
 
-	route('POST', '/tasks/:id/parent', req => {
+	route('POST', '/tasks/:id/parent', async req => {
 		const ctx = open(req);
 		const body = bodyObject(req.body, PARENT_USAGE);
-		return answerChange(setParent(ctx, { id: taskId(req), parent: requiredString(body, 'parent', PARENT_USAGE) }));
+		return answerChange(
+			await setParent(ctx, { id: taskId(req), parent: requiredString(body, 'parent', PARENT_USAGE) })
+		);
 	});
 
-	route('DELETE', '/tasks/:id/parent', req => {
-		return answerChange(removeParent(open(req), { id: taskId(req) }));
+	route('DELETE', '/tasks/:id/parent', async req => {
+		return answerChange(await removeParent(open(req), { id: taskId(req) }));
 	});
 
-	route('POST', '/tasks/:id/type', req => {
+	route('POST', '/tasks/:id/type', async req => {
 		const ctx = open(req);
 		const body = bodyObject(req.body, TYPE_USAGE);
 		// The "None" choice of the type picker posts an empty type: it clears the type (same as DELETE /tasks/:id/type).
 		if (body['type'] === '') {
-			return answerChange(unsetType(ctx, { id: taskId(req) }));
+			return answerChange(await unsetType(ctx, { id: taskId(req) }));
 		}
-		return answerChange(setType(ctx, { id: taskId(req), type: requiredString(body, 'type', TYPE_USAGE) }));
+		return answerChange(await setType(ctx, { id: taskId(req), type: requiredString(body, 'type', TYPE_USAGE) }));
 	});
 
-	route('POST', '/tasks/:id/meta', req => {
+	route('POST', '/tasks/:id/meta', async req => {
 		const ctx = open(req);
 		const body = bodyObject(req.body, META_USAGE);
 		const key = requiredString(body, 'key', META_USAGE);
@@ -204,14 +208,15 @@ export function registerTaskWriteRoutes(kit: RouteKit): void {
 		if (typeof value !== 'string') {
 			throw new RequestError(400, 'value must be a string (it may be empty)', META_USAGE);
 		}
-		return answerChange(setMeta(ctx, { id: taskId(req), key, value }));
+		return answerChange(await setMeta(ctx, { id: taskId(req), key, value }));
 	});
 
 	// A metadata key given in the path. Blank is refused like an empty body field; the key-based twin below carries keys
 	// holding "/" or "%".
-	const putMeta = (req: RouteRequest, key: string) =>
-		answerChange(setMeta(open(req), { id: taskId(req), key, value: metaValue(req) }));
-	const deleteMeta = (req: RouteRequest, key: string) => answerChange(unsetMeta(open(req), { id: taskId(req), key }));
+	const putMeta = async (req: RouteRequest, key: string) =>
+		answerChange(await setMeta(open(req), { id: taskId(req), key, value: metaValue(req) }));
+	const deleteMeta = async (req: RouteRequest, key: string) =>
+		answerChange(await unsetMeta(open(req), { id: taskId(req), key }));
 
 	route('PUT', '/tasks/:id/meta/:key', req => putMeta(req, pathValue(req, 'key', META_KEY_USAGE)));
 	route('DELETE', '/tasks/:id/meta/:key', req => deleteMeta(req, pathValue(req, 'key', META_KEY_USAGE)));
@@ -219,7 +224,7 @@ export function registerTaskWriteRoutes(kit: RouteKit): void {
 	route('DELETE', '/tasks/:id/meta-keys/:key', req => deleteMeta(req, metaKeyFromKey(req.params?.['key'] ?? '')));
 
 	// Clears the type ("none" in the type picker).
-	route('DELETE', '/tasks/:id/type', req => answerChange(unsetType(open(req), { id: taskId(req) })));
+	route('DELETE', '/tasks/:id/type', async req => answerChange(await unsetType(open(req), { id: taskId(req) })));
 
 	// Edits the headline and/or the description (one onTaskTextChanged per field that changed).
 	route('PATCH', '/tasks/:id', async req => {
@@ -227,7 +232,7 @@ export function registerTaskWriteRoutes(kit: RouteKit): void {
 		const body = bodyObject(req.body, TEXT_USAGE);
 		const title = optionalText(body, 'title', TEXT_USAGE);
 		const description = optionalText(body, 'description', TEXT_USAGE);
-		const result = setTaskText(ctx, {
+		const result = await setTaskText(ctx, {
 			id: taskId(req),
 			...(title === undefined ? {} : { title }),
 			...(description === undefined ? {} : { description }),
@@ -239,7 +244,7 @@ export function registerTaskWriteRoutes(kit: RouteKit): void {
 				task: result.task,
 				// What the page shows after the edit (the same rules as GET /tasks/:id) and the new length of the activity.
 				...taskTextFields(result.task),
-				activityCount: getTaskActivity(ctx, { id: result.task.id }).rows.length,
+				activityCount: (await getTaskActivity(ctx, { id: result.task.id })).rows.length,
 				...undeliveredFields(undelivered),
 			},
 		};
@@ -247,14 +252,14 @@ export function registerTaskWriteRoutes(kit: RouteKit): void {
 
 	route('POST', '/tasks/:id/links', async req => {
 		const ctx = open(req);
-		const result = linkTasks(ctx, linkInput(req, false));
+		const result = await linkTasks(ctx, linkInput(req, false));
 		const undelivered = await deliver(result.events);
 		return { status: 200, body: { task: result.task, ...undeliveredFields(undelivered) } };
 	});
 
 	route('DELETE', '/tasks/:id/links', async req => {
 		const ctx = open(req);
-		const result = unlinkTasks(ctx, linkInput(req, true));
+		const result = await unlinkTasks(ctx, linkInput(req, true));
 		const undelivered = await deliver(result.events);
 		return { status: 200, body: { task: result.task, ...undeliveredFields(undelivered) } };
 	});

@@ -6,7 +6,8 @@ import * as crypto from 'node:crypto';
 
 import { TaskNotFoundError } from '../errors.js';
 import type { CommentChange, CommentEdit } from '../taskComments.js';
-import type { LinkType, TaskRecord, TaskStatus, TaskStore, TaskSummary } from '../TaskStore.js';
+import { TaskStore } from '../TaskStore.js';
+import type { LinkType, TaskRecord, TaskStatus, TaskStoreOptions, TaskSummary } from '../TaskStore.js';
 import { StaleRevisionError } from './backendErrors.js';
 import { LOCAL_CAPABILITIES } from './capabilities.js';
 import type {
@@ -33,6 +34,14 @@ function versioned(record: TaskRecord): VersionedRecord {
 
 function withVersion<T extends CommentChange | CommentEdit>(change: T): Omit<T, 'task'> & { task: VersionedRecord } {
 	return { ...change, task: versioned(change.task) };
+}
+
+/**
+ * The local backend over `tasksDir` (the index is `<tasksDir>/../task-index.json`). Outside task-core nothing names the
+ * store class: callers ask for a backend (architecture.test.ts, NO_TASK_STORE_OUTSIDE_CORE).
+ */
+export function createLocalBackend(tasksDir: string, options: TaskStoreOptions = {}): LocalFileBackend {
+	return new LocalFileBackend(new TaskStore(tasksDir, options));
 }
 
 export class LocalFileBackend implements TaskBackend {

@@ -1,4 +1,4 @@
-import { Search, X } from 'lucide-react';
+import { Link2, Search, X } from 'lucide-react';
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { ApiProblem, getJson, isAbort, problemText } from '../apiFetch.js';
 import { toneOf } from '../tones.js';
@@ -6,7 +6,18 @@ import { useAction } from '../useAction.js';
 import type { ActionHandler } from '../useAction.js';
 import { useDismiss } from '../useDismiss.js';
 import { StatusBadge } from './StatusBadge.js';
-import { FIELD_CLASS, GAP_CONTROLS, ICON_SIZE, RESULTS_CLASS, SEARCH_STICKY_CLASS } from '../ui/tokens.js';
+import { relationIcon } from '../ui/icons.js';
+import {
+	CONTROL_H,
+	CONTROL_RADIUS,
+	CONTROL_TEXT,
+	FIELD_CLASS,
+	FOCUS_RING,
+	GAP_CONTROLS,
+	ICON_SIZE,
+	RESULTS_CLASS,
+	SEARCH_STICKY_CLASS,
+} from '../ui/tokens.js';
 
 export interface TaskPickerProps {
 	/** Name of the `$actions` entry run when a task is picked. */
@@ -24,6 +35,15 @@ export interface TaskPickerProps {
 	choiceKey?: string;
 	/** The accessible name of the `choices` select. */
 	choiceLabel?: string;
+	/**
+	 * `select` (default): a native select. `icons`: one button per choice with the icon of the relation (a radio group), so
+	 * the choice reads without its words.
+	 */
+	choiceStyle?: 'select' | 'icons';
+	/** `stack` (default): the choices above the search. `row`: choices and search on ONE line (the last row of a list). */
+	layout?: 'stack' | 'row';
+	/** A heading above the choices (with a link icon), for a picker alone in a popover. */
+	heading?: string;
 	/** The project to search in (the `project` query of the search route): an id, a name or an alias. */
 	projectParam?: string;
 	placeholder?: string;
@@ -104,6 +124,9 @@ export function TaskPicker({
 	choices,
 	choiceKey = 'choice',
 	choiceLabel = 'Choice',
+	choiceStyle = 'select',
+	layout = 'stack',
+	heading,
 	projectParam,
 	placeholder = 'Search a task',
 	ariaLabel,
@@ -249,63 +272,112 @@ export function TaskPicker({
 	const showStatus = open && !loading && problem === null && shown.length === 0;
 	const activeId = open && !loading && shown[active] ? optionId(active) : undefined;
 
+	const inRow = layout === 'row';
+	const ChosenIcon = relationIcon(chosen ?? '');
 	return (
 		<div ref={rootRef} data-testid="task-picker" className={`flex w-full min-w-0 flex-col ${GAP_CONTROLS}`}>
-			{choiceList.length > 0 ? (
-				<select
-					aria-label={choiceLabel}
-					value={chosen}
-					disabled={unavailable}
-					onChange={event => setChoice(event.target.value)}
-					className={`w-full ${FIELD_CLASS}`}
-				>
-					{choiceList.map(entry => (
-						<option key={entry.value} value={entry.value}>
-							{entry.label}
-						</option>
-					))}
-				</select>
+			{heading ? (
+				<div className={`flex items-center ${GAP_CONTROLS} text-sm font-semibold text-content`}>
+					<Link2 size={ICON_SIZE} aria-hidden="true" className="text-muted" />
+					<span>{heading}</span>
+				</div>
 			) : null}
-			<div data-testid="task-picker-search" className={`relative flex items-center ${SEARCH_STICKY_CLASS}`}>
-				<Search
-					size={ICON_SIZE}
-					aria-hidden="true"
-					className="pointer-events-none absolute left-2 text-muted"
-				/>
-				<input
-					type="text"
-					role="combobox"
-					aria-label={ariaLabel ?? placeholder}
-					aria-expanded={open}
-					aria-controls={open ? listId : undefined}
-					aria-autocomplete="list"
-					aria-activedescendant={activeId}
-					aria-busy={picking || undefined}
-					autoComplete="off"
-					placeholder={placeholder}
-					title={runner.unavailableReason}
-					value={text}
-					disabled={unavailable}
-					readOnly={picking}
-					onFocus={openNow}
-					onClick={openNow}
-					onChange={event => {
-						setText(event.target.value);
-						setOpen(true);
-					}}
-					onKeyDown={onKeyDown}
-					className={`w-full pl-7 pr-8 ${FIELD_CLASS}`}
-				/>
-				{clearable && text !== '' && !picking ? (
-					<button
-						type="button"
-						aria-label="Clear"
-						onClick={() => setText('')}
-						className="absolute right-1.5 inline-flex rounded p-0.5 text-muted hover:text-content focus-visible:ring-2 focus-visible:ring-primary"
-					>
-						<X size={14} aria-hidden="true" />
-					</button>
+			<div className={inRow ? `flex flex-wrap items-center ${GAP_CONTROLS}` : 'contents'}>
+				{choiceList.length > 0 && choiceStyle === 'icons' ? (
+					<div role="radiogroup" aria-label={choiceLabel} className={`grid grid-cols-2 ${GAP_CONTROLS}`}>
+						{choiceList.map(entry => {
+							const Icon = relationIcon(entry.value);
+							const on = entry.value === chosen;
+							return (
+								<button
+									key={entry.value}
+									type="button"
+									role="radio"
+									aria-checked={on}
+									disabled={unavailable}
+									onClick={() => setChoice(entry.value)}
+									className={`inline-flex ${CONTROL_H} min-w-0 items-center ${GAP_CONTROLS} ${CONTROL_RADIUS} border px-2 ${CONTROL_TEXT} ${FOCUS_RING} disabled:cursor-not-allowed disabled:opacity-60 ${
+										on
+											? 'border-primary bg-primary-light font-medium text-primary'
+											: 'border-border bg-surface text-content hover:bg-muted-bg'
+									}`}
+								>
+									<Icon size={ICON_SIZE} aria-hidden="true" className="shrink-0" />
+									<span className="truncate">{entry.label}</span>
+								</button>
+							);
+						})}
+					</div>
 				) : null}
+				{choiceList.length > 0 && choiceStyle !== 'icons' ? (
+					<div className={`relative flex items-center ${inRow ? 'w-44 shrink-0' : 'w-full'}`}>
+						{inRow ? (
+							<ChosenIcon
+								size={ICON_SIZE}
+								aria-hidden="true"
+								data-testid="task-picker-choice-icon"
+								className="pointer-events-none absolute left-2 text-muted"
+							/>
+						) : null}
+						<select
+							aria-label={choiceLabel}
+							value={chosen}
+							disabled={unavailable}
+							onChange={event => setChoice(event.target.value)}
+							className={`w-full ${inRow ? 'pl-7 ' : ''}${FIELD_CLASS}`}
+						>
+							{choiceList.map(entry => (
+								<option key={entry.value} value={entry.value}>
+									{entry.label}
+								</option>
+							))}
+						</select>
+					</div>
+				) : null}
+				<div
+					data-testid="task-picker-search"
+					className={`relative flex items-center ${inRow ? 'min-w-[10rem] flex-1' : SEARCH_STICKY_CLASS}`}
+				>
+					<Search
+						size={ICON_SIZE}
+						aria-hidden="true"
+						className="pointer-events-none absolute left-2 text-muted"
+					/>
+					<input
+						type="text"
+						role="combobox"
+						aria-label={ariaLabel ?? placeholder}
+						aria-expanded={open}
+						aria-controls={open ? listId : undefined}
+						aria-autocomplete="list"
+						aria-activedescendant={activeId}
+						aria-busy={picking || undefined}
+						autoComplete="off"
+						placeholder={placeholder}
+						title={runner.unavailableReason}
+						value={text}
+						disabled={unavailable}
+						readOnly={picking}
+						onFocus={openNow}
+						onClick={openNow}
+						onChange={event => {
+							setText(event.target.value);
+							setOpen(true);
+						}}
+						onKeyDown={onKeyDown}
+						className={`w-full pl-7 pr-8 ${FIELD_CLASS}`}
+					/>
+					{clearable && text !== '' && !picking ? (
+						<button
+							type="button"
+							aria-label="Clear"
+							onClick={() => setText('')}
+							className="absolute right-1.5 inline-flex rounded p-0.5 text-muted hover:text-content focus-visible:ring-2 focus-visible:ring-primary"
+						>
+							<X size={14} aria-hidden="true" />
+						</button>
+					) : null}
+				</div>
 			</div>
 			{open ? (
 				<div

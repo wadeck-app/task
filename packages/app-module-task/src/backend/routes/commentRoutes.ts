@@ -28,10 +28,10 @@ export function registerCommentRoutes(kit: RouteKit): void {
 	const { route, open, deliver } = kit;
 
 	// The comments of a task, oldest first. A read: it emits no event.
-	route('GET', '/tasks/:id/comments', req => {
+	route('GET', '/tasks/:id/comments', async req => {
 		if (isBlankRequest(req.query)) return BLANK_ANSWER;
 		const ctx = open(req);
-		const { id, comments } = listComments(ctx, { id: taskId(req) });
+		const { id, comments } = await listComments(ctx, { id: taskId(req) });
 		return {
 			status: 200,
 			body: {
@@ -64,7 +64,7 @@ export function registerCommentRoutes(kit: RouteKit): void {
 		};
 	};
 
-	route('POST', '/tasks/:id/comments', req => {
+	route('POST', '/tasks/:id/comments', async req => {
 		const ctx = open(req);
 		const body = bodyObject(req.body, ADD_USAGE);
 		const text = requiredString(body, 'text', ADD_USAGE);
@@ -72,18 +72,21 @@ export function registerCommentRoutes(kit: RouteKit): void {
 		if (author !== undefined && typeof author !== 'string') {
 			throw new RequestError(400, 'author must be a string when given', ADD_USAGE);
 		}
-		return answer(201, addComment(ctx, { id: taskId(req), text, ...(author === undefined ? {} : { author }) }));
+		return answer(
+			201,
+			await addComment(ctx, { id: taskId(req), text, ...(author === undefined ? {} : { author }) })
+		);
 	});
 
-	route('PATCH', '/tasks/:id/comments/:commentId', req => {
+	route('PATCH', '/tasks/:id/comments/:commentId', async req => {
 		const ctx = open(req);
 		const text = requiredString(bodyObject(req.body, EDIT_USAGE), 'text', EDIT_USAGE);
-		const result = editComment(ctx, { id: taskId(req), commentId: req.params?.['commentId'] ?? '', text });
+		const result = await editComment(ctx, { id: taskId(req), commentId: req.params?.['commentId'] ?? '', text });
 		return answer(200, result, { changed: result.events.length > 0 });
 	});
 
-	route('DELETE', '/tasks/:id/comments/:commentId', req => {
+	route('DELETE', '/tasks/:id/comments/:commentId', async req => {
 		const ctx = open(req);
-		return answer(200, removeComment(ctx, { id: taskId(req), commentId: req.params?.['commentId'] ?? '' }));
+		return answer(200, await removeComment(ctx, { id: taskId(req), commentId: req.params?.['commentId'] ?? '' }));
 	});
 }

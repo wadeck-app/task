@@ -33,11 +33,11 @@ describe('taskProjectId in the event payloads', () => {
 		expect(Object.keys(env).sort()).toEqual(['taskProjectName', 'taskProjectPath']);
 	});
 
-	it('reaches the payload of a real operation, and fits the declared schema', () => {
+	it('reaches the payload of a real operation, and fits the declared schema', async () => {
 		test.ctx.project = { id: 'a1b2c3d4', name: 'shop', path: test.rootDir };
 		const declaration = queueEventDeclarations.find(entry => entry.name === 'onTaskCreated')!;
 
-		const { events } = createTask(test.ctx, { description: 'x' });
+		const { events } = await createTask(test.ctx, { description: 'x' });
 
 		expect(events[0]!.payload).toMatchObject({ taskProjectId: 'a1b2c3d4' });
 		expect(checkAgainstSchema(declaration.schema, JSON.parse(JSON.stringify(events[0]!.payload)))).toEqual([]);
@@ -70,7 +70,7 @@ describe('a virtual project (registered, no folder)', () => {
 	it('the operation succeeds and its event carries no path, so the sink answers it undelivered with the virtual-project reason', async () => {
 		test.ctx.project = { id: 'a1b2c3d4', name: 'notes' };
 
-		const { task, events } = createTask(test.ctx, { description: 'in a virtual project' });
+		const { task, events } = await createTask(test.ctx, { description: 'in a virtual project' });
 
 		expect(task.id).toBeTruthy();
 		expect(events).toHaveLength(1);

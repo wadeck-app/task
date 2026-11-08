@@ -5,12 +5,13 @@
 //
 // Fragments (see variants/_page.yaml for the full explanation):
 //   _page.yaml     text before the line `$type: PageContent` is copied verbatim (comments, $sources, $actions); after it:
-//                  `$notices` (nodes shown above the designs) and `$experiment` ({id, label, initial, variants: [names]}).
-//   _shared.yaml   { name: node }, used as `{ $use: name }` anywhere in a fragment (nested uses allowed, cycles refused).
-//   <name>.yaml    { label, hint, view } per design, in the order of `$experiment.variants`.
+//                  `$notices` (nodes shown above the view), `$view` (the ONE base view) and `$page` (props of the PageContent).
+//   _*.yaml        { name: node }, used as `{ $use: name }` anywhere (nested uses allowed, cycles refused, a name defined twice
+//                  refused). `_shared.yaml` holds the facts and their editors, `_options.yaml` the localized A/B options.
 //
-// To REMOVE the experiment later (bake the winner): replace the AbTest of the generated page by the chosen
-// design's view, then delete variants/, this script, the `views` npm script and taskPageVariants.test.ts.
+// The page has no experiment of its own: the options are dsl-ui `AbTest` nodes written in the fragments. An AbTest that appears
+// at several places must be declared identically each time (id, label, initial, option labels and hints), else the dock of the
+// shell reports a conflict: this script refuses it.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,7 +21,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_VIEWS_DIR = path.resolve(HERE, '../packages/app-module-task/src/dsl-views');
 
 const HOW =
-	'See the header of src/dsl-views/variants/_page.yaml: a design is src/dsl-views/variants/<name>.yaml with the keys label, hint and view, listed under $experiment.variants.';
+	'See the header of src/dsl-views/variants/_page.yaml: the page is _page.yaml (sources, actions, notices, $view) plus fragment files named _<something>.yaml.';
 
 function fail(message) {
 	throw new Error(`generate-task-page: ${message}\n${HOW}`);
@@ -64,6 +65,40 @@ function expand(value, shared, where, chain = []) {
 	return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, expand(item, shared, where, chain)]));
 }
 
+/** What the dock compares for an AbTest: label, initial, and the label and hint of each option. */
+function declarationOf(node) {
+	const variants = node.variants && typeof node.variants === 'object' ? node.variants : {};
+	return JSON.stringify([
+		node.label,
+		node.initial,
+		Object.entries(variants).map(([id, variant]) => [id, variant?.label, variant?.hint]),
+	]);
+}
+
+/** Every AbTest of the expanded tree: the ones sharing an id must be declared identically. */
+function checkAbDeclarations(tree) {
+	const seen = new Map();
+	const visit = value => {
+		if (Array.isArray(value)) {
+			value.forEach(visit);
+		} else if (value !== null && typeof value === 'object') {
+			if (value.$type === 'AbTest') {
+				const declaration = declarationOf(value);
+				const earlier = seen.get(value.id);
+				if (earlier !== undefined && earlier !== declaration) {
+					fail(
+						`AbTest "${String(value.id)}" is declared twice with different labels, initial or options: the dock would report a conflict. Make the declarations identical (only the views may differ).`
+					);
+				}
+				seen.set(value.id, declaration);
+			}
+			Object.values(value).forEach(visit);
+		}
+	};
+	visit(tree);
+	return [...seen.keys()];
+}
+
 /** The content of task-page.yaml for the fragments in `viewsDir`, nothing written. */
 export function generateTaskPage(viewsDir = DEFAULT_VIEWS_DIR) {
 	const dir = path.join(viewsDir, 'variants');
@@ -78,81 +113,47 @@ export function generateTaskPage(viewsDir = DEFAULT_VIEWS_DIR) {
 	}
 	const head = pageText.slice(0, marker);
 	const rest = yaml.load(pageText.slice(marker));
-	const { $notices: notices, $experiment: experiment, $wrap: wrap, $page: pageProps } = rest ?? {};
+	const { $notices: notices, $view: view, $page: pageProps } = rest ?? {};
 	if (!Array.isArray(notices)) {
 		fail(`${pageFile}: $notices must be a list of nodes.`);
 	}
-	if (
-		!experiment ||
-		typeof experiment.id !== 'string' ||
-		typeof experiment.label !== 'string' ||
-		typeof experiment.initial !== 'string' ||
-		!Array.isArray(experiment.variants)
-	) {
-		fail(`${pageFile}: $experiment needs id, label, initial and variants (a list of names).`);
-	}
-	const names = experiment.variants;
-	const duplicate = names.find((name, index) => names.indexOf(name) !== index);
-	if (duplicate !== undefined) {
-		fail(`${pageFile}: design "${duplicate}" is listed twice under $experiment.variants.`);
-	}
-	if (!names.includes(experiment.initial)) {
-		fail(
-			`${pageFile}: $experiment.initial "${experiment.initial}" is not one of the designs (${names.join(', ')}).`
-		);
+	if (view === null || typeof view !== 'object' || Array.isArray(view)) {
+		fail(`${pageFile}: $view must be ONE node (the base view of the page).`);
 	}
 
-	const shared = readYaml(path.join(dir, '_shared.yaml'), '_shared.yaml') ?? {};
-	const variants = {};
-	for (const name of names) {
-		const file = path.join(dir, `${name}.yaml`);
-		const fragment = readYaml(file, `design file "${name}.yaml" (listed under $experiment.variants)`);
-		const keys = fragment && typeof fragment === 'object' ? Object.keys(fragment) : [];
-		const missing = ['label', 'hint', 'view'].filter(key => !keys.includes(key));
-		const unknown = keys.filter(key => !['label', 'hint', 'view'].includes(key));
-		if (missing.length > 0 || unknown.length > 0) {
-			fail(
-				`${file}: a design has exactly label, hint and view (missing: ${missing.join(', ') || 'none'}; unexpected: ${unknown.join(', ') || 'none'}).`
-			);
-		}
-		const expanded = expand(fragment, shared, `${name}.yaml`);
-		// Every design draws nothing until the task is loaded: with an unknown, unreadable or virtual project the notices above the
-		// switcher say why, and the empty frames of a design ("Created: undefined") would only add noise.
-		variants[name] = {
-			...expanded,
-			view: {
-				$type: 'VerticalStack',
-				$if: '$sources.detail.task',
-				gap: 'gap-0',
-				items: [expanded.view],
-			},
-		};
-	}
-	const known = new Set([...names.map(name => `${name}.yaml`), '_page.yaml', '_shared.yaml']);
-	const orphans = fs.readdirSync(dir).filter(file => file.endsWith('.yaml') && !known.has(file));
+	const files = fs.readdirSync(dir).filter(file => file.endsWith('.yaml'));
+	const orphans = files.filter(file => !file.startsWith('_'));
 	if (orphans.length > 0) {
 		fail(
-			`${orphans.join(', ')} in ${dir} is not listed under $experiment.variants (list it, or move the file out of the folder).`
+			`${orphans.join(', ')} in ${dir} is not a fragment file: fragment files are named _<something>.yaml (an old design file must be deleted, the page has no per-design file any more).`
 		);
 	}
+	const shared = {};
+	for (const file of files.filter(name => name !== '_page.yaml').sort()) {
+		const fragments = readYaml(path.join(dir, file), file) ?? {};
+		for (const [name, node] of Object.entries(fragments)) {
+			if (Object.prototype.hasOwnProperty.call(shared, name)) {
+				fail(`fragment "${name}" is defined twice (second time in ${file}).`);
+			}
+			shared[name] = node;
+		}
+	}
 
-	const experimentNode = {
-		$type: 'AbTest',
-		id: experiment.id,
-		label: experiment.label,
-		initial: experiment.initial,
-		variants,
-	};
-	// `$wrap`: a node with an `items` slot that holds the experiment (optional).
-	// `$page`: extra props of the PageContent (maxWidth: full, so each design decides its own width).
-	const wrapped = wrap === undefined ? experimentNode : { ...expand(wrap, shared, '$wrap'), items: [experimentNode] };
+	const expandedView = expand(view, shared, '$view');
+	const expandedNotices = expand(notices, shared, '$notices');
+	// The page draws nothing until the task is loaded: with an unknown, unreadable or virtual project the notices above say why,
+	// and the empty frames ("Created: undefined") would only add noise.
+	const guarded = { $type: 'VerticalStack', $if: '$sources.detail.task', gap: 'gap-0', items: [expandedView] };
+	checkAbDeclarations(guarded);
+
+	// `$page`: extra props of the PageContent (maxWidth: full, so the view decides its own width).
 	const body = {
 		$type: 'PageContent',
 		...(pageProps === undefined ? {} : expand(pageProps, shared, '$page')),
-		sections: [...expand(notices, shared, '$notices'), wrapped],
+		sections: [...expandedNotices, guarded],
 	};
 	const banner =
-		'# GENERATED - edit src/dsl-views/variants/*.yaml and run: npm run views --workspace=packages/app-module-task\n' +
+		'# GENERATED - edit src/dsl-views/variants/_*.yaml and run: npm run views --workspace=packages/app-module-task\n' +
 		'# (scripts/generate-task-page.mjs). The comments below come from variants/_page.yaml.\n';
 	return banner + head + yaml.dump(body, { indent: 2, lineWidth: -1, noRefs: true });
 }

@@ -59,8 +59,8 @@ function problemText(project: ProjectListing): string {
 }
 
 export function registerProjectRoutes(kit: RouteKit): void {
-	kit.route('GET', '/projects', req => {
-		const { projects, registryProblem } = readProjects();
+	kit.route('GET', '/projects', async req => {
+		const { projects, registryProblem } = await readProjects();
 		// What a page address or a query names (the views pass `$route.project`): an id, an id prefix, a name or an alias, which
 		// the shared registry resolves (a folder or a slug is none). Why it did not resolve is said on the page.
 		const requested = optionalQueryValue(req.query, 'project');
@@ -162,15 +162,15 @@ export function registerProjectRoutes(kit: RouteKit): void {
 		};
 	});
 
-	kit.route('GET', '/summary', req => {
+	kit.route('GET', '/summary', async req => {
 		const requested = queryValue(req.query, 'project');
 		if (requested === undefined) {
 			// Every registered project (nothing registered is an empty summary; none readable throws with the reasons).
-			return { status: 200, body: summaryBody('all', summarizeProjects()) };
+			return { status: 200, body: summaryBody('all', await summarizeProjects()) };
 		}
 		// Naming a project explicitly must fail loudly: an unreadable one is an error, not a skipped entry.
 		const ctx = openProject(requested);
-		const figures = summarizeProject(ctx);
+		const figures = await summarizeProject(ctx);
 		const overview: ProjectOverview = {
 			id: ctx.project.id,
 			name: ctx.project.name,

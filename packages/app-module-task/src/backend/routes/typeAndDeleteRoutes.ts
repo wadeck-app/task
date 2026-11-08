@@ -23,10 +23,10 @@ const TYPE_NAME_USAGE = 'Send a JSON body { "name": string }.';
 export function registerTypeRoutes(kit: RouteKit): void {
 	const { route, open } = kit;
 
-	route('GET', '/types', req => {
+	route('GET', '/types', async req => {
 		if (isBlankRequest(req.query)) return BLANK_ANSWER;
 		if (allProjectsFlag(req.query, 'the types')) {
-			return { status: 200, body: allTypesBody(readAcrossProjects(ctx => listTypes(ctx))) };
+			return { status: 200, body: allTypesBody(await readAcrossProjects(ctx => listTypes(ctx))) };
 		}
 		const ctx = open(req);
 		return { status: 200, body: typesBody(ctx.project, listTypes(ctx)) };
@@ -64,17 +64,17 @@ export function registerTypeRoutes(kit: RouteKit): void {
 export function registerDeleteRoutes(kit: RouteKit): void {
 	const { route, open, deliver } = kit;
 
-	route('POST', '/tasks/delete/plan', req => {
+	route('POST', '/tasks/delete/plan', async req => {
 		const ctx = open(req);
 		const body = bodyObject(req.body, DELETE_USAGE);
-		const plan = planDelete(ctx, deleteInput(body));
+		const plan = await planDelete(ctx, deleteInput(body));
 		return { status: 200, body: planBody(ctx.project, plan, body) };
 	});
 
 	route('POST', '/tasks/delete', async req => {
 		const ctx = open(req);
 		const body = bodyObject(req.body, DELETE_USAGE);
-		const plan = planDelete(ctx, deleteInput(body));
+		const plan = await planDelete(ctx, deleteInput(body));
 		// Deletion is irreversible: only an explicit boolean true goes through; otherwise the preview is the answer.
 		if (body['confirm'] !== true) {
 			throw new RequestError(
@@ -86,7 +86,7 @@ export function registerDeleteRoutes(kit: RouteKit): void {
 		}
 		let result: ExecuteDeleteResult;
 		try {
-			result = executeDelete(ctx, plan);
+			result = await executeDelete(ctx, plan);
 		} catch (error) {
 			if (!(error instanceof PartialDeleteError)) throw error;
 			// The tasks deleted before the failure are gone: their events are delivered, and the 5xx says what happened.

@@ -53,11 +53,11 @@ function optionalField(name: string, value: string | undefined): Record<string, 
 export function registerTaskReadRoutes(kit: RouteKit): void {
 	const { route, open } = kit;
 
-	route('GET', '/tasks', req => {
+	route('GET', '/tasks', async req => {
 		if (isBlankRequest(req.query)) return BLANK_ANSWER;
 		const showAll = showAllFlag(req.query);
 		if (allProjectsFlag(req.query, 'the tasks')) {
-			return { status: 200, body: allTasksBody(listTasksAcrossProjects({ showAll }), showAll) };
+			return { status: 200, body: allTasksBody(await listTasksAcrossProjects({ showAll }), showAll) };
 		}
 		const ctx = open(req);
 		const parent = optionalQueryValue(req.query, 'parent');
@@ -66,22 +66,22 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 			body: tasksListBody(ctx.project, {
 				showAll,
 				parent,
-				tasks: listTasks(ctx, { showAll, parent }),
-				openTasks: listTasks(ctx, {}),
+				tasks: await listTasks(ctx, { showAll, parent }),
+				openTasks: await listTasks(ctx, {}),
 			}),
 		};
 	});
 
 	// A picker's search (parent, links): the index only, never a task file. Registered before `/tasks/:id`, which would take
 	// "search" for an id. `limit` above the maximum is refused (a picker never needs more; no silent clamping).
-	route('GET', '/tasks/search', req => {
+	route('GET', '/tasks/search', async req => {
 		const ctx = open(req);
 		const limit = boundedIntegerQuery(req.query, 'limit', SEARCH_MAX_LIMIT);
 		const exclude = (queryValue(req.query, 'exclude') ?? '')
 			.split(',')
 			.map(id => id.trim())
 			.filter(id => id !== '');
-		const hits = searchTasks(ctx, {
+		const hits = await searchTasks(ctx, {
 			q: queryValue(req.query, 'q') ?? '',
 			...(limit === undefined ? {} : { limit }),
 			exclude,
@@ -101,19 +101,19 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 	});
 
 	// The labels in use in the project with their count (the suggestions of a label picker).
-	route('GET', '/labels', req => ({ status: 200, body: listLabels(open(req)) }));
+	route('GET', '/labels', async req => ({ status: 200, body: await listLabels(open(req)) }));
 
 	// The metadata keys in use in the project (the suggestions of the key field), read when the field is opened.
-	route('GET', '/meta-keys', req => ({ status: 200, body: listMetaKeys(open(req)) }));
+	route('GET', '/meta-keys', async req => ({ status: 200, body: await listMetaKeys(open(req)) }));
 
-	route('GET', '/tasks/:id', req => {
+	route('GET', '/tasks/:id', async req => {
 		if (isBlankRequest(req.query)) return BLANK_ANSWER;
 		const ctx = open(req);
-		const { detail, warnings } = showTaskWithRelations(ctx, { id: taskId(req) });
+		const { detail, warnings } = await showTaskWithRelations(ctx, { id: taskId(req) });
 		// The full id of the resolved task (the request may hold a prefix).
 		const id = detail['id'] as string;
 		// A link to a vanished task is a warning with its fix, not a failure: the task must stay reachable to be repaired.
-		const linkReport = readTaskLinks(ctx, { id });
+		const linkReport = await readTaskLinks(ctx, { id });
 		return {
 			status: 200,
 			body: taskDetailBody(ctx, {
@@ -124,25 +124,27 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 				types: listTypes(ctx),
 				// A dangling parent has no chain to show (its warning says so): the store would list a hole.
 				ancestors:
-					detail['parent'] === null && detail['parentId'] !== undefined ? [] : listAncestors(ctx, { id }),
-				childrenSummary: summarizeChildren(ctx, { id }),
-				blockers: describeBlockers(ctx, { id }),
-				descendantCount: countDescendants(ctx, id),
-				activity: getTaskActivity(ctx, { id }).rows,
+					detail['parent'] === null && detail['parentId'] !== undefined
+						? []
+						: await listAncestors(ctx, { id }),
+				childrenSummary: await summarizeChildren(ctx, { id }),
+				blockers: await describeBlockers(ctx, { id }),
+				descendantCount: await countDescendants(ctx, id),
+				activity: (await getTaskActivity(ctx, { id })).rows,
 			}),
 		};
 	});
 
-	route('GET', '/tasks/:id/history', req => {
+	route('GET', '/tasks/:id/history', async req => {
 		if (isBlankRequest(req.query)) return BLANK_ANSWER;
-		const history = getTaskHistory(open(req), { id: taskId(req) });
+		const history = await getTaskHistory(open(req), { id: taskId(req) });
 		const rows = history.history.map(entry => ({ ...entry, time: shortUtcTime(entry.timestamp) }));
 		return { status: 200, body: { ...history, rows } };
 	});
 
 	// The whole activity of a task, newest first: status moves and every recorded change. `?filter=history` keeps the status
 	// rows (what /history lists); the counts are those of the whole feed. A read: it emits no event.
-	route('GET', '/tasks/:id/activity', req => {
+	route('GET', '/tasks/:id/activity', async req => {
 		if (isBlankRequest(req.query)) return BLANK_ANSWER;
 		const filter = optionalQueryValue(req.query, 'filter') ?? 'all';
 		if (!(ACTIVITY_FILTERS as readonly string[]).includes(filter)) {
@@ -152,7 +154,7 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 				`Use ?filter=all for every change, ?filter=comments for the comments only or ?filter=history for the status changes only.`
 			);
 		}
-		const { id, rows } = getTaskActivity(open(req), { id: taskId(req) });
+		const { id, rows } = await getTaskActivity(open(req), { id: taskId(req) });
 		const kept = filter === 'all' ? rows : rows.filter(row => row.source === filter);
 		return {
 			status: 200,
@@ -170,25 +172,25 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 		};
 	});
 
-	route('GET', '/tasks/:id/children', req => {
+	route('GET', '/tasks/:id/children', async req => {
 		const ctx = open(req);
 		const recursive = booleanFlag(req.query, 'recursive', 'Use ?recursive=true for the whole subtree.');
-		const found = listChildren(ctx, { id: taskId(req), recursive });
+		const found = await listChildren(ctx, { id: taskId(req), recursive });
 		return { status: 200, body: childrenBody(ctx.project, found, recursive) };
 	});
 
-	route('GET', '/tasks/:id/ancestors', req => {
+	route('GET', '/tasks/:id/ancestors', async req => {
 		const ctx = open(req);
-		const ancestors = listAncestors(ctx, { id: taskId(req) });
+		const ancestors = await listAncestors(ctx, { id: taskId(req) });
 		return { status: 200, body: { project: ctx.project, ancestors: withRowLinks(ctx.project, ancestors) } };
 	});
 
-	route('GET', '/tasks/:id/links', req => {
+	route('GET', '/tasks/:id/links', async req => {
 		if (isBlankRequest(req.query)) return BLANK_ANSWER;
 		const ctx = open(req);
-		const { links, dangling, warnings } = readTaskLinks(ctx, { id: taskId(req) });
+		const { links, dangling, warnings } = await readTaskLinks(ctx, { id: taskId(req) });
 		// The full id of the resolved task (the request may hold a prefix).
-		const resolvedId = showTask(ctx, { id: taskId(req) })['id'] as string;
+		const resolvedId = (await showTask(ctx, { id: taskId(req) }))['id'] as string;
 		const holder = { taskId: resolvedId, dangling };
 		// A dangling link counts: the group shows it (missing, removable), so the page must not say "No links".
 		const hasLinks = dangling.length > 0 || Object.values(links).some(tasks => tasks.length > 0);
@@ -211,7 +213,7 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 		};
 	});
 
-	route('GET', '/tree', req => {
+	route('GET', '/tree', async req => {
 		if (isBlankRequest(req.query)) return BLANK_ANSWER;
 		if (allProjectsFlag(req.query, 'the trees')) {
 			// A task id or a parent names one project: it cannot narrow the forest of all of them.
@@ -225,11 +227,11 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 				}
 			}
 			const showAll = showAllFlag(req.query);
-			const found = readAcrossProjects(ctx => ({
-				forest: listForest(ctx, { showAll }),
+			const found = await readAcrossProjects(async ctx => ({
+				forest: await listForest(ctx, { showAll }),
 				terminalStatuses: ctx.config.terminalStatuses,
 				negativeStatuses: ctx.config.negativeStatuses,
-				figures: summarizeProject(ctx),
+				figures: await summarizeProject(ctx),
 			}));
 			return { status: 200, body: allForestBody(found, showAll) };
 		}
@@ -237,13 +239,13 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 		const rootOf = optionalQueryValue(req.query, 'id');
 		if (rootOf !== undefined) {
 			// The single tree containing the task, its node flagged `selected`.
-			return { status: 200, body: taskTreeBody(ctx.project, getFullTree(ctx, { id: rootOf })) };
+			return { status: 200, body: taskTreeBody(ctx.project, await getFullTree(ctx, { id: rootOf })) };
 		}
 		const showAll = showAllFlag(req.query);
 		const parent = optionalQueryValue(req.query, 'parent');
 		return {
 			status: 200,
-			body: forestBody(ctx.project, { showAll, parent, forest: listForest(ctx, { showAll, parent }) }),
+			body: forestBody(ctx.project, { showAll, parent, forest: await listForest(ctx, { showAll, parent }) }),
 		};
 	});
 }

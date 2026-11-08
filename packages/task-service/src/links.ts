@@ -4,6 +4,7 @@ import type { LinkType, TaskLinks, TaskRecord } from '@wadeck-app/task-core';
 import { projectEnv, type TaskServiceContext } from './context.js';
 import { DanglingLinkError, InvalidLinkTypeError } from './errors.js';
 import type { TaskEvent } from './events.js';
+import { plain } from './plainRecord.js';
 import { suggest } from './text.js';
 
 /** Every accepted link name: the stored types, then their inverses. */
@@ -36,17 +37,17 @@ export interface LinkTasksResult {
  * The id of the other task. Unlinking also accepts the exact id of a task that no longer exists, when the task holds a
  * link to it: that is the only way to remove such a link (the target cannot be resolved by a prefix any more).
  */
-function resolveTarget(
+async function resolveTarget(
 	ctx: TaskServiceContext,
 	input: LinkTasksInput,
 	spec: { type: LinkType; inverse: boolean },
 	action: 'link' | 'unlink',
 	holderId: string
-): string {
+): Promise<string> {
 	try {
-		return ctx.store.findByPrefix(input.target).id;
+		return (await ctx.store.findByPrefix(input.target)).id;
 	} catch (error) {
-		const stored = action === 'unlink' && !spec.inverse && ctx.store.get(holderId).links;
+		const stored = action === 'unlink' && !spec.inverse && (await ctx.store.get(holderId)).links;
 		if (
 			error instanceof TaskNotFoundError &&
 			stored &&
@@ -58,20 +59,25 @@ function resolveTarget(
 	}
 }
 
-function changeLink(ctx: TaskServiceContext, input: LinkTasksInput, action: 'link' | 'unlink'): LinkTasksResult {
+async function changeLink(
+	ctx: TaskServiceContext,
+	input: LinkTasksInput,
+	action: 'link' | 'unlink'
+): Promise<LinkTasksResult> {
 	const spec = parseLinkType(input.type);
 	if (!spec) {
 		const hint = suggest(input.type, ALL_LINK_NAMES);
 		throw new InvalidLinkTypeError(input.type, ALL_LINK_NAMES, hint === undefined ? [] : [hint]);
 	}
-	const first = ctx.store.findByPrefix(input.id).id;
-	const second = resolveTarget(ctx, input, spec, action, first);
+	const first = (await ctx.store.findByPrefix(input.id)).id;
+	const second = await resolveTarget(ctx, input, spec, action, first);
 	// "A blocks B" is stored on B as "B blockedBy A": the holder is the task that owns the stored link.
 	const [holder, target] = spec.inverse ? [second, first] : [first, second];
-	const task =
+	const task = plain(
 		action === 'link'
-			? ctx.store.addLink(holder, spec.type, target)
-			: ctx.store.removeLink(holder, spec.type, target);
+			? await ctx.store.addLink(holder, spec.type, target)
+			: await ctx.store.removeLink(holder, spec.type, target)
+	);
 	return {
 		task,
 		events: [
@@ -84,23 +90,23 @@ function changeLink(ctx: TaskServiceContext, input: LinkTasksInput, action: 'lin
 }
 
 /** Adds a typed link between two tasks. */
-export function linkTasks(ctx: TaskServiceContext, input: LinkTasksInput): LinkTasksResult {
+export async function linkTasks(ctx: TaskServiceContext, input: LinkTasksInput): Promise<LinkTasksResult> {
 	return changeLink(ctx, input, 'link');
 }
 
 /** Removes a typed link between two tasks. */
-export function unlinkTasks(ctx: TaskServiceContext, input: LinkTasksInput): LinkTasksResult {
+export async function unlinkTasks(ctx: TaskServiceContext, input: LinkTasksInput): Promise<LinkTasksResult> {
 	return changeLink(ctx, input, 'unlink');
 }
 
 /** A task's outgoing links and their derived inverses. */
-export function getTaskLinks(ctx: TaskServiceContext, input: { id: string }): TaskLinks {
-	const id = ctx.store.findByPrefix(input.id).id;
+export async function getTaskLinks(ctx: TaskServiceContext, input: { id: string }): Promise<TaskLinks> {
+	const id = (await ctx.store.findByPrefix(input.id)).id;
 	// A link to a task that is gone is reported with its fix (the store would only say the index is corrupted).
-	const existing = new Set(ctx.store.list().map(t => t.id));
-	const dangling = (ctx.store.get(id).links ?? []).find(l => !existing.has(l.target));
+	const existing = new Set((await ctx.store.list()).map(t => t.id));
+	const dangling = ((await ctx.store.get(id)).links ?? []).find(l => !existing.has(l.target));
 	if (dangling) throw new DanglingLinkError(id, dangling.type, dangling.target);
-	return ctx.store.getLinks(id);
+	return await ctx.store.getLinks(id);
 }
 
 /** A stored link whose target task no longer exists, with the command that removes it. */
@@ -126,9 +132,9 @@ export interface TaskLinksReport {
  * Like {@link getTaskLinks}, but a link to a vanished task is reported (with its fix) instead of thrown: a task must
  * stay readable to be repaired, as for a dangling parent. Callers that need the failure keep `getTaskLinks`.
  */
-export function readTaskLinks(ctx: TaskServiceContext, input: { id: string }): TaskLinksReport {
-	const id = ctx.store.findByPrefix(input.id).id;
-	const { links, dangling } = ctx.store.getLinksLenient(id);
+export async function readTaskLinks(ctx: TaskServiceContext, input: { id: string }): Promise<TaskLinksReport> {
+	const id = (await ctx.store.findByPrefix(input.id)).id;
+	const { links, dangling } = await ctx.store.getLinksLenient(id);
 	const errors = dangling.map(link => new DanglingLinkError(id, link.type, link.target));
 	return {
 		links,

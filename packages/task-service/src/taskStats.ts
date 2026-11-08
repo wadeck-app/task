@@ -11,14 +11,14 @@ export interface StatusCount {
  * Number of tasks per status: the configured statuses first, in config order (zero included), then any other status
  * still held by a task (removed from config.yml) so no task is lost from the total.
  */
-export function countTasksByStatus(ctx: TaskServiceContext): StatusCount[] {
+export async function countTasksByStatus(ctx: TaskServiceContext): Promise<StatusCount[]> {
 	const counts = new Map<string, StatusCount>(
 		ctx.config.statuses.map(status => [
 			status,
 			{ status, count: 0, terminal: ctx.config.terminalStatuses.includes(status) },
 		])
 	);
-	for (const task of ctx.store.list()) {
+	for (const task of await ctx.store.list()) {
 		const entry = counts.get(task.status) ?? { status: task.status, count: 0, terminal: false };
 		entry.count++;
 		counts.set(task.status, entry);

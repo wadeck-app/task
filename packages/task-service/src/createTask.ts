@@ -3,6 +3,7 @@ import type { TaskRecord } from '@wadeck-app/task-core';
 import { projectEnv, type TaskServiceContext } from './context.js';
 import { InvalidTaskTextError } from './errors.js';
 import type { TaskEvent } from './events.js';
+import { plain } from './plainRecord.js';
 import { splitHeadline, taskDescription } from './taskText.js';
 
 export interface CreateTaskInput {
@@ -45,10 +46,10 @@ function textsToStore(input: CreateTaskInput): { title: string; description?: st
  * The description is stored only when it differs from the title. A single long text becomes a headline (title) plus the
  * full text (description); an explicit title and description are never reshaped.
  */
-export function createTask(ctx: TaskServiceContext, input: CreateTaskInput): CreateTaskResult {
+export async function createTask(ctx: TaskServiceContext, input: CreateTaskInput): Promise<CreateTaskResult> {
 	const { title, description } = textsToStore(input);
-	const parentId = input.parent === undefined ? undefined : ctx.store.findByPrefix(input.parent).id;
-	const task = ctx.store.create(title, ctx.config.defaultStatus, parentId, description);
+	const parentId = input.parent === undefined ? undefined : (await ctx.store.findByPrefix(input.parent)).id;
+	const task = plain(await ctx.store.create({ title, status: ctx.config.defaultStatus, parentId, description }));
 	return {
 		task,
 		events: [

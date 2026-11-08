@@ -1,5 +1,5 @@
 import { writeFileAtomic } from '@wadeck-app/project-sdk';
-import { TaskStore } from '@wadeck-app/task-core';
+import { createLocalBackend } from '@wadeck-app/task-core';
 
 import type { TaskServiceContext } from './context.js';
 import { loadTaskConfig } from './projectConfig.js';
@@ -25,14 +25,15 @@ function writeAtomically(file: string, content: string): void {
 }
 
 /**
- * Builds the context of a project: its task store, its resolved config and its identity. An invalid config file throws the loader's
+ * Builds the context of a project: its task backend (`ctx.store`, the local file backend for now), its resolved config and its
+ * identity. Construction is synchronous and cheap (nothing is read or created); an invalid config file throws the loader's
  * error, never defaults.
  */
 export function openTaskContext(input: OpenTaskContextInput): TaskServiceContext {
 	const { storage } = input;
 	const { id, name, path: projectPath } = input.project;
 	return {
-		store: new TaskStore(tasksDirOf(storage), { writeFile: writeAtomically }),
+		store: createLocalBackend(tasksDirOf(storage), { writeFile: writeAtomically }),
 		config: loadTaskConfig(storage, input.globalConfigDir),
 		storage,
 		project: {

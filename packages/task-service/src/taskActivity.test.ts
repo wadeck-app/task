@@ -12,35 +12,36 @@ import { createTestContext, type TestContext } from './testHelpers.js';
 describe('getTaskActivity', () => {
 	let t: TestContext;
 	let id: string;
-	beforeEach(() => {
+	beforeEach(async () => {
 		t = createTestContext();
-		id = t.ctx.store.create('Fix login', 'backlog').id;
+		id = (await t.ctx.store.create({ title: 'Fix login', status: 'backlog' })).id;
 	});
 	afterEach(() => t.cleanup());
 
-	const texts = (taskId = id): string[] => getTaskActivity(t.ctx, { id: taskId }).rows.map(row => row.text);
+	const texts = async (taskId = id): Promise<string[]> =>
+		(await getTaskActivity(t.ctx, { id: taskId })).rows.map(row => row.text);
 
-	it('a new task shows its creation only', () => {
-		const { rows } = getTaskActivity(t.ctx, { id });
+	it('a new task shows its creation only', async () => {
+		const { rows } = await getTaskActivity(t.ctx, { id });
 
 		expect(rows).toHaveLength(1);
 		expect(rows[0]).toMatchObject({ kind: 'created', text: 'Created with status backlog', source: 'history' });
 	});
 
-	it('resolves a prefix and returns the full id', () => {
-		expect(getTaskActivity(t.ctx, { id: id.slice(0, 4) }).id).toBe(id);
+	it('resolves a prefix and returns the full id', async () => {
+		expect((await getTaskActivity(t.ctx, { id: id.slice(0, 4) })).id).toBe(id);
 	});
 
 	it('merges status changes and other changes, newest first', async () => {
-		setStatus(t.ctx, { id, status: 'in-progress' });
+		await setStatus(t.ctx, { id, status: 'in-progress' });
 		await new Promise(resolve => setTimeout(resolve, 5));
-		setType(t.ctx, { id, type: 'bug' });
+		await setType(t.ctx, { id, type: 'bug' });
 		await new Promise(resolve => setTimeout(resolve, 5));
-		setType(t.ctx, { id, type: 'feature' });
+		await setType(t.ctx, { id, type: 'feature' });
 		await new Promise(resolve => setTimeout(resolve, 5));
-		setStatus(t.ctx, { id, status: 'done' });
+		await setStatus(t.ctx, { id, status: 'done' });
 
-		expect(texts()).toEqual([
+		expect(await texts()).toEqual([
 			'Status changed from in-progress to done',
 			'Type changed from bug to feature',
 			'Type set to bug',
@@ -49,7 +50,7 @@ describe('getTaskActivity', () => {
 		]);
 	});
 
-	it('orders by instant even when the activity was stored before the history in the file', () => {
+	it('orders by instant even when the activity was stored before the history in the file', async () => {
 		const file = path.join(t.rootDir, 'data', 'tasks', `${id}.json`);
 		const record = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
 		record['history'] = [
@@ -59,49 +60,49 @@ describe('getTaskActivity', () => {
 		record['activity'] = [{ at: '2026-01-02T10:00:00.000Z', kind: 'label-added', newValue: 'billing' }];
 		fs.writeFileSync(file, JSON.stringify(record));
 
-		expect(texts()).toEqual([
+		expect(await texts()).toEqual([
 			'Status changed from backlog to done',
 			'Label billing added',
 			'Created with status backlog',
 		]);
 	});
 
-	it('equal instants keep the recorded order, the activity read as newer than the history', () => {
+	it('equal instants keep the recorded order, the activity read as newer than the history', async () => {
 		const file = path.join(t.rootDir, 'data', 'tasks', `${id}.json`);
 		const record = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
 		record['history'] = [{ status: 'backlog', timestamp: '2026-01-01T10:00:00.000Z' }];
 		record['activity'] = [{ at: '2026-01-01T10:00:00.000Z', kind: 'label-added', newValue: 'x' }];
 		fs.writeFileSync(file, JSON.stringify(record));
 
-		expect(texts()).toEqual(['Label x added', 'Created with status backlog']);
+		expect(await texts()).toEqual(['Label x added', 'Created with status backlog']);
 	});
 
-	it('an old task without activity shows its status history only', () => {
-		setStatus(t.ctx, { id, status: 'done' });
+	it('an old task without activity shows its status history only', async () => {
+		await setStatus(t.ctx, { id, status: 'done' });
 
-		const rows = getTaskActivity(t.ctx, { id }).rows;
+		const rows = (await getTaskActivity(t.ctx, { id })).rows;
 		expect(rows.map(row => row.source)).toEqual(['history', 'history']);
 	});
 
-	it('words every kind as a plain sentence', () => {
-		const other = t.ctx.store.create('Other task', 'backlog').id;
-		const parent = t.ctx.store.create('Parent task', 'backlog').id;
-		setType(t.ctx, { id, type: 'bug' });
-		unsetType(t.ctx, { id });
-		setType(t.ctx, { id, type: 'bug' });
-		addLabel(t.ctx, { id, label: 'billing' });
-		removeLabel(t.ctx, { id, label: 'billing' });
-		setMeta(t.ctx, { id, key: 'owner', value: 'ann' });
-		setMeta(t.ctx, { id, key: 'owner', value: 'bob' });
-		unsetMeta(t.ctx, { id, key: 'owner' });
-		setParent(t.ctx, { id, parent });
-		removeParent(t.ctx, { id });
-		linkTasks(t.ctx, { id, type: 'blockedBy', target: other });
-		unlinkTasks(t.ctx, { id, type: 'blockedBy', target: other });
-		setTaskText(t.ctx, { id, title: 'Fix the login' });
-		setTaskText(t.ctx, { id, description: 'More words' });
+	it('words every kind as a plain sentence', async () => {
+		const other = (await t.ctx.store.create({ title: 'Other task', status: 'backlog' })).id;
+		const parent = (await t.ctx.store.create({ title: 'Parent task', status: 'backlog' })).id;
+		await setType(t.ctx, { id, type: 'bug' });
+		await unsetType(t.ctx, { id });
+		await setType(t.ctx, { id, type: 'bug' });
+		await addLabel(t.ctx, { id, label: 'billing' });
+		await removeLabel(t.ctx, { id, label: 'billing' });
+		await setMeta(t.ctx, { id, key: 'owner', value: 'ann' });
+		await setMeta(t.ctx, { id, key: 'owner', value: 'bob' });
+		await unsetMeta(t.ctx, { id, key: 'owner' });
+		await setParent(t.ctx, { id, parent });
+		await removeParent(t.ctx, { id });
+		await linkTasks(t.ctx, { id, type: 'blockedBy', target: other });
+		await unlinkTasks(t.ctx, { id, type: 'blockedBy', target: other });
+		await setTaskText(t.ctx, { id, title: 'Fix the login' });
+		await setTaskText(t.ctx, { id, description: 'More words' });
 
-		expect(texts().reverse()).toEqual([
+		expect((await texts()).reverse()).toEqual([
 			'Created with status backlog',
 			'Type set to bug',
 			'Type cleared (was bug)',
@@ -120,10 +121,10 @@ describe('getTaskActivity', () => {
 		]);
 	});
 
-	it('gives each row an icon, a tone, no actor, and the preview of an edit as details', () => {
-		setTaskText(t.ctx, { id, description: 'More words' });
+	it('gives each row an icon, a tone, no actor, and the preview of an edit as details', async () => {
+		await setTaskText(t.ctx, { id, description: 'More words' });
 
-		const row = getTaskActivity(t.ctx, { id }).rows[0]!;
+		const row = (await getTaskActivity(t.ctx, { id })).rows[0]!;
 		expect(row).toMatchObject({
 			kind: 'description',
 			icon: 'file-text',
@@ -131,47 +132,47 @@ describe('getTaskActivity', () => {
 			details: { oldValue: 'Fix login', newValue: 'More words' },
 		});
 		expect(row).not.toHaveProperty('actor');
-		expect(getTaskActivity(t.ctx, { id }).rows.every(r => r.icon.length > 0)).toBe(true);
+		expect((await getTaskActivity(t.ctx, { id })).rows.every(r => r.icon.length > 0)).toBe(true);
 	});
 
-	it('uses the status tones of the project', () => {
-		setStatus(t.ctx, { id, status: 'in-progress' });
-		setStatus(t.ctx, { id, status: 'done' });
+	it('uses the status tones of the project', async () => {
+		await setStatus(t.ctx, { id, status: 'in-progress' });
+		await setStatus(t.ctx, { id, status: 'done' });
 
-		const tones = getTaskActivity(t.ctx, { id }).rows.map(row => row.tone);
+		const tones = (await getTaskActivity(t.ctx, { id })).rows.map(row => row.tone);
 		expect(tones).toEqual(['success', 'info', 'neutral']);
 	});
 
-	it('shows a negative terminal status in the danger tone', () => {
+	it('shows a negative terminal status in the danger tone', async () => {
 		t.cleanup();
 		t = createTestContext({
 			statuses: ['backlog', 'done', 'rejected'],
 			terminalStatuses: ['done', 'rejected'],
 			negativeStatuses: ['rejected'],
 		});
-		id = t.ctx.store.create('Fix login', 'backlog').id;
-		setStatus(t.ctx, { id, status: 'rejected' });
+		id = (await t.ctx.store.create({ title: 'Fix login', status: 'backlog' })).id;
+		await setStatus(t.ctx, { id, status: 'rejected' });
 
-		expect(getTaskActivity(t.ctx, { id }).rows[0]).toMatchObject({ kind: 'status', tone: 'danger' });
+		expect((await getTaskActivity(t.ctx, { id })).rows[0]).toMatchObject({ kind: 'status', tone: 'danger' });
 	});
 
 	describe('sub-tasks on the parent side', () => {
-		it('reads a parent change from both tasks: the child says "Parent", each parent says "Sub-task"', () => {
-			const a = t.ctx.store.create('Parent A', 'backlog').id;
-			const b = t.ctx.store.create('Parent B', 'backlog').id;
-			setParent(t.ctx, { id, parent: a });
-			setParent(t.ctx, { id, parent: b });
-			removeParent(t.ctx, { id });
+		it('reads a parent change from both tasks: the child says "Parent", each parent says "Sub-task"', async () => {
+			const a = (await t.ctx.store.create({ title: 'Parent A', status: 'backlog' })).id;
+			const b = (await t.ctx.store.create({ title: 'Parent B', status: 'backlog' })).id;
+			await setParent(t.ctx, { id, parent: a });
+			await setParent(t.ctx, { id, parent: b });
+			await removeParent(t.ctx, { id });
 
-			expect(texts(a).slice(0, 2)).toEqual([
+			expect((await texts(a)).slice(0, 2)).toEqual([
 				`Sub-task ${id} Fix login detached`,
 				`Sub-task ${id} Fix login added`,
 			]);
-			expect(texts(b).slice(0, 2)).toEqual([
+			expect((await texts(b)).slice(0, 2)).toEqual([
 				`Sub-task ${id} Fix login detached`,
 				`Sub-task ${id} Fix login added`,
 			]);
-			const row = getTaskActivity(t.ctx, { id: a }).rows[0]!;
+			const row = (await getTaskActivity(t.ctx, { id: a })).rows[0]!;
 			expect(row).toMatchObject({
 				kind: 'child-removed',
 				source: 'activity',
@@ -179,73 +180,73 @@ describe('getTaskActivity', () => {
 				icon: 'git-branch',
 				tone: 'neutral',
 			});
-			expect(getTaskActivity(t.ctx, { id: a }).rows[1]).toMatchObject({
+			expect((await getTaskActivity(t.ctx, { id: a })).rows[1]).toMatchObject({
 				kind: 'child-added',
 				icon: 'git-branch',
 			});
 		});
 
-		it('a deleted parent leaves the child with its own parent entry only', () => {
-			const parent = t.ctx.store.create('Parent A', 'backlog').id;
-			setParent(t.ctx, { id, parent });
-			t.ctx.store.deleteTask(parent);
+		it('a deleted parent leaves the child with its own parent entry only', async () => {
+			const parent = (await t.ctx.store.create({ title: 'Parent A', status: 'backlog' })).id;
+			await setParent(t.ctx, { id, parent });
+			await t.ctx.store.deleteTask(parent);
 
-			expect(texts(id)[0]).toBe(`Parent removed (was ${parent})`);
+			expect((await texts(id))[0]).toBe(`Parent removed (was ${parent})`);
 		});
 	});
 
 	describe('links', () => {
-		it('reads a link from both sides: the holder says "blocked by", the target says "blocks"', () => {
-			const blocker = t.ctx.store.create('Blocker task', 'backlog').id;
-			linkTasks(t.ctx, { id, type: 'blockedBy', target: blocker });
+		it('reads a link from both sides: the holder says "blocked by", the target says "blocks"', async () => {
+			const blocker = (await t.ctx.store.create({ title: 'Blocker task', status: 'backlog' })).id;
+			await linkTasks(t.ctx, { id, type: 'blockedBy', target: blocker });
 
-			expect(texts(id)[0]).toBe(`Linked: blocked by ${blocker} Blocker task`);
-			const mirrored = getTaskActivity(t.ctx, { id: blocker }).rows[0]!;
+			expect((await texts(id))[0]).toBe(`Linked: blocked by ${blocker} Blocker task`);
+			const mirrored = (await getTaskActivity(t.ctx, { id: blocker })).rows[0]!;
 			expect(mirrored.text).toBe(`Linked: blocks ${id} Fix login`);
 			expect(mirrored.inverse).toBe(true);
 			expect(mirrored.icon).toBe('link');
 			expect(mirrored.tone).toBe('purple');
 		});
 
-		it('the inverse name given to linkTasks is recorded on the right holder', () => {
-			const blocked = t.ctx.store.create('Blocked task', 'backlog').id;
-			linkTasks(t.ctx, { id, type: 'blocks', target: blocked });
+		it('the inverse name given to linkTasks is recorded on the right holder', async () => {
+			const blocked = (await t.ctx.store.create({ title: 'Blocked task', status: 'backlog' })).id;
+			await linkTasks(t.ctx, { id, type: 'blocks', target: blocked });
 
-			expect(texts(blocked)[0]).toBe(`Linked: blocked by ${id} Fix login`);
-			expect(texts(id)[0]).toBe(`Linked: blocks ${blocked} Blocked task`);
+			expect((await texts(blocked))[0]).toBe(`Linked: blocked by ${id} Fix login`);
+			expect((await texts(id))[0]).toBe(`Linked: blocks ${blocked} Blocked task`);
 		});
 
-		it('reads the id alone when the other task is gone', () => {
-			const gone = t.ctx.store.create('Gone', 'backlog').id;
-			linkTasks(t.ctx, { id, type: 'causedBy', target: gone });
-			t.ctx.store.deleteTask(gone);
+		it('reads the id alone when the other task is gone', async () => {
+			const gone = (await t.ctx.store.create({ title: 'Gone', status: 'backlog' })).id;
+			await linkTasks(t.ctx, { id, type: 'causedBy', target: gone });
+			await t.ctx.store.deleteTask(gone);
 
-			expect(texts()[0]).toBe(`Linked: caused by ${gone}`);
+			expect((await texts())[0]).toBe(`Linked: caused by ${gone}`);
 		});
 
-		it('cuts a long title of the other task to its headline', () => {
-			const long = t.ctx.store.create(`${'word '.repeat(60)}end`, 'backlog').id;
-			linkTasks(t.ctx, { id, type: 'duplicateOf', target: long });
+		it('cuts a long title of the other task to its headline', async () => {
+			const long = (await t.ctx.store.create({ title: `${'word '.repeat(60)}end`, status: 'backlog' })).id;
+			await linkTasks(t.ctx, { id, type: 'duplicateOf', target: long });
 
-			const text = texts()[0]!;
+			const text = (await texts())[0]!;
 			expect(text.startsWith(`Linked: duplicate of ${long} word`)).toBe(true);
 			expect(text.length).toBeLessThanOrEqual('Linked: duplicate of '.length + long.length + 1 + 90);
 		});
 	});
 
-	it('shows a kind written by a newer version instead of dropping it', () => {
+	it('shows a kind written by a newer version instead of dropping it', async () => {
 		const file = path.join(t.rootDir, 'data', 'tasks', `${id}.json`);
 		const record = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
 		record['activity'] = [{ at: new Date().toISOString(), kind: 'priority-changed' }];
 		fs.writeFileSync(file, JSON.stringify(record));
 
-		expect(texts()[0]).toBe('Change recorded: priority-changed');
+		expect((await texts())[0]).toBe('Change recorded: priority-changed');
 	});
 
-	it('emits no event and writes nothing (a read)', () => {
+	it('emits no event and writes nothing (a read)', async () => {
 		const file = path.join(t.rootDir, 'data', 'tasks', `${id}.json`);
 		const before = fs.readFileSync(file, 'utf8');
-		getTaskActivity(t.ctx, { id });
+		await getTaskActivity(t.ctx, { id });
 
 		expect(fs.readFileSync(file, 'utf8')).toBe(before);
 	});

@@ -49,13 +49,13 @@ describe('failure', () => {
 });
 
 describe('runJson', () => {
-	it('prints the result as indented JSON', () => {
-		expect(runJson(false, () => ({ a: 1 }))).toEqual({ exitCode: 0, output: '{\n  "a": 1\n}' });
+	it('prints the result as indented JSON', async () => {
+		expect(await runJson(false, () => ({ a: 1 }))).toEqual({ exitCode: 0, output: '{\n  "a": 1\n}' });
 		expect(jsonResult([])).toEqual({ exitCode: 0, output: '[]' });
 	});
 
-	it('turns a thrown error into the failure answer', () => {
-		const result = runJson(true, () => {
+	it('turns a thrown error into the failure answer', async () => {
+		const result = await runJson(true, () => {
 			throw new TaskNotFoundError('abc');
 		});
 		expect(result).toEqual({ exitCode: 1, output: '{"error":"Task not found: abc"}' });

@@ -1,9 +1,19 @@
+import { CornerDownRight, ListPlus, Plus, Unlink } from 'lucide-react';
 import React, { useRef, useState } from 'react';
 import { ProgressSummary } from './ProgressSummary.js';
 import { StatusBadge } from './StatusBadge.js';
 import type { Tone } from '../tones.js';
 import { useAction } from '../useAction.js';
-import { FIELD_CLASS } from '../ui/tokens.js';
+import {
+	BUTTON_PRIMARY_CLASS,
+	CONTROL_H,
+	CONTROL_RADIUS,
+	CONTROL_SQUARE,
+	FIELD_CLASS,
+	FOCUS_RING,
+	GAP_CONTROLS,
+	ICON_SIZE,
+} from '../ui/tokens.js';
 import type { ActionHandler } from '../useAction.js';
 
 export interface ChecklistRow {
@@ -34,6 +44,18 @@ export interface TaskChecklistProps {
 	reopenStatus?: string;
 	/** Name of the `$actions` entry that creates a sub-task (the add row). Without it there is no add row. */
 	addAction?: string;
+	/**
+	 * Name of the `$actions` entry run by the icon button at the end of each row, which breaks the link with the parent.
+	 * It gets the id of the row in `idParam` (`DELETE /tasks/{id}/parent`). Without it there is no button.
+	 */
+	detachAction?: string;
+	/** Tooltip and accessible name prefix of the detach button; the id of the row is appended to the name. */
+	detachLabel?: string;
+	/**
+	 * Name of the parameter that carries the id of the row to `detachAction` (default `id`). A page whose own task is `{id}`
+	 * uses another name (`childId`): the shell fills a `{id}` of a body-less action from the page, not from the row.
+	 */
+	detachIdParam?: string;
 	/** The task the sub-tasks belong to; sent as the parent of a created sub-task. */
 	parentId?: string;
 	/** Name of the parameter that carries the id of the clicked row. */
@@ -52,6 +74,17 @@ export interface TaskChecklistProps {
 	placeholder?: string;
 	/** `ring` (default): a circle with the percentage. `bar`: a bar with "done of total". `none`: nothing. */
 	progress?: 'ring' | 'bar' | 'none';
+	/** `checklist` (default): a box, the id, the headline and the status on a line. `table`: a bordered table with a header row. */
+	appearance?: 'checklist' | 'table';
+	/**
+	 * `row` (default): the add field is the LAST ROW of the list, a plus in the box column. `form`: a small form with
+	 * icons (heading, field, button), for a popover.
+	 */
+	addStyle?: 'row' | 'form';
+	/** `form` only: the heading of the form. */
+	addHeading?: string;
+	/** `form` only: the text of the button. */
+	addButton?: string;
 	/** Shown when there is no row. */
 	emptyText?: string;
 	/**
@@ -66,12 +99,18 @@ export interface TaskChecklistProps {
 	actionPending?: Record<string, boolean>;
 }
 
+// @formatter:off
+const DETACH_CLASS = `inline-flex ${CONTROL_SQUARE} shrink-0 items-center justify-center ${CONTROL_RADIUS} text-muted hover:bg-muted-bg hover:text-danger ${FOCUS_RING} disabled:cursor-not-allowed disabled:opacity-40`;
+const BOX_CLASS = 'h-4 w-4 shrink-0 cursor-pointer accent-primary disabled:cursor-not-allowed';
+// @formatter:on
+
 /**
- * The sub-tasks of a task as a checklist: a box per task (checked = terminal status), the id, the headline, the
- * status, a progress ring and an inline row to add a sub-task.
+ * The sub-tasks of a task as a checklist or a compact table: a box per task (checked = terminal status), the id, the
+ * headline, the status, an optional button that detaches the task from its parent, a progress summary and a way to add a
+ * sub-task (the last row of the list, or a small form with icons).
  *
  * @registryCategory composite
- * @registryTags checklist subtasks children progress steps
+ * @registryTags checklist subtasks children progress steps table detach
  */
 export function TaskChecklist({
 	rows,
@@ -80,6 +119,9 @@ export function TaskChecklist({
 	terminalStatus,
 	reopenStatus,
 	addAction,
+	detachAction,
+	detachLabel = 'Detach from parent',
+	detachIdParam = 'id',
 	parentId,
 	idParam = 'id',
 	statusParam = 'status',
@@ -88,6 +130,10 @@ export function TaskChecklist({
 	params,
 	placeholder = 'Add sub-task',
 	progress = 'ring',
+	appearance = 'checklist',
+	addStyle = 'row',
+	addHeading = 'New sub-task',
+	addButton = 'Create sub-task',
 	emptyText,
 	onAction,
 	actionPending,
@@ -95,6 +141,7 @@ export function TaskChecklist({
 	const done = useAction('TaskChecklist', doneAction, onAction, actionPending);
 	const reopen = useAction('TaskChecklist', reopenAction, onAction, actionPending);
 	const adder = useAction('TaskChecklist', addAction, onAction, actionPending);
+	const detacher = useAction('TaskChecklist', detachAction, onAction, actionPending);
 	const list = Array.isArray(rows) ? rows : [];
 	const [changing, setChanging] = useState<string[]>([]);
 	const [draft, setDraft] = useState('');
@@ -102,24 +149,32 @@ export function TaskChecklist({
 	const changingRef = useRef(new Set<string>());
 	const adding = useRef(false);
 
-	const toggle = async (row: ChecklistRow): Promise<void> => {
+	const guarded = async (row: ChecklistRow, work: () => Promise<unknown>): Promise<void> => {
 		if (changingRef.current.has(row.id)) {
 			return;
 		}
-		const checking = !row.terminal;
-		const runner = checking ? done : reopen;
-		const status = checking ? terminalStatus : reopenStatus;
-		const hasStatus = status !== undefined && status !== '';
 		changingRef.current.add(row.id);
 		setChanging([...changingRef.current]);
 		try {
-			const call = { ...(params ?? {}), [idParam]: row.id, ...(hasStatus ? { [statusParam]: status } : {}) };
-			await runner.run(call, hasStatus ? { [statusParam]: status } : undefined);
+			await work();
 		} finally {
 			changingRef.current.delete(row.id);
 			setChanging([...changingRef.current]);
 		}
 	};
+
+	const toggle = (row: ChecklistRow): Promise<void> =>
+		guarded(row, () => {
+			const checking = !row.terminal;
+			const runner = checking ? done : reopen;
+			const status = checking ? terminalStatus : reopenStatus;
+			const hasStatus = status !== undefined && status !== '';
+			const call = { ...(params ?? {}), [idParam]: row.id, ...(hasStatus ? { [statusParam]: status } : {}) };
+			return runner.run(call, hasStatus ? { [statusParam]: status } : undefined);
+		});
+
+	const detach = (row: ChecklistRow): Promise<void> =>
+		guarded(row, () => detacher.run({ ...(params ?? {}), [detachIdParam]: row.id }));
 
 	const add = async (): Promise<void> => {
 		if (adding.current) {
@@ -145,9 +200,87 @@ export function TaskChecklist({
 
 	const doneCount = list.filter(r => r.terminal).length;
 	const showAdd = addAction !== undefined && addAction !== '';
+	const showDetach = detachAction !== undefined && detachAction !== '';
+	const asTable = appearance === 'table';
+
+	const addField = (extraClass: string): React.ReactElement => (
+		<input
+			type="text"
+			aria-label="Add sub-task"
+			placeholder={placeholder}
+			value={draft}
+			readOnly={adder.busy}
+			aria-busy={adder.busy || undefined}
+			title={adder.unavailableReason}
+			onChange={event => setDraft(event.target.value)}
+			onKeyDown={event => {
+				if (event.key === 'Enter') {
+					event.preventDefault();
+					void add();
+				}
+			}}
+			className={`${FIELD_CLASS} ${extraClass}`}
+		/>
+	);
+
+	const idCell = (row: ChecklistRow): React.ReactElement =>
+		row.href ? (
+			<a href={row.href} className="shrink-0 font-mono text-xs text-muted hover:text-content hover:underline">
+				{row.id}
+			</a>
+		) : (
+			<span className="shrink-0 font-mono text-xs text-muted">{row.id}</span>
+		);
+
+	const box = (row: ChecklistRow): React.ReactElement => {
+		const runner = row.terminal ? reopen : done;
+		const headline = row.headline ?? row.title;
+		return (
+			<input
+				type="checkbox"
+				aria-label={`${row.id} ${headline}`}
+				checked={row.terminal}
+				disabled={!runner.available || changing.includes(row.id)}
+				title={runner.unavailableReason}
+				onChange={() => void toggle(row)}
+				className={BOX_CLASS}
+			/>
+		);
+	};
+
+	const headlineCell = (row: ChecklistRow): React.ReactElement => {
+		const headline = row.headline ?? row.title;
+		return (
+			<span
+				className={`min-w-0 flex-1 truncate ${row.terminal ? 'text-muted line-through' : 'text-content'}`}
+				title={headline}
+			>
+				{headline}
+			</span>
+		);
+	};
+
+	const detachButton = (row: ChecklistRow): React.ReactElement | null =>
+		showDetach ? (
+			<button
+				type="button"
+				data-testid="checklist-detach"
+				aria-label={`${detachLabel} ${row.id}`}
+				title={detacher.unavailableReason ?? detachLabel}
+				disabled={!detacher.available || changing.includes(row.id)}
+				onClick={() => void detach(row)}
+				className={DETACH_CLASS}
+			>
+				<Unlink size={ICON_SIZE} aria-hidden="true" />
+			</button>
+		) : null;
+
+	const statusCell = (row: ChecklistRow): React.ReactElement => (
+		<StatusBadge label={row.statusText ?? row.status} tone={row.tone} />
+	);
 
 	return (
-		<div data-testid="task-checklist" className="flex flex-col gap-2">
+		<div data-testid="task-checklist" data-appearance={appearance} className="flex flex-col gap-2">
 			{list.length > 0 ? (
 				progress === 'none' ? null : (
 					<ProgressSummary
@@ -159,67 +292,121 @@ export function TaskChecklist({
 			) : emptyText ? (
 				<p className="text-sm text-muted">{emptyText}</p>
 			) : null}
-			{list.length > 0 ? (
-				<ul className="flex flex-col divide-y divide-border">
-					{list.map(row => {
-						const runner = row.terminal ? reopen : done;
-						const headline = row.headline ?? row.title;
-						const rowBusy = changing.includes(row.id);
-						return (
-							<li
-								key={row.id}
-								data-testid="checklist-row"
-								className="flex items-center gap-2 py-1.5 text-sm"
-							>
-								<input
-									type="checkbox"
-									aria-label={`${row.id} ${headline}`}
-									checked={row.terminal}
-									disabled={!runner.available || rowBusy}
-									title={runner.unavailableReason}
-									onChange={() => void toggle(row)}
-									className="h-4 w-4 shrink-0 cursor-pointer accent-primary disabled:cursor-not-allowed"
-								/>
-								{row.href ? (
-									<a
-										href={row.href}
-										className="shrink-0 font-mono text-xs text-muted hover:text-content hover:underline"
-									>
-										{row.id}
-									</a>
-								) : (
-									<span className="shrink-0 font-mono text-xs text-muted">{row.id}</span>
-								)}
-								<span
-									className={`min-w-0 flex-1 truncate ${row.terminal ? 'text-muted line-through' : 'text-content'}`}
-									title={headline}
-								>
-									{headline}
-								</span>
-								<StatusBadge label={row.statusText ?? row.status} tone={row.tone} />
-							</li>
-						);
-					})}
+			{list.length > 0 && !asTable ? (
+				<ul className="m-0 flex list-none flex-col divide-y divide-border p-0">
+					{list.map(row => (
+						<li key={row.id} data-testid="checklist-row" className="py-1">
+							<div className={`flex ${CONTROL_H} items-center ${GAP_CONTROLS} text-sm`}>
+								{box(row)}
+								{idCell(row)}
+								{headlineCell(row)}
+								{statusCell(row)}
+								{detachButton(row)}
+							</div>
+						</li>
+					))}
+					{showAdd && addStyle === 'row' ? (
+						<li data-testid="checklist-add-row" className="py-1">
+							<div className={`flex ${CONTROL_H} items-center ${GAP_CONTROLS} text-sm`}>
+								<Plus size={ICON_SIZE} aria-hidden="true" className="w-4 shrink-0 text-muted" />
+								{addField('min-w-0 flex-1')}
+							</div>
+						</li>
+					) : null}
 				</ul>
 			) : null}
-			{showAdd ? (
-				<input
-					type="text"
-					aria-label="Add sub-task"
-					placeholder={placeholder}
-					value={draft}
-					readOnly={adder.busy}
-					aria-busy={adder.busy || undefined}
-					title={adder.unavailableReason}
-					onChange={event => setDraft(event.target.value)}
-					onKeyDown={event => {
-						if (event.key === 'Enter') {
-							event.preventDefault();
-							void add();
-						}
+			{list.length > 0 && asTable ? (
+				<div className={`overflow-x-auto ${CONTROL_RADIUS} border border-border bg-surface`}>
+					<table className="w-full border-collapse text-sm">
+						<thead>
+							<tr className="border-b border-border bg-muted-bg text-left text-xs font-medium text-muted">
+								<th scope="col" className="w-10 py-1 pl-3 pr-2">
+									<span className="sr-only">Done</span>
+								</th>
+								<th scope="col" className="py-1 pr-2">
+									Sub-task
+								</th>
+								<th scope="col" className="py-1 pr-2">
+									Status
+								</th>
+								{showDetach ? (
+									<th scope="col" className="w-10 py-1 pr-2">
+										<span className="sr-only">Actions</span>
+									</th>
+								) : null}
+							</tr>
+						</thead>
+						<tbody className="divide-y divide-border">
+							{list.map(row => (
+								<tr key={row.id} data-testid="checklist-row">
+									<td className="py-1 pl-3 pr-2 align-middle">{box(row)}</td>
+									<td className="max-w-0 py-1 pr-2 align-middle">
+										<div className={`flex ${CONTROL_H} items-center ${GAP_CONTROLS}`}>
+											{idCell(row)}
+											{headlineCell(row)}
+										</div>
+									</td>
+									<td className="py-1 pr-2 align-middle">{statusCell(row)}</td>
+									{showDetach ? (
+										<td className="py-1 pr-2 align-middle">{detachButton(row)}</td>
+									) : null}
+								</tr>
+							))}
+							{showAdd && addStyle === 'row' ? (
+								<tr data-testid="checklist-add-row">
+									<td className="py-1 pl-3 pr-2 align-middle">
+										<Plus size={ICON_SIZE} aria-hidden="true" className="text-muted" />
+									</td>
+									<td colSpan={showDetach ? 3 : 2} className="py-1 pr-2 align-middle">
+										{addField('w-full')}
+									</td>
+								</tr>
+							) : null}
+						</tbody>
+					</table>
+				</div>
+			) : null}
+			{showAdd && addStyle === 'row' && list.length === 0 ? (
+				<div
+					data-testid="checklist-add-row"
+					className={`flex ${CONTROL_H} items-center ${GAP_CONTROLS} text-sm`}
+				>
+					<Plus size={ICON_SIZE} aria-hidden="true" className="w-4 shrink-0 text-muted" />
+					{addField('min-w-0 flex-1')}
+				</div>
+			) : null}
+			{showAdd && addStyle === 'form' ? (
+				<form
+					data-testid="checklist-add-form"
+					className={`flex flex-col ${GAP_CONTROLS}`}
+					onSubmit={event => {
+						event.preventDefault();
+						void add();
 					}}
-					className={FIELD_CLASS}
-				/>
+				>
+					<div className={`flex items-center ${GAP_CONTROLS} text-sm font-semibold text-content`}>
+						<ListPlus size={ICON_SIZE} aria-hidden="true" className="text-muted" />
+						<span>{addHeading}</span>
+					</div>
+					<div className="relative flex items-center">
+						<CornerDownRight
+							size={ICON_SIZE}
+							aria-hidden="true"
+							className="pointer-events-none absolute left-2 text-muted"
+						/>
+						{addField('w-full pl-7')}
+					</div>
+					<div className="flex justify-end">
+						<button
+							type="submit"
+							disabled={draft.trim() === '' || adder.busy || !adder.available}
+							className={`${BUTTON_PRIMARY_CLASS} ${GAP_CONTROLS}`}
+						>
+							<Plus size={ICON_SIZE} aria-hidden="true" />
+							<span>{addButton}</span>
+						</button>
+					</div>
+				</form>
 			) : null}
 		</div>
 	);

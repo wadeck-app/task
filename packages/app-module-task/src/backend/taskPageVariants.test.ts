@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import yaml from 'js-yaml';
@@ -6,10 +6,10 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { DEFAULT_VIEWS_DIR, generateTaskPage, taskPageFile } from '../../../../scripts/generate-task-page.mjs';
 
 /*
- * The task page is an experiment between THREE designs, layout clones (from knowledge of the products, no access to them) of
- * GitHub (initial), Jira and GitLab: task-page.yaml is GENERATED from src/dsl-views/variants/* and holds one AbTest. These
- * tests are the contract every design keeps, so that no design silently drops a control of the page or shows a fact twice.
- * See variants/_page.yaml.
+ * The task page is ONE base design (merged from the GitHub, Jira and GitLab layouts) with seven LOCALIZED A/B rows (dsl-ui AbTest,
+ * see variants/_options.yaml). task-page.yaml is GENERATED from src/dsl-views/variants/_*.yaml. These tests are the contract the
+ * base keeps and every option keeps: no option silently drops a control or shows a fact twice. Option views are tested one
+ * dimension at a time (every option with the others at their default) plus two full combinations.
  */
 
 type Node = Record<string, unknown>;
@@ -21,16 +21,15 @@ const page = parse(readFileSync(taskPageFile(), 'utf8'));
 
 const isNode = (value: unknown): value is Node => value !== null && typeof value === 'object' && !Array.isArray(value);
 const sections = page.sections as Node[];
-// The experiment is the last section of the PageContent; the nodes before it are the notices shared by every design.
-const switcher = sections[sections.length - 1] as Node;
+// The base view is the last section of the PageContent (guarded by "the task is loaded"); the nodes before it are the notices.
+const base = sections[sections.length - 1] as Node;
 const notices = sections.slice(0, -1);
+
 interface Fragment {
 	label: string;
 	hint: string;
 	view: unknown;
 }
-const variants = switcher.variants as Record<string, Fragment>;
-const designNames = Object.keys(variants);
 
 function walk(value: unknown, visit: (node: Node, ancestors: Node[]) => void, ancestors: Node[] = []): void {
 	if (Array.isArray(value)) {
@@ -57,7 +56,57 @@ const stringsOf = (tree: unknown): string[] => {
 	return found;
 };
 
-const designs = designNames.map(name => [name, variants[name]!.view] as const);
+// ---- the AbTest dimensions -------------------------------------------------------------------------------------------------
+interface Dimension {
+	id: string;
+	label: string;
+	initial: string;
+	options: string[];
+}
+const dimensions: Dimension[] = [];
+walk(base, node => {
+	if (node.$type !== 'AbTest') return;
+	const id = String(node.id);
+	if (dimensions.some(d => d.id === id)) return;
+	dimensions.push({
+		id,
+		label: String(node.label),
+		initial: String(node.initial),
+		options: Object.keys(node.variants as Record<string, Fragment>),
+	});
+});
+
+/** The tree with every AbTest replaced by the view of the chosen option (the initial one when `choice` says nothing). */
+function resolve(tree: unknown, choice: Record<string, string> = {}): unknown {
+	if (Array.isArray(tree)) return tree.map(item => resolve(item, choice));
+	if (!isNode(tree)) return tree;
+	if (tree.$type === 'AbTest') {
+		const variants = tree.variants as Record<string, Fragment>;
+		const picked = choice[String(tree.id)] ?? String(tree.initial);
+		return resolve(variants[picked]!.view, choice);
+	}
+	return Object.fromEntries(Object.entries(tree).map(([key, value]) => [key, resolve(value, choice)]));
+}
+
+const alternate = (d: Dimension): string => d.options.find(o => o !== d.initial)!;
+const withOption = (id: string, option: string): Record<string, string> => ({ [id]: option });
+
+// The default page, every option once with the others at their default, and two full combinations.
+const choices: Array<[string, Record<string, string>]> = [
+	['default', {}],
+	...dimensions.flatMap(d =>
+		d.options
+			.filter(o => o !== d.initial)
+			.map(o => [`${d.id}=${o}`, withOption(d.id, o)] as [string, Record<string, string>])
+	),
+	['all alternates', Object.fromEntries(dimensions.map(d => [d.id, alternate(d)]))],
+	[
+		'every other alternate',
+		Object.fromEntries(dimensions.filter((_, i) => i % 2 === 0).map(d => [d.id, alternate(d)])),
+	],
+];
+const designs = choices.map(([name, choice]) => [name, resolve(base, choice)] as const);
+const viewFor = (choice: Record<string, string>): unknown => resolve(base, choice);
 
 describe('the generated task-page.yaml', () => {
 	it('is what the generator produces now (run "npm run views --workspace=packages/app-module-task" if not)', () => {
@@ -68,97 +117,79 @@ describe('the generated task-page.yaml', () => {
 		expect(readFileSync(taskPageFile(), 'utf8')).not.toMatch(/(^|\s)[&*][A-Za-z0-9_-]+(\s|$)/m);
 	});
 
-	it('stays small: the three designs are not multiplied by option rows (the eleven designs were 1 MB)', () => {
-		expect(readFileSync(taskPageFile(), 'utf8').length).toBeLessThan(200_000);
+	it('stays small: seven localized rows do not multiply the page (the eleven designs were 1 MB)', () => {
+		expect(readFileSync(taskPageFile(), 'utf8').length).toBeLessThan(120_000);
 	});
 });
 
-describe('the experiment', () => {
-	it('is ONE AbTest "Task page" at the page root: github (initial), jira, gitlab, in that order', () => {
-		expect(sections.filter(s => s.$type === 'AbTest')).toHaveLength(1);
-		expect(switcher.$type).toBe('AbTest');
-		expect(switcher.id).toBe('task-design');
-		expect(switcher.label).toBe('Task page');
-		expect(switcher.initial).toBe('github');
-		expect(designNames).toEqual(['github', 'jira', 'gitlab']);
-		// The PageContent must not cap the designs at its own 72rem centred column: each design sets its width.
-		expect(page.maxWidth).toBe('full');
+describe('the localized A/B rows', () => {
+	const EXPECTED: Array<[string, string, string[]]> = [
+		['description-style', 'card', ['card', 'plain']],
+		['subtask-add', 'row', ['row', 'popup']],
+		['subtask-list', 'checklist', ['checklist', 'table']],
+		['link-add', 'row', ['row', 'popup']],
+		['link-group', 'grouped', ['grouped', 'flat']],
+		['activity-filter', 'tabs', ['tabs', 'select']],
+		['activity-composer', 'top', ['top', 'bottom']],
+	];
+
+	it('are exactly seven, each with 2 options and the best as the initial one', () => {
+		expect(dimensions.map(d => [d.id, d.initial, d.options])).toEqual(EXPECTED);
+		expect(dimensions.length).toBeLessThanOrEqual(7);
 	});
 
-	it('has no other row in the dock: none of the old dimensions and no nested option (the designs are decided, not tuned)', () => {
-		const ids: unknown[] = [];
-		walk(
-			designs.map(d => d[1]),
-			node => {
-				if (node.$type === 'AbTest') ids.push(node.id);
-			}
-		);
-		expect(ids).toEqual([]);
+	it('there is NO page-level "Task page" row: the three product designs are gone, production renders the base', () => {
+		expect(sections.filter(s => s.$type === 'AbTest')).toEqual([]);
+		expect(dimensions.map(d => d.id)).not.toContain('task-design');
 		const text = readFileSync(taskPageFile(), 'utf8');
-		for (const gone of [
-			'task-title',
-			'task-header',
-			'task-controls',
-			'task-width',
-			'dim.title',
-			'VariantSwitcher',
-		]) {
+		for (const gone of ['task-design', 'VariantSwitcher', 'github-a', 'jira-b', 'gitlab-a']) {
 			expect(text, gone).not.toContain(gone);
 		}
-		// The eleven old designs and the three that replaced them (issue, bar, flow).
-		for (const gone of [
-			'github-a',
-			'github-b',
-			'gitlab-a',
-			'jira-b',
-			'linear-a',
-			'notion-b',
-			'current',
-			'issue',
-			'bar',
-			'flow',
-		]) {
-			expect(designNames).not.toContain(gone);
-			expect(existsSync(join(viewsDir, 'variants', `${gone}.yaml`)), gone).toBe(false);
-		}
+		const files = readdirSync(join(viewsDir, 'variants')).sort();
+		expect(files).toEqual(['_options.yaml', '_page.yaml', '_shared.yaml']);
+		// The page only reads the initial options in production: a view resolved with no choice has no AbTest left.
+		expect(nodesOf(viewFor({})).filter(n => n.$type === 'AbTest')).toEqual([]);
 	});
 
-	it('names every design with a label and a hint', () => {
-		for (const name of designNames) {
-			expect(variants[name]!.label, `${name} label`).toMatch(/\S/);
-			expect(variants[name]!.hint, `${name} hint`).toMatch(/\S/);
-		}
+	it('every option has a label and a hint', () => {
+		walk(base, node => {
+			if (node.$type !== 'AbTest') return;
+			expect(String(node.label), String(node.id)).toMatch(/\S/);
+			for (const [id, variant] of Object.entries(node.variants as Record<string, Fragment>)) {
+				expect(variant.label, `${String(node.id)}.${id} label`).toMatch(/\S/);
+				expect(variant.hint, `${String(node.id)}.${id} hint`).toMatch(/\S/);
+			}
+		});
+	});
+
+	it('an AbTest repeated at several places is declared identically each time (the dock keeps one row)', () => {
+		const declarations = new Map<string, string>();
+		walk(base, node => {
+			if (node.$type !== 'AbTest') return;
+			const variants = node.variants as Record<string, Fragment>;
+			const declaration = JSON.stringify([
+				node.label,
+				node.initial,
+				Object.entries(variants).map(([id, v]) => [id, v.label, v.hint]),
+			]);
+			const earlier = declarations.get(String(node.id));
+			if (earlier !== undefined) expect(declaration, String(node.id)).toBe(earlier);
+			declarations.set(String(node.id), declaration);
+		});
 	});
 
 	it('draws nothing until the task is loaded (the notices say why when there is no task), and sets its own width', () => {
-		for (const [name, view] of designs) {
-			const root = view as Node;
-			expect(root.$if, `${name}: the root needs $if: $sources.detail.task`).toBe('$sources.detail.task');
-			const frame = nodesOf(root).find(n => n.$type === 'task:WidthFrame');
-			expect(frame, `${name}: no WidthFrame`).toBeDefined();
-			expect(['wide', 'full'], `${name}: width`).toContain(frame!.width);
-		}
-	});
-
-	// The extension point task:project-header sits OUTSIDE the switcher: every design has it by construction.
-	it('has the slot task:project-header outside the switcher, once, whatever the design', () => {
-		const slots = nodesOf(notices).filter(n => n.$type === 'ExtensionSlot');
-		expect(slots).toEqual([
-			{ $type: 'ExtensionSlot', $if: '$sources.projectHeader', items: '$sources.projectHeader' },
-		]);
-		expect(notices[0]).toMatchObject({ $type: 'task:ChipRow', $if: '$route.project' });
-		expect(page.$sources).toHaveProperty('projectHeader.url', 'GET /api/slots/task:project-header');
-		for (const [name, view] of designs) {
-			expect(
-				nodesOf(view).filter(n => n.$type === 'ExtensionSlot' && n.items === '$sources.projectHeader'),
-				name
-			).toEqual([]);
-		}
+		expect(base.$if).toBe('$sources.detail.task');
+		const frame = nodesOf(base).find(n => n.$type === 'task:WidthFrame');
+		expect(frame, 'no WidthFrame').toBeDefined();
+		expect(frame!.width).toBe('wide');
+		// The PageContent must not cap the page at its own 72rem centred column.
+		expect(page.maxWidth).toBe('full');
 	});
 
 	// task:Notice everywhere (same radius, padding and text as the controls; a dsl-ui Badge is a one-line 22px pill). The answer of the
 	// delete comes BEFORE "task not found": once the task is gone the page cannot draw it, and the reader meets what happened first.
-	it('keeps the notices OUTSIDE the switcher, so every design has the same error and empty states (and the delete answer survives the task)', () => {
+	it('keeps the notices OUTSIDE the options, so the page has the same error and empty states (and the delete answer survives the task)', () => {
 		const expected: [string, string, string][] = [
 			['$sources.projects.noProjects', '$sources.projects.noProjectsText', 'info'],
 			['$sources.projects.selectedProblem', '$sources.projects.selectedProblem', 'danger'],
@@ -169,15 +200,26 @@ describe('the experiment', () => {
 			['$sources.detail.errorText', '$sources.detail.errorText', 'danger'],
 			['$sources.detail.warningText', '$sources.detail.warningText', 'warning'],
 		];
-		expect(notices.slice(1).map(n => [n.$if, n.label, n.variant, n.$type])).toEqual(
+		expect(notices.map(n => [n.$if, n.label, n.variant, n.$type])).toEqual(
 			expected.map(([condition, label, variant]) => [condition, label, variant, 'task:Notice'])
 		);
 	});
+
+	it('the project link is gone: no task:project-header slot on the detail page (the breadcrumb carries the project)', () => {
+		expect(nodesOf(page).filter(n => n.$type === 'ExtensionSlot' && n.items === '$sources.projectHeader')).toEqual(
+			[]
+		);
+		expect(Object.keys(page.$sources as Node)).not.toContain('projectHeader');
+		expect(
+			stringsOf(page.sections).filter(s => s.includes('project-header') || s.includes('projectHeader'))
+		).toEqual([]);
+		expect(JSON.stringify(page.$sources)).not.toContain('/api/slots');
+	});
 });
 
-// Each fact is shown ONCE per design, where it is edited: the id in the header, the status in one control, and so on. A binding
-// counts when a node DISPLAYS it (a prop other than $if, params, initialData, or the `value` that marks the current choice of a popover).
-describe('every fact is shown once per design (single source of truth)', () => {
+// Each fact is shown ONCE per page, where it is edited: the id in the header, the status in one control, and so on. A binding counts
+// when a node DISPLAYS it (a prop other than $if, params, initialData, or the `value` that marks the current choice of a popover).
+describe('every fact is shown once (single source of truth)', () => {
 	const SKIP = new Set(['$type', '$if', 'params', 'initialData']);
 	const shows = (node: Node, bindings: string[]): boolean =>
 		Object.entries(node).some(
@@ -210,48 +252,24 @@ describe('every fact is shown once per design (single source of truth)', () => {
 	const FACTS: Array<{ fact: string; bindings: string[]; exactlyOnce: boolean }> = [
 		{ fact: 'id', bindings: ['$sources.detail.task.id'], exactlyOnce: true },
 		{ fact: 'title', bindings: ['$sources.detail.headline'], exactlyOnce: true },
-		{
-			fact: 'status',
-			bindings: ['$sources.detail.task.status', '$sources.detail.pillTexts.status'],
-			exactlyOnce: true,
-		},
-		{
-			fact: 'labels',
-			bindings: ['$sources.detail.labelList', '$sources.detail.pillTexts.labels'],
-			exactlyOnce: true,
-		},
+		{ fact: 'status', bindings: ['$sources.detail.task.status'], exactlyOnce: true },
+		{ fact: 'labels', bindings: ['$sources.detail.labelList'], exactlyOnce: true },
 		{
 			fact: 'parent',
-			bindings: [
-				'$sources.detail.parentRow.titleText',
-				'$sources.detail.pillTexts.parent',
-				'$sources.detail.parentRow',
-			],
+			bindings: ['$sources.detail.parentRow.titleText', '$sources.detail.parentRow'],
 			exactlyOnce: true,
 		},
 		{ fact: 'created', bindings: ['$sources.detail.createdAt', '$sources.detail.createdText'], exactlyOnce: true },
-		// GitHub shows when the issue was opened, not when it was last updated.
-		{ fact: 'updated', bindings: ['$sources.detail.updatedAt', '$sources.detail.updatedText'], exactlyOnce: false },
+		{ fact: 'updated', bindings: ['$sources.detail.updatedAt', '$sources.detail.updatedText'], exactlyOnce: true },
 		{
 			fact: 'sub-tasks',
 			bindings: ['$sources.detail.checklistRows', '$sources.detail.children'],
 			exactlyOnce: true,
 		},
-		{
-			fact: 'metadata',
-			bindings: ['$sources.detail.metaEntries', '$sources.detail.metaList', '$sources.detail.metaRows'],
-			exactlyOnce: true,
-		},
-		// The activity (one feed, filtered by its tabs) and the comments (the Comments tab) come from their own sources; the
-		// old Timeline of the detail answer is not drawn any more.
+		{ fact: 'metadata', bindings: ['$sources.detail.metaEntries'], exactlyOnce: true },
 		{ fact: 'activity', bindings: ['$sources.activity.rows'], exactlyOnce: true },
 		{ fact: 'comments', bindings: ['$sources.comments.comments'], exactlyOnce: true },
-		{
-			fact: 'blocked',
-			bindings: ['$sources.detail.blockedText', '$sources.detail.pillTexts.blocked'],
-			exactlyOnce: false,
-		},
-		// The project is in the shell crumb; the whole task is the title and the body.
+		{ fact: 'blocked', bindings: ['$sources.detail.blockedText'], exactlyOnce: false },
 		{ fact: 'project', bindings: ['$sources.detail.projectText', '$sources.detail.project'], exactlyOnce: false },
 		{ fact: 'whole title', bindings: ['$sources.detail.task.title'], exactlyOnce: false },
 	];
@@ -273,25 +291,21 @@ describe('every fact is shown once per design (single source of truth)', () => {
 		}
 	);
 
-	it.each(designs)(
-		'%s: the project and the whole title are not repeated (the crumb names the project, the headline is the title)',
-		(name, view) => {
-			const text = JSON.stringify(view);
-			for (const gone of [
-				'detail.projectText',
-				'detail.task.title',
-				'titleShort',
-				'hasShortTitle',
-				'descriptionText',
-				'hasDescription',
-			]) {
-				expect(text, `${name}: ${gone}`).not.toContain(gone);
-			}
+	it.each(designs)('%s: the project and the whole title are not repeated', (name, view) => {
+		const text = JSON.stringify(view);
+		for (const gone of [
+			'detail.projectText',
+			'detail.task.title',
+			'titleShort',
+			'hasShortTitle',
+			'descriptionText',
+		]) {
+			expect(text, `${name}: ${gone}`).not.toContain(gone);
 		}
-	);
+	});
 
 	it.each(designs)(
-		'%s: the status is ONE compact task:StatusSelect (no stepper, no visible list of statuses), the type a popover with a "None" choice',
+		'%s: the status is ONE task:StatusSelect pill with no label of its own (no stepper, no visible list)',
 		(name, view) => {
 			const nodes = nodesOf(view);
 			const statusControls = nodes.filter(
@@ -307,23 +321,84 @@ describe('every fact is shown once per design (single source of truth)', () => {
 				action: 'setStatus',
 				bodyKey: 'status',
 			});
-			// A stepper or any always-visible list of the statuses is pollution: the list only matters at transition time.
+			expect(statusControls[0], `${name}: the status pill needs no label`).not.toHaveProperty('label');
+			expect(statusControls[0], name).not.toHaveProperty('appearance');
 			expect(
 				nodes.filter(n => n.$type === 'task:SegmentedControl'),
+				name
+			).toEqual([]);
+			// No heading or row called Status anywhere: the pill is the whole control.
+			expect(
+				nodes.filter(n => n.label === 'Status' || n.title === 'Status'),
 				name
 			).toEqual([]);
 			const text = JSON.stringify(view);
 			for (const gone of ['statusChoices', 'setStatusTo', 'detail.pillTexts']) {
 				expect(text, `${name}: ${gone}`).not.toContain(gone);
 			}
-			const typePopovers = nodes.filter(n => n.$type === 'task:PropertyPopover' && n.action === 'setType');
-			for (const popover of typePopovers) expect(popover.options, name).toBe('$sources.detail.typeOptions');
+		}
+	);
+
+	it.each(designs)(
+		'%s: the type and the status are two pills of ONE row, the type to the LEFT, at the top of the sidebar',
+		(name, view) => {
+			const split = nodesOf(view).find(n => n.$type === 'task:SplitLayout')!;
+			const sideStack = (split.side as Node[])[0]!;
+			const first = (sideStack.items as Node[])[0]!;
+			expect(first.$type, name).toBe('task:ChipRow');
+			// Type (a pill with a list, or a free text when the project has no configured type) first, the status pill last.
+			expect((first.items as Node[]).map(n => [n.$type, n.action])).toEqual([
+				['task:PropertyPopover', 'setType'],
+				['task:ChipRow', undefined],
+				['task:StatusSelect', 'setStatus'],
+			]);
+			expect((first.items as Node[])[0]).toMatchObject({ label: 'Type', appearance: 'pill' });
+			const types = (first.items as Node[]).slice(0, 2);
+			expect(
+				nodesOf(types[1]).filter(n => n.$type === 'task:InlineText' && n.action === 'setType'),
+				name
+			).toHaveLength(1);
+			expect(
+				types.map(n => n.$if),
+				name
+			).toEqual(['$sources.detail.hasTypes', '$sources.detail.noTypes']);
+			const typePopover = nodesOf(view).filter(n => n.$type === 'task:PropertyPopover' && n.action === 'setType');
+			expect(typePopover, name).toHaveLength(1);
+			expect(typePopover[0]!.options).toBe('$sources.detail.typeOptions');
 		}
 	);
 });
 
-// A logical control of the page -> the props that can provide it. A design keeps every control.
-describe.each(designs)('design %s keeps every control of the task page', (name, view) => {
+describe('words: nothing says "terminal", no empty text for labels and metadata', () => {
+	it('no display text of the page contains "terminal" (the colour of the pill and of the dots says it)', () => {
+		// Binding expressions ($sources.detail.terminalStatus) and prop names are not display texts.
+		const displayed = stringsOf(page.sections).filter(s => !s.startsWith('$'));
+		expect(displayed.filter(s => /terminal/i.test(s))).toEqual([]);
+		const keys = nodesOf(page.sections).flatMap(n => Object.keys(n));
+		expect(keys.filter(k => /^terminal$/i.test(k))).toEqual([]);
+	});
+
+	it('no "No metadata" or "No labels" text: only the chips and "+ Add" (labels and metadata are consistent)', () => {
+		for (const [name, view] of designs) {
+			const text = stringsOf(view).join('\n');
+			expect(text, name).not.toMatch(/No metadata/i);
+			expect(text, name).not.toMatch(/No labels/i);
+			for (const node of nodesOf(view).filter(
+				n => n.$type === 'task:MetaEditor' || n.$type === 'task:LabelCombobox'
+			)) {
+				expect(node, `${name}: ${String(node.$type)}`).not.toHaveProperty('emptyText');
+			}
+		}
+	});
+
+	it('the words of the status list come from the route: no hint about terminal statuses in the components', () => {
+		const statusSelect = readFileSync(join(packageDir, '../dsl-lib-task/src/components/StatusSelect.tsx'), 'utf8');
+		expect(statusSelect).not.toMatch(/hint:\s*option\.terminal/);
+	});
+});
+
+// A logical control of the page -> the props that can provide it. Every resolved page keeps every control.
+describe.each(designs)('page %s keeps every control of the task page', (name, view) => {
 	const nodes = nodesOf(view);
 	const strings = new Set(stringsOf(view));
 	const actionProps = [
@@ -334,6 +409,7 @@ describe.each(designs)('design %s keeps every control of the task page', (name, 
 		'setAction',
 		'doneAction',
 		'reopenAction',
+		'detachAction',
 	];
 	const actionsRun = new Set<string>();
 	for (const node of nodes) {
@@ -342,7 +418,7 @@ describe.each(designs)('design %s keeps every control of the task page', (name, 
 		if (typeof node.onSubmit === 'string' && node.onSubmit.startsWith('$ctx.'))
 			actionsRun.add(node.onSubmit.slice(5));
 	}
-	// removeLinkRow is run by the x of the rows the links route builds (dslNodes.ts), which the design draws as a slot.
+	// removeLinkRow is run by the x of the rows the links route builds (dslNodes.ts) in the grouped list.
 	if (strings.has('$sources.links.groupSections')) actionsRun.add('removeLinkRow');
 
 	it.each([
@@ -357,16 +433,17 @@ describe.each(designs)('design %s keeps every control of the task page', (name, 
 		['remove a metadata entry', ['removeMetaKey']],
 		['set the parent', ['setParent']],
 		['detach the parent', ['removeParent']],
+		['detach a sub-task from its parent', ['detachChild']],
 		['add a link', ['addLink']],
 		['remove a link', ['removeLinkRow']],
 		['edit the title and the body', ['setText']],
 		['add a sub-task', ['createSubtask']],
 		['tick a sub-task', ['setChildStatus']],
 		['delete the task', ['deleteTask']],
-	])('can %s', (_feature, names) => {
+	])('can %s', (feature, names) => {
 		expect(
 			names.filter(n => actionsRun.has(n)),
-			`${name} cannot ${_feature}`
+			`${name} cannot ${feature}`
 		).not.toEqual([]);
 	});
 
@@ -393,8 +470,9 @@ describe.each(designs)('design %s keeps every control of the task page', (name, 
 		expect(parent, `${name}: parent picker`).toBeDefined();
 		// A parent cannot be the task itself or one of its descendants.
 		expect(parent.excludeDescendantsOf).toBe('$route.id');
-		const link = pickers.find(n => n.action === 'addLink')!;
-		expect(link, `${name}: link picker`).toBeDefined();
+		const links = pickers.filter(n => n.action === 'addLink');
+		expect(links, `${name}: exactly one link picker`).toHaveLength(1);
+		const link = links[0]!;
 		expect(link.choices).toBe('$sources.detail.linkTypeOptions');
 		expect(link.choiceKey).toBe('type');
 		expect(link.bodyKey).toBe('target');
@@ -414,6 +492,7 @@ describe.each(designs)('design %s keeps every control of the task page', (name, 
 		)) {
 			const ran = nodesOf(popover.items).flatMap(n => [
 				n.action,
+				n.addAction,
 				n.onSubmit && String(n.onSubmit).slice('$ctx.'.length),
 			]);
 			const closing = (popover.closeOnActions ?? []) as string[];
@@ -425,32 +504,32 @@ describe.each(designs)('design %s keeps every control of the task page', (name, 
 		}
 	});
 
-	// The list of the sub-tasks is ONE checklist (rows, boxes, statuses of the config); the add row (title and parent in the
-	// body) is either in it or, in an "Add sub-task" popover, in a checklist without rows: the sub-tasks are never listed twice.
-	it('sub-tasks: one checklist lists them, one add row creates them (title and parent in the body)', () => {
+	// One checklist lists the sub-tasks (rows, boxes, detach buttons); ONE add field creates them: a row of that checklist, or the
+	// form of the "Add sub-task" popup, which is a checklist without rows. The sub-tasks are never listed twice.
+	it('sub-tasks: one list, one add field (title and parent in the body), a detach button on every row', () => {
 		const lists = nodes.filter(n => n.$type === 'task:TaskChecklist');
 		const listing = lists.filter(n => n.rows === '$sources.detail.checklistRows');
 		expect(listing, name).toHaveLength(1);
 		expect(listing[0]).toMatchObject({
 			doneAction: 'setChildStatus',
 			reopenAction: 'setChildStatus',
+			detachAction: 'detachChild',
+			detachIdParam: 'childId',
 			terminalStatus: '$sources.detail.terminalStatus',
 			reopenStatus: '$sources.detail.reopenStatus',
 		});
-		const others = lists.filter(n => n !== listing[0]);
-		for (const other of others) expect(other.rows, `${name}: an add-only checklist has no rows`).toEqual([]);
+		for (const other of lists.filter(n => n !== listing[0])) {
+			expect(other.rows, `${name}: an add-only checklist has no rows`).toEqual([]);
+		}
 		const adders = lists.filter(n => n.addAction === 'createSubtask');
-		expect(adders, `${name}: exactly one add row`).toHaveLength(1);
+		expect(adders, `${name}: exactly one add field`).toHaveLength(1);
 		expect(adders[0]).toMatchObject({ parentId: '$route.id', titleKey: 'title' });
 	});
 
 	it('the activity is ONE task:ActivityFeed (All / Comments / History) fed by the activity source, with the comments in its Comments tab', () => {
 		const feeds = nodes.filter(n => n.$type === 'task:ActivityFeed');
 		expect(feeds, name).toHaveLength(1);
-		expect(feeds[0]).toMatchObject({
-			rows: '$sources.activity.rows',
-			filters: ['all', 'comments', 'history'],
-		});
+		expect(feeds[0]).toMatchObject({ rows: '$sources.activity.rows', filters: ['all', 'comments', 'history'] });
 		// The shell renders a slot prop from a LIST of nodes (a single object drew nothing: found in the browser).
 		expect(Array.isArray(feeds[0]!.commentsContent), `${name}: commentsContent is a list`).toBe(true);
 		expect(Array.isArray(feeds[0]!.composer), `${name}: composer is a list`).toBe(true);
@@ -463,7 +542,6 @@ describe.each(designs)('design %s keeps every control of the task page', (name, 
 			emptyText: 'No comments yet',
 		});
 		expect(JSON.stringify(thread[0]!.params), name).toContain('$route.id');
-		// The old Timeline is gone.
 		expect(
 			nodes.filter(n => n.$type === 'task:Timeline'),
 			name
@@ -480,48 +558,250 @@ describe.each(designs)('design %s keeps every control of the task page', (name, 
 		expect(['top', 'bottom'], name).toContain(feed.composerPosition);
 	});
 
-	it('the relations are the groups of the links route (an x per row), never a second remove form', () => {
-		expect(strings.has('$sources.links.groupSections'), name).toBe(true);
+	it('the relations: either the groups of the links route or one flat list, an x per row, never a second remove form', () => {
+		const grouped = strings.has('$sources.links.groupSections');
+		const flat = nodes.filter(n => n.$type === 'task:TaskRowList' && n.rows === '$sources.links.rows');
+		expect(grouped !== (flat.length === 1), `${name}: exactly one of grouped / flat`).toBe(true);
+		for (const list of flat)
+			expect(list).toMatchObject({ removeAction: 'removeLinkRow', removeLabel: 'Remove link' });
 		expect(nodes.filter(n => n.$type === 'Form' && n.onSubmit === '$ctx.removeLink')).toEqual([]);
-	});
-
-	it('the delete dialog shows the consequences, offers the cascade only with descendants, and never asks for the id', () => {
-		const dialog = nodes.find(n => n.$type === 'Dialog')!;
-		expect(dialog, `${name}: no delete dialog`).toBeDefined();
-		const inside = nodesOf(dialog);
-		expect(inside.some(n => n.label === '$sources.detail.deleteImpactText')).toBe(true);
-		// No switch (a view reads no form state, so it could not change a sentence): one form per outcome, the label states it.
-		expect(inside.filter(n => n.bind !== undefined)).toEqual([]);
-		const forms = inside.filter(n => n.$type === 'Form');
-		expect(forms).toHaveLength(2);
-		expect(forms[0]).toMatchObject({ onSubmit: '$ctx.deleteTask', initialData: '$sources.detail.forms.delete' });
-		expect(forms[1]).toMatchObject({
-			$if: '$sources.detail.hasDescendants',
-			onSubmit: '$ctx.deleteTask',
-			initialData: '$sources.detail.forms.deleteCascade',
-		});
-		const buttons = inside.filter(n => n.$type === 'ButtonAction' && n.type === 'submit');
-		expect(buttons.map(n => n.label)).toEqual([
-			'$sources.detail.deleteLabel',
-			'$sources.detail.deleteCascadeLabel',
-		]);
-		expect(buttons[0]).toMatchObject({ variant: 'danger' });
-		// The dialog sits behind a menu, not in the toolbar.
-		expect(nodes.some(n => n.$type === 'task:PropertyPopover' && nodesOf(n).includes(dialog))).toBe(true);
-		expect(nodes.filter(n => n.$type === 'ButtonLink' && n.to === '$sources.detail.taskHrefs.deleteTasks')).toEqual(
-			[]
-		);
 	});
 
 	it('an empty Parent never stands over nothing: it says "none"', () => {
 		const parents = nodes.filter(n => n.$type === 'task:PropertyPopover' && n.label === 'Parent');
 		expect(parents.length).toBe(1);
-		const pill = parents[0]!;
-		// A pill carries "Parent: none" itself (pillTexts); a row says `empty: none`.
+		expect(String(parents[0]!.empty).toLowerCase()).toBe('none');
+	});
+});
+
+describe('the delete: a direct button with the existing confirmation dialog', () => {
+	it.each(designs)(
+		'%s: a danger task:ControlButton opens a dialog with the consequences, the cascade only with descendants, no id to retype',
+		(name, view) => {
+			const nodes = nodesOf(view);
+			const dialog = nodes.filter(n => n.$type === 'Dialog');
+			expect(dialog, name).toHaveLength(1);
+			const [trigger] = dialog[0]!.trigger as Node[];
+			expect(trigger, name).toMatchObject({
+				$type: 'task:ControlButton',
+				variant: 'danger',
+				icon: 'trash',
+				label: 'Delete',
+			});
+			// Never a menu for one action.
+			expect(
+				nodes.filter(n => n.valueText === 'Actions' || n.label === 'Menu' || n.label === 'Actions'),
+				name
+			).toEqual([]);
+			const inside = nodesOf(dialog[0]!.items);
+			expect(inside.some(n => n.label === '$sources.detail.deleteImpactText')).toBe(true);
+			// No switch (a view reads no form state, so it could not change a sentence): one form per outcome, the label states it.
+			expect(inside.filter(n => n.bind !== undefined)).toEqual([]);
+			const forms = inside.filter(n => n.$type === 'Form');
+			expect(forms).toHaveLength(2);
+			expect(forms[0]).toMatchObject({
+				onSubmit: '$ctx.deleteTask',
+				initialData: '$sources.detail.forms.delete',
+			});
+			expect(forms[1]).toMatchObject({
+				$if: '$sources.detail.hasDescendants',
+				onSubmit: '$ctx.deleteTask',
+				initialData: '$sources.detail.forms.deleteCascade',
+			});
+			const buttons = inside.filter(n => n.$type === 'ButtonAction' && n.type === 'submit');
+			expect(buttons.map(n => n.label)).toEqual([
+				'$sources.detail.deleteLabel',
+				'$sources.detail.deleteCascadeLabel',
+			]);
+			expect(buttons[0]).toMatchObject({ variant: 'danger' });
+			expect(
+				nodes.filter(n => n.$type === 'ButtonLink' && n.to === '$sources.detail.taskHrefs.deleteTasks')
+			).toEqual([]);
+		}
+	);
+
+	it('the button sits at the right of the header line, the state and the id at its left', () => {
+		const header = nodesOf(viewFor({})).find(
+			n =>
+				n.$type === 'task:ChipRow' &&
+				n.justify === 'between' &&
+				Array.isArray(n.items) &&
+				nodesOf(n).some(c => c.$type === 'Dialog')
+		)!;
+		expect(header).toBeDefined();
+		const [left, right] = header.items as Node[];
+		expect(right!.$type).toBe('Dialog');
 		expect(
-			String(pill.empty).toLowerCase() === 'none' || pill.valueText === '$sources.detail.pillTexts.parent',
-			name
-		).toBe(true);
+			nodesOf(left)
+				.filter(n => n.$type === 'task:StatusBadge')
+				.map(n => n.label)
+		).toEqual(['Open', 'Closed', '$sources.detail.task.id']);
+	});
+});
+
+describe('the sidebar: GitHub look without card, Jira rows (label left, value right on ONE line)', () => {
+	const split = nodesOf(viewFor({})).find(n => n.$type === 'task:SplitLayout')!;
+	const side = nodesOf(split.side);
+
+	it('is a sticky right column that stacks ABOVE the main column on small screens', () => {
+		expect(split).toMatchObject({ sidePosition: 'right', sticky: true, sideFirstWhenStacked: true });
+		expect(nodesOf(viewFor({})).filter(n => n.$type === 'task:SplitLayout')).toHaveLength(1);
+	});
+
+	it('has no card, no background and no collapsible section: no task:Panel at all', () => {
+		expect(side.filter(n => n.$type === 'task:Panel' || n.$type === 'Card' || n.collapsible !== undefined)).toEqual(
+			[]
+		);
+	});
+
+	it('is a divider under the pills, then a divided list of inline rows: Parent, Labels, Metadata, Updated', () => {
+		expect(side.filter(n => n.$type === 'Divider')).toHaveLength(1);
+		const list = side.find(n => n.$type === 'task:PropertyList')!;
+		expect(list).toMatchObject({ labelPlacement: 'inline', dividers: true });
+		const rows = (list.items as Node[]).map(n => n.label);
+		expect(rows).toEqual(['Parent', 'Labels', 'Metadata', 'Updated']);
+		// The first three rows hold a 32px control: the label lines up with its text.
+		for (const row of (list.items as Node[]).slice(0, 3)) expect(row.align).toBe('control');
+	});
+
+	it('shows no label text above a value (no stacked rows, no section titles)', () => {
+		expect(side.filter(n => n.labelPlacement === 'stacked')).toEqual([]);
+		expect(side.filter(n => typeof n.title === 'string')).toEqual([]);
+	});
+});
+
+describe('the options, one dimension at a time', () => {
+	const only = (id: string, option: string): Node[] => nodesOf(viewFor(withOption(id, option)));
+	const panel = (nodes: Node[], title: string): Node =>
+		nodes.find(n => n.$type === 'task:Panel' && n.title === title)!;
+
+	it('description-style: a bordered card with a header strip | a plain heading', () => {
+		expect(panel(only('description-style', 'card'), 'Description')).toMatchObject({ appearance: 'strip' });
+		expect(panel(only('description-style', 'plain'), 'Description')).toMatchObject({ appearance: 'plain' });
+	});
+
+	it('subtask-add: the last row of the list (plus icon, no header button) | a header button with an icon opening a form', () => {
+		const row = only('subtask-add', 'row');
+		const rowPanel = panel(row, 'Sub-tasks');
+		expect(rowPanel.actions).toBeUndefined();
+		expect(rowPanel.count).toBe('$sources.detail.childrenSummary.total');
+		expect(
+			nodesOf(rowPanel).find(n => n.$type === 'task:TaskChecklist' && n.addAction === 'createSubtask')!.addStyle
+		).toBeUndefined();
+		const popup = only('subtask-add', 'popup');
+		const popupPanel = panel(popup, 'Sub-tasks');
+		const trigger = nodesOf(popupPanel.actions).find(n => n.$type === 'task:PropertyPopover')!;
+		expect(trigger).toMatchObject({
+			icon: 'add-sub-task',
+			valueText: 'Add sub-task',
+			align: 'end',
+			closeOnActions: ['createSubtask'],
+		});
+		const form = nodesOf(trigger.items).find(n => n.$type === 'task:TaskChecklist')!;
+		expect(form).toMatchObject({
+			addStyle: 'form',
+			rows: [],
+			addAction: 'createSubtask',
+			addHeading: 'New sub-task',
+			addButton: 'Create sub-task',
+		});
+		// The listing checklist of the popup variant has no add row of its own.
+		const listing = nodesOf(popupPanel.items).find(n => n.rows === '$sources.detail.checklistRows')!;
+		expect(listing.addAction).toBeUndefined();
+	});
+
+	it('subtask-list: a checklist | a compact table, with the detach button in both and in both add variants', () => {
+		for (const add of ['row', 'popup']) {
+			const checklist = nodesOf(viewFor({ 'subtask-add': add, 'subtask-list': 'checklist' })).find(
+				n => n.rows === '$sources.detail.checklistRows'
+			)!;
+			const table = nodesOf(viewFor({ 'subtask-add': add, 'subtask-list': 'table' })).find(
+				n => n.rows === '$sources.detail.checklistRows'
+			)!;
+			expect(checklist.appearance, add).toBeUndefined();
+			expect(table.appearance, add).toBe('table');
+			for (const list of [checklist, table]) {
+				expect(list, add).toMatchObject({
+					detachAction: 'detachChild',
+					detachIdParam: 'childId',
+					progress: 'bar',
+				});
+				expect(JSON.stringify(list.params), add).toContain('projectParam');
+			}
+		}
+	});
+
+	it('link-add: the last row of the panel (relation select and search on one line) | a header button with an icon and icon relations', () => {
+		const row = only('link-add', 'row');
+		const rowPanel = panel(row, 'Relations');
+		expect(rowPanel.actions).toBeUndefined();
+		const picker = nodesOf(rowPanel).find(n => n.$type === 'task:TaskPicker')!;
+		expect(picker).toMatchObject({ layout: 'row', action: 'addLink' });
+		expect(picker.choiceStyle).toBeUndefined();
+		// The add row is the LAST thing of the panel.
+		const stack = (rowPanel.items as Node[])[0]!;
+		expect((stack.items as Node[]).at(-1)).toBe(picker);
+		const popup = panel(only('link-add', 'popup'), 'Relations');
+		const trigger = nodesOf(popup.actions).find(n => n.$type === 'task:PropertyPopover')!;
+		expect(trigger).toMatchObject({
+			icon: 'link',
+			valueText: 'Add link',
+			align: 'end',
+			closeOnActions: ['addLink'],
+		});
+		const iconPicker = nodesOf(trigger.items).find(n => n.$type === 'task:TaskPicker')!;
+		expect(iconPicker).toMatchObject({ choiceStyle: 'icons', heading: 'Link to another task', action: 'addLink' });
+		expect(iconPicker.layout).toBeUndefined();
+	});
+
+	it('link-group: titled blocks per relation | one flat list with the relation as a pill, both with an x per row and the empty text', () => {
+		for (const add of ['row', 'popup']) {
+			const grouped = nodesOf(viewFor({ 'link-add': add, 'link-group': 'grouped' }));
+			const flat = nodesOf(viewFor({ 'link-add': add, 'link-group': 'flat' }));
+			expect(
+				grouped.some(n => n.items === '$sources.links.groupSections'),
+				add
+			).toBe(true);
+			expect(
+				grouped.some(n => n.rows === '$sources.links.rows'),
+				add
+			).toBe(false);
+			expect(
+				flat.some(n => n.items === '$sources.links.groupSections'),
+				add
+			).toBe(false);
+			expect(
+				flat.find(n => n.rows === '$sources.links.rows'),
+				add
+			).toMatchObject({ $if: '$sources.links.hasLinks', removeAction: 'removeLinkRow' });
+			for (const nodes of [grouped, flat]) {
+				expect(
+					nodes.filter(n => n.$type === 'task:Caption' && n.$if === '$sources.links.noLinks'),
+					add
+				).toHaveLength(1);
+			}
+		}
+	});
+
+	it.each([
+		['tabs', 'top', undefined, 'top'],
+		['tabs', 'bottom', undefined, 'bottom'],
+		['select', 'top', 'select', 'top'],
+		['select', 'bottom', 'select', 'bottom'],
+	])('activity: filter %s and composer %s', (filter, composer, filterAppearance, position) => {
+		const feed = only('activity-filter', filter).length
+			? nodesOf(viewFor({ 'activity-filter': filter, 'activity-composer': composer })).find(
+					n => n.$type === 'task:ActivityFeed'
+				)!
+			: undefined;
+		expect(feed!.filterAppearance).toBe(filterAppearance);
+		expect(feed!.composerPosition).toBe(position);
+	});
+
+	it('every option keeps the activity panel titled Activity', () => {
+		for (const filter of ['tabs', 'select']) {
+			expect(panel(only('activity-filter', filter), 'Activity')).toMatchObject({ appearance: 'plain' });
+		}
 	});
 });
 
@@ -536,18 +816,19 @@ describe('feedback: the error and the undelivered events of every action are sho
 		'linkRowResult',
 		'textResult',
 		'subtaskResult',
+		'detachResult',
 		'commentResult',
 	];
 	it.each(designs)(
 		'%s: one task:Notice for the error and one for the undelivered events of each result key',
 		(name, view) => {
-			const notices = nodesOf(view).filter(n => n.$type === 'task:Notice' || n.$type === 'Badge');
+			const shownNotices = nodesOf(view).filter(n => n.$type === 'task:Notice' || n.$type === 'Badge');
 			for (const key of RESULT_KEYS) {
 				for (const [field, variant] of [
 					['errorText', 'danger'],
 					['undeliveredText', 'warning'],
 				] as const) {
-					const shown = notices.filter(n => n.label === `$ctx.${key}.${field}`);
+					const shown = shownNotices.filter(n => n.label === `$ctx.${key}.${field}`);
 					expect(shown, `${name}: $ctx.${key}.${field}`).toHaveLength(1);
 					expect(shown[0], `${name}: ${key} ${field}`).toMatchObject({
 						$type: 'task:Notice',
@@ -558,6 +839,21 @@ describe('feedback: the error and the undelivered events of every action are sho
 			}
 			// Nothing else reads a result key: the delete answer is read by the page-level notices only.
 			expect(JSON.stringify(view)).not.toContain('$ctx.deleteResult');
+		}
+	);
+
+	it.each(designs)(
+		'%s: the detach Notice sits in the main column feedback block, with the other answers',
+		(name, view) => {
+			const split = nodesOf(view).find(n => n.$type === 'task:SplitLayout')!;
+			expect(
+				nodesOf(split.main).filter(n => n.label === '$ctx.detachResult.errorText'),
+				name
+			).toHaveLength(1);
+			expect(
+				nodesOf(split.side).filter(n => n.$type === 'task:Notice'),
+				name
+			).toEqual([]);
 		}
 	);
 
@@ -575,7 +871,7 @@ describe('feedback: the error and the undelivered events of every action are sho
 		}
 	);
 
-	it('every action has its answer shown by some design or notice (no action without a resultKey)', () => {
+	it('every action has its answer shown by some notice (no action without a resultKey)', () => {
 		const actions = page.$actions as Record<string, { resultKey?: string }>;
 		for (const [action, spec] of Object.entries(actions)) {
 			expect(spec.resultKey, action).toMatch(/\w+Result$/);
@@ -597,6 +893,7 @@ describe('actions', () => {
 				'setAction',
 				'doneAction',
 				'reopenAction',
+				'detachAction',
 			]) {
 				if (typeof node[prop] === 'string') used.add(node[prop] as string);
 			}
@@ -604,12 +901,13 @@ describe('actions', () => {
 		}
 		for (const s of stringsOf(tree)) {
 			const m = /^\$ctx\.([A-Za-z]+)$/.exec(s);
-			if (m && /^(set|add|remove|create|delete)[A-Z]/.test(m[1]!)) used.add(m[1]!);
+			if (m && /^(set|add|remove|create|delete|detach)[A-Z]/.test(m[1]!)) used.add(m[1]!);
 		}
 	}
+	// removeLinkRow is run by the rows the links route builds (grouped option) and by the flat list; both are in `used` already.
 	used.add('removeLinkRow');
 
-	it('declares exactly the actions the designs run: none missing, none left over from the old designs', () => {
+	it('declares exactly the actions the page runs: none missing, none left over from the old designs', () => {
 		for (const name of used) expect(Object.keys(actions), `${name} is run but not declared`).toContain(name);
 		expect(Object.keys(actions).sort()).toEqual([...used].sort());
 	});
@@ -654,6 +952,12 @@ describe('actions', () => {
 			'removeParent',
 			'DELETE /api/modules/task/tasks/{id}/parent?project={projectParam}&inlineErrors=true',
 			'parentResult',
+		],
+		// {childId} is the id of the CHILD row (not {id}: a body-less action gets the page's {id}): the route detaches it from its parent.
+		[
+			'detachChild',
+			'DELETE /api/modules/task/tasks/{childId}/parent?project={projectParam}&inlineErrors=true',
+			'detachResult',
 		],
 		['addLink', 'POST /api/modules/task/tasks/{id}/links?project={projectParam}&inlineErrors=true', 'linkResult'],
 		[
@@ -705,9 +1009,9 @@ describe('actions', () => {
 });
 
 describe('sources', () => {
-	it('are the project list, the task, its links, its activity, its comments and the slot; the four read through projectQuery (never an empty query: the shell keeps the last answer of a skipped source)', () => {
+	it('are the project list, the task, its links, its activity and its comments (no slot); the four read through projectQuery (never an empty query)', () => {
 		const sources = page.$sources as Record<string, { params?: Record<string, unknown> }>;
-		expect(Object.keys(sources)).toEqual(['projects', 'detail', 'links', 'activity', 'comments', 'projectHeader']);
+		expect(Object.keys(sources)).toEqual(['projects', 'detail', 'links', 'activity', 'comments']);
 		for (const name of ['detail', 'links', 'activity', 'comments']) {
 			expect(sources[name]!.params?.query, name).toBe('$source.projects.projectQuery');
 		}
@@ -725,7 +1029,7 @@ describe('sources', () => {
 	});
 });
 
-describe('links and tabs: the tab strip carries History / Tasks / Tree, the breadcrumb the context', () => {
+describe('links and tabs: the tab strip carries Tasks / Tree, the breadcrumb the context', () => {
 	it.each(designs)(
 		'%s: the only link is "Open parent" (a forward feature); none leads back or repeats a tab',
 		(name, view) => {
@@ -809,164 +1113,27 @@ describe('constructs of the shell', () => {
 			expect(chips.length, name).toBeLessThanOrEqual(1);
 		}
 	});
-});
 
-// The layouts are clones of the products (from knowledge, no access to them), adapted to our data.
-describe('the layouts of the products', () => {
-	const side = (name: string): Node[] => {
-		const split = nodesOf(variants[name]!.view).find(n => n.$type === 'task:SplitLayout')!;
-		return nodesOf(split.side);
-	};
-	const main = (name: string): Node[] => {
-		const split = nodesOf(variants[name]!.view).find(n => n.$type === 'task:SplitLayout')!;
-		return nodesOf(split.main);
-	};
-	const panelTitles = (nodes: Node[]): unknown[] => nodes.filter(n => n.$type === 'task:Panel').map(n => n.title);
-	const feedOf = (name: string): Node => nodesOf(variants[name]!.view).find(n => n.$type === 'task:ActivityFeed')!;
-
-	it.each(designNames)(
-		'%s: a main column and a sticky right sidebar that stacks ABOVE the main column on small screens',
-		name => {
-			const splits = nodesOf(variants[name]!.view).filter(n => n.$type === 'task:SplitLayout');
-			expect(splits, name).toHaveLength(1);
-			expect(splits[0]).toMatchObject({ sidePosition: 'right', sticky: true, sideFirstWhenStacked: true });
-		}
-	);
-
-	it.each(designNames)(
-		'%s: the delete dialog is behind an "Actions" overflow menu, the feedback block is in the main column',
-		name => {
-			const menu = nodesOf(variants[name]!.view).find(
-				n => n.$type === 'task:PropertyPopover' && n.valueText === 'Actions'
-			)!;
-			expect(menu, name).toMatchObject({ appearance: 'pill', align: 'end' });
-			expect(
-				nodesOf(menu).some(n => n.$type === 'Dialog'),
-				name
-			).toBe(true);
-			expect(
-				main(name).filter(n => n.$type === 'task:Notice' && n.label === '$ctx.statusResult.errorText'),
-				name
-			).toHaveLength(1);
-			expect(
-				side(name).filter(n => n.$type === 'task:Notice'),
-				name
-			).toEqual([]);
-		}
-	);
-
-	describe('jira', () => {
-		it('has the Details panel on the right: the status as a prominent button first, then Type, Parent, Labels, Metadata, the dates', () => {
-			const details = side('jira').find(n => n.$type === 'task:Panel')!;
-			expect(details.title).toBe('Details');
-			const inside = nodesOf(details.items);
-			const status = inside.find(n => n.$type === 'task:StatusSelect')!;
-			expect(status.appearance).toBe('button');
-			const order = inside
-				.filter(n =>
-					[
-						'task:StatusSelect',
-						'task:PropertyPopover',
-						'task:LabelCombobox',
-						'task:MetaEditor',
-						'RelativeDate',
-					].includes(String(n.$type))
-				)
-				.map(n => (n.$type === 'task:PropertyPopover' ? n.label : n.$type));
-			expect(order).toEqual([
-				'task:StatusSelect',
-				'Type',
-				'Parent',
-				'task:LabelCombobox',
-				'task:MetaEditor',
-				'RelativeDate',
-				'RelativeDate',
-			]);
-		});
-
-		it('has an action row under the title (Add sub-task, Link, Actions), the description, Child items with a progress bar, Linked items', () => {
-			const strings = stringsOf(variants.jira!.view);
-			for (const label of ['Add sub-task', 'Add link', 'Actions']) expect(strings, label).toContain(label);
-			expect(panelTitles(main('jira'))).toEqual(['Description', 'Child items', 'Linked items', 'Activity']);
-			const checklist = main('jira').find(
-				n => n.$type === 'task:TaskChecklist' && n.rows === '$sources.detail.checklistRows'
-			)!;
-			expect(checklist.progress).toBe('bar');
-		});
-
-		it('puts the comment composer on top of the activity block, like Jira', () => {
-			expect(feedOf('jira')).toMatchObject({ composerPosition: 'top' });
-			expect(feedOf('jira').filterAppearance ?? 'tabs').toBe('tabs');
-		});
-	});
-
-	describe('github', () => {
-		it('has a header with the Open / Closed state badge in the tone of the status, the short id and when it was opened', () => {
-			const badges = nodesOf(variants.github!.view).filter(n => n.$type === 'task:StatusBadge');
-			expect(badges.map(n => [n.label, n.$if]).sort()).toEqual([
-				['$sources.detail.task.id', undefined],
-				['Closed', '$sources.detail.isTerminal'],
-				['Open', '$sources.detail.isOpen'],
-			]);
-			// The id is neutral, the state takes the colour of the status.
-			for (const badge of badges.filter(n => n.label !== '$sources.detail.task.id')) {
-				expect(badge.tone).toBe('$sources.detail.statusTone');
+	it.each(designs)(
+		'%s: the state badges and the id are task:StatusBadge of size control, none a dsl-ui Badge',
+		(name, view) => {
+			const header = nodesOf(view).filter(
+				n => n.$use === undefined && (n.$type === 'Badge' || n.$type === 'task:StatusBadge')
+			);
+			const feedback = (n: Node): boolean => String(n.label ?? '').startsWith('$ctx.');
+			const badges = header.filter(n => !feedback(n));
+			const ids = badges.filter(n => n.label === '$sources.detail.task.id');
+			const states = badges.filter(n => n.label === 'Open' || n.label === 'Closed');
+			expect(ids, name).toHaveLength(1);
+			expect(states, name).toHaveLength(2);
+			for (const badge of [...ids, ...states]) {
+				expect(badge.$type, `${name}: ${String(badge.label)}`).toBe('task:StatusBadge');
+				expect(badge.size, `${name}: ${String(badge.label)}`).toBe('control');
 			}
-			expect(
-				nodesOf(variants.github!.view).some(
-					n => n.$type === 'RelativeDate' && n.date === '$sources.detail.createdAt'
-				)
-			).toBe(true);
-		});
-
-		it('draws the description in a bordered card with a header strip, then the sub-tasks and relations as cards', () => {
-			expect(panelTitles(main('github'))).toEqual(['Description', 'Sub-tasks', 'Relations', 'Activity']);
-			expect(main('github').find(n => n.$type === 'task:Panel')).toMatchObject({ appearance: 'strip' });
-		});
-
-		it('has a sidebar of sections separated by dividers, and the composer on top of the activity (the feed is newest first)', () => {
-			const dividers = side('github').filter(n => n.$type === 'Divider');
-			expect(dividers.length).toBeGreaterThanOrEqual(4);
-			expect(panelTitles(side('github'))).toEqual(['Status', 'Type', 'Parent', 'Labels', 'Metadata']);
-			expect(feedOf('github')).toMatchObject({ composerPosition: 'top' });
-		});
-	});
-
-	describe('gitlab', () => {
-		it('has the state badge and the actions on the right of the header, Child items with a count and a progress bar, Linked items', () => {
-			const badges = nodesOf(variants.gitlab!.view).filter(n => n.$type === 'task:StatusBadge');
-			expect(badges.map(n => n.label).sort()).toEqual(['$sources.detail.task.id', 'Closed', 'Open']);
-			expect(panelTitles(main('gitlab'))).toEqual(['Child items', 'Linked items', 'Activity']);
-			const child = main('gitlab').find(n => n.$type === 'task:Panel' && n.title === 'Child items')!;
-			expect(child.count).toBe('$sources.detail.childrenSummary.total');
-			expect(
-				nodesOf(child).find(
-					n =>
-						n.$type === 'task:TaskChecklist' &&
-						n.rows !== undefined &&
-						n.rows !== '$sources.detail.checklistRows'
-				)
-			).toBeDefined();
-			expect(
-				main('gitlab').find(
-					n => n.$type === 'task:TaskChecklist' && n.rows === '$sources.detail.checklistRows'
-				)!.progress
-			).toBe('bar');
-		});
-
-		it('has a filter dropdown (All activity / Comments only / History only) and the composer above the feed (newest first)', () => {
-			expect(feedOf('gitlab')).toMatchObject({ filterAppearance: 'select', composerPosition: 'top' });
-		});
-
-		it('has collapsible sidebar sections with an Edit link, and a footer with the dates', () => {
-			const sections = side('gitlab').filter(n => n.$type === 'task:Panel');
-			expect(sections.map(n => n.title)).toEqual(['Status', 'Type', 'Parent', 'Labels', 'Metadata']);
-			for (const section of sections) expect(section.collapsible, String(section.title)).toBe(true);
-			const edits = side('gitlab').filter(n => n.$type === 'task:PropertyPopover' && n.actionLabel === 'Edit');
-			expect(edits.length).toBeGreaterThanOrEqual(2);
-			expect(side('gitlab').filter(n => n.$type === 'RelativeDate')).toHaveLength(2);
-		});
-	});
+			// The state takes the colour of the status (red for a negative close), the id stays neutral.
+			for (const badge of states) expect(badge.tone).toBe('$sources.detail.statusTone');
+		}
+	);
 });
 
 // Built-in node types the installed shell is known to render: the ones the pages already use plus those checked in the shell
@@ -997,32 +1164,26 @@ const BUILTIN = new Set([
 describe('node types', () => {
 	const libExpected = ((): string[] | null => {
 		const file = join(import.meta.dirname, '../../../dsl-lib-task/test/libEntries.test.ts');
-		if (!existsSync(file)) return null;
 		const match = /const EXPECTED = \[([\s\S]*?)\];/.exec(readFileSync(file, 'utf8'));
 		return match ? [...match[1]!.matchAll(/'(\w+)'/g)].map(m => m[1]!) : null;
 	})();
 
-	it('every $type is a built-in known to the shell or a task:<Name> the dsl-lib exports', () => {
+	it('every $type is a built-in known to the shell or a task:<Name> the dsl-lib exports (the whole page, every option)', () => {
 		expect(libExpected, 'packages/dsl-lib-task/test/libEntries.test.ts EXPECTED list not found').not.toBeNull();
 		const problems: string[] = [];
-		for (const [name, view] of [...designs, ['notices', notices] as const]) {
-			for (const node of nodesOf(view)) {
-				const type = node.$type;
-				if (typeof type !== 'string') continue;
-				if (type.startsWith('task:')) {
-					if (!libExpected!.includes(type.slice(5)))
-						problems.push(
-							`${name}: ${type} is not exported by dsl-lib-task (EXPECTED: ${libExpected!.join(', ')})`
-						);
-				} else if (!BUILTIN.has(type) && !(type === 'PageContent' || type === 'ExtensionSlot')) {
-					problems.push(`${name}: ${type} is not a known built-in (see BUILTIN in this test)`);
-				}
+		for (const node of nodesOf(page.sections)) {
+			const type = node.$type;
+			if (typeof type !== 'string') continue;
+			if (type.startsWith('task:')) {
+				if (!libExpected!.includes(type.slice(5))) problems.push(`${type} is not exported by dsl-lib-task`);
+			} else if (!BUILTIN.has(type)) {
+				problems.push(`${type} is not a known built-in (see BUILTIN in this test)`);
 			}
 		}
 		expect([...new Set(problems)]).toEqual([]);
 	});
 
-	it('uses the new components with the props they declare (a typo would be ignored by the shell)', () => {
+	it('uses the components with the props they declare (a typo would be ignored by the shell), in every option', () => {
 		const known: Record<string, string[]> = {};
 		const entries = readFileSync(
 			join(import.meta.dirname, '../../../dsl-lib-task/src/generated/entries.tsx'),
@@ -1031,19 +1192,31 @@ describe('node types', () => {
 		for (const m of entries.matchAll(/(\w+)Entry\.knownKeys = (\[[^\]]*\])/g))
 			known[m[1]!] = JSON.parse(m[2]!) as string[];
 		const problems: string[] = [];
-		for (const [name, view] of designs) {
-			for (const node of nodesOf(view)) {
-				const type = String(node.$type);
-				if (!type.startsWith('task:')) continue;
-				const keys = known[type.slice(5)];
-				if (!keys) continue;
-				for (const key of Object.keys(node)) {
-					if (!['$type', '$if'].includes(key) && !keys.includes(key))
-						problems.push(`${name}: ${type} has no prop "${key}"`);
-				}
+		for (const node of nodesOf(page.sections)) {
+			const type = String(node.$type);
+			if (!type.startsWith('task:')) continue;
+			const keys = known[type.slice(5)];
+			if (!keys) continue;
+			for (const key of Object.keys(node)) {
+				if (!['$type', '$if'].includes(key) && !keys.includes(key))
+					problems.push(`${type} has no prop "${key}"`);
 			}
 		}
 		expect(problems).toEqual([]);
+	});
+
+	it('the icons asked by name exist in the closed list of the dsl-lib', () => {
+		const icons = readFileSync(join(import.meta.dirname, '../../../dsl-lib-task/src/ui/icons.ts'), 'utf8');
+		const names = [...icons.matchAll(/^\t'?([\w-]+)'?: \w+,$/gm)].map(m => m[1]!);
+		for (const node of nodesOf(page.sections)) {
+			if (
+				typeof node.icon === 'string' &&
+				String(node.$type).startsWith('task:') &&
+				node.$type !== 'task:StatusBadge'
+			) {
+				expect(names, `${String(node.$type)} icon ${node.icon}`).toContain(node.icon);
+			}
+		}
 	});
 });
 
@@ -1055,10 +1228,8 @@ describe('the generator reports what is wrong, with the fix', () => {
 		scratchDirs.push(dir);
 		mkdirSync(join(dir, 'variants'));
 		const base: Record<string, string> = {
-			'_page.yaml':
-				'$sources: {}\n$type: PageContent\n$notices: []\n$experiment: { id: t, label: T, initial: a, variants: [a] }\n',
+			'_page.yaml': '$sources: {}\n$type: PageContent\n$notices: []\n$view: { $use: x }\n',
 			'_shared.yaml': 'x: { $type: Badge, label: x }\n',
-			'a.yaml': 'label: A\nhint: h\nview: { $use: x }\n',
 			...files,
 		};
 		for (const [name, text] of Object.entries(base)) writeFileSync(join(dir, 'variants', name), text);
@@ -1070,22 +1241,10 @@ describe('the generator reports what is wrong, with the fix', () => {
 		expect(out).toContain('$sources: {}');
 		expect(parse(out).sections).toEqual([
 			{
-				$type: 'AbTest',
-				id: 't',
-				label: 'T',
-				initial: 'a',
-				variants: {
-					a: {
-						label: 'A',
-						hint: 'h',
-						view: {
-							$type: 'VerticalStack',
-							$if: '$sources.detail.task',
-							gap: 'gap-0',
-							items: [{ $type: 'Badge', label: 'x' }],
-						},
-					},
-				},
+				$type: 'VerticalStack',
+				$if: '$sources.detail.task',
+				gap: 'gap-0',
+				items: [{ $type: 'Badge', label: 'x' }],
 			},
 		]);
 	});
@@ -1096,105 +1255,74 @@ describe('the generator reports what is wrong, with the fix', () => {
 				scratch({
 					'_shared.yaml':
 						'x: { $type: Badge, label: x }\nlist:\n  - { $type: Badge, label: l1 }\np: { id: 1 }\n',
-					'a.yaml': 'label: A\nhint: h\nview: { $type: Y, params: { $use: p }, items: { $use: list } }\n',
+					'_page.yaml':
+						'$type: PageContent\n$notices: []\n$view: { $type: Y, params: { $use: p }, items: { $use: list } }\n',
 				})
 			)
 		);
-		const view = ((out.sections as Node[])[0]!.variants as Record<string, Fragment>).a!.view as Node;
-		const inner = (view.items as Node[])[0]!;
-		expect(inner.params).toEqual({ id: 1 });
-		expect(inner.items).toEqual([{ $type: 'Badge', label: 'l1' }]);
+		const view = ((out.sections as Node[])[0]!.items as Node[])[0]!;
+		expect(view.params).toEqual({ id: 1 });
+		expect(view.items).toEqual([{ $type: 'Badge', label: 'l1' }]);
 	});
 
-	it('puts the experiment in the `items` of $wrap and merges $page into the PageContent', () => {
+	it('reads every fragment file _*.yaml and merges $page into the PageContent', () => {
 		const out = parse(
 			generateTaskPage(
 				scratch({
-					'_page.yaml':
-						'$type: PageContent\n$page: { maxWidth: full }\n$wrap: { $type: task:WidthFrame }\n$notices: []\n$experiment: { id: t, label: T, initial: a, variants: [a] }\n',
+					'_page.yaml': '$type: PageContent\n$page: { maxWidth: full }\n$notices: []\n$view: { $use: y }\n',
+					'_more.yaml': 'y: { $type: Badge, label: y }\n',
 				})
 			)
 		);
 		expect(out.maxWidth).toBe('full');
-		const [wrapper] = out.sections as Node[];
-		expect(wrapper).toMatchObject({ $type: 'task:WidthFrame' });
-		expect((wrapper!.items as Node[]).map(n => n.$type)).toEqual(['AbTest']);
+		expect(JSON.stringify(out.sections)).toContain('"label":"y"');
+	});
+
+	const abTest = (label: string, hint: string): string =>
+		`ab: { $type: AbTest, id: t, label: T, initial: a, variants: { a: { label: ${label}, hint: ${hint}, view: { $type: Badge } }, b: { label: B, hint: hb, view: { $type: Badge } } } }\n`;
+
+	it('accepts an AbTest repeated with the same declaration and refuses one declared differently', () => {
+		const same = scratch({
+			'_shared.yaml': `${abTest('A', 'ha')}ab2: { $type: AbTest, id: t, label: T, initial: a, variants: { a: { label: A, hint: ha, view: { $type: Tag } }, b: { label: B, hint: hb, view: { $type: Tag } } } }\n`,
+			'_page.yaml':
+				'$type: PageContent\n$notices: []\n$view: { $type: VerticalStack, items: [{ $use: ab }, { $use: ab2 }] }\n',
+		});
+		expect(() => generateTaskPage(same)).not.toThrow();
+		const different = scratch({
+			'_shared.yaml': `${abTest('A', 'ha')}ab2: { $type: AbTest, id: t, label: T, initial: a, variants: { a: { label: A, hint: OTHER, view: { $type: Tag } }, b: { label: B, hint: hb, view: { $type: Tag } } } }\n`,
+			'_page.yaml':
+				'$type: PageContent\n$notices: []\n$view: { $type: VerticalStack, items: [{ $use: ab }, { $use: ab2 }] }\n',
+		});
+		expect(() => generateTaskPage(different)).toThrow(/AbTest "t" is declared twice.*identical/s);
 	});
 
 	it.each([
 		[
 			'an unknown $use',
-			{ 'a.yaml': 'label: A\nhint: h\nview: { $use: nope }\n' },
+			{ '_page.yaml': '$type: PageContent\n$notices: []\n$view: { $use: nope }\n' },
 			/unknown \$use "nope".*Shared fragments: x/s,
 		],
+		['a $use cycle', { '_shared.yaml': 'x: { $use: y }\ny: { $use: x }\n' }, /cycle x -> y -> x/],
 		[
-			'a $use cycle',
-			{ '_shared.yaml': 'x: { $use: y }\ny: { $use: x }\n', 'a.yaml': 'label: A\nhint: h\nview: { $use: x }\n' },
-			/cycle x -> y -> x/,
+			'a $use with other keys',
+			{ '_page.yaml': '$type: PageContent\n$notices: []\n$view: { $use: x, label: z }\n' },
+			/no other key/,
 		],
-		['a $use with other keys', { 'a.yaml': 'label: A\nhint: h\nview: { $use: x, label: z }\n' }, /no other key/],
-		['a fragment without hint', { 'a.yaml': 'label: A\nview: { $type: Badge }\n' }, /missing: hint/],
-		[
-			'a missing design file',
-			{
-				'_page.yaml':
-					'$type: PageContent\n$notices: []\n$experiment: { id: t, label: T, initial: a, variants: [a, b] }\n',
-			},
-			/b\.yaml.*is missing/s,
-		],
-		[
-			'a duplicate design',
-			{
-				'_page.yaml':
-					'$type: PageContent\n$notices: []\n$experiment: { id: t, label: T, initial: a, variants: [a, a] }\n',
-			},
-			/listed twice/,
-		],
-		['an unlisted fragment file', { 'zzz.yaml': 'label: Z\nhint: h\nview: {}\n' }, /zzz\.yaml.*not listed/s],
-		[
-			'an initial that is not a design',
-			{
-				'_page.yaml':
-					'$type: PageContent\n$notices: []\n$experiment: { id: t, label: T, initial: q, variants: [a] }\n',
-			},
-			/initial "q"/,
-		],
+		['a fragment defined twice', { '_more.yaml': 'x: { $type: Tag }\n' }, /fragment "x" is defined twice/],
+		['an old design file', { 'jira.yaml': 'label: J\nhint: h\nview: {}\n' }, /jira\.yaml.*not a fragment file/s],
+		['a missing $view', { '_page.yaml': '$type: PageContent\n$notices: []\n' }, /\$view must be ONE node/],
+		['a missing PageContent line', { '_page.yaml': '$notices: []\n' }, /\$type: PageContent/],
 	])('%s', (_label, files, message) => {
 		expect(() => generateTaskPage(scratch(files))).toThrow(message);
 	});
 
-	it('every error tells where to read how a design is added', () => {
-		expect(() => generateTaskPage(scratch({ 'a.yaml': 'label: A\n' }))).toThrow(/_page\.yaml/);
+	it('every error tells where to read how the page is built', () => {
+		expect(() => generateTaskPage(scratch({ 'jira.yaml': 'label: A\n' }))).toThrow(/_page\.yaml/);
 	});
 
 	it('the real folder lists exactly the fragment files it contains', () => {
 		const files = readdirSync(join(DEFAULT_VIEWS_DIR, 'variants')).filter(f => f.endsWith('.yaml'));
-		expect(files.sort()).toEqual(['_page.yaml', '_shared.yaml', ...designNames.map(n => `${n}.yaml`)].sort());
+		expect(files.sort()).toEqual(['_options.yaml', '_page.yaml', '_shared.yaml']);
 		expect(viewsDir).toContain('dsl-views');
 	});
-});
-
-// A badge in a row with pills and buttons is the same control: the 32px height token, not the 22px of a dsl-ui Badge nor the
-// 28px of a padded badge (measured in a browser before this rule). The header row of every design holds the state badge, the
-// id and the Actions menu.
-describe('the header row of every design', () => {
-	it.each(designs)(
-		'%s: the state badges and the id are task:StatusBadge of size control, none a dsl-ui Badge',
-		(name, view) => {
-			const header = nodesOf(view).filter(
-				n => n.$use === undefined && (n.$type === 'Badge' || n.$type === 'task:StatusBadge')
-			);
-			const feedback = (n: Node): boolean => String(n.label ?? '').startsWith('$ctx.');
-			const badges = header.filter(n => !feedback(n));
-			const ids = badges.filter(n => n.label === '$sources.detail.task.id');
-			const states = badges.filter(n => n.label === 'Open' || n.label === 'Closed');
-			expect(ids, name).toHaveLength(1);
-			// Jira shows the status as a button of the sidebar and has no state badge.
-			expect(states, name).toHaveLength(name === 'jira' ? 0 : 2);
-			for (const badge of [...ids, ...states]) {
-				expect(badge.$type, `${name}: ${String(badge.label)}`).toBe('task:StatusBadge');
-				expect(badge.size, `${name}: ${String(badge.label)}`).toBe('control');
-			}
-		}
-	);
 });

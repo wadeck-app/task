@@ -27,7 +27,7 @@ export function registryStorage(registry: Registry, registryDir: string, project
 	};
 }
 
-/** The folder of the task files: the `tasksDir` handed to the `TaskStore` (its index is then `<dataDir>/task-index.json`). */
+/** The folder of the task files: the `tasksDir` handed to the local backend (its index is then `<dataDir>/task-index.json`). */
 export function tasksDirOf(storage: TaskStorage): string {
 	return path.join(storage.dataDir, 'tasks');
 }

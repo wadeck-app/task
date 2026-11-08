@@ -44,6 +44,7 @@ export const OWN_TEMP_PREFIXES: readonly string[] = [
 	'task-events-elsewhere-',
 	'task-events-registered-',
 	'task-events-test-',
+	'task-follow-',
 	'task-global-cmd-',
 	'task-global-shared-',
 	'task-hierarchy-test-',

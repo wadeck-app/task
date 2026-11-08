@@ -6,6 +6,8 @@ import { useAction } from '../useAction.js';
 import type { ActionHandler } from '../useAction.js';
 import { useDismiss } from '../useDismiss.js';
 import { InsidePopoverContext } from '../ui/popoverContext.js';
+import { isIconName, NAMED_ICONS } from '../ui/icons.js';
+import type { IconName } from '../ui/icons.js';
 import {
 	CONTROL_BORDER,
 	CONTROL_H,
@@ -45,6 +47,8 @@ export interface PropertyPopoverProps {
 	appearance?: 'pill' | 'row' | 'field' | 'button';
 	/** `field` only: this text, muted and right aligned, replaces the chevron (`Edit`). */
 	actionLabel?: string;
+	/** A Lucide icon before the text (`plus`, `link`, `add-sub-task`...). A trigger with an icon is an action, not a value: it has no chevron. */
+	icon?: IconName;
 	/** `end`: the panel is anchored to the right edge of the trigger (a popover at the right edge of a header). */
 	align?: 'start' | 'end';
 	/** The choices. Without them the popover shows its `items`. */
@@ -98,6 +102,7 @@ export function PropertyPopover({
 	tone,
 	appearance = 'pill',
 	actionLabel,
+	icon,
 	align = 'start',
 	options,
 	value,
@@ -128,6 +133,7 @@ export function PropertyPopover({
 	const trigger = useRef<HTMLButtonElement>(null);
 	const listbox = useRef<HTMLDivElement>(null);
 	const resolvedTone = tone === undefined ? undefined : toneOf(tone);
+	const Glyph = isIconName(icon) ? NAMED_ICONS[icon] : null;
 	const text = valueText !== undefined && valueText !== '' ? valueText : empty;
 	const unavailable = hasOptions && action !== undefined && action !== '' && !runner.available;
 	const off = disabled || unavailable || (hasOptions && (action === undefined || action === ''));
@@ -267,12 +273,13 @@ export function PropertyPopover({
 				className={`inline-flex min-w-0 items-center ${GAP_CONTROLS} ${FOCUS_RING} disabled:cursor-not-allowed disabled:opacity-60 ${look}`}
 			>
 				{appearance === 'row' ? <span className="shrink-0 text-muted">{label}</span> : null}
+				{Glyph ? <Glyph size={ICON_SIZE} aria-hidden="true" className="shrink-0" /> : null}
 				<span className={appearance === 'field' ? 'min-w-0 flex-1 truncate text-left' : 'truncate'}>
 					{text}
 				</span>
 				{appearance === 'field' && actionLabel ? (
 					<span className="ml-auto shrink-0 text-muted">{actionLabel}</span>
-				) : (
+				) : Glyph ? null : (
 					<ChevronDown size={ICON_SIZE} aria-hidden="true" className="shrink-0 opacity-70" />
 				)}
 			</button>

@@ -50,14 +50,33 @@ describe('StatusSelect', () => {
 		expect(screen.getByTestId('property-popover')).toHaveAttribute('data-tone', 'success');
 	});
 
-	it('lists the statuses with tone dots only when opened, marks the current one and the terminal ones', async () => {
+	it('a negative terminal status (tone danger) is a RED pill and a red dot in the list', async () => {
+		const user = userEvent.setup();
+		setup({
+			current: 'rejected',
+			options: [
+				...OPTIONS,
+				{ value: 'rejected', label: 'rejected', tone: 'danger', terminal: true, outcome: 'negative' },
+			],
+		});
+
+		const pill = screen.getByRole('button', { name: 'Status: rejected' });
+		expect(screen.getByTestId('property-popover')).toHaveAttribute('data-tone', 'danger');
+		expect(pill.className).toContain('bg-danger-bg');
+		await user.click(pill);
+		const dot = screen.getByRole('option', { name: /rejected/ }).querySelector('span[aria-hidden="true"]')!;
+		expect(dot.className).toContain('bg-danger');
+		expect(screen.getByRole('option', { name: /rejected/ })).not.toHaveTextContent(/terminal/i);
+	});
+
+	it('lists the statuses with tone dots only when opened and marks the current one: no word "terminal"', async () => {
 		const user = userEvent.setup();
 		setup();
 
 		await user.click(screen.getByRole('button', { name: 'Status: In progress' }));
 
 		const options = screen.getAllByRole('option');
-		expect(options.map(o => o.textContent)).toEqual(['To do', 'In progress', 'Doneterminal']);
+		expect(options.map(o => o.textContent)).toEqual(['To do', 'In progress', 'Done']);
 		expect(screen.getByRole('option', { name: /In progress/ })).toHaveAttribute('aria-selected', 'true');
 	});
 

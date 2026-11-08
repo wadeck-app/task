@@ -8,16 +8,9 @@ export interface LabelCount {
 
 /**
  * Every label in use with the number of tasks carrying it, most used first, then by name.
- * Labels live in the task files, not in the index: this reads every task file (cost O(tasks), measured in listLabels.test.ts).
+ * Labels live in the task files, not in the index: the local backend reads every task file (cost O(tasks), measured in
+ * listLabels.test.ts); a remote backend answers from its own label listing.
  */
-export function listLabels(ctx: TaskServiceContext): LabelCount[] {
-	const counts = new Map<string, number>();
-	for (const summary of ctx.store.list()) {
-		for (const label of new Set(ctx.store.get(summary.id).labels ?? [])) {
-			counts.set(label, (counts.get(label) ?? 0) + 1);
-		}
-	}
-	return [...counts]
-		.map(([label, count]) => ({ label, count }))
-		.sort((a, b) => b.count - a.count || (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));
+export async function listLabels(ctx: TaskServiceContext): Promise<LabelCount[]> {
+	return ctx.store.listLabels();
 }

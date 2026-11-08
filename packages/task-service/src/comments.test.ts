@@ -7,19 +7,19 @@ import { createTestContext, type TestContext } from './testHelpers.js';
 describe('comments use cases', () => {
 	let t: TestContext;
 	let id: string;
-	beforeEach(() => {
+	beforeEach(async () => {
 		t = createTestContext();
-		id = t.ctx.store.create('Title', 'backlog').id;
+		id = (await t.ctx.store.create({ title: 'Title', status: 'backlog' })).id;
 	});
 	afterEach(() => t.cleanup());
 
 	const env = () => ({ taskProjectName: 'proj', taskProjectPath: t.rootDir });
 
 	describe('addComment', () => {
-		it('stores the comment (prefix accepted) and fires onTaskCommentAdded with the FULL text', () => {
+		it('stores the comment (prefix accepted) and fires onTaskCommentAdded with the FULL text', async () => {
 			const long = `${'word '.repeat(500)}end`;
 
-			const result = addComment(t.ctx, { id: id.slice(0, 4), text: long, author: 'alice' });
+			const result = await addComment(t.ctx, { id: id.slice(0, 4), text: long, author: 'alice' });
 
 			expect(result.comment.text).toBe(long);
 			expect(result.events).toEqual([
@@ -28,30 +28,30 @@ describe('comments use cases', () => {
 					payload: { taskId: id, commentId: result.comment.id, text: long, author: 'alice', ...env() },
 				},
 			]);
-			expect(t.ctx.store.get(id).comments).toEqual([result.comment]);
+			expect((await t.ctx.store.get(id)).comments).toEqual([result.comment]);
 		});
 
-		it('leaves author out of the JSON payload when there is none', () => {
-			const result = addComment(t.ctx, { id, text: 'hi' });
+		it('leaves author out of the JSON payload when there is none', async () => {
+			const result = await addComment(t.ctx, { id, text: 'hi' });
 
 			expect(JSON.parse(JSON.stringify(result.events[0]!.payload))).not.toHaveProperty('author');
 		});
 
-		it('refuses a blank text with no event and no write', () => {
-			expect(() => addComment(t.ctx, { id, text: '  ' })).toThrow(InvalidCommentTextError);
-			expect(t.ctx.store.get(id).comments).toBeUndefined();
+		it('refuses a blank text with no event and no write', async () => {
+			await expect(addComment(t.ctx, { id, text: '  ' })).rejects.toThrow(InvalidCommentTextError);
+			expect((await t.ctx.store.get(id)).comments).toBeUndefined();
 		});
 
-		it('unknown task: TaskNotFoundError', () => {
-			expect(() => addComment(t.ctx, { id: 'zzzz', text: 'x' })).toThrow(TaskNotFoundError);
+		it('unknown task: TaskNotFoundError', async () => {
+			await expect(addComment(t.ctx, { id: 'zzzz', text: 'x' })).rejects.toThrow(TaskNotFoundError);
 		});
 	});
 
 	describe('editComment', () => {
-		it('fires onTaskCommentEdited with the old and the new full text', () => {
-			const { comment } = addComment(t.ctx, { id, text: 'old' });
+		it('fires onTaskCommentEdited with the old and the new full text', async () => {
+			const { comment } = await addComment(t.ctx, { id, text: 'old' });
 
-			const result = editComment(t.ctx, { id, commentId: comment.id, text: 'new' });
+			const result = await editComment(t.ctx, { id, commentId: comment.id, text: 'new' });
 
 			expect(result.comment.text).toBe('new');
 			expect(result.comment.editedAt).toBeDefined();
@@ -63,47 +63,49 @@ describe('comments use cases', () => {
 			]);
 		});
 
-		it('fires nothing when the text is unchanged', () => {
-			const { comment } = addComment(t.ctx, { id, text: 'same' });
+		it('fires nothing when the text is unchanged', async () => {
+			const { comment } = await addComment(t.ctx, { id, text: 'same' });
 
-			const result = editComment(t.ctx, { id, commentId: comment.id, text: ' same ' });
+			const result = await editComment(t.ctx, { id, commentId: comment.id, text: ' same ' });
 
 			expect(result.events).toEqual([]);
 			expect(result.comment.editedAt).toBeUndefined();
 		});
 
-		it('an unknown comment id throws CommentNotFoundError (hint lists the valid ids)', () => {
-			const { comment } = addComment(t.ctx, { id, text: 'x' });
+		it('an unknown comment id throws CommentNotFoundError (hint lists the valid ids)', async () => {
+			const { comment } = await addComment(t.ctx, { id, text: 'x' });
 
-			expect(() => editComment(t.ctx, { id, commentId: 'nope00', text: 'y' })).toThrow(CommentNotFoundError);
+			await expect(editComment(t.ctx, { id, commentId: 'nope00', text: 'y' })).rejects.toThrow(
+				CommentNotFoundError
+			);
 			expect(describeError(new CommentNotFoundError(id, 'nope00', [comment.id])).hint).toContain(comment.id);
 		});
 	});
 
 	describe('removeComment', () => {
-		it('fires onTaskCommentRemoved', () => {
-			const { comment } = addComment(t.ctx, { id, text: 'x' });
+		it('fires onTaskCommentRemoved', async () => {
+			const { comment } = await addComment(t.ctx, { id, text: 'x' });
 
-			const result = removeComment(t.ctx, { id, commentId: comment.id });
+			const result = await removeComment(t.ctx, { id, commentId: comment.id });
 
 			expect(result.events).toEqual([
 				{ name: 'onTaskCommentRemoved', payload: { taskId: id, commentId: comment.id, ...env() } },
 			]);
-			expect(t.ctx.store.get(id).comments).toBeUndefined();
+			expect((await t.ctx.store.get(id)).comments).toBeUndefined();
 		});
 
-		it('an unknown comment id throws and fires nothing', () => {
-			expect(() => removeComment(t.ctx, { id, commentId: 'nope00' })).toThrow(CommentNotFoundError);
+		it('an unknown comment id throws and fires nothing', async () => {
+			await expect(removeComment(t.ctx, { id, commentId: 'nope00' })).rejects.toThrow(CommentNotFoundError);
 		});
 	});
 
 	describe('listComments', () => {
-		it('lists the comments of a task, oldest first, and the empty list for none', () => {
-			expect(listComments(t.ctx, { id })).toEqual({ id, comments: [] });
-			const a = addComment(t.ctx, { id, text: 'a' }).comment;
-			const b = addComment(t.ctx, { id, text: 'b' }).comment;
+		it('lists the comments of a task, oldest first, and the empty list for none', async () => {
+			expect(await listComments(t.ctx, { id })).toEqual({ id, comments: [] });
+			const a = (await addComment(t.ctx, { id, text: 'a' })).comment;
+			const b = (await addComment(t.ctx, { id, text: 'b' })).comment;
 
-			expect(listComments(t.ctx, { id: id.slice(0, 4) })).toEqual({ id, comments: [a, b] });
+			expect(await listComments(t.ctx, { id: id.slice(0, 4) })).toEqual({ id, comments: [a, b] });
 		});
 	});
 

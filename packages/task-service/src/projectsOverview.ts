@@ -43,8 +43,10 @@ export interface ProjectsSummary {
 }
 
 /** The figures of one project's tasks. */
-export function summarizeProject(ctx: TaskServiceContext): { open: number; total: number; byStatus: StatusCount[] } {
-	const byStatus = countTasksByStatus(ctx);
+export async function summarizeProject(
+	ctx: TaskServiceContext
+): Promise<{ open: number; total: number; byStatus: StatusCount[] }> {
+	const byStatus = await countTasksByStatus(ctx);
 	return {
 		open: byStatus.filter(entry => !entry.terminal).reduce((sum, entry) => sum + entry.count, 0),
 		total: byStatus.reduce((sum, entry) => sum + entry.count, 0),
@@ -58,7 +60,7 @@ export function summarizeProject(ctx: TaskServiceContext): { open: number; total
  * Throws {@link NoReadableProjectsError} when projects are registered and none can be read (zeros would read as "no tasks"),
  * A registry that cannot be read is not an error here: it is reported in `registryProblem`.
  */
-export function summarizeProjects(options: ListKnownProjectsOptions = {}): ProjectsSummary {
+export async function summarizeProjects(options: ListKnownProjectsOptions = {}): Promise<ProjectsSummary> {
 	const projects: ProjectOverview[] = [];
 	const merged = new Map<string, StatusCount>();
 	let readableCount = 0;
@@ -76,7 +78,8 @@ export function summarizeProjects(options: ListKnownProjectsOptions = {}): Proje
 			projects.push({ ...base, open: null, total: null, byStatus: [], error: health.error });
 			continue;
 		}
-		const figures = summarizeProject(context);
+		// Projects are read one after the other, in registration order: the answer order and the first failure do not depend on timing.
+		const figures = await summarizeProject(context);
 		projects.push({ ...base, ...figures, error: null });
 		readableCount++;
 		open += figures.open;
@@ -133,7 +136,7 @@ export interface TasksAcrossProjects {
  * The tasks of every registered project, each carrying its project. Nothing registered is an empty answer;
  * projects that cannot be read are reported in `unreadable`. Throws like {@link summarizeProjects} when none can be read.
  */
-export function listTasksAcrossProjects(input: ListTasksAcrossProjectsInput = {}): TasksAcrossProjects {
+export async function listTasksAcrossProjects(input: ListTasksAcrossProjectsInput = {}): Promise<TasksAcrossProjects> {
 	const inspected = inspectKnownProjects({ env: input.env });
 	const tasks: ProjectTask[] = [];
 	const unreadable: TasksAcrossProjects['unreadable'] = [];
@@ -148,7 +151,7 @@ export function listTasksAcrossProjects(input: ListTasksAcrossProjectsInput = {}
 			});
 			continue;
 		}
-		for (const task of listTasks(context, { showAll: input.showAll })) {
+		for (const task of await listTasks(context, { showAll: input.showAll })) {
 			tasks.push({ ...task, project: { id: known.id, name: context.project.name, path: known.path } });
 		}
 	}
