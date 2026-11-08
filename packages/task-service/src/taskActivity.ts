@@ -52,6 +52,7 @@ const ICONS: Record<string, string> = {
 	'link-removed': 'unlink',
 	title: 'pencil',
 	description: 'file-text',
+	other: 'circle-dot',
 	comment: 'message-square',
 	'comment-edited': 'pencil',
 	'comment-removed': 'message-square-x',
@@ -129,6 +130,8 @@ function describeEntry(entry: ActivityEntry, label: TaskLabel): Pick<ActivityRow
 			return { text: 'Title edited', details: texts(entry) };
 		case 'description':
 			return { text: 'Description edited', details: texts(entry) };
+		case 'other':
+			return { text: `Remote event: ${key}${newValue === undefined ? '' : ` (${newValue})`}` };
 	}
 	// A kind written by a newer task: still shown, never dropped.
 	return { text: `Change recorded: ${String((entry as { kind: unknown }).kind)}` };

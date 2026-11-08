@@ -4,7 +4,10 @@
 		"module": "ESNext",
 		"moduleResolution": "bundler",
 		// Resolve task-core from source (tsx, esbuild, IDE) instead of its built dist/.
-		"paths": { "@wadeck-app/task-core": ["../task-core/src/index.ts"] },
+		"paths": {
+			"@wadeck-app/task-core": ["../task-core/src/index.ts"],
+			"@wadeck-app/task-core/contract": ["../task-core/src/contract/index.ts"]
+		},
 		"lib": ["ES2022"],
 		"strict": true,
 		"skipLibCheck": true,

@@ -88,16 +88,16 @@ describe('checkStrategy: a project without a strategy section', () => {
 
 describe('checkStrategy: a config that cannot be used', () => {
 	it('reports the error of the config instead of throwing, with the fix, and checks nothing else', async () => {
-		const result = await checkStrategy(target('strategy:\n    type: github\n'));
+		const result = await checkStrategy(target('strategy:\n    type: gitlab\n'));
 
 		expect(result.ok).toBe(false);
 		expect(result.errors).toBe(1);
 		expect(result.lines).toHaveLength(1);
 		expect(result.lines[0]).toMatchObject({ name: 'config', status: 'error' });
 		expect(result.lines[0]!.text).toContain(
-			'strategy.type: strategy type github is declared but no plugin is installed; built-in types: local'
+			'strategy.type: strategy type gitlab is declared but no plugin is installed; built-in types: github, local'
 		);
-		expect(result.lines[0]!.fix).toMatch(/Set strategy.type to a built-in type \(local\)/);
+		expect(result.lines[0]!.fix).toMatch(/Set strategy.type to a built-in type \(github, local\)/);
 		expect(result.report).toBeUndefined();
 	});
 

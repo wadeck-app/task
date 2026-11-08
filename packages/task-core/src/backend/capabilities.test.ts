@@ -9,3 +9,9 @@ describe('the runtime lists that mirror the capability types', () => {
 		expect([...BACKEND_KINDS]).toEqual(['local', 'github', 'gitlab', 'remote']);
 	});
 });
+
+describe('the writes capability', () => {
+	it('the local store writes in full', () => {
+		expect(LOCAL_CAPABILITIES.writes).toBe('full');
+	});
+});

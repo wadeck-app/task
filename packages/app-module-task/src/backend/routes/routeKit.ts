@@ -1,10 +1,11 @@
 import type { ModuleContext } from '@wadeck-app/app-core-sdk';
-import type { EventSink, QueueEventSinkOptions, TaskEvent } from '@wadeck-app/task-service';
+import type { EventSink, QueueEventSinkOptions, ReadNotice, TaskEvent } from '@wadeck-app/task-service';
 
 import { toHttpError, toInlineError } from '../errors.js';
 import { openProject } from '../projects.js';
 import type { OpenedProject } from '../projects.js';
 import { queryValue } from '../request.js';
+import { runInRequestScope } from '../requestScope.js';
 import type { RouteAnswer, RouteRequest } from '../request.js';
 import { recordServerError } from '../serverErrorLog.js';
 import { deliverForRequest } from '../undelivered.js';
@@ -51,12 +52,19 @@ export function createRouteKit(
 			ctx.registerRoute(method, subPath, async (req, reply) => {
 				const out = reply as unknown as Reply;
 				try {
-					const answer = await run(req as unknown as RouteRequest);
-					return out.code(answer.status).send(answer.body);
+					// The contexts the handler opens are released when the answer is ready (or the handler failed): a project on a
+					// remote strategy may hold a connection or a cache.
+					const { value: answer, notices } = await runInRequestScope(
+						() => run(req as unknown as RouteRequest),
+						message => writeStderr(`warning: ${message}\n`)
+					);
+					return out.code(answer.status).send(withReadNotices(jsonBody(answer.body), notices));
 				} catch (error) {
 					const failure = toHttpError(error);
 					// Only unexpected failures: a 4xx is the caller's mistake and is already in its answer.
-					if (failure.status >= 500) {
+					// 503 is the remote system being unavailable (no token, unreachable, refused): expected and already explained in the
+					// answer with its fix, so it is not an unexpected failure to put in the log and on stderr.
+					if (failure.status >= 500 && failure.status !== 503) {
 						recordServerError(
 							logDir,
 							{ method, route: subPath, status: failure.status, error },
@@ -75,7 +83,26 @@ export function createRouteKit(
 	};
 }
 
+/**
+ * The installed shell reads every answer but a 204 with `response.json()`: an empty body fails the action with "Failed to
+ * execute 'json' on 'Response': Unexpected end of JSON input" (no status, no hint). A route that answers without a body (a
+ * mistake, not a design) therefore sends `{}`, never an empty response.
+ */
+function jsonBody(body: unknown): unknown {
+	return body === undefined || body === null ? {} : body;
+}
+
 /** `?inlineErrors=true`: the caller is a view that cannot read a failed request (see {@link toInlineError}). */
 function wantsInlineErrors(req: RouteRequest): boolean {
 	return req.query?.['inlineErrors'] === 'true';
+}
+
+/**
+ * What the reads of the request want the user to know (data served from the cache because the server could not be asked, something
+ * left out of a read): added to an object answer as `readNotices` (the texts), nothing when there is none. A view that shows them
+ * binds the field; the others ignore it.
+ */
+function withReadNotices(body: unknown, notices: readonly ReadNotice[]): unknown {
+	if (notices.length === 0 || typeof body !== 'object' || body === null || Array.isArray(body)) return body;
+	return { ...(body as Record<string, unknown>), readNotices: notices.map(notice => notice.text) };
 }

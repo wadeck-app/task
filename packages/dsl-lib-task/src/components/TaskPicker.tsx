@@ -5,6 +5,7 @@ import { toneOf } from '../tones.js';
 import { useAction } from '../useAction.js';
 import type { ActionHandler } from '../useAction.js';
 import { useDismiss } from '../useDismiss.js';
+import { useRefocus } from '../useRefocus.js';
 import { StatusBadge } from './StatusBadge.js';
 import { relationIcon } from '../ui/icons.js';
 import {
@@ -144,6 +145,8 @@ export function TaskPicker({
 	const baseId = useId();
 	const listId = `${baseId}-list`;
 	const rootRef = useRef<HTMLDivElement>(null);
+	// The search field is where the next task is typed: it keeps the focus after a successful pick (also when it is drawn again).
+	const { fieldRef, refocus } = useRefocus<HTMLInputElement>(rootRef);
 	const [text, setText] = useState('');
 	const choiceList = Array.isArray(choices) ? choices : [];
 	const [choice, setChoice] = useState<string | undefined>(undefined);
@@ -231,6 +234,7 @@ export function TaskPicker({
 			const ok = await runner.run({ ...(params ?? {}) }, body);
 			if (ok) {
 				setText('');
+				refocus();
 			}
 		} finally {
 			pickingRef.current = false;
@@ -344,6 +348,7 @@ export function TaskPicker({
 						className="pointer-events-none absolute left-2 text-muted"
 					/>
 					<input
+						ref={fieldRef}
 						type="text"
 						role="combobox"
 						aria-label={ariaLabel ?? placeholder}

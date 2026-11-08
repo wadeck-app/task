@@ -7,7 +7,16 @@ import {
 	InvalidTaskTypeError,
 	TaskServiceError,
 } from '@wadeck-app/task-service';
-import { AmbiguousTaskPrefixError, TaskConflictError, TaskNotFoundError } from '@wadeck-app/task-core';
+import {
+	AmbiguousTaskPrefixError,
+	BackendAuthError,
+	BackendTimeoutError,
+	BackendUnreachableError,
+	RateLimitedError,
+	TaskConflictError,
+	TaskNotFoundError,
+	UnsupportedByBackendError,
+} from '@wadeck-app/task-core';
 
 import { RequestError, toHttpError } from './errors.js';
 
@@ -37,6 +46,37 @@ describe('toHttpError', () => {
 		const result = toHttpError(new AmbiguousDeletePrefixError('a', ['a1', 'a2']));
 		expect(result.status).toBe(409);
 		expect(result.body).toMatchObject({ matches: ['a1', 'a2'] });
+	});
+
+	it('a refused operation => 422 with the hint and the capability', () => {
+		const result = toHttpError(
+			new UnsupportedByBackendError('github', 'setTitle', 'writes', 'Writes arrive later')
+		);
+		expect(result.status).toBe(422);
+		expect(result.body).toMatchObject({
+			hint: 'Writes arrive later',
+			capability: 'writes',
+			operation: 'setTitle',
+			backend: 'github',
+		});
+	});
+
+	it('a rate limit => 429 with the retry instant', () => {
+		const result = toHttpError(new RateLimitedError('github', 'primary', new Date('2026-11-08T14:20:00.000Z')));
+		expect(result.status).toBe(429);
+		expect(result.body).toMatchObject({ retryAt: '2026-11-08T14:20:00.000Z' });
+	});
+
+	it('an unreachable server, a timeout and a refused token => 503 with their hint', () => {
+		for (const error of [
+			new BackendUnreachableError('github', 'api.github.com', 'ENOTFOUND'),
+			new BackendTimeoutError('github', 'api.github.com', 5000),
+			new BackendAuthError('github', 'unauthenticated', 'token refused', 'Create a new token'),
+		]) {
+			const result = toHttpError(error);
+			expect(result.status).toBe(503);
+			expect(result.body['hint']).toBe(error.hint);
+		}
 	});
 
 	it('TaskConflictError => 409 with its message', () => {

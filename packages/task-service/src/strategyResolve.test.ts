@@ -67,15 +67,17 @@ describe('resolveStrategy: the default', () => {
 });
 
 describe('resolveStrategy: types declared but not installed fail loudly, never fall back to local', () => {
-	it.each(['github', 'gitlab', 'remote', 'plugins.github.default'])('%s', type => {
+	it.each(['gitlab', 'remote', 'plugins.gitlab.default'])('%s', type => {
 		const error = failure({ type });
 		const bare = type.replace(/^plugins\.|\.default$/g, '');
 
 		expect(error.message).toBe(
-			`${FILE}: strategy.type: strategy type ${bare} is declared but no plugin is installed; built-in types: local`
+			`${FILE}: strategy.type: strategy type ${bare} is declared but no plugin is installed; built-in types: github, local`
 		);
 		expect(error.path).toBe('strategy.type');
-		expect(error.hint).toMatch(/Set strategy.type to a built-in type \(local\) or remove the strategy section/);
+		expect(error.hint).toMatch(
+			/Set strategy.type to a built-in type \(github, local\) or remove the strategy section/
+		);
 	});
 
 	it('a type that is not even declared lists what is registered and what is declared but missing', () => {
@@ -83,7 +85,7 @@ describe('resolveStrategy: types declared but not installed fail loudly, never f
 
 		expect(error.message).toBe(`${FILE}: strategy.type: unknown strategy plugin "foo"`);
 		expect(error.hint).toBe(
-			'Registered strategy plugins: local (plugins.local.default). Declared but not installed: github, gitlab, remote.'
+			'Registered strategy plugins: github (plugins.github.default), local (plugins.local.default). Declared but not installed: gitlab, remote.'
 		);
 	});
 
@@ -180,7 +182,73 @@ describe('resolveStrategy: the transport slot of a declared remote strategy', ()
 		});
 
 		expect(error.message).toBe(
-			`${FILE}: strategy.type: strategy type remote is declared but no plugin is installed; built-in types: local`
+			`${FILE}: strategy.type: strategy type remote is declared but no plugin is installed; built-in types: github, local`
 		);
+	});
+});
+
+describe('resolveStrategy: the plugin checks its options against the project (statuses, types)', () => {
+	const facts = {
+		statuses: [
+			{ name: 'todo', terminal: false, default: true, outcome: undefined },
+			{ name: 'done', terminal: true, default: false, outcome: 'positive' as const },
+		],
+		types: ['bug'],
+	};
+
+	function withProjectCheck(check: StrategyPlugin['validateForProject']): TaskPluginRegistry {
+		const registry = createBuiltinRegistry();
+		registry.register('plugins.fake.default', { ...fakeStrategy(), validateForProject: check }, ['fake']);
+		return registry;
+	}
+
+	it('hands the plugin the statuses of the project and names the file and key of its message', () => {
+		const seen = vi.fn();
+		const registry = withProjectCheck((options, project) => {
+			seen(options, project);
+			return 'statusMap.done: no entry for the status "done"';
+		});
+
+		let error: unknown;
+		try {
+			resolveStrategy(
+				parseStrategySection(FILE, { type: 'fake', options: { repo: 'o/n' } }),
+				FILE,
+				registry,
+				facts
+			);
+		} catch (caught) {
+			error = caught;
+		}
+
+		expect(error).toBeInstanceOf(StrategyConfigError);
+		expect((error as StrategyConfigError).message).toBe(
+			`${FILE}: strategy.options.statusMap.done: no entry for the status "done"`
+		);
+		expect((error as StrategyConfigError).path).toBe('strategy.options.statusMap.done');
+		expect(seen).toHaveBeenCalledWith({ repo: 'o/n' }, facts);
+	});
+
+	it('is not asked when the caller gives no facts (a bare resolution)', () => {
+		const check = vi.fn(() => 'never');
+		const registry = withProjectCheck(check);
+
+		expect(
+			resolveStrategy(parseStrategySection(FILE, { type: 'fake', options: { repo: 'o/n' } }), FILE, registry)
+		).toBeDefined();
+		expect(check).not.toHaveBeenCalled();
+	});
+
+	it('a plugin without the check resolves as before', () => {
+		const registry = withProjectCheck(undefined);
+
+		expect(
+			resolveStrategy(
+				parseStrategySection(FILE, { type: 'fake', options: { repo: 'o/n' } }),
+				FILE,
+				registry,
+				facts
+			).type
+		).toBe('fake');
 	});
 });

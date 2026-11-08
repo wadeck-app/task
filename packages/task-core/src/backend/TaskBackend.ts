@@ -12,7 +12,15 @@ import type { LinkType, TaskLink, TaskLinks, TaskRecord, TaskStatus, TaskSummary
 import type { BackendCapabilities, BackendKind } from './capabilities.js';
 
 /** A record read or written through a backend. `revision` is opaque: hand it back as `expectedRevision` to detect a concurrent change. Never stored. */
-export type VersionedRecord = TaskRecord & { readonly revision: string };
+export type VersionedRecord = TaskRecord & {
+	readonly revision: string;
+	/**
+	 * Set by a backend that reads through a cache, ONLY when part of the record was served from the cache after the server could
+	 * not be asked (offline, rate limited): `cachedAt` is the oldest instant of the data used. Absent on a fresh read.
+	 */
+	readonly stale?: true;
+	readonly cachedAt?: string;
+};
 
 /** Options of every write that changes an existing task. */
 export interface WriteOptions {

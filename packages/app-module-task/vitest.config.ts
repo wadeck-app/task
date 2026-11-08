@@ -18,6 +18,11 @@ export default defineConfig({
 		// Load task-core and task-service from source so tests never run against a stale or missing dist/.
 		alias: {
 			'@wadeck-app/task-core': path.resolve(import.meta.dirname, '../task-core/src/index.ts'),
+			// The fake GitHub server of the github strategy tests (test-only, Node http): listed first, the shorter key also matches.
+			'@wadeck-app/task-service/fakeGitHub': path.resolve(
+				import.meta.dirname,
+				'../task-service/src/plugins/github/fakeGitHub.testkit.ts'
+			),
 			'@wadeck-app/task-service': path.resolve(import.meta.dirname, '../task-service/src/index.ts'),
 		},
 	},

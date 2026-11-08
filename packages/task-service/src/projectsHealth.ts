@@ -24,7 +24,7 @@ export interface InspectedProject {
 }
 
 /** The message of an error with its hint, on one text: what a list shows next to an unreadable project. */
-function describeProblem(error: unknown): string {
+export function describeProblem(error: unknown): string {
 	const { message, hint } = describeError(error);
 	return hint === undefined ? message : `${message}. ${hint}`;
 }

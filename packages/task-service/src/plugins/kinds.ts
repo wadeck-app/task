@@ -14,6 +14,18 @@ export interface CheckLine {
 	fix?: string;
 }
 
+/**
+ * Something a read did that the user should know and that is not a failure: data served from the cache because the server could
+ * not be asked (`stale`), or something of the remote system that has no task equivalent and was left out (`ignored`).
+ */
+export interface ReadNotice {
+	kind: 'stale' | 'ignored';
+	/** One sentence, ready to print after `warning: `. */
+	text: string;
+	/** `stale`: when the data served was read from the server. */
+	cachedAt?: string;
+}
+
 /** What a strategy plugin builds: the backend of a project plus what `strategy show|check` needs to talk about it. */
 export interface StrategyInstance extends PluginInstance {
 	backend: TaskBackend;
@@ -21,12 +33,36 @@ export interface StrategyInstance extends PluginInstance {
 	describe(): string[];
 	/** Probes the backend (reachable, writable, counts...). Never throws for an expected problem: it reports it as an `error` line. */
 	check(): Promise<CheckLine[]>;
+	/** The notices of the reads since the last call, oldest first (the instance forgets them). Absent: this strategy has none. */
+	takeNotices?(): ReadNotice[];
 }
 
 /** The fills (design 2A) as declared in the project config: capability -> technique, with its own fidelity when it has one. */
 export type DeclaredFills = Record<string, { use: string; fidelity: 'strict' | 'degrade' }>;
 
+/** One status of the project's merged config, as a strategy that maps them onto a remote system needs it. */
+export interface ProjectStatus {
+	name: string;
+	terminal: boolean;
+	/** The status of a new task. */
+	default: boolean;
+	/** How a terminal status ended; absent on a non-terminal one. */
+	outcome: 'positive' | 'negative' | undefined;
+}
+
+/** What the project's config says that a strategy has to agree with: checked at load, before any request. */
+export interface ProjectFacts {
+	statuses: ProjectStatus[];
+	/** The valid task types; empty = any. */
+	types: string[];
+}
+
 export interface StrategyContext {
+	/** The project's own config file: where the strategy is written, named in error messages. */
+	source: string;
+	/** The statuses (config order) and types of the project. */
+	statuses: ProjectStatus[];
+	types: string[];
 	project: { id?: string; name: string; path?: string };
 	/** The folder of the task files and the data folder of the project (local backends only; others ignore them). */
 	tasksDir: string;
@@ -36,6 +72,8 @@ export interface StrategyContext {
 	env: NodeJS.ProcessEnv;
 	fidelity: 'strict' | 'degrade';
 	fills: DeclaredFills;
+	/** Appends a line to the task log (`task cli logs`). Never throws. Request lines are logged only when `TASK_DEBUG=1`. */
+	log: (level: 'info' | 'warn' | 'error', message: string) => void;
 }
 
 /**
@@ -47,6 +85,16 @@ export interface StrategyPlugin extends Plugin<'strategy', StrategyInstance, Str
 	readonly capabilities: BackendCapabilities;
 	/** Capability -> the fill techniques this plugin implements (empty: everything is native, no fill applies). */
 	readonly fillTechniques: Readonly<Record<string, readonly string[]>>;
+	/**
+	 * What is only partly true of a declared capability, in one sentence each (`strategy show` prints the row as `partial`):
+	 * keys are capability names or `linkTypes.<type>`.
+	 */
+	readonly capabilityNotes?: Readonly<Record<string, string>>;
+	/**
+	 * Checks the options against the project (every status mapped, every type representable) at load, like `validate` does for the
+	 * options alone: the same single-sentence shape, a problem about one option starting with its dotted key and ": ".
+	 */
+	validateForProject?(options: Record<string, unknown>, project: ProjectFacts): string | undefined;
 }
 
 /** What a transport plugin builds (design 3.1): how bytes reach the server. It never parses protocol payloads. */

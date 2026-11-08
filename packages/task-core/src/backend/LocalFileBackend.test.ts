@@ -42,6 +42,7 @@ describe('LocalFileBackend', () => {
 			labels: true,
 			meta: true,
 			comments: true,
+			writes: 'full',
 			indexedGraph: true,
 		});
 	});

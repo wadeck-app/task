@@ -315,3 +315,30 @@ describe('LabelCombobox', () => {
 		expect(screen.getByRole('dialog').className).toContain('max-w-[calc(100vw-1rem)]');
 	});
 });
+
+describe('LabelCombobox: focus after an add (the popover closes by design)', () => {
+	it('closes after a successful add and puts the focus back on "+ Add"', async () => {
+		const user = userEvent.setup();
+		const { onAction } = setup();
+
+		const input = await openAdd(user);
+		await user.type(input, 'brand-new{Enter}');
+
+		await waitFor(() => expect(onAction).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+		expect(screen.getByRole('button', { name: 'Add label' })).toHaveFocus();
+	});
+
+	it('stays open on a failure, with the typed text', async () => {
+		const user = userEvent.setup();
+		const { onAction } = setup();
+		onAction.mockResolvedValue({ error: 'refused', status: 400 });
+
+		const input = await openAdd(user);
+		await user.type(input, 'brand-new{Enter}');
+
+		await waitFor(() => expect(onAction).toHaveBeenCalledTimes(1));
+		expect(screen.getByRole('dialog')).toBeInTheDocument();
+		expect(screen.getByRole('combobox')).toHaveValue('brand-new');
+	});
+});

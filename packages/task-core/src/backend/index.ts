@@ -10,9 +10,19 @@ export type {
 	IdSupport,
 	SearchSupport,
 	StatusSupport,
+	WriteSupport,
 } from './capabilities.js';
 export { BACKEND_CAPABILITY_NAMES, BACKEND_KINDS, LOCAL_CAPABILITIES } from './capabilities.js';
-export { StaleRevisionError, UnsupportedByBackendError } from './backendErrors.js';
+export {
+	BackendAuthError,
+	BackendDataError,
+	BackendLimitError,
+	BackendTimeoutError,
+	BackendUnreachableError,
+	RateLimitedError,
+	StaleRevisionError,
+	UnsupportedByBackendError,
+} from './backendErrors.js';
 export type {
 	BackendCommentChange,
 	BackendCommentEdit,

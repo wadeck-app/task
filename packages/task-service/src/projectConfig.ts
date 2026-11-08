@@ -7,7 +7,7 @@ import { statusOutcomeProblem, TaskConfigLoader } from '@wadeck-app/task-core';
 import type { TaskProjectConfig, TaskResolvedConfig } from '@wadeck-app/task-core';
 
 import { createBuiltinRegistry } from './plugins/builtinPlugins.js';
-import type { TaskPluginRegistry } from './plugins/kinds.js';
+import type { ProjectFacts, TaskPluginRegistry } from './plugins/kinds.js';
 import { parseStrategySection, StrategyConfigError } from './strategyConfig.js';
 import type { StrategySection } from './strategyConfig.js';
 import { resolveStrategy } from './strategyResolve.js';
@@ -109,6 +109,28 @@ export function loadProjectSetup(
 	const { config, strategy } = readSetup(storage, options.globalConfigDir);
 	return {
 		config,
-		strategy: resolveStrategy(strategy, ownConfigFile(storage), options.registry ?? createBuiltinRegistry()),
+		strategy: resolveStrategy(
+			strategy,
+			ownConfigFile(storage),
+			options.registry ?? createBuiltinRegistry(),
+			projectFactsOf(config)
+		),
+	};
+}
+
+/** The statuses (config order, with their terminal / default / outcome) and types a strategy has to agree with. */
+export function projectFactsOf(config: TaskResolvedConfig): ProjectFacts {
+	return {
+		statuses: config.statuses.map(name => ({
+			name,
+			terminal: config.terminalStatuses.includes(name),
+			default: name === config.defaultStatus,
+			outcome: !config.terminalStatuses.includes(name)
+				? undefined
+				: config.negativeStatuses.includes(name)
+					? 'negative'
+					: 'positive',
+		})),
+		types: config.types,
 	};
 }

@@ -243,6 +243,24 @@ describe('getTaskActivity', () => {
 		expect((await texts())[0]).toBe('Change recorded: priority-changed');
 	});
 
+	it('shows an event of the remote system that has no task equivalent by its name, with its detail', async () => {
+		const file = path.join(t.rootDir, 'data', 'tasks', `${id}.json`);
+		const record = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
+		record['activity'] = [
+			{ at: new Date().toISOString(), kind: 'other', field: 'assigned', newValue: 'octocat' },
+			{ at: new Date().toISOString(), kind: 'other', field: 'locked' },
+		];
+		fs.writeFileSync(file, JSON.stringify(record));
+
+		const { rows } = await getTaskActivity(t.ctx, { id });
+		const others = rows.filter(row => row.kind === 'other');
+		expect(others.map(row => row.text).sort()).toEqual([
+			'Remote event: assigned (octocat)',
+			'Remote event: locked',
+		]);
+		expect(others[0]!.icon).toBe('circle-dot');
+	});
+
 	it('emits no event and writes nothing (a read)', async () => {
 		const file = path.join(t.rootDir, 'data', 'tasks', `${id}.json`);
 		const before = fs.readFileSync(file, 'utf8');

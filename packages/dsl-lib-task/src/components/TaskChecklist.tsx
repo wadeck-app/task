@@ -3,7 +3,9 @@ import React, { useRef, useState } from 'react';
 import { ProgressSummary } from './ProgressSummary.js';
 import { StatusBadge } from './StatusBadge.js';
 import type { Tone } from '../tones.js';
+import { addProblemText } from '../actionProblem.js';
 import { useAction } from '../useAction.js';
+import { useRefocus } from '../useRefocus.js';
 import {
 	BUTTON_PRIMARY_CLASS,
 	CONTROL_H,
@@ -148,6 +150,11 @@ export function TaskChecklist({
 	// A row runs one request at a time: a second click on it while it runs is ignored.
 	const changingRef = useRef(new Set<string>());
 	const adding = useRef(false);
+	// Why the last add failed, in words; the text stays in the field.
+	const [problem, setProblem] = useState<string | null>(null);
+	const root = useRef<HTMLDivElement>(null);
+	// The field takes the focus back after a successful add (also when it is drawn again: the first sub-task of an empty list).
+	const { fieldRef, refocus } = useRefocus<HTMLInputElement>(root);
 
 	const guarded = async (row: ChecklistRow, work: () => Promise<unknown>): Promise<void> => {
 		if (changingRef.current.has(row.id)) {
@@ -185,6 +192,7 @@ export function TaskChecklist({
 			return;
 		}
 		adding.current = true;
+		setProblem(null);
 		try {
 			const body: Record<string, unknown> = { [titleKey]: text };
 			if (parentId !== undefined && parentId !== '') {
@@ -192,6 +200,9 @@ export function TaskChecklist({
 			}
 			if (await adder.run(params ?? {}, body)) {
 				setDraft('');
+				refocus();
+			} else {
+				setProblem(addProblemText('The sub-task', adder.lastFailure()));
 			}
 		} finally {
 			adding.current = false;
@@ -205,6 +216,7 @@ export function TaskChecklist({
 
 	const addField = (extraClass: string): React.ReactElement => (
 		<input
+			ref={fieldRef}
 			type="text"
 			aria-label="Add sub-task"
 			placeholder={placeholder}
@@ -212,7 +224,10 @@ export function TaskChecklist({
 			readOnly={adder.busy}
 			aria-busy={adder.busy || undefined}
 			title={adder.unavailableReason}
-			onChange={event => setDraft(event.target.value)}
+			onChange={event => {
+				setDraft(event.target.value);
+				setProblem(null);
+			}}
 			onKeyDown={event => {
 				if (event.key === 'Enter') {
 					event.preventDefault();
@@ -280,7 +295,7 @@ export function TaskChecklist({
 	);
 
 	return (
-		<div data-testid="task-checklist" data-appearance={appearance} className="flex flex-col gap-2">
+		<div ref={root} data-testid="task-checklist" data-appearance={appearance} className="flex flex-col gap-2">
 			{list.length > 0 ? (
 				progress === 'none' ? null : (
 					<ProgressSummary
@@ -407,6 +422,11 @@ export function TaskChecklist({
 						</button>
 					</div>
 				</form>
+			) : null}
+			{problem ? (
+				<p role="alert" className="text-xs text-warning-text">
+					{problem}
+				</p>
 			) : null}
 		</div>
 	);

@@ -65,9 +65,9 @@ describe('openTaskContext: the strategy', () => {
 	});
 
 	it('a declared type with no plugin fails at open, loudly, naming the file: no local fallback', () => {
-		expect(() => open('strategy:\n    type: github\n')).toThrow(StrategyConfigError);
-		expect(() => open('strategy:\n    type: github\n')).toThrow(
-			'strategy type github is declared but no plugin is installed; built-in types: local'
+		expect(() => open('strategy:\n    type: gitlab\n')).toThrow(StrategyConfigError);
+		expect(() => open('strategy:\n    type: gitlab\n')).toThrow(
+			'strategy type gitlab is declared but no plugin is installed; built-in types: github, local'
 		);
 	});
 
@@ -105,6 +105,13 @@ describe('openTaskContext: the strategy', () => {
 			tasksDir: path.join(root, 'data', 'tasks'),
 			fidelity: 'degrade',
 			fills: { meta: { use: 'labels', fidelity: 'degrade' } },
+			source: path.join(root, 'config', 'config.yml'),
+			statuses: [
+				{ name: 'backlog', terminal: false, default: true, outcome: undefined },
+				{ name: 'in-progress', terminal: false, default: false, outcome: undefined },
+				{ name: 'done', terminal: false, default: false, outcome: undefined },
+			],
+			types: [],
 		});
 	});
 

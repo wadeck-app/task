@@ -74,6 +74,8 @@ export type ActivityKind =
 	| 'child-removed'
 	| 'title'
 	| 'description'
+	// An event of a remote system (a forge) that has no task equivalent (assigned, locked...): `field` is its name, `newValue` its detail. Never written by the local store.
+	| 'other'
 	// Comments: an added one is not logged here (the comment itself is the record); `field` is the comment id.
 	| 'comment-edited'
 	| 'comment-removed';

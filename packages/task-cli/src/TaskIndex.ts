@@ -150,7 +150,18 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 	} finally {
 		// main() exits the process right after: let the queue SDK finish what it has in flight first.
 		await env.eventSink.flush?.();
+		printReadNotices(env);
 		await releaseStorage(env);
+	}
+}
+
+/**
+ * What the reads of a remote project want the user to know without having failed (data served from the cache because the
+ * server could not be asked, something left out): one `warning:` line each on stderr, also with --json (stdout stays the result).
+ */
+function printReadNotices(env: CommandEnv): void {
+	for (const notice of env.ctx.takeNotices?.() ?? []) {
+		process.stderr.write(`warning: ${notice.text}\n`);
 	}
 }
 

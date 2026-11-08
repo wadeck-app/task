@@ -6,7 +6,8 @@
 		// Resolve task-core and task-service from source instead of their built dist/.
 		"paths": {
 			"@wadeck-app/task-core": ["../task-core/src/index.ts"],
-			"@wadeck-app/task-service": ["../task-service/src/index.ts"]
+			"@wadeck-app/task-service": ["../task-service/src/index.ts"],
+			"@wadeck-app/task-service/fakeGitHub": ["../task-service/src/plugins/github/fakeGitHub.testkit.ts"]
 		},
 		"lib": ["ES2022"],
 		"strict": true,

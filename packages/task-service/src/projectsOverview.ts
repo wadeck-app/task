@@ -6,7 +6,8 @@ import { NoReadableProjectsError } from './errors.js';
 import type { ProjectFailure } from './errors.js';
 import { listTasks } from './listTasks.js';
 import type { ListKnownProjectsOptions } from './knownProjects.js';
-import { inspectKnownProjects } from './projectsHealth.js';
+import { isRemoteFailure } from './describeError.js';
+import { describeProblem, inspectKnownProjects } from './projectsHealth.js';
 import { countTasksByStatus } from './taskStats.js';
 import type { StatusCount } from './taskStats.js';
 
@@ -83,6 +84,12 @@ export async function summarizeProjects(options: ListKnownProjectsOptions = {}):
 		let figures: Awaited<ReturnType<typeof summarizeProject>>;
 		try {
 			figures = await summarizeProject(context);
+		} catch (error) {
+			// The system behind a project (a forge) can fail for a reason that is not the others' business: that project is listed
+			// with the reason and the fix, left out of the totals. Any other failure is a bug or a corrupt file and stays fatal.
+			if (!isRemoteFailure(error)) throw error;
+			projects.push({ ...base, open: null, total: null, byStatus: [], error: describeProblem(error) });
+			continue;
 		} finally {
 			await context.dispose?.();
 		}
@@ -160,6 +167,10 @@ export async function listTasksAcrossProjects(input: ListTasksAcrossProjectsInpu
 		let listed: Awaited<ReturnType<typeof listTasks>>;
 		try {
 			listed = await listTasks(context, { showAll: input.showAll });
+		} catch (error) {
+			if (!isRemoteFailure(error)) throw error;
+			unreadable.push({ id: known.id, name: known.name, path: known.path, error: describeProblem(error) });
+			continue;
 		} finally {
 			await context.dispose?.();
 		}

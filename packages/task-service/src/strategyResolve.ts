@@ -4,7 +4,13 @@ import { BACKEND_KINDS } from '@wadeck-app/task-core';
 
 import { PluginLookupError, PluginSlotError, resolveSlot } from './plugin-host/index.js';
 import type { ResolvedSlot } from './plugin-host/index.js';
-import type { DeclaredFills, StrategyPlugin, TaskPluginRegistry, TransportPlugin } from './plugins/kinds.js';
+import type {
+	DeclaredFills,
+	ProjectFacts,
+	StrategyPlugin,
+	TaskPluginRegistry,
+	TransportPlugin,
+} from './plugins/kinds.js';
 import { StrategyConfigError } from './strategyConfig.js';
 import type { Fidelity, StrategySection } from './strategyConfig.js';
 
@@ -48,6 +54,14 @@ function isInstalled(registry: TaskPluginRegistry, type: string): boolean {
 	}
 }
 
+/** What a plugin does implement, said where a fill it lacks is refused. */
+function describeImplemented(plugin: StrategyPlugin, key: string, forKey: readonly string[]): string {
+	if (forKey.length > 0) return `it implements: ${forKey.join(', ')}`;
+	const all = Object.entries(plugin.fillTechniques).filter(([, techniques]) => techniques.length > 0);
+	if (all.length === 0) return 'it implements none: every capability is native';
+	return `it implements no fill for ${key.split('.')[0]}; its fills: ${all.map(([capability, techniques]) => `${capability}: ${techniques.join(', ')}`).join('; ')}`;
+}
+
 function displayName(registry: TaskPluginRegistry, ref: string): string {
 	const entry = registry.list('strategy').find(candidate => candidate.ref === ref);
 	return entry?.aliases[0] ?? ref;
@@ -56,11 +70,13 @@ function displayName(registry: TaskPluginRegistry, ref: string): string {
 /**
  * Resolves `section` (undefined: the project has none) written in `source`. Throws StrategyConfigError naming the file and the dotted
  * key: unknown or not installed type, an option the plugin refuses, a fill the plugin does not implement, a bad transport slot.
+ * With `project` (the statuses and types of the config), the plugin also checks its options against them (`validateForProject`).
  */
 export function resolveStrategy(
 	section: StrategySection | undefined,
 	source: string,
-	registry: TaskPluginRegistry
+	registry: TaskPluginRegistry,
+	project?: ProjectFacts
 ): ResolvedStrategy {
 	const wanted = section ?? { type: undefined, fidelity: 'strict' as const, options: {}, fills: {} };
 	const type = wanted.type ?? DEFAULT_STRATEGY_TYPE;
@@ -130,9 +146,18 @@ export function resolveStrategy(
 				source,
 				`strategy.options.fills.${key}`,
 				`the "${name}" strategy does not implement the fill "${fill.use}" for ${key.split('.')[0]} ` +
-					`(${implemented.length === 0 ? 'it implements none: every capability is native' : `it implements: ${implemented.join(', ')}`})`
+					`(${describeImplemented(resolved.plugin, key, implemented)})`
 			);
 		}
+	}
+
+	const projectProblem =
+		project === undefined ? undefined : resolved.plugin.validateForProject?.(wanted.options, project);
+	if (projectProblem !== undefined) {
+		const keyed = /^([A-Za-z][A-Za-z0-9_.-]*): ([\s\S]+)$/.exec(projectProblem);
+		throw keyed === null
+			? new StrategyConfigError(source, 'strategy.options', projectProblem)
+			: new StrategyConfigError(source, `strategy.options.${keyed[1]}`, keyed[2]!);
 	}
 
 	return {

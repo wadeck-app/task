@@ -18,7 +18,7 @@ export {
 } from './errors.js';
 export type { ProjectFailure } from './errors.js';
 export type { ErrorDescription, ErrorKind } from './describeError.js';
-export { describeError } from './describeError.js';
+export { describeError, isRemoteFailure } from './describeError.js';
 export type {
 	TaskProjectEnv,
 	TaskEvent,
@@ -90,7 +90,7 @@ export { listTypes, addType, removeType } from './taskTypes.js';
 export { getTaskConfigDir, getTaskLogDir } from './configDir.js';
 export type { ProjectHealth } from './projectsHealth.js';
 export type { InspectedProject } from './projectsHealth.js';
-export { inspectKnownProjects } from './projectsHealth.js';
+export { describeProblem, inspectKnownProjects } from './projectsHealth.js';
 export type {
 	ProjectOverview,
 	ProjectsSummary,
@@ -122,5 +122,5 @@ export type { StrategyCheck } from './strategyCheck.js';
 export { checkStrategy } from './strategyCheck.js';
 export type { CapabilityRow, FillRow, StrategyReport, StrategyTarget, TokenRow } from './strategyReport.js';
 export { showStrategy } from './strategyReport.js';
-export type { CheckLine } from './plugins/kinds.js';
+export type { CheckLine, ReadNotice } from './plugins/kinds.js';
 export { StrategyConfigError } from './strategyConfig.js';

@@ -2,11 +2,12 @@
 // fix. A config problem is a line (never a throw), so the command can print it in the block it prints everything else in.
 import { describeError } from './describeError.js';
 import { createInstance } from './plugin-host/index.js';
-import type { CheckLine } from './plugins/kinds.js';
-import { loadProjectSetup } from './projectConfig.js';
+import type { CheckLine, ProjectFacts } from './plugins/kinds.js';
+import { loadProjectSetup, projectFactsOf } from './projectConfig.js';
 import { techniquesOf } from './strategyFills.js';
 import { collectTokenKeys, fillRows, showStrategy } from './strategyReport.js';
 import type { StrategyReport, StrategyTarget } from './strategyReport.js';
+import { taskLogWriter } from './strategyLog.js';
 import { tasksDirOf } from './storage.js';
 import { checkTokenEnv, checkTokenFile } from './tokenCheck.js';
 import type { ResolvedStrategy } from './strategyResolve.js';
@@ -84,10 +85,17 @@ function securityLines(strategy: ResolvedStrategy): CheckLine[] {
 }
 
 /** Opens the backend like a command would, asks the plugin for its lines, and always disposes what it opened. */
-async function backendLines(strategy: ResolvedStrategy, target: StrategyTarget): Promise<CheckLine[]> {
+async function backendLines(
+	strategy: ResolvedStrategy,
+	target: StrategyTarget,
+	facts: ProjectFacts
+): Promise<CheckLine[]> {
 	let instance: Awaited<ReturnType<typeof createInstance<typeof strategy.plugin>>>;
 	try {
 		instance = await createInstance(strategy, {
+			source: strategy.source,
+			statuses: facts.statuses,
+			types: facts.types,
 			project: target.project,
 			tasksDir: tasksDirOf(target.storage),
 			dataDir: target.storage.dataDir,
@@ -98,6 +106,7 @@ async function backendLines(strategy: ResolvedStrategy, target: StrategyTarget):
 			env: target.env ?? process.env,
 			fidelity: strategy.fidelity,
 			fills: strategy.fills,
+			log: taskLogWriter(),
 		});
 	} catch (error) {
 		const hint = describeError(error).hint;
@@ -133,11 +142,14 @@ async function backendLines(strategy: ResolvedStrategy, target: StrategyTarget):
 export async function checkStrategy(target: StrategyTarget): Promise<StrategyCheck> {
 	let strategy: ResolvedStrategy;
 	let report: StrategyReport;
+	let facts: ProjectFacts;
 	try {
-		({ strategy } = loadProjectSetup(target.storage, {
+		const setup = loadProjectSetup(target.storage, {
 			globalConfigDir: target.globalConfigDir,
 			registry: target.registry,
-		}));
+		});
+		strategy = setup.strategy;
+		facts = projectFactsOf(setup.config);
 		report = showStrategy(target);
 	} catch (error) {
 		const { message, hint } = describeError(error);
@@ -145,6 +157,7 @@ export async function checkStrategy(target: StrategyTarget): Promise<StrategyChe
 			{ name: 'config', status: 'error', text: message, ...(hint === undefined ? {} : { fix: hint }) },
 		]);
 	}
+	const tokens = tokenLines(strategy, target.env ?? process.env);
 	const lines: CheckLine[] = [
 		{
 			name: 'config',
@@ -153,9 +166,9 @@ export async function checkStrategy(target: StrategyTarget): Promise<StrategyChe
 		},
 		{ name: 'strategy', status: 'ok', text: `${strategy.type} (${strategy.ref}), fidelity ${strategy.fidelity}` },
 		...fillWarnings(strategy),
-		...tokenLines(strategy, target.env ?? process.env),
+		...tokens,
 		...securityLines(strategy),
-		...(await backendLines(strategy, target)),
+		...(await backendLines(strategy, target, facts)),
 	];
 	return summarize(lines, report);
 }

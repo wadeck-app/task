@@ -1,5 +1,16 @@
 import { ConfigSchemaError, ProjectOptionError } from '@wadeck-app/project-sdk';
-import { AmbiguousTaskPrefixError, TaskConflictError, TaskNotFoundError } from '@wadeck-app/task-core';
+import {
+	AmbiguousTaskPrefixError,
+	BackendAuthError,
+	BackendDataError,
+	BackendLimitError,
+	BackendTimeoutError,
+	BackendUnreachableError,
+	RateLimitedError,
+	TaskConflictError,
+	TaskNotFoundError,
+	UnsupportedByBackendError,
+} from '@wadeck-app/task-core';
 
 import { describeError } from './describeError.js';
 import { PluginCreateError } from './plugin-host/index.js';
@@ -169,5 +180,82 @@ describe('describeError: the strategy and its plugins', () => {
 
 		expect(description.kind).toBe('internal');
 		expect(description.hint).toBe('Do the other thing');
+	});
+});
+
+describe('describeError: the errors of a remote system', () => {
+	it('a refused operation is "unsupported" with its own hint and the capability in the details', () => {
+		const description = describeError(
+			new UnsupportedByBackendError('github', 'setTitle', 'writes', 'Writes arrive in stage 2')
+		);
+
+		expect(description).toEqual({
+			kind: 'unsupported',
+			message: 'The github backend does not support setTitle (capability "writes")',
+			hint: 'Writes arrive in stage 2',
+			details: { backend: 'github', operation: 'setTitle', capability: 'writes' },
+		});
+	});
+
+	it('a rate limit is "rate-limited" with the instant to retry at', () => {
+		const retryAt = new Date('2026-11-08T14:20:00.000Z');
+		const description = describeError(new RateLimitedError('github', 'primary', retryAt));
+
+		expect(description.kind).toBe('rate-limited');
+		expect(description.hint).toContain('2026-11-08T14:20:00.000Z');
+		expect(description.details).toEqual({ scope: 'primary', retryAt: '2026-11-08T14:20:00.000Z' });
+	});
+
+	it('a rate limit without an instant has no retryAt key', () => {
+		expect(describeError(new RateLimitedError('github', 'secondary', undefined)).details).toEqual({
+			scope: 'secondary',
+		});
+	});
+
+	it.each([
+		['unreachable', new BackendUnreachableError('github', 'api.github.com', 'ENOTFOUND')],
+		['timeout', new BackendTimeoutError('github', 'api.github.com', 15_000)],
+		['missing token', new BackendAuthError('github', 'missing', 'No token', 'Set GITHUB_TOKEN')],
+		['rejected token', new BackendAuthError('github', 'unauthenticated', 'Bad token', 'Create a new one')],
+	])('%s is "unavailable" and keeps its hint', (_name, error) => {
+		const description = describeError(error);
+
+		expect(description.kind).toBe('unavailable');
+		expect(description.message).toBe(error.message);
+		expect(description.hint).toBe(error.hint);
+	});
+
+	it('a limit of the remote system is "conflict" with the limit in the details', () => {
+		const description = describeError(new BackendLimitError('github', 'sub-issue depth', 8, 'Flatten it'));
+
+		expect(description.kind).toBe('conflict');
+		expect(description.hint).toBe('Flatten it');
+		expect(description.details).toEqual({ limit: 'sub-issue depth', max: 8 });
+	});
+});
+
+describe('describeError: data of the remote system that does not fit', () => {
+	it('is "conflict" with the fix and the subject', () => {
+		const description = describeError(
+			new BackendDataError('github', 'issue #12', 'issue #12 has two status labels', 'Remove one on GitHub')
+		);
+
+		expect(description).toEqual({
+			kind: 'conflict',
+			message: 'issue #12 has two status labels',
+			hint: 'Remove one on GitHub',
+			details: { subject: 'issue #12' },
+		});
+	});
+
+	it('a failed plugin creation keeps the kind and text of a cause the callers know (a missing token)', () => {
+		const cause = new BackendAuthError('github', 'missing', 'No GitHub token', 'Set GITHUB_TOKEN');
+		const description = describeError(new PluginCreateError('plugins.github.default', cause.message, cause));
+
+		expect(description).toMatchObject({
+			kind: 'unavailable',
+			message: 'No GitHub token',
+			hint: 'Set GITHUB_TOKEN',
+		});
 	});
 });

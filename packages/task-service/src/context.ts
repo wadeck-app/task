@@ -1,6 +1,7 @@
 import type { TaskBackend, TaskResolvedConfig } from '@wadeck-app/task-core';
 
 import type { TaskProjectEnv } from './events.js';
+import type { ReadNotice } from './plugins/kinds.js';
 import type { ResolvedStrategy } from './strategyResolve.js';
 import type { TaskStorage } from './storage.js';
 
@@ -29,6 +30,11 @@ export interface TaskServiceContext {
 	 * request call it once at the end; safe to call twice. Absent on a hand-built context.
 	 */
 	dispose?: () => Promise<void>;
+	/**
+	 * What the reads since the last call want the user to know (cache served after a failure, something left out): the CLI prints
+	 * them as warnings, the module adds them to its answers. Forgets them; empty for the local store and on a hand-built context.
+	 */
+	takeNotices?: () => ReadNotice[];
 }
 
 /**

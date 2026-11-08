@@ -193,3 +193,42 @@ describe('describeCapabilities', () => {
 		expect(rows.find(row => row.capability === 'linkTypes.causedBy')?.state).toBe('emulated');
 	});
 });
+
+describe('describeCapabilities: what a plugin says is only partly true', () => {
+	it('a note turns a native or unsupported row into a partial one with the note as its detail', () => {
+		const rows = describeCapabilities(
+			RESTRICTED,
+			{},
+			{
+				delete: 'closes only',
+				'linkTypes.duplicateOf': 'read from the managed block',
+			}
+		);
+
+		expect(rows.find(row => row.capability === 'delete')).toEqual({
+			capability: 'delete',
+			state: 'partial',
+			detail: 'closes only',
+		});
+		expect(rows.find(row => row.capability === 'linkTypes.duplicateOf')).toEqual({
+			capability: 'linkTypes.duplicateOf',
+			state: 'partial',
+			detail: 'read from the managed block',
+		});
+		expect(rows.find(row => row.capability === 'linkTypes.causedBy')?.state).toBe('unsupported');
+	});
+
+	it('a declared fill wins over a note: the row is emulated', () => {
+		const rows = describeCapabilities(
+			RESTRICTED,
+			{ meta: { use: 'labels', fidelity: 'strict' } },
+			{ meta: 'a note' }
+		);
+
+		expect(rows.find(row => row.capability === 'meta')?.state).toBe('emulated');
+	});
+
+	it('a note on a capability that does not exist is a bug of the plugin, said loudly', () => {
+		expect(() => describeCapabilities(RESTRICTED, {}, { nonsense: 'x' })).toThrow(/nonsense/);
+	});
+});

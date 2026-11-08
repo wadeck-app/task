@@ -19,6 +19,9 @@ afterEach(() => {
 
 function contextAt(dataDir: string): StrategyContext {
 	return {
+		source: path.join(dataDir, '..', 'config', 'config.yml'),
+		statuses: [],
+		types: [],
 		project: { name: 'shop' },
 		dataDir,
 		tasksDir: path.join(dataDir, 'tasks'),
@@ -26,6 +29,7 @@ function contextAt(dataDir: string): StrategyContext {
 		env: {},
 		fidelity: 'strict',
 		fills: {},
+		log: () => undefined,
 	};
 }
 

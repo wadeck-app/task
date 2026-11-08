@@ -22,7 +22,8 @@ export interface StrategyTarget {
 export interface CapabilityRow {
 	/** A capability name, or `linkTypes.<type>` when the link types are not all stored. */
 	capability: string;
-	state: 'native' | 'emulated' | 'unsupported';
+	/** `partial`: the plugin says the backend does it only in part (the detail says how). */
+	state: 'native' | 'partial' | 'emulated' | 'unsupported';
 	detail: string;
 }
 
@@ -73,6 +74,7 @@ const UNSUPPORTED: Partial<Record<keyof BackendCapabilities, unknown>> = {
 	labels: false,
 	meta: false,
 	comments: false,
+	writes: 'none',
 };
 
 function detailOf(value: unknown): string {
@@ -84,12 +86,35 @@ function emulated(fill: DeclaredFills[string]): CapabilityRow['detail'] {
 	return fill.use;
 }
 
-/** The capability table: native, emulated by a declared fill, or unsupported (a backend may refuse the operation; a fill may replace it). */
-export function describeCapabilities(capabilities: BackendCapabilities, fills: DeclaredFills): CapabilityRow[] {
+/**
+ * The capability table: native, partial (the plugin has a `notes` entry for it), emulated by a declared fill, or unsupported (a
+ * backend may refuse the operation; a fill may replace it). A note key is a capability name or `linkTypes.<type>`.
+ */
+export function describeCapabilities(
+	capabilities: BackendCapabilities,
+	fills: DeclaredFills,
+	notes: Readonly<Record<string, string>> = {}
+): CapabilityRow[] {
 	const rows: CapabilityRow[] = [];
+	const known = new Set<string>([
+		...BACKEND_CAPABILITY_NAMES,
+		'linkTypes.blockedBy',
+		'linkTypes.duplicateOf',
+		'linkTypes.causedBy',
+	]);
+	for (const key of Object.keys(notes)) {
+		if (!known.has(key)) {
+			throw new Error(
+				`The strategy plugin describes "${key}", which is not a capability (a bug of the plugin; capabilities: ${[...known].join(', ')})`
+			);
+		}
+	}
 	const viaFill = (key: string, fallback: CapabilityRow): CapabilityRow => {
 		const fill = fills[key];
-		if (fill === undefined) return fallback;
+		if (fill === undefined) {
+			const note = notes[key];
+			return note === undefined ? fallback : { capability: fallback.capability, state: 'partial', detail: note };
+		}
 		const quality = techniquesOf(key)?.[fill.use] ?? 'exact';
 		return {
 			capability: fallback.capability,
@@ -177,7 +202,11 @@ export function showStrategy(target: StrategyTarget): StrategyReport {
 		...(strategy.transport === undefined
 			? {}
 			: { transport: { ref: strategy.transport.ref, options: strategy.transport.options } }),
-		capabilities: describeCapabilities(strategy.plugin.capabilities, strategy.fills),
+		capabilities: describeCapabilities(
+			strategy.plugin.capabilities,
+			strategy.fills,
+			strategy.plugin.capabilityNotes
+		),
 		dataDir: target.storage.dataDir,
 	};
 }

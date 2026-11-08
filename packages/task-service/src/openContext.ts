@@ -4,8 +4,9 @@ import type { TaskServiceContext } from './context.js';
 import { createLazyBackend } from './lazyBackend.js';
 import { createInstance } from './plugin-host/index.js';
 import type { TaskPluginRegistry } from './plugins/kinds.js';
-import { loadProjectSetup } from './projectConfig.js';
+import { loadProjectSetup, projectFactsOf } from './projectConfig.js';
 import type { ResolvedProject } from './resolveProject.js';
+import { taskLogWriter } from './strategyLog.js';
 import { tasksDirOf } from './storage.js';
 import type { TaskStorage } from './storage.js';
 
@@ -49,8 +50,12 @@ export function openTaskContext(input: OpenTaskContextInput): TaskServiceContext
 		name,
 		...(projectPath === undefined ? {} : { path: projectPath }),
 	};
+	const facts = projectFactsOf(config);
 	const lazy = createLazyBackend(strategy.plugin, () =>
 		createInstance(strategy, {
+			source: strategy.source,
+			statuses: facts.statuses,
+			types: facts.types,
 			project,
 			tasksDir: tasksDirOf(storage),
 			dataDir: storage.dataDir,
@@ -58,9 +63,18 @@ export function openTaskContext(input: OpenTaskContextInput): TaskServiceContext
 			env: input.env ?? process.env,
 			fidelity: strategy.fidelity,
 			fills: strategy.fills,
+			log: taskLogWriter(),
 		})
 	);
-	return { store: lazy.backend, config, storage, project, strategy, dispose: lazy.dispose };
+	return {
+		store: lazy.backend,
+		config,
+		storage,
+		project,
+		strategy,
+		dispose: lazy.dispose,
+		takeNotices: () => lazy.opened()?.takeNotices?.() ?? [],
+	};
 }
 
 /** Opens the context of a project found by `resolveProject` (its storage, id, name and path). */

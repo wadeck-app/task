@@ -97,7 +97,7 @@ describe('loadProjectSetup: the strategy section', () => {
 	it('a parent whose strategy is a type with no plugin does not break the child that has none', async () => {
 		const storage = await chain();
 		const [parentFile] = storage.configFiles as [string, string];
-		write(parentFile, 'strategy:\n    type: github\n');
+		write(parentFile, 'strategy:\n    type: gitlab\n');
 
 		expect(setup(storage).strategy.type).toBe('local');
 	});
@@ -127,12 +127,12 @@ describe('loadProjectSetup: the strategy section', () => {
 		);
 	});
 
-	it('type: github fails loudly in setup, naming the file', async () => {
+	it('type: gitlab fails loudly in setup, naming the file', async () => {
 		const storage = await single();
-		write(ownConfigFile(storage), 'strategy:\n    type: github\n');
+		write(ownConfigFile(storage), 'strategy:\n    type: gitlab\n');
 
 		expect(() => setup(storage)).toThrow(
-			`${ownConfigFile(storage)}: strategy.type: strategy type github is declared but no plugin is installed; built-in types: local`
+			`${ownConfigFile(storage)}: strategy.type: strategy type gitlab is declared but no plugin is installed; built-in types: github, local`
 		);
 	});
 

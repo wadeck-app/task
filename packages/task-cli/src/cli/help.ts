@@ -15,7 +15,8 @@ Concepts:
               strategy: the project's own; defaults: inherited). Defines valid statuses (default: backlog, in-progress, done). An unknown key is an error naming the file.
               The global config (~/.task/config.yml: defaults, hooks) stays task's own file
   strategy    Where the tasks of a project are stored: the 'strategy' section of the project config ({type, fidelity, options}). Without it the project uses
-              the local files of the registry (type: local), silently. Other types are declared but not installed yet and fail loudly. See: task strategy --help
+              the local files of the registry (type: local), silently. type: github reads the issues of a GitHub repository, READ-ONLY in this version (stage 1:
+              every write is refused with a hint); gitlab and remote are declared but not installed yet and fail loudly. See: task strategy --help
   id          Short prefix of the task UUID - any unambiguous prefix is accepted
 
 Usage:
@@ -158,16 +159,35 @@ Usage:
                                                 backend, creates nothing.
   task strategy check [-p <project>] [--json]   show, plus the checks: the config is valid, each token is there (variable set, file readable by
                                                 you only), the transport warns on plain http:// to a non-loopback host, the backend opens
-                                                (local: data folder, writable, task counts). Each problem prints its fix; exit 1 on any error
+                                                (local: data folder, writable, task counts; github: it contacts GitHub: token accepted and its
+                                                expiry, repository and Issues readable, quota left, statuses mapped, labels that exist,
+                                                sub-issues and dependencies available). Each problem prints its fix; exit 1 on any error
                                                 (warnings do not fail it).
   task strategy --help                          Show this help
 
 Configuration (the project's config.yml, section 'strategy'; no section = type: local, silently):
   strategy:
-      type: local            # local (installed); github, gitlab, remote are declared but not installed yet: a loud error, never a fallback
+      type: local            # local, or github (READ-ONLY in this version: every write is refused with a hint); gitlab, remote are declared but
+                             # not installed yet: a loud error, never a fallback
       fidelity: strict       # strict (default) | degrade: whether an approximate or lossy fill is accepted
       options: {}            # read by the strategy plugin only; local takes none. fills: <capability>: <technique> | { use, fidelity }
                              # secrets: tokenEnv: <NAME of an environment variable> or tokenFile: <path>; a literal token is refused
+
+The github strategy (the issues of one repository, through the official REST API; the token needs Issues: Read and Metadata: Read):
+  strategy:
+      type: github
+      options:
+          repo: owner/name                       # required
+          tokenEnv: GITHUB_TOKEN                 # the NAME of the variable (or tokenFile: <path>); required
+          baseUrl: https://api.github.com        # GitHub Enterprise Server: https://HOST/api/v3
+          statusMap:                             # every status of the project; exactly one open status has no label
+              backlog: { state: open }
+              in-progress: { state: open, label: 'status:in-progress' }
+              done: { state: closed }            # a positive terminal status closes as completed (reason: completed)
+              cancelled: { state: closed, reason: not_planned }   # a negative one as not_planned (or duplicate)
+          # typePrefix: 'type:'  typeMap: { bug: { issueType: Bug } }  metaPrefix: 'meta:'  pageSize: 100  maxPages: 50
+          # cache: { ttlSeconds: 60 }  timeoutSeconds: 15; fills: { meta: labels } reads metadata from the labels meta:key=value
+  Task ids are the issue numbers. A read that GitHub cannot answer (offline, rate limited) shows the cached answer with a warning on stderr.
 
 A 'strategy' key in the global ~/.task/config.yml, a literal credential, and 'pluginsDir' (external plugins) are errors naming the file and the key.`;
 

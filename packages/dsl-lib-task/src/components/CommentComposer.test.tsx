@@ -187,3 +187,80 @@ describe('CommentComposer', () => {
 		expect(screen.getByRole('button', { name: 'Add note' })).toBeInTheDocument();
 	});
 });
+
+describe('CommentComposer: focus and failures', () => {
+	it('puts the focus back in the field after a successful send by the button (several comments in a row)', async () => {
+		const user = userEvent.setup();
+		const { onAction } = setup();
+
+		await user.type(field(), 'one');
+		await user.click(send());
+
+		await waitFor(() => expect(onAction).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(field()).toHaveFocus());
+		expect(field()).toHaveValue('');
+		await user.keyboard('two{Control>}{Enter}{/Control}');
+		await waitFor(() => expect(onAction).toHaveBeenCalledTimes(2));
+	});
+
+	it('keeps the focus where the user went while the comment was sent', async () => {
+		const user = userEvent.setup();
+		let finish: (() => void) | undefined;
+		const onAction = vi.fn(
+			() =>
+				new Promise<undefined>(resolve => {
+					finish = () => resolve(undefined);
+				})
+		);
+		render(
+			<div>
+				<CommentComposer action="addComment" onAction={onAction} />
+				<input aria-label="Elsewhere" />
+			</div>
+		);
+
+		await user.type(field(), 'slow');
+		await user.click(send());
+		await user.click(screen.getByRole('textbox', { name: 'Elsewhere' }));
+		finish?.();
+
+		await waitFor(() => expect(field()).toHaveValue(''));
+		expect(screen.getByRole('textbox', { name: 'Elsewhere' })).toHaveFocus();
+	});
+
+	it('does not move the focus when the send failed, and keeps the text', async () => {
+		const user = userEvent.setup();
+		const onAction = vi.fn().mockResolvedValue({ error: 'refused', status: 400 });
+		render(
+			<div>
+				<CommentComposer action="addComment" onAction={onAction} />
+				<input aria-label="Elsewhere" />
+			</div>
+		);
+
+		await user.type(field(), 'keep');
+		await user.click(send());
+		await screen.findByRole('alert');
+		await user.click(screen.getByRole('textbox', { name: 'Elsewhere' }));
+
+		expect(screen.getByRole('textbox', { name: 'Elsewhere' })).toHaveFocus();
+		expect(field()).toHaveValue('keep');
+	});
+
+	it('names an answer that was not JSON instead of the browser words', async () => {
+		const user = userEvent.setup();
+		vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		const onAction = vi
+			.fn()
+			.mockRejectedValue(new SyntaxError("Failed to execute 'json' on 'Response': Unexpected end of JSON input"));
+		render(<CommentComposer action="addComment" onAction={onAction} />);
+
+		await user.type(field(), 'lost');
+		await user.click(send());
+
+		const alert = await screen.findByRole('alert');
+		expect(alert).toHaveTextContent('did not answer with JSON');
+		expect(alert).not.toHaveTextContent('Unexpected end');
+		expect(field()).toHaveValue('lost');
+	});
+});

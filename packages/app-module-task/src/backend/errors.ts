@@ -33,6 +33,9 @@ const STATUS_BY_KIND: Record<ErrorKind, number> = {
 	ambiguous: 409,
 	conflict: 409,
 	invalid: 400,
+	unsupported: 422,
+	'rate-limited': 429,
+	unavailable: 503,
 	internal: 500,
 };
 

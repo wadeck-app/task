@@ -1,6 +1,8 @@
 import { Loader2, Send } from 'lucide-react';
-import React, { useRef, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
+import { addProblemText, isUnreadableAnswer } from '../actionProblem.js';
 import { useAction } from '../useAction.js';
+import { useRefocus } from '../useRefocus.js';
 import type { ActionHandler } from '../useAction.js';
 import {
 	BUTTON_PRIMARY_CLASS,
@@ -69,8 +71,18 @@ export function CommentComposer({
 	const [problem, setProblem] = useState<string | null>(null);
 	// A second send while one is in flight (Ctrl+Enter held down) must not start another request.
 	const guard = useRef(false);
-	const field = useRef<HTMLTextAreaElement>(null);
+	const field = useRef<HTMLTextAreaElement | null>(null);
 	useAutoGrow(field, draft);
+	const root = useRef<HTMLDivElement>(null);
+	// The field takes the focus back after a successful send, so the next comment can be typed at once.
+	const { fieldRef, refocus } = useRefocus<HTMLTextAreaElement>(root);
+	const setField = useCallback(
+		(element: HTMLTextAreaElement | null): void => {
+			field.current = element;
+			fieldRef(element);
+		},
+		[fieldRef]
+	);
 
 	const trimmed = draft.trim();
 	const canSend = runner.available && !sending && trimmed !== '';
@@ -90,9 +102,13 @@ export function CommentComposer({
 			const ok = await runner.run({ ...(params ?? {}) }, body);
 			if (ok) {
 				setDraft('');
+				refocus();
 			} else {
+				const failure = runner.lastFailure();
 				setProblem(
-					'The comment was not saved. The page shows the reason; your text is kept, send it again when fixed.'
+					isUnreadableAnswer(failure)
+						? addProblemText('The comment', failure)
+						: 'The comment was not saved. The page shows the reason; your text is kept, send it again when fixed.'
 				);
 			}
 		} finally {
@@ -104,9 +120,9 @@ export function CommentComposer({
 	const counterVisible = draft.length >= maxLength * COUNTER_FROM;
 
 	return (
-		<div data-testid="comment-composer" className={`flex w-full flex-col ${GAP_CONTROLS}`}>
+		<div ref={root} data-testid="comment-composer" className={`flex w-full flex-col ${GAP_CONTROLS}`}>
 			<textarea
-				ref={field}
+				ref={setField}
 				aria-label="New comment"
 				aria-busy={sending}
 				aria-invalid={problem !== null}

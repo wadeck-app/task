@@ -1,5 +1,5 @@
 import { Plus, X } from 'lucide-react';
-import React, { useCallback, useContext, useRef, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { useDismiss } from '../useDismiss.js';
 import { InsidePopoverContext } from './popoverContext.js';
 import {
@@ -93,10 +93,20 @@ export function ChipField({
 	const close = useCallback((): void => setMode(null), []);
 	useDismiss(root, open, close);
 
+	// The focus goes back to "+ Add" once the popover is gone AND the button can take it: a panel closes right after its action
+	// resolved, while the button is still disabled by `busy` (a disabled button ignores focus()), so the focus waits for a render.
+	const focusAddNext = useRef(false);
 	const closeAndFocus = useCallback((): void => {
 		setMode(null);
-		addButton.current?.focus();
+		focusAddNext.current = true;
 	}, []);
+	useEffect(() => {
+		const button = addButton.current;
+		if (focusAddNext.current && mode === null && button !== null && !button.disabled) {
+			focusAddNext.current = false;
+			button.focus();
+		}
+	});
 
 	return (
 		<div

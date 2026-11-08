@@ -157,6 +157,10 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 			files: {
 				'packages/task-service/src/plugins/local/localPlugin.ts':
 					'the local strategy checks its data folder (exists, writable) for strategy check; tasks go through the backend',
+				'packages/task-service/src/plugins/github/githubToken.ts':
+					'the github strategy reads its token from the file the config names (the value goes to the HTTP client only, never into a result)',
+				'packages/task-service/src/plugins/github/responseCache.ts':
+					'the read-through cache of the github strategy: answers of GitHub as files in the project data folder',
 				'packages/task-service/src/projectsHealth.ts': 'existence of the registered folders',
 				'packages/task-service/src/queueEventSink.ts': 'the queue publisher configuration files',
 				'packages/task-service/src/taskLog.ts': 'the task log files',

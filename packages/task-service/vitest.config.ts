@@ -18,6 +18,9 @@ export default defineConfig({
 		extensions: ['.ts', '.tsx', '.js', '.jsx', '.json'],
 		// Load task-core from source so tests never run against a stale or missing dist/.
 		alias: {
+			// The contract suites (they import vitest) are test helpers, not part of the package barrel. Listed first: the
+			// shorter key below also matches this path.
+			'@wadeck-app/task-core/contract': path.resolve(import.meta.dirname, '../task-core/src/contract/index.ts'),
 			'@wadeck-app/task-core': path.resolve(import.meta.dirname, '../task-core/src/index.ts'),
 		},
 	},

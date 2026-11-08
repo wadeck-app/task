@@ -27,6 +27,19 @@ function isErrorAnswer(answer: unknown): boolean {
 	);
 }
 
+/** Why the last run of an action did not succeed: the handler rejected (`thrown`) or the shell answered with an error. */
+export interface ActionFailure {
+	kind: 'thrown' | 'answer';
+	/** The words of the error, empty when the answer carried none. */
+	message: string;
+}
+
+function failureOfAnswer(answer: unknown): ActionFailure {
+	const error =
+		typeof answer === 'object' && answer !== null && 'error' in answer ? (answer as { error: unknown }).error : '';
+	return { kind: 'answer', message: typeof error === 'string' ? error : '' };
+}
+
 export const NO_PAGE_HINT = 'This control must be rendered inside a page: there is no action to run';
 
 export interface ActionRunner {
@@ -41,6 +54,8 @@ export interface ActionRunner {
 	 * answered with an error. Never throws.
 	 */
 	run: (params: Record<string, unknown>, body?: unknown) => Promise<boolean>;
+	/** Why the last run failed, null when it succeeded or none ran. Read it right after `run` resolved false. */
+	lastFailure: () => ActionFailure | null;
 }
 
 /**
@@ -72,19 +87,25 @@ export function useAction(
 		}
 	}, [who, action, hasAction, wired]);
 
+	const failure = useRef<ActionFailure | null>(null);
 	const run = async (params: Record<string, unknown>, body?: unknown): Promise<boolean> => {
 		if (!hasAction || !onAction) {
 			return false;
 		}
 		setLocal(true);
+		failure.current = null;
 		try {
 			const answer =
 				body === undefined ? await onAction(action, params) : await onAction(action, params, { body });
-			return !isErrorAnswer(answer);
+			if (isErrorAnswer(answer)) {
+				failure.current = failureOfAnswer(answer);
+				return false;
+			}
+			return true;
 		} catch (error) {
-			console.error(
-				`[${who}] action "${action}" failed: ${error instanceof Error ? error.message : String(error)}`
-			);
+			const message = error instanceof Error ? error.message : String(error);
+			console.error(`[${who}] action "${action}" failed: ${message}`);
+			failure.current = { kind: 'thrown', message };
 			return false;
 		} finally {
 			if (mounted.current) {
@@ -97,5 +118,6 @@ export function useAction(
 		busy: local || (hasAction && actionPending?.[action] === true),
 		unavailableReason: hasAction && !wired ? NO_PAGE_HINT : undefined,
 		run,
+		lastFailure: () => failure.current,
 	};
 }

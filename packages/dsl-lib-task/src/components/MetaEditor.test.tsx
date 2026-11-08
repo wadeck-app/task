@@ -261,3 +261,32 @@ describe('MetaEditor', () => {
 		await waitFor(() => expect(screen.getByRole('button', { name: 'Add property' })).toBeEnabled());
 	});
 });
+
+describe('MetaEditor: focus after an add (the popover closes by design)', () => {
+	it('closes after a successful add and puts the focus back on "+ Add property", so the keyboard goes on from there', async () => {
+		const user = userEvent.setup();
+		const onAction = setup();
+
+		await user.click(screen.getByRole('button', { name: 'Add property' }));
+		await user.type(screen.getByRole('combobox', { name: 'New property key' }), 'env');
+		await user.type(screen.getByRole('textbox', { name: 'New property value' }), 'prod{Enter}');
+
+		await waitFor(() => expect(onAction).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+		expect(screen.getByRole('button', { name: 'Add property' })).toHaveFocus();
+	});
+
+	it('stays open on a failure, with the typed text', async () => {
+		const user = userEvent.setup();
+		const onAction = setup({});
+		onAction.mockResolvedValue({ error: 'refused', status: 400 });
+
+		await user.click(screen.getByRole('button', { name: 'Add property' }));
+		await user.type(screen.getByRole('combobox', { name: 'New property key' }), 'env');
+		await user.type(screen.getByRole('textbox', { name: 'New property value' }), 'prod{Enter}');
+
+		await waitFor(() => expect(onAction).toHaveBeenCalledTimes(1));
+		expect(screen.getByRole('dialog')).toBeInTheDocument();
+		expect(screen.getByRole('textbox', { name: 'New property value' })).toHaveValue('prod');
+	});
+});

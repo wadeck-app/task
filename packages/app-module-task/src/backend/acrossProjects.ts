@@ -1,5 +1,11 @@
 // Reads every registered project with one callback (the forest, the types...): the unreadable ones are reported, never dropped.
-import { inspectKnownProjects, NoReadableProjectsError, type TaskServiceContext } from '@wadeck-app/task-service';
+import {
+	describeProblem,
+	inspectKnownProjects,
+	isRemoteFailure,
+	NoReadableProjectsError,
+	type TaskServiceContext,
+} from '@wadeck-app/task-service';
 
 import type { SkippedProject } from './allProjectsViews.js';
 
@@ -43,10 +49,22 @@ export async function readAcrossProjects<T>(
 			continue;
 		}
 		// One project after the other: the first failure and the order of the entries do not depend on timing.
-		entries.push({
-			project: { id: known.id, name: context.project.name, path: known.path },
-			value: await read(context),
-		});
+		try {
+			entries.push({
+				project: { id: known.id, name: context.project.name, path: known.path },
+				value: await read(context),
+			});
+		} catch (error) {
+			// The system behind a project (a forge) can fail for a reason that is not the others' business: it is listed unreadable
+			// with the reason and the fix, like a project with an invalid config. Any other failure stays fatal.
+			if (!isRemoteFailure(error)) throw error;
+			const message = describeProblem(error);
+			unreadable.push({ path: health.path, error: message });
+			unreadableProjects.push({ id: known.id, name: known.name, path: known.path, error: message });
+		} finally {
+			// Released as soon as it is read: the strategy of a project may hold a connection or a cache.
+			await context.dispose?.();
+		}
 	}
 	if (inspected.length > 0 && entries.length === 0) throw new NoReadableProjectsError(unreadable);
 	entries.sort((a, b) => compareText(a.project.name, b.project.name) || compareText(a.project.path, b.project.path));

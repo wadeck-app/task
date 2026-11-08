@@ -31,6 +31,7 @@ export const OWN_TEMP_PREFIXES: readonly string[] = [
 	'task-backend-contract-',
 	'task-backend-golden-',
 	'task-cli-declare-',
+	'task-cli-github-',
 	'task-cli-globalconfig-',
 	'task-cli-iso-',
 	'task-cli-xdg-',

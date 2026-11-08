@@ -9,10 +9,17 @@ import {
 } from '@wadeck-app/project-sdk';
 import {
 	AmbiguousTaskPrefixError,
+	BackendAuthError,
+	BackendDataError,
+	BackendLimitError,
+	BackendTimeoutError,
+	BackendUnreachableError,
 	CommentNotFoundError,
 	InvalidCommentTextError,
+	RateLimitedError,
 	TaskConflictError,
 	TaskNotFoundError,
+	UnsupportedByBackendError,
 } from '@wadeck-app/task-core';
 
 import { PluginCreateError } from './plugin-host/index.js';
@@ -37,9 +44,13 @@ import {
  * - `ambiguous`: an id prefix matches several tasks (`details.matches`).
  * - `conflict`: the request is valid but contradicts the current data (cycle, duplicate link, corrupt hierarchy).
  * - `invalid`: the input is rejected (unknown status, link type, task type, delete filter).
+ * - `unsupported`: the project's storage cannot do the operation (`details.capability`); the hint says what to do instead.
+ * - `rate-limited`: the remote system's request budget is used up (`details.retryAt` when it said when).
+ * - `unavailable`: the remote system cannot be used right now: unreachable, no answer in time, token missing or refused.
  * - `internal`: anything else; a caller should treat it as a failure of the tool, not of the input.
  */
-export type ErrorKind = 'not-found' | 'ambiguous' | 'conflict' | 'invalid' | 'internal';
+export type ErrorKind =
+	'not-found' | 'ambiguous' | 'conflict' | 'invalid' | 'unsupported' | 'rate-limited' | 'unavailable' | 'internal';
 
 /** A caller-agnostic description of an error: the CLI maps it to stderr and an exit code, the app-module to an HTTP status. */
 export interface ErrorDescription {
@@ -74,6 +85,32 @@ export function describeError(error: unknown): ErrorDescription {
 	if (error instanceof AmbiguousTaskPrefixError || error instanceof AmbiguousDeletePrefixError) {
 		return describe('ambiguous', error, undefined, { matches: error.matches });
 	}
+	if (error instanceof UnsupportedByBackendError) {
+		return describe('unsupported', error, error.hint, {
+			backend: error.backendKind,
+			operation: error.operation,
+			capability: error.capability,
+		});
+	}
+	if (error instanceof RateLimitedError) {
+		return describe('rate-limited', error, error.hint, {
+			scope: error.scope,
+			...(error.retryAt === undefined ? {} : { retryAt: error.retryAt.toISOString() }),
+		});
+	}
+	if (
+		error instanceof BackendUnreachableError ||
+		error instanceof BackendTimeoutError ||
+		error instanceof BackendAuthError
+	) {
+		return describe('unavailable', error, error.hint);
+	}
+	if (error instanceof BackendDataError) {
+		return describe('conflict', error, error.hint, { subject: error.subject });
+	}
+	if (error instanceof BackendLimitError) {
+		return describe('conflict', error, error.hint, { limit: error.limitName, max: error.limit });
+	}
 	if (error instanceof TaskConflictError) return describe('conflict', error);
 	if (error instanceof DanglingParentError || error instanceof DanglingLinkError)
 		return describe('conflict', error, error.hint);
@@ -100,7 +137,10 @@ export function describeError(error: unknown): ErrorDescription {
 	if (error instanceof PluginNotImplementedError) return describe('internal', error, error.hint);
 	// A plugin that failed to open: the reason is the cause's, so is the fix.
 	if (error instanceof PluginCreateError) {
-		return describe('internal', error, error.cause === undefined ? undefined : describeError(error.cause).hint);
+		if (error.cause === undefined) return describe('internal', error);
+		const inner = describeError(error.cause);
+		// A cause the callers already know how to explain (a missing token, an unreachable server) keeps its own kind and text.
+		return inner.kind === 'internal' ? describe('internal', error, inner.hint) : inner;
 	}
 	if (error instanceof ProjectError) return describeProjectError(error);
 	return { kind: 'internal', message: error instanceof Error ? error.message : String(error), details: {} };
@@ -142,4 +182,22 @@ function describeProjectError(error: ProjectError): ErrorDescription {
 		);
 	}
 	return describe('internal', error, undefined, { code: error.code });
+}
+
+/**
+ * True for a failure of the remote system behind a project (unreachable, no answer, a token that is missing or refused, a rate limit,
+ * data that does not fit the task model, a limit of the system, an operation it refuses). Such a project is unreadable right now; the
+ * views that show several projects report it with its reason and carry on with the others, instead of failing as a whole.
+ */
+export function isRemoteFailure(error: unknown): boolean {
+	if (error instanceof PluginCreateError) return error.cause !== undefined && isRemoteFailure(error.cause);
+	return (
+		error instanceof BackendUnreachableError ||
+		error instanceof BackendTimeoutError ||
+		error instanceof BackendAuthError ||
+		error instanceof RateLimitedError ||
+		error instanceof BackendDataError ||
+		error instanceof BackendLimitError ||
+		error instanceof UnsupportedByBackendError
+	);
 }

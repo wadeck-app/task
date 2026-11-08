@@ -11,6 +11,7 @@ import type { KnownProject, TaskServiceContext } from '@wadeck-app/task-service'
 
 import { RequestError } from './errors.js';
 import { tasksPageHref } from './hrefs.js';
+import { trackContext } from './requestScope.js';
 
 /** The service context of a project the module can address: a registered project with a folder, so its path is known. */
 export type OpenedProject = TaskServiceContext & { project: { id: string; name: string; path: string } };
@@ -38,7 +39,7 @@ function problemOf(error: unknown): string {
 }
 
 /** The checks every use of a known project starts with, then its context. */
-function openKnown(known: KnownProject): OpenedProject {
+function openKnown(known: KnownProject, options: { track: boolean } = { track: true }): OpenedProject {
 	if (known.problem !== undefined) {
 		throw new RequestError(
 			409,
@@ -46,10 +47,12 @@ function openKnown(known: KnownProject): OpenedProject {
 			`Fix the parent chain of project ${known.name} with the project CLI (project set-parent).`
 		);
 	}
-	return openTaskContext({
+	const ctx = openTaskContext({
 		storage: known.storage,
 		project: { id: known.id, name: known.name, path: known.path },
 	}) as OpenedProject;
+	// Released by the request that opened it (requestScope.ts), unless the caller releases it itself.
+	return options.track ? trackContext(ctx) : ctx;
 }
 
 async function listingOf(known: KnownProject): Promise<ProjectListing> {
@@ -59,12 +62,18 @@ async function listingOf(known: KnownProject): Promise<ProjectListing> {
 		path: known.path,
 		exists: fs.existsSync(known.path),
 	};
+	let ctx: OpenedProject | undefined;
 	try {
-		const openCount = (await listTasks(openKnown(known), {})).length;
+		// Released right below, not by the request: a listing holds as many projects as are registered.
+		ctx = openKnown(known, { track: false });
+		const openCount = (await listTasks(ctx, {})).length;
 		return { ...base, openCount, error: null, href: tasksPageHref(base) };
 	} catch (error) {
 		// One unreadable project must not hide the others, nor read as "0 open": it is listed with its reason and fix.
 		return { ...base, openCount: null, error: problemOf(error), href: null };
+	} finally {
+		// One listing holds as many projects as are registered: each is released as soon as it is read, not at the end of the request.
+		await ctx?.dispose?.();
 	}
 }
 
