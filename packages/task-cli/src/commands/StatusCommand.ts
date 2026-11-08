@@ -13,9 +13,13 @@ export function isStatusHelp(rest: readonly string[]): boolean {
 	return rest[0] === undefined || rest[0] === '--help';
 }
 
-/** `doing (default)`, `done (terminal)`, `only (default, terminal)`, or the bare name. */
+/** `doing (default)`, `done (terminal)`, `rejected (terminal, negative)`, `only (default, terminal)`, or the bare name. */
 function statusLine(status: StatusInfo): string {
-	const markers = [...(status.default ? ['default'] : []), ...(status.terminal ? ['terminal'] : [])];
+	const markers = [
+		...(status.default ? ['default'] : []),
+		...(status.terminal ? ['terminal'] : []),
+		...(status.outcome === 'negative' ? ['negative'] : []),
+	];
 	return markers.length === 0 ? status.name : `${status.name} (${markers.join(', ')})`;
 }
 

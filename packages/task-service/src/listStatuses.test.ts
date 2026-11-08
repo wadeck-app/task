@@ -17,8 +17,23 @@ describe('listStatuses', () => {
 		expect(listStatuses(t.ctx)).toEqual([
 			{ name: 'backlog', default: false, terminal: false },
 			{ name: 'doing', default: true, terminal: false },
-			{ name: 'done', default: false, terminal: true },
-			{ name: 'dropped', default: false, terminal: true },
+			{ name: 'done', default: false, terminal: true, outcome: 'positive' },
+			{ name: 'dropped', default: false, terminal: true, outcome: 'positive' },
+		]);
+	});
+
+	it('gives the outcome of the terminal statuses only (positive unless the config says negative)', () => {
+		t = createTestContext({
+			statuses: ['todo', 'done', 'rejected'],
+			defaultStatus: 'todo',
+			terminalStatuses: ['done', 'rejected'],
+			negativeStatuses: ['rejected'],
+		});
+
+		expect(listStatuses(t.ctx)).toEqual([
+			{ name: 'todo', default: true, terminal: false },
+			{ name: 'done', default: false, terminal: true, outcome: 'positive' },
+			{ name: 'rejected', default: false, terminal: true, outcome: 'negative' },
 		]);
 	});
 

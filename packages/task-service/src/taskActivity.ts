@@ -5,7 +5,7 @@ import type { TaskServiceContext } from './context.js';
 import { headlineOf } from './taskText.js';
 
 /** The tones the views know (same words as the module's status tones). */
-export type ActivityTone = 'neutral' | 'info' | 'success' | 'purple';
+export type ActivityTone = 'neutral' | 'info' | 'success' | 'danger' | 'purple';
 
 /** `created` and `status` come from `TaskRecord.history`; the others are the kinds of `TaskRecord.activity`. */
 export type ActivityRowKind = 'created' | 'status' | 'comment' | ActivityEntry['kind'];
@@ -46,6 +46,8 @@ const ICONS: Record<string, string> = {
 	'meta-set': 'sliders-horizontal',
 	'meta-removed': 'sliders-horizontal',
 	parent: 'git-branch',
+	'child-added': 'git-branch',
+	'child-removed': 'git-branch',
 	'link-added': 'link',
 	'link-removed': 'unlink',
 	title: 'pencil',
@@ -110,6 +112,10 @@ function describeEntry(entry: ActivityEntry, label: TaskLabel): Pick<ActivityRow
 			}
 			if (newValue !== undefined) return { text: `Parent set to ${label(newValue)}` };
 			return { text: `Parent removed${oldValue === undefined ? '' : ` (was ${label(oldValue)})`}` };
+		case 'child-added':
+			return { text: `Sub-task ${label(entry.target ?? '?')} added` };
+		case 'child-removed':
+			return { text: `Sub-task ${label(entry.target ?? '?')} detached` };
 		case 'link-added':
 			return { text: `Linked: ${linkWord(entry)} ${label(entry.target ?? '?')}` };
 		case 'link-removed':
@@ -136,6 +142,7 @@ function texts(entry: ActivityEntry): { oldValue?: string; newValue?: string } {
 }
 
 function statusTone(ctx: TaskServiceContext, status: string): ActivityTone {
+	if (ctx.config.negativeStatuses.includes(status)) return 'danger';
 	if (ctx.config.terminalStatuses.includes(status)) return 'success';
 	return status === ctx.config.defaultStatus ? 'neutral' : 'info';
 }

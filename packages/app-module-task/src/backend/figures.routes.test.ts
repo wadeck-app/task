@@ -120,7 +120,7 @@ describe('GET /types/p/:project/count', () => {
 
 // The manifest side: `check` and `package` of app-core-cli validate the same rules, these tests keep them in the unit run.
 describe('manifest.json count (figures next to entries)', () => {
-	type Count = { route: string; field: string; refreshSeconds?: number };
+	type Count = { route: string; field: string; label?: string; refreshSeconds?: number };
 	type Point = { path?: string; slot: string; count?: Count; tab?: { group: string; label: string; count?: Count } };
 	const packageDir = join(dirname(fileURLToPath(import.meta.url)), '../..');
 	const manifest = JSON.parse(readFileSync(join(packageDir, 'manifest.json'), 'utf8')) as {
@@ -160,6 +160,8 @@ describe('manifest.json count (figures next to entries)', () => {
 			}
 			expect(count.field, where).toBe('count');
 			expect(count.refreshSeconds, where).toBe(60);
+			// The shell writes the tooltip "<count> <label>" ("3 open tasks"): a short phrase that reads after the number, none in it.
+			expect(count.label, where).toMatch(/^[a-z][a-z ]+$/);
 		}
 	});
 

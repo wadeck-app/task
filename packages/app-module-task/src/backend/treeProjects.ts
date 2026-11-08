@@ -16,6 +16,8 @@ export interface TreeProjectReadable {
 	value: {
 		forest: TaskTreeNode[];
 		terminalStatuses: readonly string[];
+		/** The terminal statuses that end badly (rows in the danger tone). */
+		negativeStatuses?: readonly string[];
 		figures: { open: number; total: number };
 	};
 }
@@ -53,6 +55,7 @@ export function countForest(
 function collectRows(
 	project: { id: string },
 	terminal: readonly string[],
+	negative: readonly string[],
 	nodes: readonly TaskTreeNode[],
 	depth: number,
 	out: Array<Record<string, unknown>>
@@ -64,19 +67,19 @@ function collectRows(
 			title: node.title,
 			titleText: shortTitle(node.title),
 			status: node.status,
-			// A closed task reads as done; an open one stays neutral (the status text says which).
-			tone: terminal.includes(node.status) ? 'success' : 'neutral',
+			// A closed task reads as done (or danger when it ended badly); an open one stays neutral (the status text says which).
+			tone: terminal.includes(node.status) ? (negative.includes(node.status) ? 'danger' : 'success') : 'neutral',
 			depth,
 			href: detailHref(project, node.id),
 		});
-		collectRows(project, terminal, node.children, depth + 1, out);
+		collectRows(project, terminal, negative, node.children, depth + 1, out);
 	}
 }
 
 function readableEntry({ project, value }: TreeProjectReadable): Record<string, unknown> {
 	const { open, total } = value.figures;
 	const rows: Array<Record<string, unknown>> = [];
-	collectRows(project, value.terminalStatuses, value.forest, 0, rows);
+	collectRows(project, value.terminalStatuses, value.negativeStatuses ?? [], value.forest, 0, rows);
 	const hiddenCount = countForest(value.forest, value.terminalStatuses).tasks - rows.length;
 	const empty = total === 0;
 	const allDone = !empty && open === 0;

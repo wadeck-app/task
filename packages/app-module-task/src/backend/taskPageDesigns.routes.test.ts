@@ -63,28 +63,36 @@ describe('detail fields of the three task page designs', () => {
 		expect((await detail(long)).body).toMatchObject({ bodyAddsInfo: true, noBodyInfo: false });
 	});
 
-	it('the texts of the delete dialog say what happens: children become roots, links removed, blocked tasks, the cascade label', async () => {
+	it('the delete dialog states each outcome on its own button (a view reads no form state, so no switch can change a sentence)', async () => {
 		const root = await createTask('root');
 		const child = await createTask('child', { parent: root });
 		await createTask('grandchild', { parent: child });
 		const other = await createTask('other');
 		await call('POST /tasks/:id/links', other, { type: 'blockedBy', target: root });
 		const { body } = await detail(root);
+		// The sentence above the buttons holds what both buttons share: the links. What happens to the children is on the buttons.
 		expect(body['deleteImpactText']).toBe(
-			'Deleting this task: its 1 child becomes a root task, 1 link is removed, 1 task it blocks loses a blocker. This cannot be undone.'
+			'Deleting this task: 1 link is removed, 1 task it blocks loses a blocker. This cannot be undone.'
 		);
 		expect(body['hasDescendants']).toBe(true);
-		// The impact sentence cannot follow the switch (a view reads no form state): the label states the alternative.
-		expect(body['deleteCascadeLabel']).toBe(
-			'Also delete its 2 descendants (otherwise its 1 child becomes a root task)'
-		);
+		expect(body['deleteLabel']).toBe('Delete task, its 1 child becomes a root task');
+		expect(body['deleteCascadeLabel']).toBe('Delete task and its 2 descendants');
 		const blocked = await detail(other);
 		expect(blocked.body['hasDescendants']).toBe(false);
+		expect(blocked.body['deleteLabel']).toBe('Delete task');
 		expect(blocked.body['deleteImpactText']).toBe('Deleting this task: 1 link is removed. This cannot be undone.');
 		const plain = await createTask('plain');
 		expect((await detail(plain)).body['deleteImpactText']).toBe(
 			'Deleting this task has no other effect: no children, no links. This cannot be undone.'
 		);
+		// Children and nothing else touched: the sentence does not claim "no children".
+		const parent = await createTask('parent');
+		await createTask('kid', { parent });
+		expect((await detail(parent)).body['deleteImpactText']).toBe('Deleting this task cannot be undone.');
+		const kids = await createTask('many');
+		await createTask('k1', { parent: kids });
+		await createTask('k2', { parent: kids });
+		expect((await detail(kids)).body['deleteLabel']).toBe('Delete task, its 2 children become root tasks');
 	});
 
 	it('pillTexts: each property pill as one labelled text ("Type: none"), the blocked pill only while blockers are open', async () => {
@@ -107,6 +115,7 @@ describe('detail fields of the three task page designs', () => {
 		const id = await createTask('t');
 		const forms = (await detail(id)).body['forms'] as Record<string, unknown>;
 		expect(forms['delete']).toMatchObject({ ids: id, cascade: false, confirm: true });
+		expect(forms['deleteCascade']).toMatchObject({ ids: id, cascade: true, confirm: true });
 	});
 
 	it('linkTypeOptions read as a sentence ("Blocked by", not "blockedBy"), with the stored name as the value', async () => {

@@ -9,9 +9,28 @@ export type TaskHookValue = string | { command: string; debug?: boolean };
 /**
  * A status entry in a project config.yml: either a bare name, or an object carrying
  * `terminal` (hidden from `task list` by default, e.g. "done") and/or `default`
- * (the status assigned to newly created tasks).
+ * (the status assigned to newly created tasks). `outcome` says how a terminal status ended: `positive` (the default, e.g.
+ * "done") or `negative` (e.g. "rejected"); it is valid on terminal statuses only. Both outcomes close the task and unblock
+ * what it blocks.
  */
-export type TaskStatusEntry = string | { name: string; terminal?: boolean; default?: boolean };
+export type TaskStatusEntry = string | { name: string; terminal?: boolean; default?: boolean; outcome?: StatusOutcome };
+
+export type StatusOutcome = 'positive' | 'negative';
+
+/**
+ * What is wrong with the `outcome` of a status entry, as a sentence without the file (the caller names it), or undefined.
+ * An outcome belongs to terminal statuses only, and is `positive` or `negative`.
+ */
+export function statusOutcomeProblem(entry: TaskStatusEntry): string | undefined {
+	if (typeof entry === 'string' || entry.outcome === undefined) return undefined;
+	if (entry.outcome !== 'positive' && entry.outcome !== 'negative') {
+		return `"outcome" of status "${entry.name}" must be "positive" or "negative", found ${JSON.stringify(entry.outcome)}`;
+	}
+	if (entry.terminal !== true) {
+		return `"outcome" on status "${entry.name}" is only valid on a terminal status: add "terminal: true" to it or remove "outcome"`;
+	}
+	return undefined;
+}
 
 export interface TaskGlobalConfig {
 	defaults?: {
@@ -36,6 +55,8 @@ export interface TaskResolvedConfig {
 	defaultStatus: string;
 	/** Statuses hidden from `task list` unless `--all` is passed (e.g. "done"). */
 	terminalStatuses: string[];
+	/** The terminal statuses that end badly (`outcome: negative`, e.g. "rejected"); a subset of `terminalStatuses`. They still unblock. */
+	negativeStatuses: string[];
 	/** Valid task types. Empty array means no validation (any string accepted). */
 	types: string[];
 	defaults: {
@@ -81,15 +102,25 @@ function resolveStatuses(
 	statuses: string[];
 	defaultStatus: string;
 	terminalStatuses: string[];
+	negativeStatuses: string[];
 } {
 	if (entries.length === 0) {
 		throw new Error(`"statuses" in ${source} must list at least one status.`);
 	}
+	for (const entry of entries) {
+		const problem = statusOutcomeProblem(entry);
+		if (problem !== undefined) throw new Error(`${source}: ${problem}.`);
+	}
 
 	const normalized = entries.map(entry =>
 		typeof entry === 'string'
-			? { name: entry, terminal: false, default: false }
-			: { name: entry.name, terminal: entry.terminal ?? false, default: entry.default ?? false }
+			? { name: entry, terminal: false, default: false, negative: false }
+			: {
+					name: entry.name,
+					terminal: entry.terminal ?? false,
+					default: entry.default ?? false,
+					negative: entry.outcome === 'negative',
+				}
 	);
 
 	const defaultEntries = normalized.filter(e => e.default);
@@ -103,6 +134,7 @@ function resolveStatuses(
 		statuses: normalized.map(e => e.name),
 		defaultStatus: defaultEntries[0]?.name ?? normalized[0]!.name,
 		terminalStatuses: normalized.filter(e => e.terminal).map(e => e.name),
+		negativeStatuses: normalized.filter(e => e.negative).map(e => e.name),
 	};
 }
 
@@ -143,7 +175,7 @@ export class TaskConfigLoader {
 		source: string;
 	}): TaskResolvedConfig {
 		const { global: globalConfig, project: projectConfig } = input;
-		const { statuses, defaultStatus, terminalStatuses } = resolveStatuses(
+		const { statuses, defaultStatus, terminalStatuses, negativeStatuses } = resolveStatuses(
 			projectConfig.statuses ?? DEFAULT_STATUSES,
 			input.source
 		);
@@ -152,6 +184,7 @@ export class TaskConfigLoader {
 			statuses,
 			defaultStatus,
 			terminalStatuses,
+			negativeStatuses,
 			types: projectConfig.types ?? [],
 			defaults: {
 				priority: projectConfig.defaults?.priority ?? globalConfig.defaults?.priority ?? DEFAULT_PRIORITY,

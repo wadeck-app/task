@@ -65,7 +65,7 @@ describe('GET /tasks/:id presentation for the redesigned task page', () => {
 		expect(body['statusOptions']).toEqual([
 			{ value: 'backlog', label: 'backlog', tone: 'neutral', terminal: false },
 			{ value: 'in-progress', label: 'in-progress', tone: 'info', terminal: false },
-			{ value: 'done', label: 'done', tone: 'success', terminal: true },
+			{ value: 'done', label: 'done', tone: 'success', terminal: true, outcome: 'positive' },
 		]);
 	});
 

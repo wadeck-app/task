@@ -28,6 +28,8 @@ export const OWN_TEMP_PREFIXES: readonly string[] = [
 	'app-module-task-real-server-',
 	'register-after-update-',
 	'task-applying-',
+	'task-backend-contract-',
+	'task-backend-golden-',
 	'task-cli-declare-',
 	'task-cli-globalconfig-',
 	'task-cli-iso-',

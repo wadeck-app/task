@@ -490,19 +490,22 @@ describe.each(designs)('design %s keeps every control of the task page', (name, 
 		expect(dialog, `${name}: no delete dialog`).toBeDefined();
 		const inside = nodesOf(dialog);
 		expect(inside.some(n => n.label === '$sources.detail.deleteImpactText')).toBe(true);
-		const form = inside.find(n => n.$type === 'Form')!;
-		expect(form).toMatchObject({ onSubmit: '$ctx.deleteTask', initialData: '$sources.detail.forms.delete' });
-		const fields = inside.filter(n => n.bind !== undefined);
-		expect(fields).toEqual([
-			{
-				$type: 'Switch',
-				$if: '$sources.detail.hasDescendants',
-				label: '$sources.detail.deleteCascadeLabel',
-				bind: 'cascade',
-			},
+		// No switch (a view reads no form state, so it could not change a sentence): one form per outcome, the label states it.
+		expect(inside.filter(n => n.bind !== undefined)).toEqual([]);
+		const forms = inside.filter(n => n.$type === 'Form');
+		expect(forms).toHaveLength(2);
+		expect(forms[0]).toMatchObject({ onSubmit: '$ctx.deleteTask', initialData: '$sources.detail.forms.delete' });
+		expect(forms[1]).toMatchObject({
+			$if: '$sources.detail.hasDescendants',
+			onSubmit: '$ctx.deleteTask',
+			initialData: '$sources.detail.forms.deleteCascade',
+		});
+		const buttons = inside.filter(n => n.$type === 'ButtonAction' && n.type === 'submit');
+		expect(buttons.map(n => n.label)).toEqual([
+			'$sources.detail.deleteLabel',
+			'$sources.detail.deleteCascadeLabel',
 		]);
-		const submit = inside.find(n => n.$type === 'ButtonAction' && n.type === 'submit')!;
-		expect(submit).toMatchObject({ variant: 'danger' });
+		expect(buttons[0]).toMatchObject({ variant: 'danger' });
 		// The dialog sits behind a menu, not in the toolbar.
 		expect(nodes.some(n => n.$type === 'task:PropertyPopover' && nodesOf(n).includes(dialog))).toBe(true);
 		expect(nodes.filter(n => n.$type === 'ButtonLink' && n.to === '$sources.detail.taskHrefs.deleteTasks')).toEqual(
@@ -921,11 +924,11 @@ describe('the layouts of the products', () => {
 			expect(main('github').find(n => n.$type === 'task:Panel')).toMatchObject({ appearance: 'strip' });
 		});
 
-		it('has a sidebar of sections separated by dividers, and the composer at the bottom of the activity', () => {
+		it('has a sidebar of sections separated by dividers, and the composer on top of the activity (the feed is newest first)', () => {
 			const dividers = side('github').filter(n => n.$type === 'Divider');
 			expect(dividers.length).toBeGreaterThanOrEqual(4);
 			expect(panelTitles(side('github'))).toEqual(['Status', 'Type', 'Parent', 'Labels', 'Metadata']);
-			expect(feedOf('github')).toMatchObject({ composerPosition: 'bottom' });
+			expect(feedOf('github')).toMatchObject({ composerPosition: 'top' });
 		});
 	});
 
@@ -951,8 +954,8 @@ describe('the layouts of the products', () => {
 			).toBe('bar');
 		});
 
-		it('has a filter dropdown (All activity / Comments only / History only) and the composer under the feed', () => {
-			expect(feedOf('gitlab')).toMatchObject({ filterAppearance: 'select', composerPosition: 'bottom' });
+		it('has a filter dropdown (All activity / Comments only / History only) and the composer above the feed (newest first)', () => {
+			expect(feedOf('gitlab')).toMatchObject({ filterAppearance: 'select', composerPosition: 'top' });
 		});
 
 		it('has collapsible sidebar sections with an Edit link, and a footer with the dates', () => {

@@ -292,15 +292,21 @@ sections:
                                           $if: $sources.detail.forms
                                           onSubmit: $ctx.deleteTask
                                           initialData: $sources.detail.forms.delete
-                                          fields:
-                                            - $type: Switch
-                                              $if: $sources.detail.hasDescendants
-                                              label: $sources.detail.deleteCascadeLabel
-                                              bind: cascade
+                                          fields: []
                                           actions:
                                             - $type: ButtonAction
-                                              label: Delete task
+                                              label: $sources.detail.deleteLabel
                                               variant: danger
+                                              type: submit
+                                        - $type: Form
+                                          $if: $sources.detail.hasDescendants
+                                          onSubmit: $ctx.deleteTask
+                                          initialData: $sources.detail.forms.deleteCascade
+                                          fields: []
+                                          actions:
+                                            - $type: ButtonAction
+                                              label: $sources.detail.deleteCascadeLabel
+                                              variant: danger-outline
                                               type: submit
                         - $type: task:Notice
                           $if: $sources.detail.blockedText
@@ -488,11 +494,12 @@ sections:
                                     - all
                                     - comments
                                     - history
-                                  composerPosition: bottom
+                                  composerPosition: top
                                   emptyText: No activity yet
                                   commentsContent:
                                     - $type: task:CommentThread
                                       comments: $sources.comments.comments
+                                      newestFirst: true
                                       editAction: editComment
                                       removeAction: removeComment
                                       emptyText: No comments yet
@@ -738,15 +745,21 @@ sections:
                                           $if: $sources.detail.forms
                                           onSubmit: $ctx.deleteTask
                                           initialData: $sources.detail.forms.delete
-                                          fields:
-                                            - $type: Switch
-                                              $if: $sources.detail.hasDescendants
-                                              label: $sources.detail.deleteCascadeLabel
-                                              bind: cascade
+                                          fields: []
                                           actions:
                                             - $type: ButtonAction
-                                              label: Delete task
+                                              label: $sources.detail.deleteLabel
                                               variant: danger
+                                              type: submit
+                                        - $type: Form
+                                          $if: $sources.detail.hasDescendants
+                                          onSubmit: $ctx.deleteTask
+                                          initialData: $sources.detail.forms.deleteCascade
+                                          fields: []
+                                          actions:
+                                            - $type: ButtonAction
+                                              label: $sources.detail.deleteCascadeLabel
+                                              variant: danger-outline
                                               type: submit
                     - $type: task:SplitLayout
                       sidePosition: right
@@ -906,6 +919,7 @@ sections:
                                   commentsContent:
                                     - $type: task:CommentThread
                                       comments: $sources.comments.comments
+                                      newestFirst: true
                                       editAction: editComment
                                       removeAction: removeComment
                                       emptyText: No comments yet
@@ -1045,6 +1059,7 @@ sections:
                                 - $type: Divider
                                 - $type: task:PropertyList
                                   density: compact
+                                  hideTipsOnNarrow: true
                                   labelPlacement: inline
                                   labelWidth: narrow
                                   items:
@@ -1125,15 +1140,21 @@ sections:
                                           $if: $sources.detail.forms
                                           onSubmit: $ctx.deleteTask
                                           initialData: $sources.detail.forms.delete
-                                          fields:
-                                            - $type: Switch
-                                              $if: $sources.detail.hasDescendants
-                                              label: $sources.detail.deleteCascadeLabel
-                                              bind: cascade
+                                          fields: []
                                           actions:
                                             - $type: ButtonAction
-                                              label: Delete task
+                                              label: $sources.detail.deleteLabel
                                               variant: danger
+                                              type: submit
+                                        - $type: Form
+                                          $if: $sources.detail.hasDescendants
+                                          onSubmit: $ctx.deleteTask
+                                          initialData: $sources.detail.forms.deleteCascade
+                                          fields: []
+                                          actions:
+                                            - $type: ButtonAction
+                                              label: $sources.detail.deleteCascadeLabel
+                                              variant: danger-outline
                                               type: submit
                         - $type: task:InlineText
                           ariaLabel: Title
@@ -1347,11 +1368,12 @@ sections:
                                     - comments
                                     - history
                                   filterAppearance: select
-                                  composerPosition: bottom
+                                  composerPosition: top
                                   emptyText: No activity yet
                                   commentsContent:
                                     - $type: task:CommentThread
                                       comments: $sources.comments.comments
+                                      newestFirst: true
                                       editAction: editComment
                                       removeAction: removeComment
                                       emptyText: No comments yet
@@ -1491,6 +1513,7 @@ sections:
                                     projectParam: $sources.detail.projectParam
                             - $type: task:PropertyList
                               density: compact
+                              hideTipsOnNarrow: true
                               labelPlacement: inline
                               labelWidth: narrow
                               items:

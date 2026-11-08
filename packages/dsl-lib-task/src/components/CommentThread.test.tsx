@@ -22,6 +22,16 @@ const COMMENTS = [
 	},
 ];
 
+describe('CommentThread order', () => {
+	it('lists the comments in the given order, newest first only on request', () => {
+		const { rerender } = render(<CommentThread comments={COMMENTS} now={NOW} readOnly />);
+		const texts = () => screen.getAllByTestId('comment').map(node => node.textContent);
+		expect(texts()[0]).toContain('First line');
+		rerender(<CommentThread comments={COMMENTS} now={NOW} readOnly newestFirst />);
+		expect(texts()[0]).toContain('Anonymous');
+	});
+});
+
 function setup(extra: Partial<CommentThreadProps> = {}) {
 	const onAction = vi.fn().mockResolvedValue(undefined);
 	const view = render(

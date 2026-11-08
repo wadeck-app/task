@@ -38,6 +38,7 @@ const CUSTOM_CONFIG = [
 	'    terminal: true',
 	'  - name: dropped',
 	'    terminal: true',
+	'    outcome: negative',
 	'',
 ].join('\n');
 
@@ -62,11 +63,11 @@ describe('task status list', () => {
 
 		expect(result).toEqual({
 			exitCode: 0,
-			output: ['backlog', 'doing (default)', 'done (terminal)', 'dropped (terminal)'].join('\n'),
+			output: ['backlog', 'doing (default)', 'done (terminal)', 'dropped (terminal, negative)'].join('\n'),
 		});
 	});
 
-	it('--json is [{name, default, terminal}] in the same order', async () => {
+	it('--json is [{name, default, terminal, outcome?}] in the same order (outcome on terminal statuses only)', async () => {
 		const dir = await project('shop', CUSTOM_CONFIG);
 
 		const result = await runTaskCommand(['status', 'list', '--json'], dir);
@@ -75,8 +76,8 @@ describe('task status list', () => {
 		expect(JSON.parse(result.output)).toEqual([
 			{ name: 'backlog', default: false, terminal: false },
 			{ name: 'doing', default: true, terminal: false },
-			{ name: 'done', default: false, terminal: true },
-			{ name: 'dropped', default: false, terminal: true },
+			{ name: 'done', default: false, terminal: true, outcome: 'positive' },
+			{ name: 'dropped', default: false, terminal: true, outcome: 'negative' },
 		]);
 	});
 

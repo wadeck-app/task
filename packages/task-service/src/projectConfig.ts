@@ -1,7 +1,7 @@
 // The config of a task project: the layers of the shared registry (project chain).
-import { mergeLayers, validateLayer } from '@wadeck-app/project-sdk';
+import { ConfigSchemaError, mergeLayers, validateLayer } from '@wadeck-app/project-sdk';
 import type { ConfigSchema, NamedLayer } from '@wadeck-app/project-sdk';
-import { TaskConfigLoader } from '@wadeck-app/task-core';
+import { statusOutcomeProblem, TaskConfigLoader } from '@wadeck-app/task-core';
 import type { TaskProjectConfig, TaskResolvedConfig } from '@wadeck-app/task-core';
 
 import { ownConfigFile } from './storage.js';
@@ -22,6 +22,23 @@ export const TASK_CONFIG_SCHEMA: ConfigSchema = {
 	},
 };
 
+/** An `outcome` on a non-terminal status, or another value than positive / negative, is a schema error naming the file. */
+function checkStatusOutcomes(layer: NamedLayer): void {
+	const statuses = (layer.values as TaskProjectConfig).statuses;
+	if (!Array.isArray(statuses)) return;
+	for (const entry of statuses) {
+		const problem = statusOutcomeProblem(entry);
+		if (problem !== undefined) {
+			const name = typeof entry === 'string' ? '?' : entry.name;
+			throw new ConfigSchemaError(`${layer.name}: ${problem}.`, {
+				layer: layer.name,
+				key: 'statuses',
+				path: `statuses.${name}.outcome`,
+			});
+		}
+	}
+}
+
 /**
  * Resolves the config of a project: every layer file (root ancestor first, the project's own last) is read,
  * checked against {@link TASK_CONFIG_SCHEMA} (an unknown or misplaced key throws a `ConfigSchemaError` naming the FILE and the
@@ -35,6 +52,7 @@ export function loadTaskConfig(storage: TaskStorage, globalConfigDir?: string): 
 	}));
 	for (const layer of layers) {
 		validateLayer(TASK_CONFIG_SCHEMA, layer.name, layer.values, 'project');
+		checkStatusOutcomes(layer);
 	}
 	const merged = mergeLayers(TASK_CONFIG_SCHEMA, layers);
 	return TaskConfigLoader.resolve({

@@ -2703,7 +2703,7 @@ describe('GET /tasks/:id (form options)', () => {
 		expect(answer.body['statusOptions']).toEqual([
 			{ value: 'backlog', label: 'backlog', tone: 'neutral', terminal: false },
 			{ value: 'in-progress', label: 'in-progress', tone: 'info', terminal: false },
-			{ value: 'done', label: 'done', tone: 'success', terminal: true },
+			{ value: 'done', label: 'done', tone: 'success', terminal: true, outcome: 'positive' },
 		]);
 		// First entry: "none" (clears the type through DELETE /tasks/:id/type); the value is empty.
 		expect(answer.body['typeOptions']).toEqual([
@@ -2847,6 +2847,7 @@ describe('view data: page links, filters and form defaults', () => {
 				parent: { ...base, parent: '' },
 				link: { ...base, type: 'blockedBy', target: '' },
 				delete: { ...base, ids: id, cascade: false, confirm: true },
+				deleteCascade: { ...base, ids: id, cascade: true, confirm: true },
 				empty: base,
 			});
 			expect(answer.body['hasTypes']).toBe(true);

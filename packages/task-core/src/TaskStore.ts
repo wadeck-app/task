@@ -69,6 +69,9 @@ export type ActivityKind =
 	| 'parent'
 	| 'link-added'
 	| 'link-removed'
+	// Mirror of a parent change, written on the PARENT (always `inverse`, `target` = the child).
+	| 'child-added'
+	| 'child-removed'
 	| 'title'
 	| 'description'
 	// Comments: an added one is not logged here (the comment itself is the record); `field` is the comment id.
@@ -79,7 +82,7 @@ export type ActivityKind =
  * One change of a task, appended to `TaskRecord.activity` in the same write as the change. Only the keys that apply are
  * stored. `oldValue` / `newValue`: the type, the label (new for added, old for removed), the metadata value, the parent
  * id, or a preview of a title / description (see {@link ACTIVITY_PREVIEW_MAX}). `field`: the metadata key, or the stored
- * link type. `target`: the other task of a link. `inverse`: the entry is the mirror of a link held by `target`.
+ * link type. `target`: the other task of a link. `inverse`: the entry is the mirror of a link (or, for `child-added` / `child-removed`, of a parent change) held by `target`.
  */
 export interface ActivityEntry {
 	at: string;
@@ -207,12 +210,12 @@ export class TaskStore {
 		return this.writeParent(record, parentId);
 	}
 
-	removeParent(id: string): TaskRecord {
+	removeParent(id: string, options: { mirror?: boolean } = {}): TaskRecord {
 		const record = this.get(id);
 		if (record.parentId === undefined) {
 			throw new TaskConflictError(`Task "${id}" has no parent`);
 		}
-		return this.writeParent(record, undefined);
+		return this.writeParent(record, undefined, options.mirror !== false);
 	}
 
 	/**
@@ -835,7 +838,8 @@ export class TaskStore {
 	// Children of a deleted task become roots; their own subtrees stay attached to them.
 	private orphanChildrenOf(parentId: string): void {
 		for (const child of this.getChildren(parentId)) {
-			this.removeParent(child.id);
+			// The parent is already gone: nothing to mirror on it.
+			this.removeParent(child.id, { mirror: false });
 		}
 	}
 
@@ -862,7 +866,7 @@ export class TaskStore {
 		return ancestors;
 	}
 
-	private writeParent(record: TaskRecord, parentId: string | undefined): TaskRecord {
+	private writeParent(record: TaskRecord, parentId: string | undefined, mirror = true): TaskRecord {
 		const oldParentId = record.parentId;
 		if (parentId === undefined) {
 			delete record.parentId;
@@ -889,6 +893,10 @@ export class TaskStore {
 			entry.parentId = parentId;
 		}
 		this.writeIndex(index);
+		if (mirror && oldParentId !== parentId) {
+			if (oldParentId !== undefined) this.logInverse(oldParentId, record.id, 'child-removed', 'Parent');
+			if (parentId !== undefined) this.logInverse(parentId, record.id, 'child-added', 'Parent');
+		}
 		return record;
 	}
 
@@ -907,19 +915,33 @@ export class TaskStore {
 		type: LinkType,
 		targetId: string
 	): void {
-		if (!fs.existsSync(this.taskFilePath(targetId))) {
+		this.logInverse(targetId, holderId, kind, 'Link', type);
+	}
+
+	/**
+	 * A mirror entry (`inverse`, `target` = the task that changed) on a SECOND task file, written after the change itself.
+	 * A vanished task gets none; its `updatedAt` stays. `what` names the change in the failure message.
+	 */
+	private logInverse(
+		mirrorId: string,
+		changedId: string,
+		kind: ActivityKind,
+		what: 'Link' | 'Parent',
+		field?: string
+	): void {
+		if (!fs.existsSync(this.taskFilePath(mirrorId))) {
 			return;
 		}
 		try {
-			const target = this.get(targetId);
+			const mirror = this.get(mirrorId);
 			this.appendActivity(
-				target,
-				activityEntry(new Date().toISOString(), kind, { field: type, target: holderId, inverse: true })
+				mirror,
+				activityEntry(new Date().toISOString(), kind, { field, target: changedId, inverse: true })
 			);
-			this.writeFile(this.taskFilePath(targetId), JSON.stringify(target, null, 2));
+			this.writeFile(this.taskFilePath(mirrorId), JSON.stringify(mirror, null, 2));
 		} catch (err) {
 			throw new Error(
-				`Link change saved on "${holderId}" but the activity entry of "${targetId}" could not be written: ${err instanceof Error ? err.message : String(err)}`
+				`${what} change saved on "${changedId}" but the activity entry of "${mirrorId}" could not be written: ${err instanceof Error ? err.message : String(err)}`
 			);
 		}
 	}

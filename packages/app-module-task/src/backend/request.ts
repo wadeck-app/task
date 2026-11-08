@@ -59,7 +59,7 @@ export function booleanFlag(query: RouteRequest['query'], name: string, hint: st
 
 /** `?showAll=true` includes the tasks in a terminal status. */
 export function showAllFlag(query: RouteRequest['query']): boolean {
-	return booleanFlag(query, 'showAll', 'Use ?showAll=true to include terminal statuses.');
+	return booleanFlag(query, 'showAll', 'Use ?showAll=true to include closed tasks.');
 }
 
 /** The JSON object body of a request; `usage` is the hint of the 400 when it is something else. */

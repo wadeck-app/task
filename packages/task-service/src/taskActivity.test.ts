@@ -142,6 +142,58 @@ describe('getTaskActivity', () => {
 		expect(tones).toEqual(['success', 'info', 'neutral']);
 	});
 
+	it('shows a negative terminal status in the danger tone', () => {
+		t.cleanup();
+		t = createTestContext({
+			statuses: ['backlog', 'done', 'rejected'],
+			terminalStatuses: ['done', 'rejected'],
+			negativeStatuses: ['rejected'],
+		});
+		id = t.ctx.store.create('Fix login', 'backlog').id;
+		setStatus(t.ctx, { id, status: 'rejected' });
+
+		expect(getTaskActivity(t.ctx, { id }).rows[0]).toMatchObject({ kind: 'status', tone: 'danger' });
+	});
+
+	describe('sub-tasks on the parent side', () => {
+		it('reads a parent change from both tasks: the child says "Parent", each parent says "Sub-task"', () => {
+			const a = t.ctx.store.create('Parent A', 'backlog').id;
+			const b = t.ctx.store.create('Parent B', 'backlog').id;
+			setParent(t.ctx, { id, parent: a });
+			setParent(t.ctx, { id, parent: b });
+			removeParent(t.ctx, { id });
+
+			expect(texts(a).slice(0, 2)).toEqual([
+				`Sub-task ${id} Fix login detached`,
+				`Sub-task ${id} Fix login added`,
+			]);
+			expect(texts(b).slice(0, 2)).toEqual([
+				`Sub-task ${id} Fix login detached`,
+				`Sub-task ${id} Fix login added`,
+			]);
+			const row = getTaskActivity(t.ctx, { id: a }).rows[0]!;
+			expect(row).toMatchObject({
+				kind: 'child-removed',
+				source: 'activity',
+				inverse: true,
+				icon: 'git-branch',
+				tone: 'neutral',
+			});
+			expect(getTaskActivity(t.ctx, { id: a }).rows[1]).toMatchObject({
+				kind: 'child-added',
+				icon: 'git-branch',
+			});
+		});
+
+		it('a deleted parent leaves the child with its own parent entry only', () => {
+			const parent = t.ctx.store.create('Parent A', 'backlog').id;
+			setParent(t.ctx, { id, parent });
+			t.ctx.store.deleteTask(parent);
+
+			expect(texts(id)[0]).toBe(`Parent removed (was ${parent})`);
+		});
+	});
+
 	describe('links', () => {
 		it('reads a link from both sides: the holder says "blocked by", the target says "blocks"', () => {
 			const blocker = t.ctx.store.create('Blocker task', 'backlog').id;

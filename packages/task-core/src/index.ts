@@ -6,8 +6,9 @@ export type {
 	TaskGlobalConfig,
 	TaskProjectConfig,
 	TaskResolvedConfig,
+	StatusOutcome,
 } from './TaskConfigLoader.js';
-export { TaskConfigLoader } from './TaskConfigLoader.js';
+export { TaskConfigLoader, statusOutcomeProblem } from './TaskConfigLoader.js';
 export type {
 	TaskStatus,
 	TaskSummary,
@@ -32,3 +33,32 @@ export { OpenTypeStrategy, FixedListTypeStrategy, resolveTypeValidationStrategy 
 export { TaskNotFoundError, AmbiguousTaskPrefixError, TaskConflictError } from './errors.js';
 export type { CommentChange, CommentEdit, TaskComment } from './taskComments.js';
 export { COMMENT_AUTHOR_MAX, COMMENT_TEXT_MAX, CommentNotFoundError, InvalidCommentTextError } from './taskComments.js';
+// The async port (stage 0 of the storage-strategies design): not used by any caller yet.
+export type {
+	ActivitySupport,
+	BackendCapabilities,
+	BackendCommentChange,
+	BackendCommentEdit,
+	BackendKind,
+	ConcurrencySupport,
+	CreateTaskInput,
+	DeleteSupport,
+	HierarchySupport,
+	HistorySupport,
+	IdSupport,
+	LabelCount,
+	ListQuery,
+	Page,
+	SearchSupport,
+	StatusSupport,
+	TaskBackend,
+	VersionedRecord,
+	WriteOptions,
+} from './backend/index.js';
+export {
+	LOCAL_CAPABILITIES,
+	LocalFileBackend,
+	StaleRevisionError,
+	UnsupportedByBackendError,
+	revisionOf,
+} from './backend/index.js';

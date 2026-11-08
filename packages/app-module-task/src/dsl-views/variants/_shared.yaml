@@ -188,19 +188,27 @@ delete.dialog:
               - $type: task:Notice
                 label: $sources.detail.deleteImpactText
                 variant: warning
+              # Two buttons, each saying what happens to the children: a view reads no form state, so a switch could not change the
+              # sentence above it. Each form posts its own body (forms.delete keeps the children, forms.deleteCascade takes the subtree).
               - $type: Form
                 $if: $sources.detail.forms
                 onSubmit: $ctx.deleteTask
                 initialData: $sources.detail.forms.delete
-                fields:
-                    - $type: Switch
-                      $if: $sources.detail.hasDescendants
-                      label: $sources.detail.deleteCascadeLabel
-                      bind: cascade
+                fields: []
                 actions:
                     - $type: ButtonAction
-                      label: Delete task
+                      label: $sources.detail.deleteLabel
                       variant: danger
+                      type: submit
+              - $type: Form
+                $if: $sources.detail.hasDescendants
+                onSubmit: $ctx.deleteTask
+                initialData: $sources.detail.forms.deleteCascade
+                fields: []
+                actions:
+                    - $type: ButtonAction
+                      label: $sources.detail.deleteCascadeLabel
+                      variant: danger-outline
                       type: submit
 # The overflow menu of the header: a popover holding the dialog. A PropertyPopover, so its trigger has the height of every other
 # pill of the page (a ButtonAction is shorter), and it opens towards the left (it sits at the right edge).
@@ -480,6 +488,8 @@ subtasks.add.popover.end:
 comments.thread:
     $type: task:CommentThread
     comments: $sources.comments.comments
+    # Newest first, like the All filter, and next to the composer (which is above the list in every design).
+    newestFirst: true
     editAction: editComment
     removeAction: removeComment
     emptyText: No comments yet
@@ -508,6 +518,8 @@ dates.updated.row:
 dates:
     $type: task:PropertyList
     density: compact
+    # The date tooltips are w-max bubbles: on a phone they stick out of the page (sideways scroll at 390 px).
+    hideTipsOnNarrow: true
     labelPlacement: inline
     labelWidth: narrow
     items:

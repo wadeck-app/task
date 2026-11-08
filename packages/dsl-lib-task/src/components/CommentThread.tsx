@@ -30,8 +30,10 @@ export interface TaskCommentItem {
 }
 
 export interface CommentThreadProps {
-	/** The comments in the order to show them (the API gives oldest first). */
+	/** The comments as the API gives them: oldest first. */
 	comments: TaskCommentItem[];
+	/** Show the newest comment first (next to a composer placed above the list, like the activity feed). */
+	newestFirst?: boolean;
 	/** Name of the `$actions` entry run when a comment is edited (`PATCH /tasks/{id}/comments/{commentId}`, body `{text}`). Empty = not editable. */
 	editAction?: string;
 	/** Name of the `$actions` entry run when a comment is deleted (`DELETE /tasks/{id}/comments/{commentId}`). Empty = no delete control. */
@@ -74,7 +76,7 @@ function isComment(value: unknown): value is TaskCommentItem {
 }
 
 /**
- * The comments of a task, oldest first: author (when named), relative time with the UTC instant in the tooltip, an
+ * The comments of a task, oldest first (`newestFirst` reverses): author (when named), relative time with the UTC instant in the tooltip, an
  * "edited" marker, and the plain text with its line breaks (long words wrap). The text is edited in place like the
  * title (check and cross at the right, Ctrl+Enter saves, Esc cancels); delete asks for a confirmation. HTML and
  * links in a text are never interpreted.
@@ -86,6 +88,7 @@ function isComment(value: unknown): value is TaskCommentItem {
  */
 export function CommentThread({
 	comments,
+	newestFirst = false,
 	editAction,
 	removeAction,
 	params,
@@ -99,7 +102,8 @@ export function CommentThread({
 	const [confirming, setConfirming] = useState<string | null>(null);
 	const [deleting, setDeleting] = useState<string | null>(null);
 	const [problem, setProblem] = useState<{ id: string; text: string } | null>(null);
-	const list = (Array.isArray(comments) ? comments : []).filter(isComment);
+	const given = (Array.isArray(comments) ? comments : []).filter(isComment);
+	const list = newestFirst ? [...given].reverse() : given;
 	const parsedNow = now === undefined ? Number.NaN : Date.parse(now);
 	const nowMs = Number.isNaN(parsedNow) ? Date.now() : parsedNow;
 	const canEdit = !readOnly && editAction !== undefined && editAction !== '';

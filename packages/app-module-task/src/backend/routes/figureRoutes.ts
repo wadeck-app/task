@@ -10,7 +10,7 @@ import { RequestError } from '../errors.js';
 import { openProject } from '../projects.js';
 import type { RouteKit } from './routeKit.js';
 
-/** The route answer of a figure. */
+/** The route answer of a figure. The tooltip is the manifest `label` after the number (the shell writes "3 open tasks"). */
 function figure(count: number): { status: 200; body: { count: number } } {
 	return { status: 200, body: { count } };
 }

@@ -165,7 +165,10 @@ export const STATUS_HELP = `task status - the valid statuses of this project
 Usage:
   task status list [--json]   The statuses 'task set-status' accepts, in config order, one per line: a status that is the
                               default (the initial status of a new task) is marked "(default)", a terminal one (hidden from
-                              'task list' unless --all) "(terminal)". --json: [{"name": "...", "default": false, "terminal": false}]
+                              'task list' unless --all) "(terminal)", or "(terminal, negative)" when
+                              its config says 'outcome: negative' (e.g. rejected; it still unblocks what it blocks).
+                              --json: [{"name": "...", "default": false, "terminal": false}], plus "outcome":
+                              "positive"|"negative" on terminal statuses
   task status --help          Show this help
 
 The list is the statuses of the project's merged config.yml (see 'task --help', config); without any, backlog, in-progress, done.`;

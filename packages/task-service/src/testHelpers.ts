@@ -19,6 +19,7 @@ const DEFAULT_TEST_CONFIG: TaskResolvedConfig = {
 	statuses: ['backlog', 'in-progress', 'done'],
 	defaultStatus: 'backlog',
 	terminalStatuses: ['done'],
+	negativeStatuses: [],
 	types: [],
 	defaults: { priority: 'medium' },
 	globalHooks: {},

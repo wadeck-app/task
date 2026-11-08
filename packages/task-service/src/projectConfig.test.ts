@@ -131,6 +131,45 @@ describe('loadTaskConfig: a project of the shared registry', () => {
 		expect((failure as Error).message).toContain('colour');
 	});
 
+	it('reads outcome: negative of a terminal status', async () => {
+		const storage = await single();
+		write(
+			ownConfigFile(storage),
+			'statuses:\n  - todo\n  - name: done\n    terminal: true\n  - name: rejected\n    terminal: true\n    outcome: negative\n'
+		);
+
+		const config = loadTaskConfig(storage, sandbox.root);
+
+		expect(config.terminalStatuses).toEqual(['done', 'rejected']);
+		expect(config.negativeStatuses).toEqual(['rejected']);
+	});
+
+	it.each([
+		['an outcome on a non-terminal status', 'statuses:\n  - name: todo\n    outcome: negative\n', 'terminal: true'],
+		[
+			'an unknown outcome',
+			'statuses:\n  - todo\n  - name: done\n    terminal: true\n    outcome: maybe\n',
+			'"positive" or "negative"',
+		],
+	])('%s is a ConfigSchemaError naming the FILE and the key', async (_label, yml, fix) => {
+		const storage = await single();
+		write(ownConfigFile(storage), yml);
+
+		let failure: unknown;
+		try {
+			loadTaskConfig(storage, sandbox.root);
+		} catch (error) {
+			failure = error;
+		}
+
+		expect(failure).toBeInstanceOf(ConfigSchemaError);
+		expect((failure as ConfigSchemaError).layer).toBe(ownConfigFile(storage));
+		expect((failure as ConfigSchemaError).key).toBe('statuses');
+		expect((failure as Error).message).toContain(ownConfigFile(storage));
+		expect((failure as Error).message).toContain('outcome');
+		expect((failure as Error).message).toContain(fix);
+	});
+
 	it('names the file of an ANCESTOR when its key is the problem', async () => {
 		const storage = await chain();
 		const [parentFile] = storage.configFiles as [string, string];

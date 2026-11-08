@@ -206,6 +206,43 @@ describe('TaskConfigLoader', () => {
 			expect(config.projectHooks).toEqual({ onStatusChange: 'p' });
 		});
 
+		it('a terminal status is positive unless it says outcome: negative', () => {
+			const config = TaskConfigLoader.resolve({
+				global: {},
+				project: {
+					statuses: [
+						'todo',
+						{ name: 'done', terminal: true },
+						{ name: 'shipped', terminal: true, outcome: 'positive' },
+						{ name: 'rejected', terminal: true, outcome: 'negative' },
+					],
+				},
+				source: '/x/config.yml',
+			});
+			expect(config.terminalStatuses).toEqual(['done', 'shipped', 'rejected']);
+			expect(config.negativeStatuses).toEqual(['rejected']);
+		});
+
+		it('refuses an outcome on a non-terminal status, naming the file, the status and the fix', () => {
+			expect(() =>
+				TaskConfigLoader.resolve({
+					global: {},
+					project: { statuses: [{ name: 'todo', outcome: 'negative' }] },
+					source: '/x/config.yml',
+				})
+			).toThrow(/\/x\/config\.yml.*"outcome".*"todo".*terminal: true/s);
+		});
+
+		it('refuses an outcome other than positive or negative', () => {
+			expect(() =>
+				TaskConfigLoader.resolve({
+					global: {},
+					project: { statuses: [{ name: 'done', terminal: true, outcome: 'bad' as 'negative' }] },
+					source: '/x/config.yml',
+				})
+			).toThrow(/\/x\/config\.yml.*"outcome".*"done".*positive.*negative/s);
+		});
+
 		it('names the source in the status errors', () => {
 			expect(() =>
 				TaskConfigLoader.resolve({ global: {}, project: { statuses: [] }, source: '/x/config.yml' })

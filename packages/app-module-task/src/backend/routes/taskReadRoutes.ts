@@ -228,6 +228,7 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 			const found = readAcrossProjects(ctx => ({
 				forest: listForest(ctx, { showAll }),
 				terminalStatuses: ctx.config.terminalStatuses,
+				negativeStatuses: ctx.config.negativeStatuses,
 				figures: summarizeProject(ctx),
 			}));
 			return { status: 200, body: allForestBody(found, showAll) };

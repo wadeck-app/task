@@ -67,7 +67,7 @@ view:
                                       - all
                                       - comments
                                       - history
-                                  composerPosition: bottom
+                                  composerPosition: top
                                   emptyText: No activity yet
                                   commentsContent:
                                       - $use: comments.thread

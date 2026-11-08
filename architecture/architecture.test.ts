@@ -333,3 +333,30 @@ describe('the adapters agree on the app-core module id without importing each ot
 		expect(read('packages/app-module-task/src/backend/hrefs.ts')).toContain(`MODULE_ID = '${manifestId}'`);
 	});
 });
+
+// Stage 0 of the storage-strategies design (.claude/plans/2026-11-08_storage-strategies.md, 1.1): the async port is
+// types, errors and capability declarations only. A forge or remote adapter is written against it, so it must not drag
+// in the local file API. Only the local adapter (LocalFileBackend.ts) may use a Node module.
+// NOT enabled yet (callers are not migrated, step 0.6): "nothing outside task-core imports TaskStore directly" and
+// "fs only in the local adapter, storage.ts and the config loaders".
+describe('the backend port stays free of the local file API', () => {
+	const PORT_FILES = ['TaskBackend.ts', 'capabilities.ts', 'backendErrors.ts', 'index.ts'];
+	const nodeImports = (source: string): string[] =>
+		importedModules(source).filter(specifier => /^(node:|fs$|path$|os$|crypto$|child_process$)/.test(specifier));
+
+	it.each(PORT_FILES)('backend/%s imports no Node module', file => {
+		const source = fs.readFileSync(path.join(ROOT, 'packages/task-core/src/backend', file), 'utf8');
+		expect(nodeImports(source), `${file} must stay portable: move Node usage to LocalFileBackend.ts`).toEqual([]);
+	});
+
+	it('the check sees a Node import (detection test)', () => {
+		expect(nodeImports("import * as fs from 'node:fs';")).toEqual(['node:fs']);
+		expect(nodeImports("import { createHash } from 'crypto';")).toEqual(['crypto']);
+		expect(nodeImports("import type { TaskRecord } from '../TaskStore.js';")).toEqual([]);
+	});
+
+	it('the local adapter is the one backend file that uses a Node module', () => {
+		const source = fs.readFileSync(path.join(ROOT, 'packages/task-core/src/backend/LocalFileBackend.ts'), 'utf8');
+		expect(nodeImports(source)).toEqual(['node:crypto']);
+	});
+});

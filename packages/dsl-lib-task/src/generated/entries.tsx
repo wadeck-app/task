@@ -131,6 +131,7 @@ export const CommentThreadEntry: ComponentRegistryEntry = {
 	nodeSchema: null as never,
 	render: ({ node, ctx }: RegistryRenderProps) => {
 		const comments = coerceProp(resolveExpressionValue(node['comments'], ctx), 'CommentThread.comments', 'array', true) as import('../components/CommentThread.js').CommentThreadProps['comments']
+		const newestFirst = coerceProp(resolveExpressionValue(node['newestFirst'], ctx), 'CommentThread.newestFirst', 'primitive', false) as import('../components/CommentThread.js').CommentThreadProps['newestFirst']
 		const editAction = coerceProp(resolveExpressionValue(node['editAction'], ctx), 'CommentThread.editAction', 'string', false) as import('../components/CommentThread.js').CommentThreadProps['editAction']
 		const removeAction = coerceProp(resolveExpressionValue(node['removeAction'], ctx), 'CommentThread.removeAction', 'string', false) as import('../components/CommentThread.js').CommentThreadProps['removeAction']
 		const params = coerceProp(resolveExpressionsDeep(node['params'], ctx), 'CommentThread.params', 'object', false) as import('../components/CommentThread.js').CommentThreadProps['params']
@@ -139,7 +140,7 @@ export const CommentThreadEntry: ComponentRegistryEntry = {
 		const now = coerceProp(resolveExpressionValue(node['now'], ctx), 'CommentThread.now', 'string', false) as import('../components/CommentThread.js').CommentThreadProps['now']
 		const onAction = coerceProp(resolveExpressionValue(node['onAction'], ctx) ?? pageActionHandler(ctx), 'CommentThread.onAction', 'function', false) as import('../components/CommentThread.js').CommentThreadProps['onAction']
 		const actionPending = coerceProp(resolveExpressionValue(node['actionPending'], ctx) ?? ctx['$actionPending'], 'CommentThread.actionPending', 'object', false) as import('../components/CommentThread.js').CommentThreadProps['actionPending']
-		return <CommentThread comments={comments} editAction={editAction} removeAction={removeAction} params={params} readOnly={readOnly} emptyText={emptyText} now={now} onAction={onAction} actionPending={actionPending} />
+		return <CommentThread comments={comments} newestFirst={newestFirst} editAction={editAction} removeAction={removeAction} params={params} readOnly={readOnly} emptyText={emptyText} now={now} onAction={onAction} actionPending={actionPending} />
 	},
 }
 
@@ -296,8 +297,9 @@ export const PropertyListEntry: ComponentRegistryEntry = {
 		const labelPlacement = coerceProp(resolveExpressionValue(node['labelPlacement'], ctx), 'PropertyList.labelPlacement', 'primitive', false) as import('../components/PropertyList.js').PropertyListProps['labelPlacement']
 		const labelWidth = coerceProp(resolveExpressionValue(node['labelWidth'], ctx), 'PropertyList.labelWidth', 'primitive', false) as import('../components/PropertyList.js').PropertyListProps['labelWidth']
 		const dividers = coerceProp(resolveExpressionValue(node['dividers'], ctx), 'PropertyList.dividers', 'primitive', false) as import('../components/PropertyList.js').PropertyListProps['dividers']
+		const hideTipsOnNarrow = coerceProp(resolveExpressionValue(node['hideTipsOnNarrow'], ctx), 'PropertyList.hideTipsOnNarrow', 'primitive', false) as import('../components/PropertyList.js').PropertyListProps['hideTipsOnNarrow']
 		const items = node['items'] as unknown[] | undefined
-		return <PropertyList density={density} labelPlacement={labelPlacement} labelWidth={labelWidth} dividers={dividers} items={items ? renderChildren(items, registry, ctx) : null} />
+		return <PropertyList density={density} labelPlacement={labelPlacement} labelWidth={labelWidth} dividers={dividers} hideTipsOnNarrow={hideTipsOnNarrow} items={items ? renderChildren(items, registry, ctx) : null} />
 	},
 }
 
@@ -568,7 +570,7 @@ CaptionEntry.knownKeys = ["mono","text","tone"];
 ChipRowEntry.allowedChildren = {"items":["atomic","composite","display"]};
 ChipRowEntry.knownKeys = ["align","gap","items","justify"];
 CommentComposerEntry.knownKeys = ["action","actionPending","author","buttonLabel","maxLength","onAction","params","placeholder"];
-CommentThreadEntry.knownKeys = ["actionPending","comments","editAction","emptyText","now","onAction","params","readOnly","removeAction"];
+CommentThreadEntry.knownKeys = ["actionPending","comments","editAction","emptyText","newestFirst","now","onAction","params","readOnly","removeAction"];
 InlineTextEntry.knownKeys = ["action","actionPending","allowEmpty","ariaLabel","collapsedLines","maxLength","multiline","onAction","params","placeholder","readOnly","textClass","value","valueParam"];
 KeyValueListEntry.knownKeys = ["density","emptyText","entries"];
 LabelChipsEntry.knownKeys = ["actionPending","addAction","colors","emptyText","labelKeys","labelParam","labels","onAction","params","placeholder","readOnly","removeAction","size"];
@@ -580,7 +582,7 @@ PanelEntry.knownKeys = ["actions","appearance","collapsible","count","defaultOpe
 ProgressSummaryEntry.knownKeys = ["appearance","done","text","tone","total"];
 ProjectAccordionEntry.knownKeys = ["projects"];
 PropertyListEntry.allowedChildren = {"items":["composite"]};
-PropertyListEntry.knownKeys = ["density","dividers","items","labelPlacement","labelWidth"];
+PropertyListEntry.knownKeys = ["density","dividers","hideTipsOnNarrow","items","labelPlacement","labelWidth"];
 PropertyListEntry.providesContext = ["PropertyLayoutContext"];
 PropertyPopoverEntry.allowedChildren = {"items":["layout","display","composite","atomic","form"]};
 PropertyPopoverEntry.knownKeys = ["action","actionLabel","actionPending","align","appearance","bodyKey","closeOnActions","disabled","empty","items","label","onAction","options","params","tone","value","valueParam","valueText"];

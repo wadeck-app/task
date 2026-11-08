@@ -147,6 +147,43 @@ describe('TaskStore activity', () => {
 			]);
 		});
 
+		it('records child-added on the new parent and child-removed on the old one (inverse, updatedAt untouched)', () => {
+			const a = store.create('A', 'backlog');
+			const b = store.create('B', 'backlog');
+			const child = store.create('C', 'backlog');
+			const beforeA = onDisk(a.id).updatedAt;
+			store.setParent(child.id, a.id);
+			store.setParent(child.id, a.id);
+			store.setParent(child.id, b.id);
+			store.removeParent(child.id);
+
+			expect(activity(a.id).map(without)).toEqual([
+				{ kind: 'child-added', target: child.id, inverse: true },
+				{ kind: 'child-removed', target: child.id, inverse: true },
+			]);
+			expect(activity(b.id).map(without)).toEqual([
+				{ kind: 'child-added', target: child.id, inverse: true },
+				{ kind: 'child-removed', target: child.id, inverse: true },
+			]);
+			expect(onDisk(a.id).updatedAt).toBe(beforeA);
+		});
+
+		it('says which task kept the change when the parent entry cannot be written', () => {
+			const parent = store.create('P', 'backlog');
+			const child = store.create('C', 'backlog');
+			const failing = new TaskStore(tasksDir, {
+				writeFile: (file, content) => {
+					if (file.endsWith(`${parent.id}.json`)) throw new Error('disk full');
+					fs.writeFileSync(file, content, 'utf8');
+				},
+			});
+
+			expect(() => failing.setParent(child.id, parent.id)).toThrow(
+				`Parent change saved on "${child.id}" but the activity entry of "${parent.id}" could not be written: disk full`
+			);
+			expect(store.get(child.id).parentId).toBe(parent.id);
+		});
+
 		it('records the detachment of the children of a deleted task', () => {
 			const parent = store.create('P', 'backlog');
 			const child = store.create('C', 'backlog', parent.id);

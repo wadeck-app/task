@@ -12,18 +12,24 @@ import { linkRows } from './rowViews.js';
 
 type ProjectRef = ProjectIdentity & { path: string };
 
-/** The colour family a status is shown in: closed -> success, the starting status -> neutral, anything else -> info. */
-export type Tone = 'success' | 'neutral' | 'info';
+/**
+ * The colour family a status is shown in: closed with a positive outcome -> success, closed with a negative one (config
+ * `outcome: negative`) -> danger, the starting status -> neutral, anything else -> info.
+ */
+export type Tone = 'success' | 'danger' | 'neutral' | 'info';
 
 /** The statuses of a project, as the config gives them. */
 export interface StatusConfig {
 	statuses: string[];
 	defaultStatus: string;
 	terminalStatuses: string[];
+	/** The terminal statuses that end badly (a subset of `terminalStatuses`). */
+	negativeStatuses: string[];
 }
 
 export function statusTone(config: StatusConfig, status: string): Tone {
-	if (config.terminalStatuses.includes(status)) return 'success';
+	if (config.terminalStatuses.includes(status))
+		return config.negativeStatuses.includes(status) ? 'danger' : 'success';
 	return status === config.defaultStatus ? 'neutral' : 'info';
 }
 
@@ -132,16 +138,30 @@ export function activityRowView(row: ActivityRow): Record<string, unknown> {
 	return { ...row, group: day ?? 'Unknown date', time: shortUtcTime(row.at) };
 }
 
-/** The statuses with what a picker needs: value, label, tone, terminal (config order; the same config `set-status` validates against). */
-export function statusOptionRows(
-	config: StatusConfig
-): Array<{ value: string; label: string; tone: Tone; terminal: boolean }> {
-	return config.statuses.map(status => ({
-		value: status,
-		label: status,
-		tone: statusTone(config, status),
-		terminal: config.terminalStatuses.includes(status),
-	}));
+/**
+ * The statuses with what a picker needs: value, label, tone, terminal, and `outcome` (`positive` | `negative`, terminal
+ * statuses only) (config order; the same config `set-status` validates against). The label is the bare name: the colour
+ * says closed / how it ended.
+ */
+export function statusOptionRows(config: StatusConfig): Array<{
+	value: string;
+	label: string;
+	tone: Tone;
+	terminal: boolean;
+	outcome?: 'positive' | 'negative';
+}> {
+	return config.statuses.map(status => {
+		const terminal = config.terminalStatuses.includes(status);
+		return {
+			value: status,
+			label: status,
+			tone: statusTone(config, status),
+			terminal,
+			...(terminal
+				? { outcome: config.negativeStatuses.includes(status) ? ('negative' as const) : ('positive' as const) }
+				: {}),
+		};
+	});
 }
 
 /**
@@ -159,7 +179,7 @@ export interface PropertyPill {
 	key: 'status' | 'type' | 'labels' | 'parent' | 'blocked';
 	label: string;
 	text: string;
-	tone: Tone | 'danger';
+	tone: Tone;
 	empty: boolean;
 }
 
@@ -243,16 +263,12 @@ export interface DeleteImpact {
 
 const plural = (count: number, one: string, many: string): string => `${count} ${count === 1 ? one : many}`;
 
-/** The consequences of deleting a task, in one sentence for the confirmation dialog (children become roots, links go). */
+/**
+ * What both delete buttons share, in one sentence for the confirmation dialog (links go, blocked tasks lose a blocker). What
+ * happens to the children is not here: it differs per button and is stated on them (see {@link deleteButtonLabels}).
+ */
 export function deleteImpactText(impact: DeleteImpact): string {
 	const parts: string[] = [];
-	if (impact.childCount > 0) {
-		parts.push(
-			impact.childCount === 1
-				? 'its 1 child becomes a root task'
-				: `its ${impact.childCount} children become root tasks`
-		);
-	}
 	if (impact.linkCount > 0) {
 		parts.push(`${plural(impact.linkCount, 'link is', 'links are')} removed`);
 	}
@@ -261,19 +277,29 @@ export function deleteImpactText(impact: DeleteImpact): string {
 			`${impact.blocksCount} ${impact.blocksCount === 1 ? 'task it blocks loses' : 'tasks it blocks lose'} a blocker`
 		);
 	}
-	return parts.length === 0
-		? 'Deleting this task has no other effect: no children, no links. This cannot be undone.'
-		: `Deleting this task: ${parts.join(', ')}. This cannot be undone.`;
+	if (parts.length === 0) {
+		return impact.childCount > 0
+			? 'Deleting this task cannot be undone.'
+			: 'Deleting this task has no other effect: no children, no links. This cannot be undone.';
+	}
+	return `Deleting this task: ${parts.join(', ')}. This cannot be undone.`;
 }
 
-/** The label of the "also delete the descendants" switch of the delete dialog. */
-export function deleteCascadeLabel(descendantCount: number, childCount = 0): string {
-	const label = `Also delete its ${plural(descendantCount, 'descendant', 'descendants')}`;
-	// The sentence above the switch cannot follow it (a view reads no form state): the label says what the switch changes.
-	if (childCount === 0) return label;
-	const otherwise =
-		childCount === 1 ? 'its 1 child becomes a root task' : `its ${childCount} children become root tasks`;
-	return `${label} (otherwise ${otherwise})`;
+/**
+ * The two buttons of the delete dialog, each saying its own outcome (a view reads no form state, so a switch could not change a
+ * sentence): `deleteLabel` keeps the children (they become roots), `deleteCascadeLabel` takes the whole subtree.
+ */
+export function deleteButtonLabels(impact: DeleteImpact): { deleteLabel: string; deleteCascadeLabel: string } {
+	const deleteLabel =
+		impact.childCount === 0
+			? 'Delete task'
+			: impact.childCount === 1
+				? 'Delete task, its 1 child becomes a root task'
+				: `Delete task, its ${impact.childCount} children become root tasks`;
+	return {
+		deleteLabel,
+		deleteCascadeLabel: `Delete task and its ${plural(impact.descendantCount, 'descendant', 'descendants')}`,
+	};
 }
 
 /** The status a checked sub-task gets (the first terminal status in config order) and the one an unchecked one gets back. */

@@ -18,10 +18,10 @@
 // | noBodyInfo              | boolean                                | opposite of `bodyAddsInfo` (the DSL has no negation): the "Add a description" field is shown only then | $if      |
 // | checklistRows           | [{id,title,headline,status,tone,terminal,href}] | the children as the rows of task:TaskChecklist | checklist |
 // | terminalStatus, reopenStatus | string, string                    | the status a checked sub-task gets (first terminal in config order, '' when the project has none) and the one an unchecked one gets back (the default status) | checklist |
-// | deleteImpactText, hasDescendants, deleteCascadeLabel | string, boolean, string | the sentence of the delete dialog ("its 2 children become root tasks, ..."), whether the cascade switch is offered, and its label | delete dialog |
-// | forms.delete            | {projectParam,ids,cascade,confirm}     | the body of POST /tasks/delete for this task (the dialog's submit); ids is this task's id | delete dialog |
+// | deleteImpactText, hasDescendants, deleteLabel, deleteCascadeLabel | string, boolean, string, string | the sentence of the delete dialog (links removed, blockers lost), whether the cascade button is offered, and the labels of the two buttons (each states what happens to the children) | delete dialog |
+// | forms.delete, forms.deleteCascade | {projectParam,ids,cascade,confirm} | the body of POST /tasks/delete for this task (one per button of the dialog, cascade false / true); ids is this task's id | delete dialog |
 // | descriptionText, hasDescription | string or null, boolean        | the body when it adds information, else null / false (the old Description panel no longer repeats the title) | Markdown, $if |
-// | statusOptions           | [{value,label,tone,terminal}]          | the statuses of the merged config (the one `set-status` validates against), config order | pickers |
+// | statusOptions           | [{value,label,tone,terminal,outcome?}] | the statuses of the merged config (the one `set-status` validates against), config order; `outcome` (positive/negative) on terminal ones only; tone danger = closed negatively | pickers |
 // | typeOptions             | [{value,label}]                        | "None" (value '') then the configured types; [] when the project has none (free text) | pickers |
 // The detail answer never scans the project's task files: label suggestions come from GET /labels and metadata key
 // suggestions from GET /meta-keys, both fetched on demand by the pickers.
@@ -29,7 +29,7 @@
 // | deleteImpact            | {childCount,descendantCount,linkCount,blocksCount} | what a deletion touches: direct children (become roots), all descendants (a cascade), links counted both ways (removed), tasks it blocks | delete dialog |
 // | pills                   | [{key,label,text,tone,empty}]          | status, type, labels, parent (+ `blocked`, tone danger, only while open blockers exist); text "none" when empty | pill row |
 // | pillTexts               | {status,type,labels,parent,blocked?}   | each pill as one text "Label: text" (blocked only while blockers are open): the labelled pills of the bar and flow designs | pill row |
-// | statusChoices           | [{value,label,tone,isDefault,isTerminal}] | statuses in config order; tone success (closed), neutral (initial), info (others) | ActionSelect, SegmentedControl |
+// | statusChoices           | [{value,label,tone,isDefault,isTerminal}] | statuses in config order; tone success (closed), danger (closed with outcome: negative), neutral (initial), info (others) | ActionSelect, SegmentedControl |
 // | statusTone, isTerminal, isOpen | tone, boolean, boolean          | of the task's current status; isOpen = not terminal (the DSL has no negation) | badges   |
 // | typeChoices             | [{value,label}]                        | configured types; [] when the project has none (free text)           | ActionSelect |
 // | labelList               | string[]                               | the labels                                                           | LabelChips |
@@ -68,7 +68,7 @@ import {
 	checklistRows,
 	checklistStatuses,
 	childrenSummaryView,
-	deleteCascadeLabel,
+	deleteButtonLabels,
 	deleteImpactText,
 	propertyPills,
 	relationLabel,
@@ -119,6 +119,7 @@ function detailForms(project: Project, task: TaskRecord): Record<string, Record<
 		link: { ...base, type: 'blockedBy', target: '' },
 		// The delete dialog posts this as is to POST /tasks/delete: the task is never retyped, `confirm` is set by the dialog's own button.
 		delete: { ...base, ids: task.id, cascade: false, confirm: true },
+		deleteCascade: { ...base, ids: task.id, cascade: true, confirm: true },
 		empty: base,
 	};
 }
@@ -192,7 +193,7 @@ export function taskDetailBody(
 		deleteImpact,
 		deleteImpactText: deleteImpactText(deleteImpact),
 		hasDescendants: data.descendantCount > 0,
-		deleteCascadeLabel: deleteCascadeLabel(data.descendantCount, deleteImpact.childCount),
+		...deleteButtonLabels(deleteImpact),
 		checklistRows: checklistRows(config, childRows),
 		...checklistStatuses(config),
 		pills,

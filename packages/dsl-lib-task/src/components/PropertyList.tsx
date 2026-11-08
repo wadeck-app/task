@@ -12,6 +12,11 @@ export interface PropertyListProps {
 	/** Thin line between rows. */
 	dividers?: boolean;
 	/**
+	 * Hide the hover tips of the values (the exact instant of a date) below 640 px. A tip is a `w-max` bubble centred on its value:
+	 * on a narrow screen it sticks out of the page and adds a sideways scroll (measured at 390 px), and there is no hover on a phone.
+	 */
+	hideTipsOnNarrow?: boolean;
+	/**
 	 * The rows (PropertyRow nodes; a row alone also works, with the default layout).
 	 * @slot tag:composite
 	 */
@@ -38,6 +43,7 @@ export function PropertyList({
 	labelPlacement = 'stacked',
 	labelWidth = 'normal',
 	dividers = false,
+	hideTipsOnNarrow = false,
 	items,
 }: PropertyListProps): React.ReactElement {
 	const layout = useMemo(() => ({ density, labelPlacement, labelWidth }), [density, labelPlacement, labelWidth]);
@@ -46,7 +52,9 @@ export function PropertyList({
 			<div
 				data-testid="property-list"
 				data-density={density}
-				className={`flex flex-col ${DENSITY_GAP[density]}${dividers ? ' divide-y divide-border' : ''}`}
+				className={`flex flex-col ${DENSITY_GAP[density]}${dividers ? ' divide-y divide-border' : ''}${
+					hideTipsOnNarrow ? ' max-sm:[&_[role=tooltip]]:hidden' : ''
+				}`}
 			>
 				{items}
 			</div>

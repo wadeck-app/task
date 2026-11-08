@@ -46,6 +46,14 @@ describe('PropertyList', () => {
 		expect(screen.getByTestId('property-list')).toHaveClass('divide-y');
 	});
 
+	it('hides the hover tips of its values below 640 px only when asked (a tip sticks out of a narrow page)', () => {
+		const { rerender } = render(<PropertyList items={<PropertyRow label="A" items="x" />} />);
+		expect(screen.getByTestId('property-list').className).not.toContain('role=tooltip');
+
+		rerender(<PropertyList hideTipsOnNarrow items={<PropertyRow label="A" items="x" />} />);
+		expect(screen.getByTestId('property-list')).toHaveClass('max-sm:[&_[role=tooltip]]:hidden');
+	});
+
 	// An inline label sits next to a 32 px control: its text must line up with the control's text, not with its top edge.
 	it('inline: align="control" centres the label on a control-high first line, text (default) keeps it at the top', () => {
 		const { rerender } = render(

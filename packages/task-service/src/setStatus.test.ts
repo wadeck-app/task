@@ -145,4 +145,24 @@ describe('setStatus', () => {
 			},
 		});
 	});
+
+	it('a NEGATIVE terminal status (rejected) unblocks like a positive one: terminal means "no longer blocking"', () => {
+		const custom = createTestContext({
+			statuses: ['backlog', 'done', 'rejected'],
+			terminalStatuses: ['done', 'rejected'],
+			negativeStatuses: ['rejected'],
+		});
+		try {
+			const blocker = custom.ctx.store.create('blocker', 'backlog');
+			const a = custom.ctx.store.create('a', 'backlog');
+			custom.ctx.store.addLink(a.id, 'blockedBy', blocker.id);
+
+			const result = setStatus(custom.ctx, { id: blocker.id, status: 'rejected' });
+
+			expect(result.unblocked.map(x => x.id)).toEqual([a.id]);
+			expect(result.events.map(e => e.name)).toEqual(['onStatusChange', 'onTaskUnblocked']);
+		} finally {
+			custom.cleanup();
+		}
+	});
 });

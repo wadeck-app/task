@@ -41,6 +41,7 @@
 			"count": {
 				"route": "/tasks/open/count",
 				"field": "count",
+				"label": "open tasks",
 				"refreshSeconds": 60
 			}
 		},
@@ -106,6 +107,7 @@
 				"count": {
 					"route": "/tasks/p/:project/open/count",
 					"field": "count",
+					"label": "open tasks",
 					"refreshSeconds": 60
 				}
 			},
@@ -171,6 +173,7 @@
 				"count": {
 					"route": "/types/p/:project/count",
 					"field": "count",
+					"label": "types",
 					"refreshSeconds": 60
 				}
 			},
