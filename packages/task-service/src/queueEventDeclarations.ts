@@ -42,6 +42,9 @@ export const TASK_EVENT_NAMES: Record<TaskEvent['name'], true> = {
 	onTaskLabelRemoved: true,
 	onTaskMetaChanged: true,
 	onTaskTextChanged: true,
+	onTaskCommentAdded: true,
+	onTaskCommentEdited: true,
+	onTaskCommentRemoved: true,
 	onTaskParentChanged: true,
 	onTaskDeleted: true,
 };
@@ -330,6 +333,75 @@ export const queueEventDeclarations: readonly QueueEventDeclaration[] = [
 		correlationKey: 'payload.taskId',
 	},
 	{
+		name: 'onTaskCommentAdded',
+		description:
+			'A comment was added to a task (task comment, or the Comments tab of the app-core UI). Fires once per comment, after ' +
+			'it is saved. text is the full text of the comment (plain text, newlines kept), author is absent when none was given. ' +
+			'Does NOT fire for an edit (onTaskCommentEdited), a removal (onTaskCommentRemoved) or a refused (blank, too long) comment.',
+		schema: {
+			type: 'object',
+			properties: {
+				taskId: string,
+				commentId: { type: 'string', description: 'Short id of the comment, unique within the task.' },
+				text: { type: 'string', description: 'The full text of the comment, never a preview.' },
+				author: { type: 'string', description: 'Absent when the comment has no author.' },
+				...projectProperties,
+			},
+			required: ['taskId', 'commentId', 'text', ...projectRequired],
+			additionalProperties: false,
+		},
+		example: {
+			taskId: '3f2a9c1e-0000-4000-8000-000000000001',
+			commentId: 'k3x9ab',
+			text: 'Reproduced on staging: the redirect loops after the second login.',
+			author: 'alice',
+			...projectExample,
+		},
+		correlationKey: 'payload.taskId',
+	},
+	{
+		name: 'onTaskCommentEdited',
+		description:
+			'The text of a comment was edited (task comment-edit, or the app-core UI). Fires once per edit, after it is saved. ' +
+			'oldText and newText are the full texts. Does NOT fire when the new text equals the old one, when the comment does ' +
+			'not exist, or for an added or removed comment.',
+		schema: {
+			type: 'object',
+			properties: {
+				taskId: string,
+				commentId: string,
+				oldText: { type: 'string', description: 'The full text before the edit.' },
+				newText: { type: 'string', description: 'The full text after the edit.' },
+				...projectProperties,
+			},
+			required: ['taskId', 'commentId', 'newText', ...projectRequired],
+			additionalProperties: false,
+		},
+		example: {
+			taskId: '3f2a9c1e-0000-4000-8000-000000000001',
+			commentId: 'k3x9ab',
+			oldText: 'Reproduced on staging.',
+			newText: 'Reproduced on staging: the redirect loops after the second login.',
+			...projectExample,
+		},
+		correlationKey: 'payload.taskId',
+	},
+	{
+		name: 'onTaskCommentRemoved',
+		description:
+			'A comment was removed from a task (task comment-rm, or the app-core UI). Fires once per removal, after it is saved. ' +
+			'The text is not in the payload. Does NOT fire when the comment does not exist, nor when the whole task is deleted ' +
+			'(onTaskDeleted, see commentCount).',
+		schema: {
+			type: 'object',
+			properties: { taskId: string, commentId: string, ...projectProperties },
+			required: ['taskId', 'commentId', ...projectRequired],
+			additionalProperties: false,
+		},
+		example: { taskId: '3f2a9c1e-0000-4000-8000-000000000001', commentId: 'k3x9ab', ...projectExample },
+		correlationKey: 'payload.taskId',
+	},
+	{
 		name: 'onTaskParentChanged',
 		description:
 			'A task was attached under a parent, moved to another, or detached (task set-parent / remove-parent, or the app-core ' +
@@ -378,6 +450,10 @@ export const queueEventDeclarations: readonly QueueEventDeclaration[] = [
 				removedLinkCount: {
 					type: 'integer',
 					description: 'Links held by the tasks still present that pointed to this task, removed with it.',
+				},
+				commentCount: {
+					type: 'integer',
+					description: 'Comments the task had, deleted with it. Absent when it had none.',
 				},
 				...projectProperties,
 			},

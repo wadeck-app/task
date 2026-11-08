@@ -38,7 +38,13 @@ function setup(
 			{...props}
 		/>
 	);
-	return { ...fetchStub, onAction, ...utils, input: screen.getByRole('combobox') as HTMLInputElement };
+	return { ...fetchStub, onAction, ...utils };
+}
+
+/** Clicks the "+ Add" chip and returns the input of its popover. */
+async function openAdd(user: ReturnType<typeof userEvent.setup>): Promise<HTMLInputElement> {
+	await user.click(screen.getByRole('button', { name: 'Add label' }));
+	return screen.getByRole('combobox') as HTMLInputElement;
 }
 
 describe('LabelCombobox', () => {
@@ -55,18 +61,23 @@ describe('LabelCombobox', () => {
 		});
 	});
 
-	it('is a combobox with a named input and a collapsed popup', () => {
-		const { input } = setup();
+	it('shows a "+ Add" chip, not an input; the popover opens on click with a named, focused combobox', async () => {
+		setup();
+
+		expect(screen.queryByRole('combobox')).toBeNull();
+		const input = await openAdd(userEvent.setup());
 
 		expect(input).toHaveAccessibleName('Add a label');
-		expect(input).toHaveAttribute('aria-expanded', 'false');
+		expect(input).toHaveFocus();
 		expect(input).toHaveAttribute('aria-autocomplete', 'list');
+		expect(screen.getByRole('dialog', { name: 'Add label' })).toContainElement(input);
 	});
 
-	it('loads the project labels on focus and lists them with their count, without the current labels', async () => {
-		const { calls, input } = setup();
+	it('does not fetch before the popover opens, then loads the project labels with their count, without the current labels', async () => {
+		const { calls } = setup();
+		expect(calls).toHaveLength(0);
 
-		await userEvent.setup().click(input);
+		await openAdd(userEvent.setup());
 
 		const options = await screen.findAllByRole('option');
 		expect(calls[0]!.url.pathname).toBe('/api/modules/task/labels');
@@ -80,32 +91,42 @@ describe('LabelCombobox', () => {
 		expect(screen.queryByRole('option', { name: /\bui\b/ })).toBeNull();
 	});
 
+	it('draws the suggestions BELOW the input, in the flow', async () => {
+		setup();
+
+		const input = await openAdd(userEvent.setup());
+		const list = await screen.findByRole('listbox');
+
+		expect(input.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(screen.getByTestId('suggest-results').className).not.toMatch(/\babsolute\b/);
+	});
+
 	it('shows skeleton rows while the labels load', async () => {
 		const gate = deferred<Response>();
 		stubFetch(() => gate.promise);
 		render(<LabelCombobox labels={[]} addAction="a" onAction={vi.fn()} />);
 
-		await userEvent.setup().click(screen.getByRole('combobox'));
+		await openAdd(userEvent.setup());
 
 		expect(screen.getByRole('listbox')).toHaveAttribute('aria-busy', 'true');
-		expect(screen.getAllByTestId('label-skeleton').length).toBeGreaterThan(0);
+		expect(screen.getAllByTestId('suggest-skeleton').length).toBeGreaterThan(0);
 		await act(async () => gate.resolve(jsonResponse(COUNTS)));
 		await screen.findAllByRole('option');
 	});
 
 	it('uses the suggestions prop and does not fetch', async () => {
-		const { calls, input } = setup({ suggestions: [{ label: 'x1', count: 2 }] });
+		const { calls } = setup({ suggestions: [{ label: 'x1', count: 2 }] });
 
-		await userEvent.setup().click(input);
+		await openAdd(userEvent.setup());
 
 		expect(await screen.findByRole('option', { name: /x1/ })).toBeInTheDocument();
 		expect(calls).toHaveLength(0);
 	});
 
 	it('filters as you type, case-insensitively, prefix matches first', async () => {
-		const { input } = setup();
+		setup();
 		const user = userEvent.setup();
-		await user.click(input);
+		const input = await openAdd(user);
 		await screen.findAllByRole('option');
 
 		await user.type(input, 'B');
@@ -116,23 +137,23 @@ describe('LabelCombobox', () => {
 		expect(names.some(n => n.includes('Create'))).toBe(true);
 	});
 
-	it('creates the typed label on Enter when nothing matches, label in the body', async () => {
-		const { input, onAction } = setup();
+	it('creates the typed label on Enter when nothing matches, label in the body, and closes', async () => {
+		const { onAction } = setup();
 		const user = userEvent.setup();
-		await user.click(input);
+		const input = await openAdd(user);
 		await screen.findAllByRole('option');
 
 		await user.type(input, 'brand new{Enter}');
 
 		await waitFor(() => expect(onAction).toHaveBeenCalledTimes(1));
 		expect(onAction).toHaveBeenCalledWith('addLabel', { id: 't1' }, { body: { label: 'brand new' } });
-		await waitFor(() => expect(input.value).toBe(''));
+		await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 	});
 
 	it('Enter on a typed prefix with no highlight adds the first suggestion, not the raw prefix ("bil" must not create "bil" while "billing" exists)', async () => {
-		const { input, onAction } = setup();
+		const { onAction } = setup();
 		const user = userEvent.setup();
-		await user.click(input);
+		const input = await openAdd(user);
 		await screen.findAllByRole('option');
 
 		await user.type(input, 'bil{Enter}');
@@ -142,9 +163,9 @@ describe('LabelCombobox', () => {
 	});
 
 	it('the raw text is still created by moving to the Create row (ArrowDown past the suggestions)', async () => {
-		const { input, onAction } = setup();
+		const { onAction } = setup();
 		const user = userEvent.setup();
-		await user.click(input);
+		const input = await openAdd(user);
 		await screen.findAllByRole('option');
 
 		await user.type(input, 'bil');
@@ -159,9 +180,9 @@ describe('LabelCombobox', () => {
 	});
 
 	it('adds the highlighted suggestion on Enter', async () => {
-		const { input, onAction } = setup();
+		const { onAction } = setup();
 		const user = userEvent.setup();
-		await user.click(input);
+		const input = await openAdd(user);
 		await screen.findAllByRole('option');
 
 		await user.type(input, 'b{ArrowDown}{ArrowDown}');
@@ -173,9 +194,9 @@ describe('LabelCombobox', () => {
 	});
 
 	it('adds a suggestion with a click', async () => {
-		const { input, onAction } = setup();
+		const { onAction } = setup();
 		const user = userEvent.setup();
-		await user.click(input);
+		await openAdd(user);
 
 		await user.click(await screen.findByRole('option', { name: /backend/ }));
 
@@ -184,9 +205,9 @@ describe('LabelCombobox', () => {
 	});
 
 	it('offers a Create row only when no label matches exactly, and uses the existing casing on an exact match', async () => {
-		const { input, onAction } = setup();
+		const { onAction } = setup();
 		const user = userEvent.setup();
-		await user.click(input);
+		const input = await openAdd(user);
 		await screen.findAllByRole('option');
 
 		await user.type(input, 'nothing');
@@ -201,9 +222,9 @@ describe('LabelCombobox', () => {
 	});
 
 	it('refuses a label the task already has, whatever the case, and says so', async () => {
-		const { input, onAction } = setup();
+		const { onAction } = setup();
 		const user = userEvent.setup();
-		await user.click(input);
+		const input = await openAdd(user);
 		await user.type(input, 'UI{Enter}');
 
 		expect(await screen.findByRole('alert')).toHaveTextContent('already has the label "UI"');
@@ -213,9 +234,9 @@ describe('LabelCombobox', () => {
 	it('submits once on a double Enter and on Enter followed by a blur', async () => {
 		const gate = deferred<void>();
 		const onAction = vi.fn().mockReturnValue(gate.promise);
-		const { input } = setup({ onAction });
+		setup({ onAction });
 		const user = userEvent.setup();
-		await user.click(input);
+		const input = await openAdd(user);
 		await user.type(input, 'zed');
 
 		await user.keyboard('{Enter}{Enter}');
@@ -225,38 +246,38 @@ describe('LabelCombobox', () => {
 		expect(onAction).toHaveBeenCalledTimes(1);
 	});
 
-	it('keeps the text when the action fails', async () => {
+	it('keeps the text and the popover open when the action fails', async () => {
 		const onAction = vi.fn().mockResolvedValue({ error: 'x', status: 400 });
-		const { input } = setup({ onAction });
+		setup({ onAction });
 		const user = userEvent.setup();
-		await user.click(input);
+		const input = await openAdd(user);
 		await user.type(input, 'zed{Enter}');
 
 		await waitFor(() => expect(onAction).toHaveBeenCalled());
 		expect(input.value).toBe('zed');
+		expect(screen.getByRole('dialog')).toBeInTheDocument();
 	});
 
-	it('closes the list with Escape and on an outside click', async () => {
-		const { input } = setup();
+	it('closes the popover with Escape (focus back on "+ Add") and on an outside click', async () => {
+		setup();
 		const user = userEvent.setup();
-		await user.click(input);
+		await openAdd(user);
 		await screen.findAllByRole('option');
 
 		await user.keyboard('{Escape}');
-		expect(screen.queryByRole('listbox')).toBeNull();
-		await user.type(input, 'b');
+		expect(screen.queryByRole('dialog')).toBeNull();
+		expect(screen.getByRole('button', { name: 'Add label' })).toHaveFocus();
+		await openAdd(user);
 		await screen.findByRole('listbox');
 		fireEvent.pointerDown(document.body);
 
-		await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
+		await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 	});
 
 	it('shows a failed load in the list and still lets the typed label be created', async () => {
-		const { input, onAction } = setup({}, () =>
-			jsonResponse({ error: 'unknown project', hint: 'use the id' }, 404)
-		);
+		const { onAction } = setup({}, () => jsonResponse({ error: 'unknown project', hint: 'use the id' }, 404));
 		const user = userEvent.setup();
-		await user.click(input);
+		const input = await openAdd(user);
 
 		expect(await screen.findByRole('alert')).toHaveTextContent('unknown project');
 		await user.type(input, 'fresh{Enter}');
@@ -265,8 +286,8 @@ describe('LabelCombobox', () => {
 	});
 
 	it('aborts the label request when it unmounts', async () => {
-		const { calls, input, unmount } = setup();
-		await userEvent.setup().click(input);
+		const { calls, unmount } = setup();
+		await openAdd(userEvent.setup());
 		await waitFor(() => expect(calls).toHaveLength(1));
 
 		unmount();
@@ -286,11 +307,11 @@ describe('LabelCombobox', () => {
 		expect(screen.getByText('No labels')).toBeInTheDocument();
 	});
 
-	it('keeps the list inside a narrow screen', async () => {
-		const { input } = setup();
-		await userEvent.setup().click(input);
+	it('keeps the popover inside a narrow screen', async () => {
+		setup();
+		await openAdd(userEvent.setup());
 
 		await screen.findAllByRole('option');
-		expect(screen.getByTestId('label-popup').className).toContain('max-w-[calc(100vw-1rem)]');
+		expect(screen.getByRole('dialog').className).toContain('max-w-[calc(100vw-1rem)]');
 	});
 });

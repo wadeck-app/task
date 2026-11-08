@@ -2,6 +2,7 @@
 import {
 	addLabel,
 	createTask,
+	getTaskActivity,
 	linkTasks,
 	removeLabel,
 	removeParent,
@@ -23,6 +24,7 @@ import { rememberLastProject } from '../lastProject.js';
 import { metaKeyFromKey } from '../metaKey.js';
 import { bodyObject, optionalString, queryValue, requiredString } from '../request.js';
 import type { RouteAnswer, RouteRequest } from '../request.js';
+import { taskTextFields } from '../taskViews.js';
 import { undeliveredFields } from '../undelivered.js';
 import { taskId } from './routeKit.js';
 import type { RouteKit } from './routeKit.js';
@@ -220,18 +222,27 @@ export function registerTaskWriteRoutes(kit: RouteKit): void {
 	route('DELETE', '/tasks/:id/type', req => answerChange(unsetType(open(req), { id: taskId(req) })));
 
 	// Edits the headline and/or the description (one onTaskTextChanged per field that changed).
-	route('PATCH', '/tasks/:id', req => {
+	route('PATCH', '/tasks/:id', async req => {
 		const ctx = open(req);
 		const body = bodyObject(req.body, TEXT_USAGE);
 		const title = optionalText(body, 'title', TEXT_USAGE);
 		const description = optionalText(body, 'description', TEXT_USAGE);
-		return answerChange(
-			setTaskText(ctx, {
-				id: taskId(req),
-				...(title === undefined ? {} : { title }),
-				...(description === undefined ? {} : { description }),
-			})
-		);
+		const result = setTaskText(ctx, {
+			id: taskId(req),
+			...(title === undefined ? {} : { title }),
+			...(description === undefined ? {} : { description }),
+		});
+		const undelivered = await deliver(result.events);
+		return {
+			status: 200,
+			body: {
+				task: result.task,
+				// What the page shows after the edit (the same rules as GET /tasks/:id) and the new length of the activity.
+				...taskTextFields(result.task),
+				activityCount: getTaskActivity(ctx, { id: result.task.id }).rows.length,
+				...undeliveredFields(undelivered),
+			},
+		};
 	});
 
 	route('POST', '/tasks/:id/links', async req => {

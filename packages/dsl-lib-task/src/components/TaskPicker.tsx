@@ -6,6 +6,7 @@ import { useAction } from '../useAction.js';
 import type { ActionHandler } from '../useAction.js';
 import { useDismiss } from '../useDismiss.js';
 import { StatusBadge } from './StatusBadge.js';
+import { FIELD_CLASS, GAP_CONTROLS, ICON_SIZE, RESULTS_CLASS, SEARCH_STICKY_CLASS } from '../ui/tokens.js';
 
 export interface TaskPickerProps {
 	/** Name of the `$actions` entry run when a task is picked. */
@@ -249,14 +250,14 @@ export function TaskPicker({
 	const activeId = open && !loading && shown[active] ? optionId(active) : undefined;
 
 	return (
-		<div ref={rootRef} data-testid="task-picker" className="relative flex w-full min-w-0 flex-col gap-1.5">
+		<div ref={rootRef} data-testid="task-picker" className={`flex w-full min-w-0 flex-col ${GAP_CONTROLS}`}>
 			{choiceList.length > 0 ? (
 				<select
 					aria-label={choiceLabel}
 					value={chosen}
 					disabled={unavailable}
 					onChange={event => setChoice(event.target.value)}
-					className="w-full rounded-md border border-border bg-surface px-2 py-1 text-sm text-content outline-none focus:ring-2 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-60"
+					className={`w-full ${FIELD_CLASS}`}
 				>
 					{choiceList.map(entry => (
 						<option key={entry.value} value={entry.value}>
@@ -265,8 +266,12 @@ export function TaskPicker({
 					))}
 				</select>
 			) : null}
-			<div className="relative flex items-center">
-				<Search size={14} aria-hidden="true" className="pointer-events-none absolute left-2 text-muted" />
+			<div data-testid="task-picker-search" className={`relative flex items-center ${SEARCH_STICKY_CLASS}`}>
+				<Search
+					size={ICON_SIZE}
+					aria-hidden="true"
+					className="pointer-events-none absolute left-2 text-muted"
+				/>
 				<input
 					type="text"
 					role="combobox"
@@ -289,7 +294,7 @@ export function TaskPicker({
 						setOpen(true);
 					}}
 					onKeyDown={onKeyDown}
-					className="w-full rounded-md border border-border bg-surface py-1 pl-7 pr-8 text-sm text-content outline-none placeholder:text-muted focus:ring-2 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-60"
+					className={`w-full pl-7 pr-8 ${FIELD_CLASS}`}
 				/>
 				{clearable && text !== '' && !picking ? (
 					<button
@@ -305,7 +310,7 @@ export function TaskPicker({
 			{open ? (
 				<div
 					data-testid="task-picker-popup"
-					className="absolute z-30 mt-1 max-h-72 w-full min-w-[16rem] max-w-[calc(100vw-1rem)] overflow-y-auto rounded-md border border-border bg-surface py-1 shadow-lg"
+					className={`w-full min-w-0 max-w-[calc(100vw-1rem)] ${RESULTS_CLASS}`}
 				>
 					{loading
 						? Array.from({ length: SKELETON_ROWS }, (_, i) => (

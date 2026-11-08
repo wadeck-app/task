@@ -24,6 +24,15 @@ Usage:
                                              --description-file reads the body from a file, or from standard input with -
   task set-title <id> <text>                 Change the title (the index and 'task list' follow)
   task set-description <id> <text>           Change the description; an empty text clears it (the body is the title again)
+  task comment <id> <text...> [--file <path|->] [--author <name>] [--json]
+                                             Add a comment (plain text, 1 to 10000 characters; words are joined with a space, -- before a text
+                                             starting with --; --file reads it from a file or from standard input with -). No author unless
+                                             --author is given. Prints the new comment id
+  task comments <id> [--json]                List the comments of a task, oldest first (id, UTC minute, author, "(edited)", the text indented);
+                                             --json: [{id, at, text, author?, editedAt?}]
+  task comment-edit <id> <comment-id> <text...> [--file <path|->]
+                                             Replace the text of a comment (an identical text changes nothing); ids: task comments <id>
+  task comment-rm <id> <comment-id>          Remove a comment
   task find <query> [--limit N] [--json]     Find tasks by id prefix or title text, best match first (id prefix, title word prefix, substring);
                                              N from 1 to 20 (default 8); text lines "id  headline  [status]", --json: [{id, headline, status}]
   task labels [--json]                       Labels in use with the number of tasks carrying each, most used first
@@ -36,6 +45,9 @@ Usage:
                                              (a single project contradicts all of them)
   task show <id> [--json] [--with-parent] [--with-children]   Show task detail (always incl. parentId, childrenIds); flags add parent/children summaries
   task history <id> [--json] [--follow|-f]   Show status-change history for a task
+  task history <id> [--all] [--json]         Show the whole activity of a task, newest first (status changes, type, labels, metadata, parent, links, title and
+                                             description edits); text lines, or --json rows {at, kind, icon, tone, text, details?}. Tasks changed before the
+                                             log existed show their status changes only. Cannot be combined with --follow
   task set-status <id> <status>              Update task status (valid values: task status list)
   task status list [--json]                  List the valid statuses of the project in order, marking the default (initial status of a new task) and the terminal ones
   task set-type <id> <type>                  Update task type (validated if types configured)
@@ -91,8 +103,11 @@ Events (pushed to queue through @wadeck-app/queue-sdk after the change is saved,
   onTaskLabelRemoved   remove-label                     taskId, label
   onTaskMetaChanged    set-meta, unset-meta             taskId, key, oldValue, newValue (absent after unset-meta)
   onTaskTextChanged    set-title, set-description       taskId, field (title|description), oldValue, newValue (empty when the description was cleared)
+  onTaskCommentAdded   comment                          taskId, commentId, text (the full text), author (absent without one)
+  onTaskCommentEdited  comment-edit                     taskId, commentId, oldText, newText (both full)
+  onTaskCommentRemoved comment-rm                       taskId, commentId
   onTaskParentChanged  set-parent, remove-parent        taskId, oldParentId, newParentId
-  onTaskDeleted        delete                           taskId, description (the full text), status, parentId, orphanedChildIds, removedLinkCount
+  onTaskDeleted        delete                           taskId, description (the full text), status, parentId, orphanedChildIds, removedLinkCount, commentCount (only when the task had comments)
   Absent fields are omitted (no oldType for a first type, no oldValue for a new key or a description the task did not have, no oldParentId / newParentId for a root task).
   Nothing fires when nothing changed (same type, label already there or absent, same meta value, same parent) or when the command fails.
   delete fires one onTaskDeleted per deleted task, after the deletion; never for --dry-run. With --cascade-delete the order is

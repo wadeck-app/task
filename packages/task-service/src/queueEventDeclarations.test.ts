@@ -1,3 +1,4 @@
+import { addComment, editComment, removeComment } from './comments.js';
 import { checkAgainstSchema } from './jsonSchemaCheck.js';
 import { createTask } from './createTask.js';
 import type { TaskEvent } from './events.js';
@@ -37,6 +38,9 @@ describe('queueEventDeclarations', () => {
 		const expected = Object.keys(TASK_EVENT_NAMES).sort();
 		expect(expected).toEqual([
 			'onStatusChange',
+			'onTaskCommentAdded',
+			'onTaskCommentEdited',
+			'onTaskCommentRemoved',
 			'onTaskCreated',
 			'onTaskDeleted',
 			'onTaskLabelAdded',
@@ -291,6 +295,27 @@ describe('queueEventDeclarations', () => {
 			expectConform(cascade.events);
 		});
 
+		it('onTaskCommentAdded / Edited / Removed, with and without author, multi-line text', () => {
+			const task = createTask(t.ctx, { description: 'a' }).task;
+			const plain = addComment(t.ctx, { id: task.id, text: 'line 1\nline 2' });
+			expect(throughJson(plain.events[0]!.payload)).not.toHaveProperty('author');
+			expectConform(plain.events);
+			const named = addComment(t.ctx, { id: task.id, text: 'b', author: 'alice' });
+			expectConform(named.events);
+			const edited = editComment(t.ctx, { id: task.id, commentId: plain.comment.id, text: 'c' });
+			expect(edited.events[0]!.payload).toMatchObject({ oldText: 'line 1\nline 2', newText: 'c' });
+			expectConform(edited.events);
+			expectConform(removeComment(t.ctx, { id: task.id, commentId: named.comment.id }).events);
+		});
+
+		it('onTaskDeleted with commentCount (a task that had comments)', () => {
+			const task = createTask(t.ctx, { description: 'a' }).task;
+			addComment(t.ctx, { id: task.id, text: 'x' });
+			const deleted = executeDelete(t.ctx, planDelete(t.ctx, { selector: { kind: 'ids', ids: [task.id] } }));
+			expect(throughJson(deleted.events[0]!.payload)).toMatchObject({ commentCount: 1 });
+			expectConform(deleted.events);
+		});
+
 		it('onTaskParentChanged, attached, moved and detached', () => {
 			const a = createTask(t.ctx, { description: 'a' }).task;
 			const b = createTask(t.ctx, { description: 'b' }).task;
@@ -335,6 +360,33 @@ describe('queueEventDeclarations', () => {
 		it('onTaskCreated and onTaskDeleted say description is the full text', () => {
 			expect(declaration('onTaskCreated').description).toMatch(/full text/i);
 			expect(JSON.stringify(declaration('onTaskDeleted').schema)).toMatch(/full text/i);
+		});
+	});
+
+	describe('comment event declarations', () => {
+		it.each(['onTaskCommentAdded', 'onTaskCommentEdited', 'onTaskCommentRemoved'])(
+			'%s says what fires it and what does not, is not terminal, and its example fits its schema',
+			name => {
+				const entry = declaration(name);
+				expect(entry.description).toMatch(/comment/i);
+				expect(entry.description).toMatch(/Does NOT fire/);
+				expect(entry.terminal ?? false).toBe(false);
+				expect(entry.schema['required']).toEqual(expect.arrayContaining(['taskId', 'commentId']));
+				expect(checkAgainstSchema(entry.schema, entry.example)).toEqual([]);
+			}
+		);
+
+		it('the added and edited events carry the full text; the author is optional', () => {
+			expect(declaration('onTaskCommentAdded').description).toMatch(/full text/i);
+			expect(declaration('onTaskCommentAdded').schema['required']).toContain('text');
+			expect(declaration('onTaskCommentAdded').schema['required']).not.toContain('author');
+			expect(declaration('onTaskCommentEdited').schema['required']).toContain('newText');
+		});
+
+		it('onTaskDeleted declares commentCount as optional', () => {
+			const entry = declaration('onTaskDeleted');
+			expect(JSON.stringify(entry.schema)).toContain('commentCount');
+			expect(entry.schema['required']).not.toContain('commentCount');
 		});
 	});
 

@@ -12,6 +12,8 @@ export type {
 	TaskStatus,
 	TaskSummary,
 	TaskRecord,
+	ActivityEntry,
+	ActivityKind,
 	TaskTreeNode,
 	LinkType,
 	InverseLinkName,
@@ -19,7 +21,7 @@ export type {
 	TaskLinks,
 } from './TaskStore.js';
 export type { TaskStoreOptions } from './TaskStore.js';
-export { TaskStore, LINK_TYPES, INVERSE_LINK_NAMES } from './TaskStore.js';
+export { TaskStore, LINK_TYPES, INVERSE_LINK_NAMES, ACTIVITY_PREVIEW_MAX, activityPreview } from './TaskStore.js';
 export type {
 	TypeValidationResult,
 	TypeValidationError,
@@ -28,3 +30,5 @@ export type {
 } from './TypeValidationStrategy.js';
 export { OpenTypeStrategy, FixedListTypeStrategy, resolveTypeValidationStrategy } from './TypeValidationStrategy.js';
 export { TaskNotFoundError, AmbiguousTaskPrefixError, TaskConflictError } from './errors.js';
+export type { CommentChange, CommentEdit, TaskComment } from './taskComments.js';
+export { COMMENT_AUTHOR_MAX, COMMENT_TEXT_MAX, CommentNotFoundError, InvalidCommentTextError } from './taskComments.js';

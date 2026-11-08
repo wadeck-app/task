@@ -791,6 +791,9 @@ describe('queue events - the task events are declared to the queue (registerEven
 		expect(source).toBe('task');
 		expect(events.map(e => e.name).sort()).toEqual([
 			'onStatusChange',
+			'onTaskCommentAdded',
+			'onTaskCommentEdited',
+			'onTaskCommentRemoved',
 			'onTaskCreated',
 			'onTaskDeleted',
 			'onTaskLabelAdded',

@@ -5,7 +5,12 @@ import * as fs from 'node:fs';
  * final newline of a file) is dropped. A missing file or an empty text throws an Error whose message says what to fix.
  * `readStdin` is injectable for tests.
  */
-export function readTextSource(source: string, readStdin: () => string = () => fs.readFileSync(0, 'utf8')): string {
+export function readTextSource(
+	source: string,
+	readStdin: () => string = () => fs.readFileSync(0, 'utf8'),
+	/** What the text is, for the "is empty" message. */
+	what = 'description'
+): string {
 	let raw: string;
 	try {
 		raw = source === '-' ? readStdin() : fs.readFileSync(source, 'utf8');
@@ -16,7 +21,7 @@ export function readTextSource(source: string, readStdin: () => string = () => f
 	}
 	const text = raw.trimEnd();
 	if (text === '') {
-		throw new Error(`${source === '-' ? 'standard input' : source} is empty: there is no description to store`);
+		throw new Error(`${source === '-' ? 'standard input' : source} is empty: there is no ${what} to store`);
 	}
 	return text;
 }

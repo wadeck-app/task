@@ -7,7 +7,13 @@ import {
 	ProjectOptionError,
 	VirtualProjectError,
 } from '@wadeck-app/project-sdk';
-import { AmbiguousTaskPrefixError, TaskConflictError, TaskNotFoundError } from '@wadeck-app/task-core';
+import {
+	AmbiguousTaskPrefixError,
+	CommentNotFoundError,
+	InvalidCommentTextError,
+	TaskConflictError,
+	TaskNotFoundError,
+} from '@wadeck-app/task-core';
 
 import {
 	AmbiguousDeletePrefixError,
@@ -58,6 +64,10 @@ function describe(
  */
 export function describeError(error: unknown): ErrorDescription {
 	if (error instanceof TaskNotFoundError) return describe('not-found', error);
+	if (error instanceof CommentNotFoundError) {
+		return describe('not-found', error, error.hint, { commentId: error.commentId, validIds: error.validIds });
+	}
+	if (error instanceof InvalidCommentTextError) return describe('invalid', error, error.hint);
 	if (error instanceof AmbiguousTaskPrefixError || error instanceof AmbiguousDeletePrefixError) {
 		return describe('ambiguous', error, undefined, { matches: error.matches });
 	}

@@ -12,8 +12,11 @@ import { LIB_ENTRIES, SRC_DIR } from '../scripts/paths.js';
 // @formatter:off
 const EXPECTED = [
 	'ActionSelect',
+	'ActivityFeed',
 	'BreadcrumbTrail',
 	'ChipRow',
+	'CommentComposer',
+	'CommentThread',
 	'InlineText',
 	'KeyValueList',
 	'LabelChips',
@@ -29,6 +32,7 @@ const EXPECTED = [
 	'SegmentedControl',
 	'SplitLayout',
 	'StatusBadge',
+	'StatusSelect',
 	'TabPanels',
 	'TaskChecklist',
 	'TaskPicker',

@@ -356,3 +356,29 @@ describe('executeDelete when the store fails partway through the plan', () => {
 		expect(() => executeDelete(failingOnNthDelete(t.ctx, 1), plan)).not.toThrow(PartialDeleteError);
 	});
 });
+
+describe('executeDelete events: commentCount', () => {
+	let t: TestContext;
+	beforeEach(() => {
+		t = createTestContext();
+	});
+	afterEach(() => t.cleanup());
+
+	it('onTaskDeleted carries commentCount only for a task that had comments (they go with the file)', () => {
+		const withComments = t.ctx.store.create('talked about', 'backlog');
+		t.ctx.store.addComment(withComments.id, 'one');
+		t.ctx.store.addComment(withComments.id, 'two');
+		const plain = t.ctx.store.create('quiet', 'backlog');
+
+		const result = executeDelete(
+			t.ctx,
+			planDelete(t.ctx, { selector: { kind: 'ids', ids: [withComments.id, plain.id] } })
+		);
+
+		const payloads = result.events.map(
+			event => JSON.parse(JSON.stringify(event.payload)) as Record<string, unknown>
+		);
+		expect(payloads.find(p => p['taskId'] === withComments.id)?.['commentCount']).toBe(2);
+		expect(payloads.find(p => p['taskId'] === plain.id)).not.toHaveProperty('commentCount');
+	});
+});

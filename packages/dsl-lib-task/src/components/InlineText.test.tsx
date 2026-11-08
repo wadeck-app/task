@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { deferred } from '../testHelpers.js';
@@ -169,18 +169,21 @@ describe('InlineText', () => {
 		expect(onAction).toHaveBeenCalledTimes(1);
 	});
 
-	it('blur saves a changed value and ignores an unchanged one', async () => {
+	it('blur never saves a changed value silently: the editor stays open; an unchanged blur just leaves', async () => {
 		const user = userEvent.setup();
 		const { onAction } = setup();
 
 		await user.click(screen.getByRole('button', { name: /Title/ }));
-		await user.tab();
+		await user.click(document.body);
 		expect(onAction).not.toHaveBeenCalled();
+		expect(screen.queryByRole('textbox')).toBeNull();
 
 		await user.click(screen.getByRole('button', { name: /Title/ }));
 		await user.type(screen.getByRole('textbox'), '!');
 		await user.tab();
-		await waitFor(() => expect(onAction).toHaveBeenCalledTimes(1));
+		await user.click(document.body);
+		expect(onAction).not.toHaveBeenCalled();
+		expect(screen.getByRole('textbox')).toHaveValue('Fix login!');
 	});
 
 	it('Escape does not save through the blur that follows', async () => {

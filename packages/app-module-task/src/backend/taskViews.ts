@@ -36,7 +36,7 @@
 // | labelKeys               | Record<string,string>                  | label -> base64url key, for DELETE /tasks/:id/label-keys/:key         | LabelChips |
 // | labelCount, metaCount, linkCount | number                | counts for panel headers (the DSL cannot take a length)             | Panel count |
 // | metaList                | [{key,value}]                          | the metadata (same rows as metaRows)                                 | PropertyList |
-// | activity, hasActivity   | [{id,kind,title,detail,from,to,tone,at,atText}] | oldest first: "created" then one per status change; kind created, status or done (closing) | Timeline |
+// | activity, hasActivity, activityCount | [{id,kind,activityKind,icon,title,detail,from,to,tone,at,atText}], boolean, number | oldest first: "created", then one per status change and per recorded change (type, labels, metadata, parent, links, title, description; tasks changed before the log existed show status moves only). `kind` is the Timeline kind (created, status, done = closing, link, note), `activityKind` the real one, `title` a plain sentence, `detail` "From: ..\nTo: .." of a text edit; GET /tasks/:id/activity has the filterable list | Timeline |
 // | ancestors, hasAncestors | [{id,title,titleText,status,tone,href}] | root first; empty for a root task or a dangling parent (see warnings) | breadcrumb |
 // | parentRow, hasParent    | row or null, boolean                   | the direct parent (last ancestor) as a linkable row                  | sidebars |
 // | noParent, noType, hasType, noLabels | boolean          | opposite flags (the DSL has no negation): editors shown only while a property is empty | variants |
@@ -52,7 +52,7 @@
 // (labelKeys: label -> base64url key, labelOptions values are keys; a label may hold "/" or "%").
 import type { TaskLinks, TaskRecord, TaskSummary, TaskTreeNode } from '@wadeck-app/task-core';
 import { ALL_LINK_NAMES, bodyAddsInfo, headlineOf, taskDescription } from '@wadeck-app/task-service';
-import type { BlockerSummary, ChildrenSummary, DanglingLink } from '@wadeck-app/task-service';
+import type { ActivityRow, BlockerSummary, ChildrenSummary, DanglingLink } from '@wadeck-app/task-service';
 
 import { shortUtcTime } from './display.js';
 import { labelKey } from './labelKey.js';
@@ -123,6 +123,22 @@ function detailForms(project: Project, task: TaskRecord): Record<string, Record<
 	};
 }
 
+/**
+ * The text of a task as the page shows it: the headline (<= 90 chars), the body (the description, else the title; a blank
+ * stored description is no description) and whether the body says more than the headline. Shared by the detail answer and
+ * the answer of PATCH /tasks/:id, so an edit and a reload read the same.
+ */
+export function taskTextFields(record: Pick<TaskRecord, 'title' | 'description'>): {
+	headline: string;
+	body: string;
+	bodyAddsInfo: boolean;
+} {
+	const headline = headlineOf(record.title);
+	const stored = taskDescription(record);
+	const body = stored.trim() === '' ? record.title : stored;
+	return { headline, body, bodyAddsInfo: bodyAddsInfo(headline, body) };
+}
+
 /** The detail page of a task. `detail` is the service's task detail with `parent` and `children`. */
 export function taskDetailBody(
 	ctx: OpenedProject,
@@ -139,6 +155,8 @@ export function taskDetailBody(
 		blockers: BlockerSummary;
 		/** All tasks below this one (children, grandchildren...). */
 		descendantCount: number;
+		/** The merged activity of the task, newest first (task-service `getTaskActivity`). */
+		activity: ActivityRow[];
 	}
 ): Record<string, unknown> {
 	const { project, config } = ctx;
@@ -146,13 +164,9 @@ export function taskDetailBody(
 	const record = task as unknown as TaskRecord;
 	const labels = record.labels ?? [];
 	const meta = Object.entries(record.meta ?? {}).map(([key, value]) => ({ key, value }));
-	const headline = headlineOf(record.title);
-	// A blank stored description is no description: the body is the title again.
-	const stored = taskDescription(record);
-	const body = stored.trim() === '' ? record.title : stored;
-	const addsInfo = bodyAddsInfo(headline, body);
+	const { headline, body, bodyAddsInfo: addsInfo } = taskTextFields(record);
 	const description = addsInfo ? body : null;
-	const activity = activityEntries(config, record);
+	const activity = activityEntries(config, data.activity);
 	const ancestors = ancestorChips(project, config, data.ancestors);
 	const linkCount =
 		Object.values(data.links).reduce((sum, tasks) => sum + tasks.length, 0) + data.danglingLinks.length;
@@ -211,6 +225,10 @@ export function taskDetailBody(
 		hasMeta: meta.length > 0,
 		activity,
 		hasActivity: activity.length > 0,
+		activityCount: activity.length,
+		// Comments: the count and a flag (the Comments tab reads them); the thread itself is GET /tasks/:id/comments.
+		commentCount: record.comments?.length ?? 0,
+		hasComments: (record.comments?.length ?? 0) > 0,
 		ancestors,
 		hasAncestors: ancestors.length > 0,
 		parentRow: ancestors.length === 0 ? null : ancestors[ancestors.length - 1],

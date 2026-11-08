@@ -2,6 +2,7 @@
 import {
 	createStatusFilter,
 	getFullTree,
+	getTaskActivity,
 	getTaskHistory,
 	listAncestors,
 	listChildren,
@@ -13,7 +14,7 @@ import {
 	searchTasks,
 	showTask,
 } from '@wadeck-app/task-service';
-import type { TaskHistory, TaskLinksReport } from '@wadeck-app/task-service';
+import type { ActivityRow, TaskHistory, TaskLinksReport } from '@wadeck-app/task-service';
 
 import type { ProjectCommand } from '../cli/env.js';
 import { runTaskHistoryFollow, runTaskListFollow } from '../cli/follow.js';
@@ -94,10 +95,33 @@ export const runShow: ProjectCommand = (rest, { jsonMode, ctx }) => {
 	});
 };
 
+const HISTORY_USAGE = 'Usage: task history <id> [--follow|-f]  |  task history <id> [--all] [--json]';
+
+/** "2026-11-08 14:17  Type changed from bug to feature": the UTC minute, then the sentence. */
+function activityLine(row: ActivityRow): string {
+	return `${row.at.slice(0, 16).replace('T', ' ')}  ${row.text}`;
+}
+
 export const runHistory: ProjectCommand = async (rest, { jsonMode, ctx }) => {
 	const id = rest[0];
 	if (!id) {
-		return errorOutput(jsonMode, 'missing id', 'Usage: task history <id> [--follow|-f]');
+		return errorOutput(jsonMode, 'missing id', HISTORY_USAGE);
+	}
+	const following = rest.includes('--follow') || rest.includes('-f');
+	if (rest.includes('--all')) {
+		if (following) {
+			return errorOutput(
+				jsonMode,
+				'--all cannot be combined with --follow',
+				'Follow the status changes with: task history <id> --follow, or print the whole activity once with: task history <id> --all'
+			);
+		}
+		try {
+			const { rows } = getTaskActivity(ctx, { id });
+			return jsonMode ? jsonResult(rows) : { exitCode: 0, output: rows.map(activityLine).join('\n') };
+		} catch (error) {
+			return failure(jsonMode, error);
+		}
 	}
 	let task: TaskHistory;
 	try {
@@ -105,7 +129,7 @@ export const runHistory: ProjectCommand = async (rest, { jsonMode, ctx }) => {
 	} catch (error) {
 		return failure(jsonMode, error);
 	}
-	if (rest.includes('--follow') || rest.includes('-f')) {
+	if (following) {
 		await runTaskHistoryFollow(ctx.store, task.id, task.history);
 		return { exitCode: 0, output: '' };
 	}

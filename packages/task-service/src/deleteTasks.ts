@@ -1,4 +1,4 @@
-import type { TaskSummary } from '@wadeck-app/task-core';
+import { TaskNotFoundError, type TaskSummary } from '@wadeck-app/task-core';
 
 import { projectEnv, type TaskServiceContext } from './context.js';
 import { AmbiguousDeletePrefixError, InvalidDeleteFilterError, PartialDeleteError } from './errors.js';
@@ -127,6 +127,16 @@ function depthOf(id: string, parentOf: ReadonlyMap<string, string | undefined>):
  * The text the event reports: the full description (as onTaskCreated), read before the file goes away.
  * The index only has the title; if the file cannot be read the title is reported (the deletion itself does not need the file).
  */
+// Comments the task holds (they go with its file); 0 for a task that vanished since the plan (it gets no event anyway).
+function commentCountOf(ctx: TaskServiceContext, id: string): number {
+	try {
+		return ctx.store.get(id).comments?.length ?? 0;
+	} catch (error) {
+		if (error instanceof TaskNotFoundError) return 0;
+		throw error;
+	}
+}
+
 function fullTextOf(ctx: TaskServiceContext, task: TaskSummary): string {
 	try {
 		return taskDescription(ctx.store.get(task.id));
@@ -162,6 +172,7 @@ export function executeDelete(ctx: TaskServiceContext, plan: DeletePlan): Execut
 			.flatMap(t => t.links ?? [])
 			.filter(link => link.target === task.id).length;
 		const description = fullTextOf(ctx, task);
+		const commentCount = commentCountOf(ctx, task.id);
 		let removed: boolean;
 		try {
 			removed = ctx.store.deleteTask(task.id);
@@ -180,6 +191,7 @@ export function executeDelete(ctx: TaskServiceContext, plan: DeletePlan): Execut
 					parentId: task.parentId,
 					orphanedChildIds,
 					removedLinkCount,
+					...(commentCount > 0 && { commentCount }),
 					...projectEnv(ctx),
 				},
 			});

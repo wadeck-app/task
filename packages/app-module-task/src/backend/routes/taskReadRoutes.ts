@@ -1,6 +1,7 @@
 // Read routes of tasks: lists, detail, history, hierarchy, links and trees.
 import {
 	getFullTree,
+	getTaskActivity,
 	getTaskHistory,
 	readTaskLinks,
 	listAncestors,
@@ -36,10 +37,13 @@ import {
 	showAllFlag,
 } from '../request.js';
 import { withRowLinks } from '../rowViews.js';
-import { linkGroupSections, linkGroups, linkRowViews, statusTone } from '../taskPresentation.js';
+import { activityRowView, linkGroupSections, linkGroups, linkRowViews, statusTone } from '../taskPresentation.js';
 import { childrenBody, forestBody, taskDetailBody, taskTreeBody, tasksListBody } from '../taskViews.js';
 import { taskId } from './routeKit.js';
 import type { RouteKit } from './routeKit.js';
+
+/** The filters of GET /tasks/:id/activity: every row, or the status history only. */
+const ACTIVITY_FILTERS = ['all', 'comments', 'history'] as const;
 
 /** `{ name: value }`, or nothing when the value is absent (an optional property under exactOptionalPropertyTypes). */
 function optionalField(name: string, value: string | undefined): Record<string, string> {
@@ -124,6 +128,7 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 				childrenSummary: summarizeChildren(ctx, { id }),
 				blockers: describeBlockers(ctx, { id }),
 				descendantCount: countDescendants(ctx, id),
+				activity: getTaskActivity(ctx, { id }).rows,
 			}),
 		};
 	});
@@ -133,6 +138,36 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 		const history = getTaskHistory(open(req), { id: taskId(req) });
 		const rows = history.history.map(entry => ({ ...entry, time: shortUtcTime(entry.timestamp) }));
 		return { status: 200, body: { ...history, rows } };
+	});
+
+	// The whole activity of a task, newest first: status moves and every recorded change. `?filter=history` keeps the status
+	// rows (what /history lists); the counts are those of the whole feed. A read: it emits no event.
+	route('GET', '/tasks/:id/activity', req => {
+		if (isBlankRequest(req.query)) return BLANK_ANSWER;
+		const filter = optionalQueryValue(req.query, 'filter') ?? 'all';
+		if (!(ACTIVITY_FILTERS as readonly string[]).includes(filter)) {
+			throw new RequestError(
+				400,
+				`filter must be one of: ${ACTIVITY_FILTERS.join(', ')} (got "${filter}")`,
+				`Use ?filter=all for every change, ?filter=comments for the comments only or ?filter=history for the status changes only.`
+			);
+		}
+		const { id, rows } = getTaskActivity(open(req), { id: taskId(req) });
+		const kept = filter === 'all' ? rows : rows.filter(row => row.source === filter);
+		return {
+			status: 200,
+			body: {
+				id,
+				filters: ACTIVITY_FILTERS,
+				filter,
+				counts: {
+					all: rows.length,
+					comments: rows.filter(row => row.source === 'comments').length,
+					history: rows.filter(row => row.source === 'history').length,
+				},
+				rows: kept.map(activityRowView),
+			},
+		};
 	});
 
 	route('GET', '/tasks/:id/children', req => {

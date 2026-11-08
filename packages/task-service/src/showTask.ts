@@ -18,7 +18,11 @@ export function showTask(ctx: TaskServiceContext, input: ShowTaskInput): Record<
 	const task = ctx.store.findByPrefix(input.id);
 	const children = ctx.store.getChildren(task.id);
 	// `description` is always present (the resolved text), whatever is stored.
-	const detail: Record<string, unknown> = { ...withDescription(task), childrenIds: children.map(c => c.id) };
+	const detail: Record<string, unknown> = {
+		...withDescription(task),
+		childrenIds: children.map(c => c.id),
+		commentCount: task.comments?.length ?? 0,
+	};
 	if (input.withParent) {
 		const parent = task.parentId === undefined ? null : ctx.store.list().find(t => t.id === task.parentId);
 		if (parent === undefined) {

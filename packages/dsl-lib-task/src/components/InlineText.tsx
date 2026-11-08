@@ -1,10 +1,20 @@
-import { Pencil } from 'lucide-react';
-import React, { useEffect, useRef, useState } from 'react';
+import { Check, Loader2, Pencil, X } from 'lucide-react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useAction } from '../useAction.js';
 import type { ActionHandler } from '../useAction.js';
+import { CONTROL_RADIUS, GAP_CONTROLS, ICON_BUTTON_CLASS, ICON_SIZE } from '../ui/tokens.js';
 
 // A line of the page holds roughly this many characters (the same estimate as TitleText).
 const CHARS_PER_LINE = 70;
+// The editor grows with its text up to this many lines or 60% of the window, then scrolls inside.
+const MAX_LINES = 24;
+const LINE_PX = 24;
+
+/** Lines a text needs once wrapped (an estimate, until the browser has measured it). */
+function estimateRows(text: string): number {
+	const lines = text.split('\n').reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / CHARS_PER_LINE)), 0);
+	return Math.min(MAX_LINES, Math.max(2, lines));
+}
 
 export interface InlineTextProps {
 	/** The current text. The page gives the new one after the action ran and the sources reloaded. */
@@ -84,6 +94,47 @@ export function InlineText({
 	const restoreFocus = useRef(false);
 	const field = useRef<HTMLInputElement & HTMLTextAreaElement>(null);
 	const display = useRef<HTMLButtonElement>(null);
+	const box = useRef<HTMLSpanElement>(null);
+
+	// Height = the content as the browser wraps it, capped; recomputed on input and on resize.
+	const fit = useCallback((): void => {
+		const el = field.current;
+		if (!multiline || !el) {
+			return;
+		}
+		el.style.height = 'auto';
+		const needed = el.scrollHeight;
+		if (needed <= 0) {
+			// Not measurable (not laid out): the rows estimate stands.
+			el.style.height = '';
+			el.style.overflowY = 'hidden';
+			return;
+		}
+		const cap = Math.min(window.innerHeight * 0.6, MAX_LINES * LINE_PX);
+		el.style.height = `${Math.min(needed, cap)}px`;
+		el.style.overflowY = needed > cap ? 'auto' : 'hidden';
+	}, [multiline]);
+
+	useLayoutEffect(() => {
+		if (editing) {
+			fit();
+		}
+	}, [editing, draft, fit]);
+
+	useEffect(() => {
+		if (!editing || !multiline) {
+			return undefined;
+		}
+		window.addEventListener('resize', fit);
+		const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(() => fit());
+		if (box.current) {
+			observer?.observe(box.current);
+		}
+		return () => {
+			window.removeEventListener('resize', fit);
+			observer?.disconnect();
+		};
+	}, [editing, multiline, fit]);
 
 	useEffect(() => {
 		if (editing) {
@@ -196,7 +247,7 @@ export function InlineText({
 			return button;
 		}
 		return (
-			<div className="flex w-full flex-col items-start gap-0.5">
+			<div className="flex w-full flex-col items-start gap-2">
 				{button}
 				<button
 					type="button"
@@ -210,7 +261,7 @@ export function InlineText({
 		);
 	}
 
-	const fieldClass = `w-full rounded border border-primary bg-surface px-1 text-content outline-none focus:ring-1 focus:ring-primary read-only:opacity-70 ${textClass}`;
+	const fieldClass = `block w-full ${CONTROL_RADIUS} border border-primary bg-surface px-1 text-content outline-none focus:ring-1 focus:ring-primary read-only:opacity-70 ${textClass}`;
 	const common = {
 		ref: field,
 		'aria-label': ariaLabel,
@@ -234,25 +285,63 @@ export function InlineText({
 				void save();
 			}
 		},
-		onBlur: () => {
-			if (cancelled.current || guard.current) {
-				return;
-			}
-			if (draft.trim() === '' && !allowEmpty) {
-				cancel();
-				return;
-			}
-			void save();
-		},
 	};
+	// Leaving the editor never saves: a changed text stays until the check or Enter. An untouched one just closes.
+	const onLeave = (event: React.FocusEvent<HTMLElement>): void => {
+		if (cancelled.current || guard.current || event.currentTarget.contains(event.relatedTarget as Node | null)) {
+			return;
+		}
+		if (draft.trim() === current.trim()) {
+			finish(false);
+		}
+	};
+	const fieldNode = multiline ? (
+		<textarea {...common} rows={estimateRows(draft)} style={{ maxHeight: 'min(60vh, 36rem)', resize: 'none' }} />
+	) : (
+		<input {...common} type="text" />
+	);
+	const hint = multiline ? 'Ctrl+Enter' : 'Enter';
 
 	return (
-		<span data-testid="inline-text" className="flex w-full flex-col gap-1">
-			{multiline ? (
-				<textarea {...common} rows={Math.max(2, draft.split('\n').length)} />
-			) : (
-				<input {...common} type="text" />
-			)}
+		<span data-testid="inline-text" className={`flex w-full flex-col ${GAP_CONTROLS}`}>
+			<span className={`flex w-full items-start ${GAP_CONTROLS}`} onBlur={onLeave}>
+				<span ref={box} className="min-w-0 flex-1">
+					{fieldNode}
+				</span>
+				<span data-testid="inline-text-actions" className={`flex shrink-0 ${GAP_CONTROLS}`}>
+					<button
+						type="button"
+						aria-label={`Save ${ariaLabel}`}
+						title={`Save (${hint})`}
+						disabled={saving}
+						onMouseDown={event => event.preventDefault()}
+						onClick={() => void save()}
+						className={`${ICON_BUTTON_CLASS} text-success`}
+					>
+						{saving ? (
+							<Loader2
+								data-testid="inline-text-spinner"
+								size={ICON_SIZE}
+								aria-hidden="true"
+								className="animate-spin"
+							/>
+						) : (
+							<Check size={ICON_SIZE} aria-hidden="true" />
+						)}
+					</button>
+					<button
+						type="button"
+						aria-label={`Cancel editing ${ariaLabel}`}
+						title="Cancel (Esc)"
+						disabled={saving}
+						onMouseDown={event => event.preventDefault()}
+						onClick={cancel}
+						className={ICON_BUTTON_CLASS}
+					>
+						<X size={ICON_SIZE} aria-hidden="true" />
+					</button>
+				</span>
+			</span>
 			{maxLength !== undefined ? (
 				<span data-testid="inline-text-counter" className="text-xs text-muted">
 					{draft.length}/{maxLength}

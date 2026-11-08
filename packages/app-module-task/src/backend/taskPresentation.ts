@@ -2,7 +2,7 @@
 // service results; the rules they display (what is closed, what blocks) come from task-service.
 import type { TaskLinks, TaskRecord, TaskSummary } from '@wadeck-app/task-core';
 import { headlineOf } from '@wadeck-app/task-service';
-import type { Blocker, ChildrenSummary, DanglingLink } from '@wadeck-app/task-service';
+import type { ActivityRow, Blocker, ChildrenSummary, DanglingLink } from '@wadeck-app/task-service';
 
 import { shortTitle, shortUtcTime } from './display.js';
 import { detailHref, encodedProject } from './hrefs.js';
@@ -70,38 +70,66 @@ export function ancestorChips(
 }
 
 /**
- * The feed of a task, oldest first: its creation, then one entry per status change. The history holds the successive
- * statuses (its first entry is the status at creation), so a change reads `from` the previous one `to` its own.
+ * The feed of a task in the shape of the Timeline component, oldest first: its creation, then one entry per change (status
+ * moves and everything of the activity log: type, labels, metadata, parent, links, title and description edits), merged by
+ * task-service. A task changed before the log existed shows its status moves only.
  */
-export function activityEntries(config: StatusConfig, record: TaskRecord): Array<Record<string, unknown>> {
-	const history = record.history ?? [];
-	const created = {
-		id: 'created',
-		kind: 'created',
-		title: 'Created',
-		detail: `Status ${history[0]?.status ?? record.status}`,
-		from: null,
-		to: history[0]?.status ?? record.status,
-		tone: 'neutral',
-		at: record.createdAt,
-		atText: shortUtcTime(record.createdAt),
-	};
-	const changes = history.slice(1).map((entry, index) => {
-		const from = history[index]!.status;
-		const closing = config.terminalStatuses.includes(entry.status);
+export function activityEntries(config: StatusConfig, rows: ActivityRow[]): Array<Record<string, unknown>> {
+	// The service lists newest first; the Timeline feed of the detail answer has always been oldest first.
+	return [...rows].reverse().map(row => {
+		const closing = row.kind === 'status' && config.terminalStatuses.includes(row.to ?? '');
 		return {
-			id: `status-${index + 1}`,
-			kind: closing ? 'done' : 'status',
-			title: closing ? `Closed (${entry.status})` : `Moved from ${from} to ${entry.status}`,
-			detail: closing ? `Moved from ${from} to ${entry.status}` : '',
-			from,
-			to: entry.status,
-			tone: statusTone(config, entry.status),
-			at: entry.timestamp,
-			atText: shortUtcTime(entry.timestamp),
+			id: row.id,
+			// The Timeline component knows five kinds; anything else reads as a note and `activityKind` keeps the real one.
+			kind: timelineKind(row, closing),
+			activityKind: row.kind,
+			icon: row.icon,
+			...entryTexts(row, closing),
+			from: row.kind === 'created' ? null : (row.from ?? null),
+			to: row.to ?? null,
+			tone: row.tone,
+			at: row.at,
+			atText: shortUtcTime(row.at),
 		};
 	});
-	return [created, ...changes];
+}
+
+/** The two lines of an entry. The status rows keep the wording the page has always had ("Created", "Moved from..", "Closed (..)"). */
+function entryTexts(row: ActivityRow, closing: boolean): { title: string; detail: string } {
+	if (row.kind === 'created') return { title: 'Created', detail: `Status ${row.to ?? ''}` };
+	if (row.kind === 'status') {
+		const moved = `Moved from ${row.from ?? ''} to ${row.to ?? ''}`;
+		return closing ? { title: `Closed (${row.to ?? ''})`, detail: moved } : { title: moved, detail: '' };
+	}
+	// A comment: its text is the detail (a long text is not a title).
+	if (row.kind === 'comment') {
+		return { title: row.actor === undefined ? 'Comment' : `Comment by ${row.actor}`, detail: row.text };
+	}
+	return { title: row.text, detail: editDetail(row) };
+}
+
+function timelineKind(row: ActivityRow, closing: boolean): 'created' | 'status' | 'done' | 'link' | 'note' {
+	if (row.kind === 'created') return 'created';
+	if (row.kind === 'status') return closing ? 'done' : 'status';
+	return row.kind === 'link-added' || row.kind === 'link-removed' ? 'link' : 'note';
+}
+
+/** The second line of a title / description edit: the old and the new text (already cut to a preview). */
+function editDetail(row: ActivityRow): string {
+	if (row.details === undefined) return '';
+	const { oldValue, newValue } = row.details;
+	return [
+		oldValue === undefined ? undefined : `From: ${oldValue}`,
+		newValue === undefined ? undefined : `To: ${newValue}`,
+	]
+		.filter(line => line !== undefined)
+		.join('\n');
+}
+
+/** One row of the activity route: the service row plus the day group (UTC) and the minute the view prints. */
+export function activityRowView(row: ActivityRow): Record<string, unknown> {
+	const day = /^(\d{4}-\d\d-\d\d)T/.exec(row.at)?.[1];
+	return { ...row, group: day ?? 'Unknown date', time: shortUtcTime(row.at) };
 }
 
 /** The statuses with what a picker needs: value, label, tone, terminal (config order; the same config `set-status` validates against). */

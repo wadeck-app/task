@@ -2,6 +2,7 @@ import type { ModuleContext } from '@wadeck-app/app-core-sdk';
 import { createQueueEventSink, getTaskConfigDir, getTaskLogDir } from '@wadeck-app/task-service';
 import type { EventSink } from '@wadeck-app/task-service';
 
+import { registerCommentRoutes } from './routes/commentRoutes.js';
 import { registerProjectRoutes } from './routes/projectRoutes.js';
 import { registerRelatedRoutes } from './routes/relatedRoutes.js';
 import { createRouteKit } from './routes/routeKit.js';
@@ -45,6 +46,7 @@ export function registerTaskRoutes(ctx: ModuleContext, options: TaskRoutesOption
 	registerRelatedRoutes(kit);
 	registerTaskReadRoutes(kit);
 	registerTaskWriteRoutes(kit);
+	registerCommentRoutes(kit);
 	registerTypeRoutes(kit);
 	registerDeleteRoutes(kit);
 	return { flush: () => eventSink.flush?.() ?? Promise.resolve() };

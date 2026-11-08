@@ -2,6 +2,15 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { AmbiguousTaskPrefixError, TaskConflictError, TaskNotFoundError } from './errors.js';
+import {
+	CommentNotFoundError,
+	generateCommentId,
+	normalizeCommentAuthor,
+	normalizeCommentText,
+	type CommentChange,
+	type CommentEdit,
+	type TaskComment,
+} from './taskComments.js';
 
 // Inlined from flow-cli/storage/ExecutionStore to avoid pulling in flow-specific dependencies.
 function generateExecutionId(): string {
@@ -50,6 +59,54 @@ export interface TaskTreeNode extends TaskSummary {
 
 export type TaskLinks = Record<LinkType | InverseLinkName, TaskSummary[]>;
 
+/** What an activity entry is about. Status changes are not here: they stay in `TaskRecord.history`. */
+export type ActivityKind =
+	| 'type'
+	| 'label-added'
+	| 'label-removed'
+	| 'meta-set'
+	| 'meta-removed'
+	| 'parent'
+	| 'link-added'
+	| 'link-removed'
+	| 'title'
+	| 'description'
+	// Comments: an added one is not logged here (the comment itself is the record); `field` is the comment id.
+	| 'comment-edited'
+	| 'comment-removed';
+
+/**
+ * One change of a task, appended to `TaskRecord.activity` in the same write as the change. Only the keys that apply are
+ * stored. `oldValue` / `newValue`: the type, the label (new for added, old for removed), the metadata value, the parent
+ * id, or a preview of a title / description (see {@link ACTIVITY_PREVIEW_MAX}). `field`: the metadata key, or the stored
+ * link type. `target`: the other task of a link. `inverse`: the entry is the mirror of a link held by `target`.
+ */
+export interface ActivityEntry {
+	at: string;
+	kind: ActivityKind;
+	field?: string;
+	oldValue?: string;
+	newValue?: string;
+	target?: string;
+	inverse?: true;
+}
+
+/** A stored title / description preview is at most this long (an ellipsis of three dots included): never the full text. */
+export const ACTIVITY_PREVIEW_MAX = 200;
+
+/** The text as stored in an activity entry: unchanged up to the maximum, else cut with a trailing `...`. */
+export function activityPreview(text: string): string {
+	return text.length <= ACTIVITY_PREVIEW_MAX ? text : `${text.slice(0, ACTIVITY_PREVIEW_MAX - 3)}...`;
+}
+
+type ActivityParts = Partial<Omit<ActivityEntry, 'at' | 'kind'>>;
+
+// Only the keys that have a value (an undefined key would be dropped by JSON anyway, but not by toEqual-style readers).
+function activityEntry(at: string, kind: ActivityKind, parts: ActivityParts = {}): ActivityEntry {
+	const defined = Object.entries(parts).filter(([, value]) => value !== undefined);
+	return { at, kind, ...Object.fromEntries(defined) };
+}
+
 export interface TaskRecord {
 	id: string;
 	title: string;
@@ -67,6 +124,10 @@ export interface TaskRecord {
 	createdAt: string;
 	updatedAt: string;
 	history: Array<{ status: TaskStatus; timestamp: string }>;
+	/** Changes other than status, oldest first; absent in files written before the log existed (no migration). */
+	activity?: ActivityEntry[];
+	/** Free-text notes, oldest first; absent when there are none (and in files written before comments existed). */
+	comments?: TaskComment[];
 }
 
 interface TaskIndex {
@@ -186,7 +247,9 @@ export class TaskStore {
 				`Cannot link "${id}" ${type} "${targetId}": it would create a cycle (${[id, ...cyclePath].join(' -> ')})`
 			);
 		}
-		return this.writeLinks(record, [...links, { type, target: targetId }]);
+		const result = this.writeLinks(record, [...links, { type, target: targetId }], 'link-added', type, targetId);
+		this.logInverseLink(id, 'link-added', type, targetId);
+		return result;
 	}
 
 	removeLink(id: string, type: LinkType, targetId: string): TaskRecord {
@@ -195,10 +258,15 @@ export class TaskStore {
 		if (!links.some(l => l.type === type && l.target === targetId)) {
 			throw new TaskConflictError(`Task "${id}" is not ${type} "${targetId}"`);
 		}
-		return this.writeLinks(
+		const result = this.writeLinks(
 			record,
-			links.filter(l => !(l.type === type && l.target === targetId))
+			links.filter(l => !(l.type === type && l.target === targetId)),
+			'link-removed',
+			type,
+			targetId
 		);
+		this.logInverseLink(id, 'link-removed', type, targetId);
+		return result;
 	}
 
 	/** Outgoing links (by type) and their derived inverses (blocks, duplicates, causes) as summaries. */
@@ -452,8 +520,12 @@ export class TaskStore {
 
 	setType(id: string, type: string): TaskRecord {
 		const record = this.get(id);
+		const oldType = record.type;
 		record.type = type;
 		record.updatedAt = new Date().toISOString();
+		if (oldType !== type) {
+			this.appendActivity(record, activityEntry(record.updatedAt, 'type', { oldValue: oldType, newValue: type }));
+		}
 		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
 		return record;
 	}
@@ -461,18 +533,23 @@ export class TaskStore {
 	addLabel(id: string, label: string): TaskRecord {
 		const record = this.get(id);
 		record.labels = record.labels ?? [];
+		record.updatedAt = new Date().toISOString();
 		if (!record.labels.includes(label)) {
 			record.labels.push(label);
+			this.appendActivity(record, activityEntry(record.updatedAt, 'label-added', { newValue: label }));
 		}
-		record.updatedAt = new Date().toISOString();
 		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
 		return record;
 	}
 
 	removeLabel(id: string, label: string): TaskRecord {
 		const record = this.get(id);
+		const had = (record.labels ?? []).includes(label);
 		record.labels = (record.labels ?? []).filter(l => l !== label);
 		record.updatedAt = new Date().toISOString();
+		if (had) {
+			this.appendActivity(record, activityEntry(record.updatedAt, 'label-removed', { oldValue: label }));
+		}
 		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
 		return record;
 	}
@@ -480,11 +557,21 @@ export class TaskStore {
 	/** Replaces the title (file and index). A stored description that now equals it is dropped (it would be the title twice). */
 	setTitle(id: string, title: string): TaskRecord {
 		const record = this.get(id);
+		const oldTitle = record.title;
 		record.title = title;
 		if (record.description === title) {
 			delete record.description;
 		}
 		record.updatedAt = new Date().toISOString();
+		if (oldTitle !== title) {
+			this.appendActivity(
+				record,
+				activityEntry(record.updatedAt, 'title', {
+					oldValue: activityPreview(oldTitle),
+					newValue: activityPreview(title),
+				})
+			);
+		}
 		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
 		const index = this.readIndex();
 		const entry = index.tasks.find(t => t.id === id);
@@ -499,12 +586,23 @@ export class TaskStore {
 	/** Replaces the description. An empty one, or one equal to the title, removes the key (the body is the title again). */
 	setDescription(id: string, description: string): TaskRecord {
 		const record = this.get(id);
+		const oldBody = record.description ?? record.title;
 		if (description === '' || description === record.title) {
 			delete record.description;
 		} else {
 			record.description = description;
 		}
 		record.updatedAt = new Date().toISOString();
+		const newBody = record.description ?? record.title;
+		if (oldBody !== newBody) {
+			this.appendActivity(
+				record,
+				activityEntry(record.updatedAt, 'description', {
+					oldValue: activityPreview(oldBody),
+					newValue: activityPreview(newBody),
+				})
+			);
+		}
 		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
 		return record;
 	}
@@ -512,8 +610,12 @@ export class TaskStore {
 	/** Clears the type (the task has none afterwards). */
 	clearType(id: string): TaskRecord {
 		const record = this.get(id);
+		const oldType = record.type;
 		delete record.type;
 		record.updatedAt = new Date().toISOString();
+		if (oldType !== undefined) {
+			this.appendActivity(record, activityEntry(record.updatedAt, 'type', { oldValue: oldType }));
+		}
 		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
 		return record;
 	}
@@ -521,24 +623,120 @@ export class TaskStore {
 	/** Removes a metadata key (an absent key changes nothing but `updatedAt`, like removeLabel); the object goes with its last key. */
 	removeMeta(id: string, key: string): TaskRecord {
 		const record = this.get(id);
+		record.updatedAt = new Date().toISOString();
 		if (record.meta !== undefined && Object.hasOwn(record.meta, key)) {
+			this.appendActivity(
+				record,
+				activityEntry(record.updatedAt, 'meta-removed', { field: key, oldValue: record.meta[key] })
+			);
 			delete record.meta[key];
 			if (Object.keys(record.meta).length === 0) {
 				delete record.meta;
 			}
 		}
-		record.updatedAt = new Date().toISOString();
 		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
 		return record;
 	}
 
 	setMeta(id: string, key: string, value: string): TaskRecord {
 		const record = this.get(id);
+		// Own property only: a key such as "constructor" must not read as already set.
+		const oldValue = Object.hasOwn(record.meta ?? {}, key) ? record.meta![key] : undefined;
 		record.meta = record.meta ?? {};
 		record.meta[key] = value;
 		record.updatedAt = new Date().toISOString();
+		if (oldValue !== value) {
+			this.appendActivity(
+				record,
+				activityEntry(record.updatedAt, 'meta-set', { field: key, oldValue, newValue: value })
+			);
+		}
 		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
 		return record;
+	}
+
+	/** Appends a comment (text trimmed; blank or over the maximum refused, see taskComments.ts). Not logged in `activity`. */
+	addComment(id: string, text: string, author?: string): CommentChange {
+		const normalizedText = normalizeCommentText(text);
+		const normalizedAuthor = normalizeCommentAuthor(author);
+		const record = this.get(id);
+		const comments = record.comments ?? [];
+		const now = new Date().toISOString();
+		const comment: TaskComment = {
+			id: generateCommentId(comments.map(c => c.id)),
+			at: now,
+			text: normalizedText,
+			...(normalizedAuthor !== undefined && { author: normalizedAuthor }),
+		};
+		record.comments = [...comments, comment];
+		record.updatedAt = now;
+		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+		return { task: record, comment };
+	}
+
+	/**
+	 * Replaces the text of a comment and sets its `editedAt`. A text equal to the current one (after trimming) writes
+	 * nothing and answers `changed: false`.
+	 */
+	editComment(id: string, commentId: string, text: string): CommentEdit {
+		const normalizedText = normalizeCommentText(text);
+		const record = this.get(id);
+		const comments = record.comments ?? [];
+		const existing = comments.find(c => c.id === commentId);
+		if (existing === undefined) {
+			throw new CommentNotFoundError(
+				id,
+				commentId,
+				comments.map(c => c.id)
+			);
+		}
+		if (existing.text === normalizedText) {
+			return { task: record, comment: existing, oldText: existing.text, changed: false };
+		}
+		const now = new Date().toISOString();
+		const edited: TaskComment = { ...existing, text: normalizedText, editedAt: now };
+		record.comments = comments.map(c => (c.id === commentId ? edited : c));
+		record.updatedAt = now;
+		this.appendActivity(
+			record,
+			activityEntry(now, 'comment-edited', {
+				field: commentId,
+				oldValue: activityPreview(existing.text),
+				newValue: activityPreview(normalizedText),
+			})
+		);
+		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+		return { task: record, comment: edited, oldText: existing.text, changed: true };
+	}
+
+	/** Removes a comment; the `comments` key goes with the last one. */
+	removeComment(id: string, commentId: string): CommentChange {
+		const record = this.get(id);
+		const comments = record.comments ?? [];
+		const existing = comments.find(c => c.id === commentId);
+		if (existing === undefined) {
+			throw new CommentNotFoundError(
+				id,
+				commentId,
+				comments.map(c => c.id)
+			);
+		}
+		const remaining = comments.filter(c => c.id !== commentId);
+		if (remaining.length === 0) {
+			delete record.comments;
+		} else {
+			record.comments = remaining;
+		}
+		record.updatedAt = new Date().toISOString();
+		this.appendActivity(
+			record,
+			activityEntry(record.updatedAt, 'comment-removed', {
+				field: commentId,
+				oldValue: activityPreview(existing.text),
+			})
+		);
+		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+		return { task: record, comment: existing };
 	}
 
 	/**
@@ -601,13 +799,23 @@ export class TaskStore {
 		return undefined;
 	}
 
-	private writeLinks(record: TaskRecord, links: TaskLink[]): TaskRecord {
+	// `kind` / `type` / `target`: the activity entry of a link the user added or removed; none when the link goes because its target was deleted.
+	private writeLinks(
+		record: TaskRecord,
+		links: TaskLink[],
+		kind?: 'link-added' | 'link-removed',
+		type?: LinkType,
+		target?: string
+	): TaskRecord {
 		if (links.length === 0) {
 			delete record.links;
 		} else {
 			record.links = links;
 		}
 		record.updatedAt = new Date().toISOString();
+		if (kind !== undefined) {
+			this.appendActivity(record, activityEntry(record.updatedAt, kind, { field: type, target }));
+		}
 		this.writeFile(this.taskFilePath(record.id), JSON.stringify(record, null, 2));
 
 		const index = this.readIndex();
@@ -655,12 +863,19 @@ export class TaskStore {
 	}
 
 	private writeParent(record: TaskRecord, parentId: string | undefined): TaskRecord {
+		const oldParentId = record.parentId;
 		if (parentId === undefined) {
 			delete record.parentId;
 		} else {
 			record.parentId = parentId;
 		}
 		record.updatedAt = new Date().toISOString();
+		if (oldParentId !== parentId) {
+			this.appendActivity(
+				record,
+				activityEntry(record.updatedAt, 'parent', { oldValue: oldParentId, newValue: parentId })
+			);
+		}
 		this.writeFile(this.taskFilePath(record.id), JSON.stringify(record, null, 2));
 
 		const index = this.readIndex();
@@ -675,6 +890,38 @@ export class TaskStore {
 		}
 		this.writeIndex(index);
 		return record;
+	}
+
+	private appendActivity(record: TaskRecord, entry: ActivityEntry): void {
+		record.activity = [...(record.activity ?? []), entry];
+	}
+
+	/**
+	 * The mirror entry of a link on the task it points to ("blocks" read from the other side). A second file, so not in the
+	 * holder's write: the holder is saved first and a failure here says so. A vanished target gets none (it has no file).
+	 * The target's `updatedAt` stays: none of its own fields changed.
+	 */
+	private logInverseLink(
+		holderId: string,
+		kind: 'link-added' | 'link-removed',
+		type: LinkType,
+		targetId: string
+	): void {
+		if (!fs.existsSync(this.taskFilePath(targetId))) {
+			return;
+		}
+		try {
+			const target = this.get(targetId);
+			this.appendActivity(
+				target,
+				activityEntry(new Date().toISOString(), kind, { field: type, target: holderId, inverse: true })
+			);
+			this.writeFile(this.taskFilePath(targetId), JSON.stringify(target, null, 2));
+		} catch (err) {
+			throw new Error(
+				`Link change saved on "${holderId}" but the activity entry of "${targetId}" could not be written: ${err instanceof Error ? err.message : String(err)}`
+			);
+		}
 	}
 
 	private ensureDirectory(): void {

@@ -5,10 +5,25 @@ import type { Tone } from '../tones.js';
 import { useAction } from '../useAction.js';
 import type { ActionHandler } from '../useAction.js';
 import { useDismiss } from '../useDismiss.js';
+import { InsidePopoverContext } from '../ui/popoverContext.js';
+import {
+	CONTROL_BORDER,
+	CONTROL_H,
+	CONTROL_RADIUS,
+	CONTROL_TEXT,
+	FOCUS_RING,
+	GAP_CONTROLS,
+	ICON_SIZE,
+	PILL_RADIUS,
+	PILL_TEXT,
+	POPOVER_PANEL_CLASS,
+} from '../ui/tokens.js';
 
 export interface PropertyPopoverOption {
 	value: string;
 	label: string;
+	/** A short muted note after the label (`terminal`). */
+	hint?: string;
 	/** Colour of the dot in front of the option. */
 	tone?: Tone;
 }
@@ -116,10 +131,17 @@ export function PropertyPopover({
 	const dismiss = useCallback(() => close(false), [close]);
 	useDismiss(root, open, dismiss);
 
+	const panel = useRef<HTMLDivElement>(null);
 	useEffect(() => {
-		if (open && hasOptions) {
-			listbox.current?.focus();
+		if (!open) {
+			return;
 		}
+		if (hasOptions) {
+			listbox.current?.focus();
+			return;
+		}
+		// A picker or a form: the first field takes the focus, so what the user types lands in it.
+		panel.current?.querySelector<HTMLElement>('input, textarea, select, button')?.focus();
 	}, [open, hasOptions]);
 
 	// The popover closes when an action of the content has finished (running -> idle).
@@ -194,8 +216,8 @@ export function PropertyPopover({
 
 	const look =
 		appearance === 'row'
-			? 'w-full justify-between rounded-md border border-transparent px-2 py-1 text-sm hover:border-border'
-			: `rounded-full px-2.5 py-1 text-sm font-medium ${resolvedTone ? TONE_PILL[resolvedTone] : 'border border-border bg-surface text-content'}`;
+			? `${CONTROL_H} w-full justify-between ${CONTROL_RADIUS} border border-transparent px-2 ${CONTROL_TEXT} hover:border-border`
+			: `${CONTROL_H} ${PILL_RADIUS} px-3 ${PILL_TEXT} ${resolvedTone ? TONE_PILL[resolvedTone] : `${CONTROL_BORDER} bg-surface text-content`}`;
 
 	return (
 		<span
@@ -220,11 +242,11 @@ export function PropertyPopover({
 				disabled={off}
 				title={runner.unavailableReason}
 				onClick={toggle}
-				className={`inline-flex min-w-0 items-center gap-1.5 focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-60 ${look}`}
+				className={`inline-flex min-w-0 items-center ${GAP_CONTROLS} ${FOCUS_RING} disabled:cursor-not-allowed disabled:opacity-60 ${look}`}
 			>
 				{appearance === 'row' ? <span className="shrink-0 text-muted">{label}</span> : null}
 				<span className="truncate">{text}</span>
-				<ChevronDown size={14} aria-hidden="true" className="shrink-0 opacity-70" />
+				<ChevronDown size={ICON_SIZE} aria-hidden="true" className="shrink-0 opacity-70" />
 			</button>
 			{open ? (
 				<>
@@ -235,9 +257,10 @@ export function PropertyPopover({
 						className="fixed inset-0 z-20 bg-black/30 sm:hidden"
 					/>
 					<div
+						ref={panel}
 						id={`${id}-panel`}
 						data-testid="property-popover-panel"
-						className={`absolute left-0 top-full z-30 mt-1 min-w-[12rem] max-w-[calc(100vw-1rem)] ${hasOptions ? '' : 'w-80'} rounded-md border border-border bg-surface p-1 shadow-lg max-sm:fixed max-sm:inset-x-0 max-sm:bottom-0 max-sm:top-auto max-sm:mt-0 max-sm:max-h-[70vh] max-sm:max-w-none max-sm:overflow-y-auto max-sm:rounded-b-none`}
+						className={`${POPOVER_PANEL_CLASS} ${hasOptions ? '' : 'w-80'}`}
 					>
 						{hasOptions ? (
 							<div
@@ -265,12 +288,17 @@ export function PropertyPopover({
 											className={`h-2 w-2 shrink-0 rounded-full ${option.tone ? TONE_DOT[toneOf(option.tone)] : 'bg-transparent'}`}
 										/>
 										<span className="min-w-0 flex-1 truncate">{option.label}</span>
-										{option.value === value ? <Check size={14} aria-hidden="true" /> : null}
+										{option.hint ? (
+											<span className="shrink-0 text-xs text-muted">{option.hint}</span>
+										) : null}
+										{option.value === value ? <Check size={ICON_SIZE} aria-hidden="true" /> : null}
 									</div>
 								))}
 							</div>
 						) : (
-							<div className="p-1">{items}</div>
+							<InsidePopoverContext.Provider value={true}>
+								<div className="flex flex-col gap-2">{items}</div>
+							</InsidePopoverContext.Provider>
 						)}
 					</div>
 				</>

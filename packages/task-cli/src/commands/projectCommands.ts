@@ -1,5 +1,6 @@
 // The commands that work on an initialized project, by command word.
 import type { ProjectCommand } from '../cli/env.js';
+import { runComment, runCommentEdit, runCommentRemove, runComments } from './CommentCommands.js';
 import { runDelete } from './DeleteCommand.js';
 import {
 	runChildren,
@@ -52,6 +53,10 @@ export const PROJECT_COMMANDS: ReadonlyMap<string, ProjectCommand> = new Map<str
 	['unset-type', runUnsetType],
 	['set-title', runSetTitle],
 	['set-description', runSetDescription],
+	['comment', runComment],
+	['comments', runComments],
+	['comment-edit', runCommentEdit],
+	['comment-rm', runCommentRemove],
 	['find', runFind],
 	['labels', runLabels],
 	['delete', runDelete],
@@ -61,4 +66,4 @@ export const PROJECT_COMMANDS: ReadonlyMap<string, ProjectCommand> = new Map<str
 
 /** Shown for an unknown command: every command word, including the ones that need no project. */
 export const VALID_COMMANDS_HINT =
-	'Valid commands: new, list, show, history, set-status, set-type, set-parent, remove-parent, children, parents, tree, link, unlink, links, add-label, remove-label, set-meta, unset-meta, unset-type, set-title, set-description, find, labels, delete, type, status, plugins, projects';
+	'Valid commands: new, list, show, history, set-status, set-type, set-parent, remove-parent, children, parents, tree, link, unlink, links, add-label, remove-label, set-meta, unset-meta, unset-type, set-title, set-description, comment, comments, comment-edit, comment-rm, find, labels, delete, type, status, plugins, projects';

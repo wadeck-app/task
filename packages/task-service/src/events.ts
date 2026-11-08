@@ -98,6 +98,33 @@ export interface TaskTextChangedEvent {
 	} & TaskProjectEnv;
 }
 
+export interface TaskCommentAddedEvent {
+	name: 'onTaskCommentAdded';
+	payload: {
+		taskId: string;
+		commentId: string;
+		/** The full text of the comment, never a preview. */
+		text: string;
+		/** Absent when the comment has no author. */
+		author: string | undefined;
+	} & TaskProjectEnv;
+}
+
+export interface TaskCommentEditedEvent {
+	name: 'onTaskCommentEdited';
+	payload: {
+		taskId: string;
+		commentId: string;
+		oldText: string;
+		newText: string;
+	} & TaskProjectEnv;
+}
+
+export interface TaskCommentRemovedEvent {
+	name: 'onTaskCommentRemoved';
+	payload: { taskId: string; commentId: string } & TaskProjectEnv;
+}
+
 export interface TaskParentChangedEvent {
 	name: 'onTaskParentChanged';
 	payload: {
@@ -119,6 +146,8 @@ export interface TaskDeletedEvent {
 		orphanedChildIds: string[];
 		/** Links held by the tasks still present that pointed to this one and were removed with it. */
 		removedLinkCount: number;
+		/** Comments the task had, deleted with it. Absent when it had none. */
+		commentCount?: number;
 	} & TaskProjectEnv;
 }
 
@@ -134,6 +163,9 @@ export type TaskEvent =
 	| TaskLabelRemovedEvent
 	| TaskMetaChangedEvent
 	| TaskTextChangedEvent
+	| TaskCommentAddedEvent
+	| TaskCommentEditedEvent
+	| TaskCommentRemovedEvent
 	| TaskParentChangedEvent
 	| TaskDeletedEvent;
 

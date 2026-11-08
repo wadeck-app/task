@@ -3,6 +3,7 @@ import { ProgressSummary } from './ProgressSummary.js';
 import { StatusBadge } from './StatusBadge.js';
 import type { Tone } from '../tones.js';
 import { useAction } from '../useAction.js';
+import { FIELD_CLASS } from '../ui/tokens.js';
 import type { ActionHandler } from '../useAction.js';
 
 export interface ChecklistRow {
@@ -208,7 +209,7 @@ export function TaskChecklist({
 							void add();
 						}
 					}}
-					className="rounded border border-border bg-surface px-2 py-1 text-sm text-content outline-none placeholder:text-muted focus:ring-1 focus:ring-primary read-only:opacity-70"
+					className={FIELD_CLASS}
 				/>
 			) : null}
 		</div>
