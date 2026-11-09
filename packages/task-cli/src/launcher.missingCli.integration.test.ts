@@ -60,19 +60,7 @@ describe('bin shim when the CLI bundle (task.cjs) is missing', () => {
 	it('does not get in the way when the bundle is there (control: the bundle runs)', async () => {
 		iso = createIsolatedCliEnv();
 		const { shim } = installWrapper(iso, { bundle: "process.stdout.write('bundle ran\\n');" });
-		// The shim resolves the platform launcher before running the bundle; a stand-in file is enough on Windows, where
-		// every command but `start` bypasses the launcher. Elsewhere the launcher would be executed, so only Windows x64
-		// can run this control (the shim has no other platform entry than win32-x64, darwin-arm64, darwin-x64).
-		const platformDir = path.join(path.dirname(path.dirname(path.dirname(shim))), 'task-cli-win32-x64');
-		fs.mkdirSync(platformDir, { recursive: true });
-		fs.writeFileSync(path.join(platformDir, 'task.exe'), '');
-		if (process.platform !== 'win32' || process.arch !== 'x64') {
-			// Not a silent skip: say it in the output and stop here.
-			process.stderr.write(
-				`[launcher.missingCli] control not run on ${process.platform}-${process.arch}: the shim would execute the launcher binary\n`
-			);
-			return;
-		}
+		// No platform package and no launcher anywhere: every command but `start` runs the bundle with node, on every platform.
 
 		const result = await runIsolated(shim, ['--version'], iso);
 

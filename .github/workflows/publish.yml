@@ -88,8 +88,39 @@ jobs:
                   path: packages/task-cli-*
                   retention-days: 1
 
-    publish:
+    # Real macOS verification of the PACKED packages (nothing published, throwaway npm prefix): `task --version`,
+    # `task cli version`, `task --help` must print the version / something and exit 0, with and without the platform
+    # package. Gates `publish`: a package that is silent or broken on macOS must not be released.
+    # Runner labels (unverified from here, check against the GitHub docs if a job never starts): macos-14 is arm64;
+    # macos-13 (x64) was retired, macos-15-intel is its x64 replacement.
+    macos-smoke:
         needs: build-and-test
+        strategy:
+            fail-fast: false
+            matrix:
+                os: [macos-14, macos-15-intel]
+        runs-on: ${{ matrix.os }}
+        steps:
+            - uses: actions/checkout@v5
+
+            - uses: actions/setup-node@v5
+              with:
+                  node-version: '24'
+
+            - name: Download artifacts
+              uses: actions/download-artifact@v4
+              with:
+                  name: task-cli-packages
+                  path: packages
+
+            - name: Restore exec bits lost by the artifact transfer
+              run: bash packages/task-cli/ci/scripts/restore-exec-bits.sh packages
+
+            - name: Smoke test the packed CLI
+              run: bash packages/task-cli/ci/scripts/smoke-packed.sh packages "${{ needs.build-and-test.outputs.version }}"
+
+    publish:
+        needs: [build-and-test, macos-smoke]
         if: github.event_name == 'push'
         runs-on: ubuntu-latest
         steps:
@@ -106,6 +137,10 @@ jobs:
               with:
                   name: task-cli-packages
                   path: packages
+
+            # upload/download-artifact drop file modes: without this the published launcher is 0644 (EACCES on macOS).
+            - name: Restore exec bits lost by the artifact transfer
+              run: bash packages/task-cli/ci/scripts/restore-exec-bits.sh packages
 
             - name: Publish platform packages
               run: |
