@@ -24,7 +24,9 @@ beforeEach(() => {
 
 afterEach(() => {
 	fs.rmSync(root, { recursive: true, force: true });
-	process.env['XDG_CONFIG_HOME'] = previousXdg;
+	// Assigning undefined to an env entry stores the string "undefined" (on every OS)
+	if (previousXdg === undefined) delete process.env['XDG_CONFIG_HOME'];
+	else process.env['XDG_CONFIG_HOME'] = previousXdg;
 	if (previousProject === undefined) delete process.env['TASK_PROJECT'];
 	else process.env['TASK_PROJECT'] = previousProject;
 });

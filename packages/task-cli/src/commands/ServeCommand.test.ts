@@ -215,7 +215,9 @@ describe('the token', () => {
 
 	it('--token-env names another variable, --token-file a file; the token is never printed, only where it came from', async () => {
 		const file = path.join(tmpDir, 'token');
-		fs.writeFileSync(file, TOKEN);
+		// 0o600 as the product requires on POSIX; chmod too, the mode of writeFileSync is filtered by the umask
+		fs.writeFileSync(file, TOKEN, { mode: 0o600 });
+		fs.chmodSync(file, 0o600);
 
 		const viaEnv = await serveBriefly(['--port', '0', '--token-env', 'OTHER'], { env: { OTHER: TOKEN } });
 		abort = new AbortController();
@@ -229,6 +231,28 @@ describe('the token', () => {
 		expect(out.join('\n')).not.toContain(TOKEN);
 		expect(warnings.join('\n')).not.toContain(TOKEN);
 	});
+
+	// A real chmod: Windows has no POSIX modes (the logic itself is covered with an injected mode in serverToken.test.ts)
+	it.skipIf(process.platform === 'win32')(
+		'a --token-file readable by other users is refused with the chmod, nothing starts',
+		async () => {
+			const file = path.join(tmpDir, 'open-token');
+			fs.writeFileSync(file, TOKEN);
+			fs.chmodSync(file, 0o644);
+			const start = vi.fn();
+
+			const result = await runServe(['--port', '0', '--token-file', file], false, {
+				...deps({ env: {} }),
+				start,
+			});
+
+			expect(result.exitCode).toBe(1);
+			expect(result.output).toContain('readable by other users (mode 644)');
+			expect(result.output).toContain(`chmod 600 ${file}`);
+			expect(result.output).not.toContain(TOKEN);
+			expect(start).not.toHaveBeenCalled();
+		}
+	);
 });
 
 describe('starting and stopping', () => {
