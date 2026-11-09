@@ -16,6 +16,7 @@ function configFor(baseUrl: string): string {
     - backlog
     - in-progress
     - { name: done, terminal: true }
+    - { name: cancelled, terminal: true, outcome: negative }
 strategy:
     type: github
     options:
@@ -24,10 +25,12 @@ strategy:
         tokenEnv: ${TOKEN_VARIABLE}
         cache: { ttlSeconds: 0 }
         timeoutSeconds: 3
+        writeSpacingSeconds: 0
         statusMap:
             backlog: { state: open }
             in-progress: { state: open, label: 'status:in-progress' }
             done: { state: closed }
+            cancelled: { state: closed, reason: not_planned }
 `;
 }
 
@@ -92,38 +95,96 @@ describe('reads', () => {
 	});
 });
 
-describe('writes are refused with the hint, and nothing is sent', () => {
-	it.each([
-		['POST /tasks/:id/status', { id: '1' }, { status: 'done' }],
-		['POST /tasks/:id/labels', { id: '1' }, { label: 'x' }],
-		['POST /tasks/:id/meta', { id: '1' }, { key: 'k', value: 'v' }],
-	])('%s is 422 with the capability and where to make the change', async (route, params, body) => {
-		const answer = await h.call(route, { params, query: { project }, body });
+describe('writes reach GitHub', () => {
+	it('POST /tasks creates an issue and answers 201 with the task, its page and what the queue did not get', async () => {
+		const answer = await h.call('POST /tasks', { query: { project }, body: { title: 'New one' } });
 
-		expect(answer.status).toBe(422);
-		expect(answer.body['capability']).toBe('writes');
-		expect(answer.body['hint']).toContain('read-only in this version (stage 1');
-		expect(fake.writes()).toEqual([]);
+		expect(answer.status).toBe(201);
+		expect(answer.body['task']).toMatchObject({ id: '4', title: 'New one', status: 'backlog' });
+		expect(answer.body['message']).toContain('Created task 4');
+		expect(answer.body['undelivered']).toBeDefined();
+		expect(fake.issues.get(4)!.title).toBe('New one');
 	});
 
-	it('POST /tasks (a new task) is 422 too', async () => {
-		const answer = await h.call('POST /tasks', { query: { project }, body: { description: 'New' } });
-
-		expect(answer.status).toBe(422);
-		expect(answer.body['capability']).toBe('writes');
-	});
-
-	it('with ?inlineErrors=true the view gets it as data', async () => {
+	it('POST /tasks/:id/status moves the issue; the answer carries the task and the events as undelivered (queue off)', async () => {
 		const answer = await h.call('POST /tasks/:id/status', {
-			params: { id: '1' },
-			query: { project, inlineErrors: 'true' },
-			body: { status: 'done' },
+			params: { id: '2' },
+			query: { project },
+			body: { status: 'in-progress' },
 		});
 
 		expect(answer.status).toBe(200);
-		expect(answer.body['failed']).toBe(true);
-		expect(answer.body['httpStatus']).toBe(422);
-		expect(answer.body['errorText']).toContain('read-only in this version (stage 1');
+		expect(answer.body['task']).toMatchObject({ id: '2', status: 'in-progress' });
+		expect(fake.issues.get(2)!.labels).toEqual(['status:in-progress']);
+		expect(answer.body['undelivered']).toBeDefined();
+	});
+
+	it('labels, comments and the parent are written too, and a read right after shows them', async () => {
+		const labelled = await h.call('POST /tasks/:id/labels', {
+			params: { id: '2' },
+			query: { project },
+			body: { label: 'urgent' },
+		});
+		const commented = await h.call('POST /tasks/:id/comments', {
+			params: { id: '2' },
+			query: { project },
+			body: { text: 'hello' },
+		});
+		const detached = await h.call('DELETE /tasks/:id/parent', { params: { id: '2' }, query: { project } });
+
+		expect(labelled.status).toBe(200);
+		expect(commented.status).toBe(201);
+		expect(detached.status).toBe(200);
+		const read = await h.call('GET /tasks/:id', { params: { id: '2' }, query: { project } });
+		expect(read.body['task']).toMatchObject({ id: '2', labels: ['urgent'] });
+		expect(read.body['task']['parentId']).toBeUndefined();
+	});
+
+	it('what needs a fill is 422 with the capability and the key to write, as data with ?inlineErrors=true', async () => {
+		const meta = await h.call('POST /tasks/:id/meta', {
+			params: { id: '1' },
+			query: { project },
+			body: { key: 'k', value: 'v' },
+		});
+		const inline = await h.call('POST /tasks/:id/meta', {
+			params: { id: '1' },
+			query: { project, inlineErrors: 'true' },
+			body: { key: 'k', value: 'v' },
+		});
+
+		expect(meta.status).toBe(422);
+		expect(meta.body['capability']).toBe('meta');
+		expect(meta.body['hint']).toContain('strategy.options.fills');
+		expect(inline.status).toBe(200);
+		expect(inline.body['failed']).toBe(true);
+		expect(inline.body['httpStatus']).toBe(422);
+		expect(inline.body['errorText']).toContain('meta: labels');
+		expect(fake.writes()).toEqual([]);
+	});
+
+	it('a write that GitHub refuses is 400 with the reason, one that stops halfway is 500 with what was and was not applied', async () => {
+		fake.failNext({ status: 422, method: 'PATCH', body: { message: 'Validation Failed' } });
+		const refused = await h.call('POST /tasks/:id/status', {
+			params: { id: '1' },
+			query: { project },
+			body: { status: 'done' },
+		});
+
+		fake.failNext({
+			status: 422,
+			method: 'POST',
+			pathPrefix: '/repos/acme/shop/issues/1/sub_issues',
+			body: { message: 'Validation Failed' },
+		});
+		const partial = await h.call('POST /tasks', {
+			query: { project },
+			body: { title: 'Under alpha', parent: '1' },
+		});
+
+		expect(refused.status).toBe(400);
+		expect(refused.body['hint']).toContain('Nothing was changed');
+		expect(partial.status).toBe(500);
+		expect(partial.body['hint']).toContain('task set-parent 4 1');
 	});
 });
 

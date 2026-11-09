@@ -45,6 +45,7 @@ describe('parseGitHubOptions: a valid configuration and its defaults', () => {
 			maxPages: 50,
 			cacheTtlSeconds: 60,
 			timeoutSeconds: 15,
+			writeSpacingSeconds: 1,
 		});
 	});
 
@@ -70,6 +71,7 @@ describe('parseGitHubOptions: a valid configuration and its defaults', () => {
 				maxPages: 5,
 				cache: { ttlSeconds: 0 },
 				timeoutSeconds: 3,
+				writeSpacingSeconds: 0.5,
 				typePrefix: 'kind/',
 				metaPrefix: 'm/',
 				typeMap: { bug: { issueType: 'Bug' }, chore: { label: 'chore' } },
@@ -81,6 +83,7 @@ describe('parseGitHubOptions: a valid configuration and its defaults', () => {
 			maxPages: 5,
 			cacheTtlSeconds: 0,
 			timeoutSeconds: 3,
+			writeSpacingSeconds: 0.5,
 			typePrefix: 'kind/',
 			metaPrefix: 'm/',
 			typeMap: { bug: { issueType: 'Bug' }, chore: { label: 'chore' } },
@@ -102,6 +105,7 @@ describe('parseGitHubOptions: a valid configuration and its defaults', () => {
 				'tokenFile',
 				'typeMap',
 				'typePrefix',
+				'writeSpacingSeconds',
 			].sort()
 		);
 	});
@@ -226,6 +230,12 @@ describe('parseGitHubOptions: every problem names its option', () => {
 		['maxPages', 0, 'maxPages: must be a whole number from 1 to 1000, found 0'],
 		['timeoutSeconds', 0, 'timeoutSeconds: must be a positive number of seconds, found 0'],
 		['timeoutSeconds', 'fast', 'timeoutSeconds: must be a positive number of seconds, found "fast"'],
+		['writeSpacingSeconds', -1, 'writeSpacingSeconds: must be zero or a positive number of seconds, found -1'],
+		[
+			'writeSpacingSeconds',
+			'slow',
+			'writeSpacingSeconds: must be zero or a positive number of seconds, found "slow"',
+		],
 	])('%s %j is refused', (key, value, message) => {
 		expect(problem(valid({ [key]: value }))).toBe(message);
 	});

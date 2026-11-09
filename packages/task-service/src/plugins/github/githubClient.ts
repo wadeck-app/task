@@ -13,7 +13,7 @@ import {
 } from '@wadeck-app/task-core';
 
 import type { ReadNotice } from '../kinds.js';
-import type { CacheEntry, ResponseCache } from './responseCache.js';
+import type { CacheEntry, RecentKind, ResponseCache } from './responseCache.js';
 
 export interface GitHubClientOptions {
 	/** No trailing slash: `https://api.github.com`, `https://HOST/api/v3`. */
@@ -36,6 +36,12 @@ export interface GitHubClientOptions {
 	onNotice?: (notice: ReadNotice) => void;
 	/** One line per request, without any header: what was asked, the status, the time, the quota left. */
 	debug?: (line: string) => void;
+	/** Least time between the start of two writes (GitHub asks integrators to go slowly with content-creating requests). Default 1000. */
+	writeSpacingMs?: number;
+	/** Longest `retry-after` of a secondary limit that a write waits out; a longer one is a RateLimitedError at once. Default 15000. */
+	maxRetryWaitMs?: number;
+	/** Injectable wait (tests). */
+	sleep?: (ms: number) => Promise<void>;
 }
 
 export interface GetOptions {
@@ -44,6 +50,8 @@ export interface GetOptions {
 	cache?: boolean;
 	/** A 404 is an answer (`status: 404`, no body) instead of an error. */
 	allowNotFound?: boolean;
+	/** true: skip the "served without asking" shortcut of the TTL and revalidate (a re-read before a write). */
+	revalidate?: boolean;
 }
 
 export interface ClientResponse<T> {
@@ -74,11 +82,34 @@ export class GitHubHttpError extends Error {
 		readonly status: number,
 		readonly path: string,
 		readonly detail: string,
-		message: string
+		message: string,
+		/** The texts of the `errors` array of a 422 (a string, or the `message` / `resource field code` of an object). */
+		readonly errors: readonly string[] = []
 	) {
 		super(message);
 		this.name = 'GitHubHttpError';
 	}
+}
+
+/** GitHub answered 5xx: the request may or may not have been applied (for a write, read the issue again before saying anything). */
+export class GitHubServerFailure extends BackendUnreachableError {
+	constructor(
+		host: string,
+		readonly status: number,
+		reason: string
+	) {
+		super('github', host, reason);
+	}
+}
+
+/** The GraphQL endpoint next to a REST base: `https://api.github.com` -> `/graphql`, GHES `https://HOST/api/v3` -> `https://HOST/api/graphql`. */
+export function graphqlUrlOf(baseUrl: string): string {
+	return /\/api\/v3$/.test(baseUrl) ? baseUrl.replace(/\/api\/v3$/, '/api/graphql') : `${baseUrl}/graphql`;
+}
+
+export interface GraphQlAnswer<T> {
+	data?: T;
+	errors?: Array<{ type?: string; message: string }>;
 }
 
 /** Hides the token, and any `Bearer` credential, in a text. */
@@ -104,13 +135,28 @@ export class GitHubClient {
 	private tokenExpiration: string | undefined;
 	private inFlight = 0;
 	private readonly waiting: Array<() => void> = [];
+	private readonly sleep: (ms: number) => Promise<void>;
+	/** The writes wait for each other: this is the end of the last one queued. */
+	private writeChain: Promise<unknown> = Promise.resolve();
+	private lastWriteStartedAt: number | undefined;
 
 	constructor(private readonly options: GitHubClientOptions) {
+		this.sleep = options.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
 		this.now = options.now ?? Date.now;
 		this.doFetch = options.fetch ?? fetch;
 		const base = new URL(options.baseUrl);
 		this.host = base.host;
 		this.origin = base.origin;
+	}
+
+	/** Remembers that task just changed issue `number` in a way GitHub shows late (see {@link recently}). */
+	note(kind: RecentKind, number: number): void {
+		this.options.cache.remember(kind, number, new Date(this.now()).toISOString());
+	}
+
+	/** The issues task changed under `kind` within `windowMs`, oldest first (GitHub does not show those changes at once). */
+	recently(kind: RecentKind, windowMs: number): number[] {
+		return this.options.cache.recent(kind, new Date(this.now() - windowMs).toISOString());
 	}
 
 	/** What the last answer of a bucket (`core`, `search`) said about the quota; undefined before any answer. */
@@ -190,6 +236,75 @@ export class GitHubClient {
 		return { items, stale, ...(oldest === undefined ? {} : { cachedAt: oldest }) };
 	}
 
+	/**
+	 * One write (POST, PATCH, PUT, DELETE) of a path under the base address. Writes go one at a time and at least `writeSpacingMs`
+	 * apart (GitHub's guidance for content-creating requests); a secondary limit with a short `retry-after` is waited out (the request
+	 * was refused before it did anything, so sending it again is safe), a long one is a RateLimitedError. A 5xx or a lost connection is
+	 * NOT retried: the write may have been applied, the caller reads the issue again to know. The read cache is expired afterwards.
+	 */
+	async write<T>(
+		method: 'POST' | 'PATCH' | 'PUT' | 'DELETE',
+		path: string,
+		body?: unknown
+	): Promise<ClientResponse<T>> {
+		return this.serialized(() => this.writeNow<T>(method, this.urlOf(path), body));
+	}
+
+	/** One GraphQL call. GraphQL reports most failures in the body (`errors`), so they are returned, not thrown. */
+	async graphql<T>(query: string, variables: Record<string, unknown> = {}): Promise<GraphQlAnswer<T>> {
+		const answer = await this.serialized(() =>
+			this.writeNow<GraphQlAnswer<T>>('POST', graphqlUrlOf(this.options.baseUrl), { query, variables })
+		);
+		return answer.body;
+	}
+
+	private serialized<T>(task: () => Promise<T>): Promise<T> {
+		const run = this.writeChain.then(async () => {
+			const spacing = this.options.writeSpacingMs ?? 1000;
+			if (this.lastWriteStartedAt !== undefined && spacing > 0) {
+				const wait = spacing - (this.now() - this.lastWriteStartedAt);
+				if (wait > 0) await this.sleep(wait);
+			}
+			this.lastWriteStartedAt = this.now();
+			return task();
+		});
+		// The next write waits for this one whatever its outcome.
+		this.writeChain = run.catch(() => undefined);
+		return run;
+	}
+
+	private async writeNow<T>(method: string, url: string, body: unknown): Promise<ClientResponse<T>> {
+		const stamp = new Date(this.now()).toISOString();
+		const maxWait = this.options.maxRetryWaitMs ?? 15_000;
+		try {
+			for (let attempt = 0; ; attempt++) {
+				try {
+					const raw = await this.send(url, undefined, false, { method, body });
+					return {
+						status: raw.status,
+						body: raw.body as T,
+						fromCache: false,
+						stale: false,
+						cachedAt: stamp,
+					};
+				} catch (error) {
+					const wait =
+						error instanceof RateLimitedError && error.scope === 'secondary' && error.retryAt !== undefined
+							? error.retryAt.getTime() - this.now()
+							: undefined;
+					if (wait === undefined || attempt >= 2 || wait > maxWait) throw error;
+					this.options.debug?.(
+						`${method} ${this.shortPath(url)} -> secondary rate limit, waiting ${Math.ceil(wait / 1000)} s before sending it again`
+					);
+					await this.sleep(Math.max(wait, 0));
+				}
+			}
+		} finally {
+			// Whatever happened, what the cache holds may be out of date now.
+			this.options.cache.expire(new Date(this.now()).toISOString());
+		}
+	}
+
 	private requireOwnAddress(url: string): void {
 		let parsed: URL;
 		try {
@@ -219,8 +334,11 @@ export class GitHubClient {
 		const stamp = new Date(this.now()).toISOString();
 		if (
 			entry !== undefined &&
+			options.revalidate !== true &&
 			this.options.cacheTtlMs > 0 &&
-			this.now() - Date.parse(entry.cachedAt) < this.options.cacheTtlMs
+			this.now() - Date.parse(entry.cachedAt) < this.options.cacheTtlMs &&
+			// A write expired everything read before it (this process or another): ask again, conditionally.
+			!this.expiredByWrite(entry)
 		) {
 			this.options.debug?.(`GET ${this.shortPath(url)} -> cache (read ${entry.cachedAt})`);
 			return this.fromEntry<T>(entry, false);
@@ -344,7 +462,17 @@ export class GitHubClient {
 		else next();
 	}
 
-	private async send(url: string, etag: string | undefined, allowNotFound: boolean): Promise<Raw> {
+	private expiredByWrite(entry: CacheEntry): boolean {
+		const mark = this.options.cache.expiredAt();
+		return mark !== undefined && entry.cachedAt <= mark;
+	}
+
+	private async send(
+		url: string,
+		etag: string | undefined,
+		allowNotFound: boolean,
+		write?: { method: string; body: unknown }
+	): Promise<Raw> {
 		const resource = this.resourceOf(url);
 		const known = this.rates.get(resource);
 		if (known !== undefined && known.remaining <= 0 && this.now() < known.resetAt * 1000) {
@@ -357,13 +485,19 @@ export class GitHubClient {
 		}
 		await this.acquire();
 		try {
-			return await this.sendNow(url, etag, allowNotFound);
+			return await this.sendNow(url, etag, allowNotFound, write);
 		} finally {
 			this.release();
 		}
 	}
 
-	private async sendNow(url: string, etag: string | undefined, allowNotFound: boolean): Promise<Raw> {
+	private async sendNow(
+		url: string,
+		etag: string | undefined,
+		allowNotFound: boolean,
+		write?: { method: string; body: unknown }
+	): Promise<Raw> {
+		const method = write?.method ?? 'GET';
 		const started = performance.now();
 		const controller = new AbortController();
 		let timedOut = false;
@@ -376,7 +510,8 @@ export class GitHubClient {
 		try {
 			for (let hops = 0; ; hops++) {
 				response = await this.doFetch(current, {
-					method: 'GET',
+					method,
+					...(write?.body === undefined ? {} : { body: JSON.stringify(write.body) }),
 					redirect: 'manual',
 					signal: controller.signal,
 					headers: {
@@ -385,6 +520,7 @@ export class GitHubClient {
 						'x-github-api-version': API_VERSION,
 						'user-agent': 'task-cli (github strategy)',
 						...(etag === undefined ? {} : { 'if-none-match': etag }),
+						...(write?.body === undefined ? {} : { 'content-type': 'application/json' }),
 					},
 				});
 				const location = response.headers.get('location');
@@ -419,17 +555,33 @@ export class GitHubClient {
 		}
 		const remaining = response.headers.get('x-ratelimit-remaining');
 		this.options.debug?.(
-			`GET ${this.shortPath(current)} -> ${response.status} (${Math.round(performance.now() - started)} ms${
+			`${method} ${this.shortPath(current)} -> ${response.status} (${Math.round(performance.now() - started)} ms${
 				remaining === null ? '' : `, rate limit remaining ${remaining}`
 			})`
 		);
-		return this.classify(current, response, text, allowNotFound);
+		return this.classify(current, response, text, allowNotFound, method);
 	}
 
-	private classify(url: string, response: Response, text: string, allowNotFound: boolean): Raw {
+	/** The texts of the `errors` array of an error body: strings as they are, objects by their message or `resource field code`. */
+	private errorTexts(body: unknown): string[] {
+		const errors = (body as { errors?: unknown } | undefined)?.errors;
+		if (!Array.isArray(errors)) return [];
+		return errors.map(entry => {
+			if (typeof entry === 'string') return this.redact(entry);
+			const item = entry as { message?: unknown; resource?: unknown; field?: unknown; code?: unknown };
+			if (typeof item.message === 'string') return this.redact(item.message);
+			return this.redact(
+				[item.resource, item.field, item.code].filter(part => typeof part === 'string').join(' ')
+			);
+		});
+	}
+
+	private classify(url: string, response: Response, text: string, allowNotFound: boolean, method: string): Raw {
 		const path = this.shortPath(url);
 		const status = response.status;
 		const headers = response.headers;
+		const writing = method !== 'GET';
+		const access = writing ? 'Issues: Read and write, Metadata: Read' : 'Issues: Read and Metadata: Read';
 		let body: unknown;
 		let message = '';
 		if (text !== '') {
@@ -451,7 +603,7 @@ export class GitHubClient {
 					status,
 					path,
 					'not JSON',
-					this.redact(`GitHub answered ${status} for GET ${path} with something that is not JSON`)
+					this.redact(`GitHub answered ${status} for ${method} ${path} with something that is not JSON`)
 				);
 			}
 			return { status, headers, body };
@@ -462,7 +614,7 @@ export class GitHubClient {
 				'github',
 				'unauthenticated',
 				`GitHub refused the token (401${detail === '' ? '' : ` ${detail}`})`,
-				`Create or renew a fine-grained token with Issues: Read and Metadata: Read on ${this.options.repo}, and put it in ${this.options.tokenHint}. An expired or revoked token gives this answer; task strategy check shows the expiry date.`
+				`Create or renew a fine-grained token with ${access} on ${this.options.repo}, and put it in ${this.options.tokenHint}. An expired or revoked token gives this answer; task strategy check shows the expiry date.`
 			);
 		}
 		if (status === 403 || status === 429) {
@@ -488,13 +640,13 @@ export class GitHubClient {
 				'github',
 				'forbidden',
 				`GitHub refused the request (403${detail === '' ? '' : ` ${detail}`})`,
-				`The token needs ${needed === null ? 'Issues: Read and Metadata: Read' : `these permissions (${needed})`} on ${this.options.repo}; edit the token in GitHub (Settings > Developer settings > Fine-grained tokens), or use one that has them. It is read from ${this.options.tokenHint}.`
+				`The token needs ${needed === null ? access : `these permissions (${needed})`} on ${this.options.repo}; edit the token in GitHub (Settings > Developer settings > Fine-grained tokens), or use one that has them. It is read from ${this.options.tokenHint}.`
 			);
 		}
 		if (status >= 500) {
-			throw new BackendUnreachableError(
-				'github',
+			throw new GitHubServerFailure(
 				this.host,
+				status,
 				`answered HTTP ${status}${detail === '' ? '' : `: ${detail}`}`
 			);
 		}
@@ -502,7 +654,8 @@ export class GitHubClient {
 			status,
 			path,
 			detail,
-			`GitHub answered ${status} for GET ${path}${detail === '' ? '' : `: ${detail}`}`
+			`GitHub answered ${status} for ${method} ${path}${detail === '' ? '' : `: ${detail}`}`,
+			this.errorTexts(body)
 		);
 	}
 }

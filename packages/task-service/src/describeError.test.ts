@@ -4,8 +4,10 @@ import {
 	BackendAuthError,
 	BackendDataError,
 	BackendLimitError,
+	BackendRejectedError,
 	BackendTimeoutError,
 	BackendUnreachableError,
+	PartialWriteError,
 	RateLimitedError,
 	TaskConflictError,
 	TaskNotFoundError,
@@ -256,6 +258,44 @@ describe('describeError: data of the remote system that does not fit', () => {
 			kind: 'unavailable',
 			message: 'No GitHub token',
 			hint: 'Set GITHUB_TOKEN',
+		});
+	});
+});
+
+describe('describeError: github writes', () => {
+	it('a write the server refused is "invalid" with the fix', () => {
+		const description = describeError(
+			new BackendRejectedError('github', 'addLabel', 'GitHub refused the label', 'Use at most 50 characters')
+		);
+
+		expect(description).toEqual({
+			kind: 'invalid',
+			message: 'GitHub refused the label',
+			hint: 'Use at most 50 characters',
+			details: { backend: 'github', operation: 'addLabel' },
+		});
+	});
+
+	it('a write done only in part is "internal" with what was and was not applied, and the repair as hint', () => {
+		const description = describeError(
+			new PartialWriteError({
+				backendKind: 'github',
+				operation: 'updateStatus',
+				taskId: '12',
+				applied: ['removed the label status:todo'],
+				notApplied: ['close the issue'],
+				hint: 'Run: task set-status 12 done',
+			})
+		);
+
+		expect(description.kind).toBe('internal');
+		expect(description.hint).toBe('Run: task set-status 12 done');
+		expect(description.details).toEqual({
+			backend: 'github',
+			operation: 'updateStatus',
+			taskId: '12',
+			applied: ['removed the label status:todo'],
+			notApplied: ['close the issue'],
 		});
 	});
 });

@@ -20,7 +20,7 @@ export const FILL_TECHNIQUES = {
 /** `linkTypes` is filled per link type (`fills.linkTypes.causedBy`). */
 export const LINK_FILL_TECHNIQUES: Readonly<Record<string, Readonly<Record<string, FillFidelity>>>> = {
 	blockedBy: { native: 'exact', 'body-block': 'approximate', 'relates-block': 'approximate' },
-	duplicateOf: { 'close-duplicate': 'approximate', 'quick-action': 'approximate', relate: 'approximate' },
+	duplicateOf: { 'duplicate-marker': 'approximate', 'quick-action': 'approximate', relate: 'approximate' },
 	causedBy: { 'relate-block': 'approximate' },
 };
 

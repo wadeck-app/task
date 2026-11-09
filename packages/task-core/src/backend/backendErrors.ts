@@ -144,3 +144,60 @@ export class BackendLimitError extends Error {
 		requireHint('BackendLimitError', hint);
 	}
 }
+
+/** The server refused the content of a write (a label name it does not accept, a value out of range...). Nothing was changed. */
+export class BackendRejectedError extends Error {
+	constructor(
+		readonly backendKind: BackendKind,
+		readonly operation: string,
+		message: string,
+		readonly hint: string
+	) {
+		super(message);
+		this.name = 'BackendRejectedError';
+		requireHint('BackendRejectedError', hint);
+	}
+}
+
+export interface PartialWriteInit {
+	backendKind: BackendKind;
+	operation: string;
+	taskId: string;
+	/** What reached the remote system, in words, in order. */
+	applied: readonly string[];
+	/** What did not, in words. */
+	notApplied: readonly string[];
+	/** How to repair (a command to run again, a page to fix). */
+	hint: string;
+	cause?: unknown;
+}
+
+/**
+ * A write made of several remote calls failed halfway (design 1.6): the remote system holds part of it. The backend re-reads before
+ * it reports, so `applied` / `notApplied` describe what is really there. Same pattern as PartialDeleteError.
+ */
+export class PartialWriteError extends Error {
+	readonly backendKind: BackendKind;
+	readonly operation: string;
+	readonly taskId: string;
+	readonly applied: readonly string[];
+	readonly notApplied: readonly string[];
+	readonly hint: string;
+
+	constructor(init: PartialWriteInit) {
+		const causeText =
+			init.cause instanceof Error ? init.cause.message : init.cause === undefined ? '' : String(init.cause);
+		super(
+			`${init.operation} on ${init.taskId} is only partly done: applied [${init.applied.join('; ') || 'nothing'}], NOT applied [${init.notApplied.join('; ') || 'nothing'}]${causeText === '' ? '' : ` (${causeText})`}`,
+			init.cause === undefined ? undefined : { cause: init.cause }
+		);
+		this.name = 'PartialWriteError';
+		this.backendKind = init.backendKind;
+		this.operation = init.operation;
+		this.taskId = init.taskId;
+		this.applied = init.applied;
+		this.notApplied = init.notApplied;
+		this.hint = init.hint;
+		requireHint('PartialWriteError', init.hint);
+	}
+}

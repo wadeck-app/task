@@ -19,6 +19,7 @@ export {
 export type { ProjectFailure } from './errors.js';
 export type { ErrorDescription, ErrorKind } from './describeError.js';
 export { describeError, isRemoteFailure } from './describeError.js';
+export { syncLabels } from './syncLabels.js';
 export type {
 	TaskProjectEnv,
 	TaskEvent,

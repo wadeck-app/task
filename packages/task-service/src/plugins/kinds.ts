@@ -16,10 +16,11 @@ export interface CheckLine {
 
 /**
  * Something a read did that the user should know and that is not a failure: data served from the cache because the server could
- * not be asked (`stale`), or something of the remote system that has no task equivalent and was left out (`ignored`).
+ * not be asked (`stale`), something of the remote system that has no task equivalent and was left out (`ignored`), or a write done
+ * through a declared fill that is only approximate (`emulated`: a human edit on the remote system may overwrite it).
  */
 export interface ReadNotice {
-	kind: 'stale' | 'ignored';
+	kind: 'stale' | 'ignored' | 'emulated';
 	/** One sentence, ready to print after `warning: `. */
 	text: string;
 	/** `stale`: when the data served was read from the server. */
@@ -83,6 +84,11 @@ export interface StrategyContext {
 export interface StrategyPlugin extends Plugin<'strategy', StrategyInstance, StrategyContext> {
 	readonly backendKind: BackendKind;
 	readonly capabilities: BackendCapabilities;
+	/**
+	 * The capabilities once the project's declared fills are taken into account (a fill enables what the backend cannot do natively).
+	 * Absent: the static ones. `strategy show` still prints the static ones with the fills as `emulated`.
+	 */
+	capabilitiesFor?(fills: DeclaredFills): BackendCapabilities;
 	/** Capability -> the fill techniques this plugin implements (empty: everything is native, no fill applies). */
 	readonly fillTechniques: Readonly<Record<string, readonly string[]>>;
 	/**

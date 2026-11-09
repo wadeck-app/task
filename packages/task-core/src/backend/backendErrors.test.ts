@@ -3,8 +3,10 @@ import {
 	BackendAuthError,
 	BackendDataError,
 	BackendLimitError,
+	BackendRejectedError,
 	BackendTimeoutError,
 	BackendUnreachableError,
+	PartialWriteError,
 	RateLimitedError,
 	StaleRevisionError,
 	UnsupportedByBackendError,
@@ -124,5 +126,64 @@ describe('BackendDataError', () => {
 		expect(error.message).toBe('issue #12 carries two status labels (status:a, status:b)');
 		expect(error.hint).toBe('Remove one of them on GitHub');
 		expect(() => new BackendDataError('github', 'x', 'm', '')).toThrow(/hint/);
+	});
+});
+
+describe('PartialWriteError', () => {
+	it('lists what was applied, what was not, and how to repair, and keeps the cause', () => {
+		const cause = new Error('boom');
+		const error = new PartialWriteError({
+			backendKind: 'github',
+			operation: 'updateStatus',
+			taskId: '12',
+			applied: ['removed the label status:in-progress'],
+			notApplied: ['close the issue as completed'],
+			hint: 'Run: task set-status 12 done',
+			cause,
+		});
+
+		expect(error).toBeInstanceOf(Error);
+		expect(error.name).toBe('PartialWriteError');
+		expect(error.backendKind).toBe('github');
+		expect(error.taskId).toBe('12');
+		expect(error.applied).toEqual(['removed the label status:in-progress']);
+		expect(error.notApplied).toEqual(['close the issue as completed']);
+		expect(error.hint).toBe('Run: task set-status 12 done');
+		expect(error.cause).toBe(cause);
+		expect(error.message).toContain('updateStatus');
+		expect(error.message).toContain('12');
+		expect(error.message).toContain('removed the label status:in-progress');
+		expect(error.message).toContain('close the issue as completed');
+		expect(error.message).toContain('boom');
+	});
+
+	it('refuses an empty hint: a half-done write without a repair step is a bug', () => {
+		expect(
+			() =>
+				new PartialWriteError({
+					backendKind: 'github',
+					operation: 'x',
+					taskId: '1',
+					applied: [],
+					notApplied: [],
+					hint: ' ',
+				})
+		).toThrow(/hint/);
+	});
+});
+
+describe('BackendRejectedError', () => {
+	it('is the server refusing the content of a write, with the reason and a fix', () => {
+		const error = new BackendRejectedError(
+			'github',
+			'addLabel',
+			'GitHub refused it: name is too long',
+			'Use at most 50'
+		);
+
+		expect(error.name).toBe('BackendRejectedError');
+		expect(error.operation).toBe('addLabel');
+		expect(error.message).toBe('GitHub refused it: name is too long');
+		expect(error.hint).toBe('Use at most 50');
 	});
 });

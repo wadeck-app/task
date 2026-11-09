@@ -551,8 +551,8 @@ describe('GitHubClient: rate limit state and concurrency', () => {
 	});
 });
 
-describe('GitHubClient: only reads', () => {
-	it('has no method that sends anything but GET', async () => {
+describe('GitHubClient: a read sends GET only', () => {
+	it('a read sends nothing but GET (writes go through write() and graphql() only)', async () => {
 		const c = client();
 		await c.get('/repos/acme/shop');
 		await c.getAll('/repos/acme/shop/issues');

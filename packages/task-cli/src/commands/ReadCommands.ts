@@ -1,4 +1,4 @@
-// Read-only task commands: list, show, history, links, children, parents, tree.
+// Task commands that read: list, show, history, links, children, parents, tree, labels (and `labels sync`, the one that creates labels on a forge).
 import {
 	createStatusFilter,
 	getFullTree,
@@ -13,6 +13,7 @@ import {
 	SEARCH_MAX_LIMIT,
 	searchTasks,
 	showTask,
+	syncLabels,
 } from '@wadeck-app/task-service';
 import type { ActivityRow, TaskHistory, TaskLinksReport } from '@wadeck-app/task-service';
 
@@ -222,10 +223,44 @@ export const runFind: ProjectCommand = async (rest, { jsonMode, ctx }) => {
 	}
 };
 
-/** `task labels`: the labels in use with the number of tasks carrying each, most used first. */
-export const runLabels: ProjectCommand = async (rest, { jsonMode, ctx }) => {
+const LABELS_SYNC_USAGE = 'Usage: task labels sync [--dry-run] [--json]';
+
+/** `task labels sync`: creates the labels the project's strategy needs in the remote system (never deletes one). */
+const runLabelsSync: ProjectCommand = async (rest, { jsonMode, ctx }) => {
+	const unknown = rest.find(arg => arg !== '--dry-run');
+	if (unknown !== undefined) return errorOutput(jsonMode, `unexpected argument: ${unknown}`, LABELS_SYNC_USAGE);
+	try {
+		const report = await syncLabels(ctx, { dryRun: rest.includes('--dry-run') });
+		if (jsonMode) return jsonResult(report);
+		const nameWidth = Math.max(0, ...report.wanted.map(label => label.name.length));
+		const verb = (name: string): string =>
+			report.created.includes(name) ? (report.dryRun ? 'would create' : 'created') : 'exists';
+		const lines = [
+			...(report.dryRun ? ['Dry run: nothing was created.'] : []),
+			...report.wanted.map(
+				label => `  ${verb(label.name).padEnd(12)} ${label.name.padEnd(nameWidth)}  ${label.why}`
+			),
+			report.created.length === 0
+				? 'The labels the configuration needs all exist: nothing to create.'
+				: `${report.created.length} label${report.created.length === 1 ? '' : 's'} ${report.dryRun ? 'to create' : 'created'}, ${report.existing.length} already there. No label is ever deleted or changed.`,
+			...report.notes,
+		];
+		return { exitCode: 0, output: lines.join('\n') };
+	} catch (error) {
+		return failure(jsonMode, error);
+	}
+};
+
+/** `task labels`: the labels in use with the number of tasks carrying each, most used first. `task labels sync`: see above. */
+export const runLabels: ProjectCommand = async (rest, env) => {
+	const { jsonMode, ctx } = env;
+	if (rest[0] === 'sync') return runLabelsSync(rest.slice(1), env);
 	if (rest.length > 0) {
-		return errorOutput(jsonMode, `unexpected argument: ${rest[0]}`, 'Usage: task labels [--json]');
+		return errorOutput(
+			jsonMode,
+			`unexpected argument: ${rest[0]}`,
+			'Usage: task labels [--json] | task labels sync [--dry-run] [--json]'
+		);
 	}
 	try {
 		const labels = await listLabels(ctx);

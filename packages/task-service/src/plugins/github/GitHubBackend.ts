@@ -1,25 +1,21 @@
-// The github strategy's backend: the TaskBackend port over the GitHub REST API, READ-ONLY (stage 1 of the storage design, R3).
-// Every read goes through the one GitHubClient (token, cache, pagination, rate limits); every write is refused with
-// UnsupportedByBackendError before any request, never a no-op and never a local fallback. The mapping lives in issueMapping.ts.
-import {
-	BackendDataError,
-	BackendLimitError,
-	TaskNotFoundError,
-	UnsupportedByBackendError,
-} from '@wadeck-app/task-core';
+// The github strategy's backend: the TaskBackend port over the GitHub REST API. Every read goes through the one GitHubClient (token,
+// cache, pagination, rate limits); the mapping lives in issueMapping.ts; every write is in githubWrites.ts (stage 2 of the storage
+// design). What GitHub cannot do is an UnsupportedByBackendError naming the fill that would emulate it, never a silent fallback.
+import { BackendDataError, BackendLimitError, TaskNotFoundError } from '@wadeck-app/task-core';
 import type {
 	BackendCapabilities,
 	BackendCommentChange,
 	BackendCommentEdit,
 	CreateTaskInput,
 	LabelCount,
-	LinkType,
+	LabelSyncReport,
 	ListQuery,
 	Page,
 	TaskBackend,
 	TaskLink,
 	TaskLinks,
 	TaskRecord,
+	LinkType,
 	TaskStatus,
 	TaskSummary,
 	TaskTreeNode,
@@ -29,11 +25,16 @@ import type {
 
 import { GitHubHttpError } from './githubClient.js';
 import type { ClientResponse, GitHubClient } from './githubClient.js';
+import type { DeclaredFills } from '../kinds.js';
 import type { GitHubSettings } from './githubOptions.js';
+import { revisionOf } from './githubRevision.js';
+import { CREATION_MEMORY_MS } from './responseCache.js';
+import { GitHubWriter } from './githubWrites.js';
 import {
 	activityOf,
 	commentsOf,
 	isPullRequest,
+	isTombstone,
 	iso,
 	linksOf,
 	metaOf,
@@ -47,7 +48,10 @@ import {
 } from './issueMapping.js';
 import type { ApiComment, ApiEvent, ApiIssue, MapContext } from './issueMapping.js';
 
-/** What this backend can do. Static: the plugin declares it before anything is created. */
+/**
+ * What this backend can do with NO fill declared. Static: the plugin declares it before anything is created. A fill adds to it
+ * (see {@link githubCapabilities}); `task strategy show` prints those as `emulated via <technique>`.
+ */
 export const GITHUB_CAPABILITIES: BackendCapabilities = Object.freeze({
 	// GitHub caps sub-issues at 8 levels and 100 per parent.
 	hierarchy: 'limited',
@@ -64,24 +68,43 @@ export const GITHUB_CAPABILITIES: BackendCapabilities = Object.freeze({
 	// With fills.meta: labels the labels `meta:key=value` are read as meta; the plugin reports it as emulated.
 	meta: false,
 	comments: true,
-	writes: 'none',
+	writes: 'full',
 	// The list carries the parent of each issue, not its links.
 	indexedGraph: false,
 });
+
+/** The capabilities of a backend whose project declared these fills (the base ones plus what each fill enables). */
+export function githubCapabilities(fills: DeclaredFills): BackendCapabilities {
+	const deleteUse = fills['delete']?.use;
+	return Object.freeze({
+		...GITHUB_CAPABILITIES,
+		meta: fills['meta'] !== undefined,
+		delete: deleteUse === 'hard' ? 'yes' : deleteUse === 'tombstone' ? 'close-only' : GITHUB_CAPABILITIES.delete,
+		linkTypes: Object.freeze([
+			...GITHUB_CAPABILITIES.linkTypes,
+			...(fills['linkTypes.duplicateOf']?.use === 'duplicate-marker' ? (['duplicateOf'] as const) : []),
+		]),
+	});
+}
+
+/** The dependency counts of an issue lag a change by 1 to 2 s (measured): for this long the lists are read whatever the counts say. */
+const DEPENDENCY_MEMORY_MS = 10_000;
 
 /** GitHub allows 8 levels of sub-issues. */
 export const MAX_DEPTH = 8;
 /** GitHub allows 100 sub-issues per parent. */
 export const MAX_CHILDREN = 100;
 
-const READ_ONLY =
-	'The github strategy is read-only in this version (stage 1 of the storage design): writes arrive in stage 2.';
+/** The `u` of a cursor that is past the end of the list: only the recent creations remain. */
+const OVERLAY = 'recent-creations';
 
 interface Cursor {
-	/** The URL of the page being read. */
+	/** The URL of the page being read, or {@link OVERLAY}. */
 	u: string;
-	/** Items of that page already consumed. */
+	/** Items of that page already consumed (overlay: recent creations already returned). */
 	s: number;
+	/** The highest issue number met so far: a recent creation above it is one the list does not show yet. */
+	m?: number;
 }
 
 function encodeCursor(cursor: Cursor): string {
@@ -91,7 +114,14 @@ function encodeCursor(cursor: Cursor): string {
 function decodeCursor(text: string): Cursor {
 	try {
 		const parsed = JSON.parse(Buffer.from(text, 'base64url').toString('utf8')) as Partial<Cursor>;
-		if (typeof parsed.u === 'string' && Number.isInteger(parsed.s) && parsed.s! >= 0) return parsed as Cursor;
+		if (
+			typeof parsed.u === 'string' &&
+			Number.isInteger(parsed.s) &&
+			parsed.s! >= 0 &&
+			(parsed.m === undefined || Number.isInteger(parsed.m))
+		) {
+			return parsed as Cursor;
+		}
 	} catch {
 		// falls through to the error below
 	}
@@ -107,12 +137,16 @@ export interface GitHubBackendInit {
 	/** Page of an issue on GitHub, for the hint of a refused write. */
 	issueUrl: (number: number) => string;
 	newIssueUrl: string;
+	/** The fills the project declared (`strategy.options.fills`): they decide what meta, delete and duplicateOf do. */
+	fills: DeclaredFills;
 }
 
 export class GitHubBackend implements TaskBackend {
 	readonly kind = 'github' as const;
-	readonly capabilities = GITHUB_CAPABILITIES;
+	readonly capabilities: BackendCapabilities;
 	private readonly settings: GitHubSettings;
+	private readonly fills: DeclaredFills;
+	private readonly writer: GitHubWriter;
 	private readonly client: GitHubClient;
 	private readonly map: MapContext;
 	private readonly issueUrl: (number: number) => string;
@@ -126,6 +160,19 @@ export class GitHubBackend implements TaskBackend {
 		this.issueUrl = init.issueUrl;
 		this.newIssueUrl = init.newIssueUrl;
 		this.repoPath = `/repos/${init.settings.repo.full}`;
+		this.fills = init.fills;
+		this.capabilities = githubCapabilities(init.fills);
+		this.writer = new GitHubWriter({
+			settings: init.settings,
+			client: init.client,
+			map: init.map,
+			fills: init.fills,
+			repoPath: this.repoPath,
+			issueUrl: init.issueUrl,
+			loadIssue: (id, options) => this.issue(id, options),
+			readRecord: id => this.get(id),
+			related: path => this.related(path),
+		});
 	}
 
 	// ---------------------------------------------------------------- ids
@@ -137,13 +184,22 @@ export class GitHubBackend implements TaskBackend {
 
 	// ---------------------------------------------------------------- raw reads
 
-	/** The issue as GitHub holds it; a missing, deleted or pull-request number is TaskNotFoundError under the id the caller used. */
-	private async issue(id: string): Promise<{ issue: ApiIssue; response: ClientResponse<ApiIssue> }> {
+	/**
+	 * The issue as GitHub holds it; a missing, deleted or pull-request number is TaskNotFoundError under the id the caller used (a
+	 * tombstone is still an issue: it is hidden from the lists, not from a read by number). `revalidate`: ask GitHub even inside the cache TTL (a write re-reads before it writes).
+	 */
+	private async issue(
+		id: string,
+		options: { revalidate?: boolean } = {}
+	): Promise<{ issue: ApiIssue; response: ClientResponse<ApiIssue> }> {
 		const number = this.numberOf(id);
 		if (number === undefined) throw new TaskNotFoundError(id);
 		let response: ClientResponse<ApiIssue>;
 		try {
-			response = await this.client.get<ApiIssue>(`${this.repoPath}/issues/${number}`, { allowNotFound: true });
+			response = await this.client.get<ApiIssue>(`${this.repoPath}/issues/${number}`, {
+				allowNotFound: true,
+				...(options.revalidate === true ? { revalidate: true } : {}),
+			});
 		} catch (error) {
 			if (error instanceof GitHubHttpError && error.status === 410) throw new TaskNotFoundError(id);
 			throw error;
@@ -156,7 +212,27 @@ export class GitHubBackend implements TaskBackend {
 		const all = await this.client.getAll<ApiIssue>(`${this.repoPath}/issues`, {
 			query: { state: 'all', per_page: this.settings.pageSize, sort: 'created', direction: 'asc' },
 		});
-		return { issues: all.items.filter(issue => !isPullRequest(issue)), stale: all.stale };
+		const issues = all.items.filter(issue => !isPullRequest(issue) && !isTombstone(issue));
+		issues.push(...(await this.missingRecent(new Set(issues.map(issue => issue.number)), 0)));
+		return { issues, stale: all.stale };
+	}
+
+	/**
+	 * The issues task created lately that a list does not show yet (the list lags a creation by seconds: measured), read by number.
+	 * One request each, only while the list lacks them; a deleted or hidden one is skipped.
+	 */
+	private async missingRecent(seen: ReadonlySet<number>, above: number): Promise<ApiIssue[]> {
+		const found: ApiIssue[] = [];
+		for (const number of this.client.recently('created', CREATION_MEMORY_MS)) {
+			if (seen.has(number) || number <= above) continue;
+			try {
+				const { issue } = await this.issue(String(number));
+				if (!isTombstone(issue)) found.push(issue);
+			} catch (error) {
+				if (!(error instanceof TaskNotFoundError)) throw error;
+			}
+		}
+		return found;
 	}
 
 	/** The issues on the other end of a relation list (`dependencies/...`, `sub_issues`), this repository's only. */
@@ -164,7 +240,7 @@ export class GitHubBackend implements TaskBackend {
 		const all = await this.client.getAll<ApiIssue>(path, { query: { per_page: this.settings.pageSize } });
 		const own: ApiIssue[] = [];
 		for (const issue of all.items) {
-			if (isPullRequest(issue)) continue;
+			if (isPullRequest(issue) || isTombstone(issue)) continue;
 			const repoUrl = (issue as { repository_url?: string }).repository_url;
 			if (repoUrl !== undefined && !this.sameRepository(repoUrl)) {
 				this.map.notice({
@@ -204,13 +280,14 @@ export class GitHubBackend implements TaskBackend {
 			url = searching ? this.searchUrl(text, perPage, 1) : this.listUrl(perPage);
 		}
 		let skip = start?.s ?? 0;
+		let maxSeen = start?.m ?? 0;
 		const items: TaskSummary[] = [];
 		const matches = (summary: TaskSummary): boolean =>
 			(statusIn === undefined || statusIn.includes(summary.status)) &&
 			(parentId === undefined ||
 				(parentId === null ? summary.parentId === undefined : summary.parentId === parentId));
 
-		for (let pages = 0; url !== undefined; pages++) {
+		for (let pages = 0; url !== undefined && url !== OVERLAY; pages++) {
 			if (pages >= this.settings.maxPages) {
 				throw new BackendLimitError(
 					'github',
@@ -223,19 +300,36 @@ export class GitHubBackend implements TaskBackend {
 				cache: !searching,
 			});
 			const issues = (Array.isArray(page.body) ? page.body : page.body.items).filter(
-				issue => !isPullRequest(issue)
+				issue => !isPullRequest(issue) && !isTombstone(issue)
 			);
 			for (let index = skip; index < issues.length; index++) {
 				const summary = toSummary(issues[index]!, this.map);
-				if (!matches(summary)) continue;
+				if (!matches(summary)) {
+					maxSeen = Math.max(maxSeen, issues[index]!.number);
+					continue;
+				}
 				if (limit !== undefined && items.length === limit) {
 					// One more match exists: the next page starts at it.
-					return { items, nextCursor: encodeCursor({ u: url, s: index }) };
+					return { items, nextCursor: encodeCursor({ u: url, s: index, m: maxSeen }) };
 				}
+				maxSeen = Math.max(maxSeen, issues[index]!.number);
 				items.push(summary);
 			}
 			skip = 0;
 			url = searching ? this.nextSearchUrl(url, issues.length, perPage, page.body) : page.next;
+		}
+		if (searching) return { items };
+		// The list is read to its end. The issues task created lately and the list does not show yet come last (their numbers are the
+		// highest), by number; a page limit may stop in the middle of them.
+		const skipRecent = url === OVERLAY ? skip : 0;
+		const recent = (await this.missingRecent(new Set(), maxSeen)).slice(skipRecent);
+		for (const [index, issue] of recent.entries()) {
+			const summary = toSummary(issue, this.map);
+			if (!matches(summary)) continue;
+			if (limit !== undefined && items.length === limit) {
+				return { items, nextCursor: encodeCursor({ u: OVERLAY, s: skipRecent + index, m: maxSeen }) };
+			}
+			items.push(summary);
 		}
 		return { items };
 	}
@@ -320,9 +414,7 @@ export class GitHubBackend implements TaskBackend {
 		const [comments, timeline, blockers] = await Promise.all([
 			issue.comments > 0 ? this.client.getAll<ApiComment>(`${base}/comments`, { query }) : undefined,
 			this.client.getAll<ApiEvent>(`${base}/timeline`, { query }),
-			(issue.issue_dependencies_summary?.total_blocked_by ?? 0) > 0
-				? this.related(`${base}/dependencies/blocked_by`)
-				: [],
+			this.mayHaveBlockers(issue) ? this.related(`${base}/dependencies/blocked_by`) : [],
 		]);
 		const { description, duplicateOf } = splitBody(issue, this.map);
 		const status = statusOfIssue(issue, this.map);
@@ -356,10 +448,9 @@ export class GitHubBackend implements TaskBackend {
 			...(activity.length === 0 ? {} : { activity }),
 			...(comments === undefined || comments.items.length === 0 ? {} : { comments: commentsOf(comments.items) }),
 		};
-		const etag = (response.etag ?? '').replace(/^W\//, '').replace(/"/g, '');
 		return {
 			...record,
-			revision: `${issue.updated_at}#${etag}`,
+			revision: revisionOf(issue, response.etag, this.map),
 			...(stales.length === 0
 				? {}
 				: { stale: true as const, ...(oldest === undefined ? {} : { cachedAt: oldest }) }),
@@ -385,17 +476,17 @@ export class GitHubBackend implements TaskBackend {
 	async getLinksLenient(id: string): Promise<{ links: TaskLinks; dangling: TaskLink[] }> {
 		const { issue } = await this.issue(id);
 		const base = `${this.repoPath}/issues/${issue.number}/dependencies`;
-		const summary = issue.issue_dependencies_summary;
 		const [blockedBy, blocks] = await Promise.all([
-			(summary?.total_blocked_by ?? 0) > 0 ? this.related(`${base}/blocked_by`) : [],
-			(summary?.total_blocking ?? 0) > 0 ? this.related(`${base}/blocking`) : [],
+			this.mayHaveBlockers(issue) ? this.related(`${base}/blocked_by`) : [],
+			this.mayBlockOthers(issue) ? this.related(`${base}/blocking`) : [],
 		]);
 		const links: TaskLinks = {
 			blockedBy: blockedBy.map(item => toSummary(item, this.map)),
 			blocks: blocks.map(item => toSummary(item, this.map)),
 			duplicateOf: [],
-			// Which issues are duplicates of this one cannot be read: GitHub keeps no target (design 2.2.1).
-			duplicates: [],
+			// GitHub keeps no readable target for a duplicate (design 2.2.1): the inverse is read from the managed blocks of the other
+			// issues, only when the project declared the duplicate-marker fill (it costs one read of the list).
+			duplicates: await this.duplicatesOf(issue),
 			causedBy: [],
 			causes: [],
 		};
@@ -419,7 +510,7 @@ export class GitHubBackend implements TaskBackend {
 	async getUnblockedBy(blockerId: string, isTerminal: (status: TaskStatus) => boolean): Promise<TaskSummary[]> {
 		const { issue } = await this.issue(blockerId);
 		if (!isTerminal(statusOfIssue(issue, this.map))) return [];
-		if ((issue.issue_dependencies_summary?.total_blocking ?? 0) === 0) return [];
+		if (!this.mayBlockOthers(issue)) return [];
 		const blocked = await this.related(`${this.repoPath}/issues/${issue.number}/dependencies/blocking`);
 		const unblocked: TaskSummary[] = [];
 		for (const candidate of blocked) {
@@ -571,104 +662,119 @@ export class GitHubBackend implements TaskBackend {
 		return tree;
 	}
 
-	// ---------------------------------------------------------------- writes: all refused
-
-	private refuse(operation: string, id?: string): never {
-		const where =
-			id === undefined
-				? `create the issue on GitHub (${this.newIssueUrl})`
-				: `change it on GitHub (${this.issueUrl(Number(String(id).replace('#', '')) || 0)})`;
-		throw new UnsupportedByBackendError(
-			'github',
-			operation,
-			'writes',
-			`${READ_ONLY} Until then ${where}, or use a project with the local strategy.`
-		);
+	/**
+	 * Whether the dependency lists of an issue are worth reading: its counts say it has some, or task changed its dependencies a moment
+	 * ago and GitHub has not counted them yet (the counts lag; the lists do not).
+	 */
+	private mayHaveBlockers(issue: ApiIssue): boolean {
+		return (issue.issue_dependencies_summary?.total_blocked_by ?? 0) > 0 || this.touchedDependencies(issue);
 	}
 
-	async create(_input: CreateTaskInput): Promise<VersionedRecord> {
-		return this.refuse('create');
+	private mayBlockOthers(issue: ApiIssue): boolean {
+		return (issue.issue_dependencies_summary?.total_blocking ?? 0) > 0 || this.touchedDependencies(issue);
 	}
 
-	async updateStatus(id: string, _status: TaskStatus, _options?: WriteOptions): Promise<VersionedRecord> {
-		return this.refuse('updateStatus', id);
+	private touchedDependencies(issue: ApiIssue): boolean {
+		return this.client.recently('dependencies', DEPENDENCY_MEMORY_MS).includes(issue.number);
 	}
 
-	async setTitle(id: string, _title: string, _options?: WriteOptions): Promise<VersionedRecord> {
-		return this.refuse('setTitle', id);
+	/** The issues whose managed block says they duplicate this one (fills.linkTypes.duplicateOf: duplicate-marker only). */
+	private async duplicatesOf(issue: ApiIssue): Promise<TaskSummary[]> {
+		if (this.fills['linkTypes.duplicateOf']?.use !== 'duplicate-marker') return [];
+		const { issues } = await this.issuesAll();
+		const found: TaskSummary[] = [];
+		for (const other of issues) {
+			if (other.number === issue.number || !(other.body ?? '').includes('task:begin')) continue;
+			try {
+				if (splitBody(other, this.map).duplicateOf === String(issue.number))
+					found.push(toSummary(other, this.map));
+			} catch (error) {
+				// A block that cannot be read is reported when that issue itself is read; it must not hide the others here.
+				if (!(error instanceof BackendDataError)) throw error;
+				this.map.notice({
+					kind: 'ignored',
+					text: `${error.message}; it was skipped while looking for the duplicates of #${issue.number}`,
+				});
+			}
+		}
+		return found;
 	}
 
-	async setDescription(id: string, _description: string, _options?: WriteOptions): Promise<VersionedRecord> {
-		return this.refuse('setDescription', id);
+	// ---------------------------------------------------------------- writes (githubWrites.ts)
+
+	create(input: CreateTaskInput): Promise<VersionedRecord> {
+		return this.writer.create(input);
 	}
 
-	async setType(id: string, _type: string, _options?: WriteOptions): Promise<VersionedRecord> {
-		return this.refuse('setType', id);
+	updateStatus(id: string, status: TaskStatus, options?: WriteOptions): Promise<VersionedRecord> {
+		return this.writer.updateStatus(id, status, options);
 	}
 
-	async clearType(id: string, _options?: WriteOptions): Promise<VersionedRecord> {
-		return this.refuse('clearType', id);
+	setTitle(id: string, title: string, options?: WriteOptions): Promise<VersionedRecord> {
+		return this.writer.setTitle(id, title, options);
 	}
 
-	async addLabel(id: string, _label: string, _options?: WriteOptions): Promise<VersionedRecord> {
-		return this.refuse('addLabel', id);
+	setDescription(id: string, description: string, options?: WriteOptions): Promise<VersionedRecord> {
+		return this.writer.setDescription(id, description, options);
 	}
 
-	async removeLabel(id: string, _label: string, _options?: WriteOptions): Promise<VersionedRecord> {
-		return this.refuse('removeLabel', id);
+	setType(id: string, type: string, options?: WriteOptions): Promise<VersionedRecord> {
+		return this.writer.setType(id, type, options);
 	}
 
-	async setMeta(id: string, _key: string, _value: string, _options?: WriteOptions): Promise<VersionedRecord> {
-		return this.refuse('setMeta', id);
+	clearType(id: string, options?: WriteOptions): Promise<VersionedRecord> {
+		return this.writer.clearType(id, options);
 	}
 
-	async removeMeta(id: string, _key: string, _options?: WriteOptions): Promise<VersionedRecord> {
-		return this.refuse('removeMeta', id);
+	addLabel(id: string, label: string, options?: WriteOptions): Promise<VersionedRecord> {
+		return this.writer.addLabel(id, label, options);
 	}
 
-	async setParent(id: string, _parentId: string, _options?: WriteOptions): Promise<VersionedRecord> {
-		return this.refuse('setParent', id);
+	removeLabel(id: string, label: string, options?: WriteOptions): Promise<VersionedRecord> {
+		return this.writer.removeLabel(id, label, options);
 	}
 
-	async removeParent(id: string, _options?: WriteOptions): Promise<VersionedRecord> {
-		return this.refuse('removeParent', id);
+	setMeta(id: string, key: string, value: string, options?: WriteOptions): Promise<VersionedRecord> {
+		return this.writer.setMeta(id, key, value, options);
 	}
 
-	async addLink(id: string, _type: LinkType, _targetId: string, _options?: WriteOptions): Promise<VersionedRecord> {
-		return this.refuse('addLink', id);
+	removeMeta(id: string, key: string, options?: WriteOptions): Promise<VersionedRecord> {
+		return this.writer.removeMeta(id, key, options);
 	}
 
-	async removeLink(
-		id: string,
-		_type: LinkType,
-		_targetId: string,
-		_options?: WriteOptions
-	): Promise<VersionedRecord> {
-		return this.refuse('removeLink', id);
+	setParent(id: string, parentId: string, options?: WriteOptions): Promise<VersionedRecord> {
+		return this.writer.setParent(id, parentId, options);
 	}
 
-	async addComment(
-		id: string,
-		_text: string,
-		_options?: WriteOptions & { author?: string }
-	): Promise<BackendCommentChange> {
-		return this.refuse('addComment', id);
+	removeParent(id: string, options?: WriteOptions): Promise<VersionedRecord> {
+		return this.writer.removeParent(id, options);
 	}
 
-	async editComment(
-		id: string,
-		_commentId: string,
-		_text: string,
-		_options?: WriteOptions
-	): Promise<BackendCommentEdit> {
-		return this.refuse('editComment', id);
+	addLink(id: string, type: LinkType, targetId: string, options?: WriteOptions): Promise<VersionedRecord> {
+		return this.writer.addLink(id, type, targetId, options);
 	}
 
-	async removeComment(id: string, _commentId: string, _options?: WriteOptions): Promise<BackendCommentChange> {
-		return this.refuse('removeComment', id);
+	removeLink(id: string, type: LinkType, targetId: string, options?: WriteOptions): Promise<VersionedRecord> {
+		return this.writer.removeLink(id, type, targetId, options);
 	}
 
-	async deleteTask(id: string, _options?: WriteOptions): Promise<boolean> {
-		return this.refuse('deleteTask', id);
+	addComment(id: string, text: string, options?: WriteOptions & { author?: string }): Promise<BackendCommentChange> {
+		return this.writer.addComment(id, text, options);
+	}
+
+	editComment(id: string, commentId: string, text: string, options?: WriteOptions): Promise<BackendCommentEdit> {
+		return this.writer.editComment(id, commentId, text, options);
+	}
+
+	removeComment(id: string, commentId: string, options?: WriteOptions): Promise<BackendCommentChange> {
+		return this.writer.removeComment(id, commentId, options);
+	}
+
+	deleteTask(id: string, options?: WriteOptions): Promise<boolean> {
+		return this.writer.deleteTask(id, options);
+	}
+
+	syncLabels(options: { dryRun?: boolean }): Promise<LabelSyncReport> {
+		return this.writer.syncLabels(options);
 	}
 }

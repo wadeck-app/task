@@ -33,6 +33,12 @@ export interface BackendFixture {
 export interface ContractOptions {
 	/** Statuses the backend accepts. Defaults: backlog -> in-progress -> done (terminal). */
 	statuses?: { initial: string; next: string; terminal: string };
+	/**
+	 * Whether the caller can choose the author of a comment (default true). A forge writes the comment as the user of the token: with
+	 * `false` the suite asserts that a given author is refused (UnsupportedByBackendError for comments) and that the comment still
+	 * has an author, instead of asserting the author it sent.
+	 */
+	authoredComments?: boolean;
 }
 
 export interface Need {
@@ -46,6 +52,7 @@ export interface Harness {
 	backend: TaskBackend;
 	caps: BackendCapabilities;
 	statuses: { initial: string; next: string; terminal: string };
+	authoredComments: boolean;
 	/** Creates a task in the initial status. */
 	task: (title: string, extra?: { parentId?: string; description?: string }) => Promise<VersionedRecord>;
 }
@@ -205,24 +212,25 @@ export const BACKEND_CONTRACT_CASES: readonly ContractCase[] = [
 	},
 	{
 		group: 'crud',
-		name: 'a prefix resolves, whatever its case',
-		needs: NEEDS.generatedIds,
-		async run({ backend, task }) {
+		name: 'a prefix resolves, whatever its case (generated ids); with assigned ids the exact id does',
+		async run({ backend, task, caps }) {
 			const a = await task('A');
 
-			expect((await backend.findByPrefix(a.id.slice(0, 3))).id).toBe(a.id);
-			expect((await backend.findByPrefix(a.id.toUpperCase())).id).toBe(a.id);
-		},
-		async attempt({ backend, task }) {
-			const a = await task('A');
-			return backend.findByPrefix(a.id.slice(0, 1));
+			if (caps.ids === 'generated') {
+				expect((await backend.findByPrefix(a.id.slice(0, 3))).id).toBe(a.id);
+				expect((await backend.findByPrefix(a.id.toUpperCase())).id).toBe(a.id);
+			} else {
+				expect((await backend.findByPrefix(a.id)).id).toBe(a.id);
+				await rejectsWith(backend.findByPrefix(`${a.id}0`), TaskNotFoundError);
+			}
 		},
 	},
 	{
 		group: 'crud',
-		name: 'a prefix shared by several tasks is AmbiguousTaskPrefixError listing them',
-		needs: NEEDS.generatedIds,
-		async run({ backend, task }) {
+		name: 'a prefix shared by several tasks is AmbiguousTaskPrefixError listing them (generated ids only)',
+		async run({ backend, task, caps }) {
+			// Assigned ids are exact: there is no prefix to share, the exact-id cases above cover them.
+			if (caps.ids !== 'generated') return;
 			// Pigeonhole: ids start with one of 36 characters, so 37 tasks share a first character.
 			const byFirst = new Map<string, string[]>();
 			let shared: string | undefined;
@@ -237,10 +245,6 @@ export const BACKEND_CONTRACT_CASES: readonly ContractCase[] = [
 			const error = await rejectsWith(backend.findByPrefix(shared!), AmbiguousTaskPrefixError);
 			expect(error.prefix).toBe(shared);
 			expect(error.matches).toEqual(expect.arrayContaining(byFirst.get(shared!)!));
-		},
-		async attempt({ backend, task }) {
-			const a = await task('A');
-			return backend.findByPrefix(a.id.slice(0, 1));
 		},
 	},
 	{
@@ -484,16 +488,29 @@ export const BACKEND_CONTRACT_CASES: readonly ContractCase[] = [
 		group: 'fields',
 		name: 'comments: add (trimmed, optional author), edit, remove, with typed errors',
 		needs: NEEDS.comments,
-		async run({ backend, task, caps }) {
+		async run({ backend, task, caps, authoredComments }) {
 			const a = await task('A');
 
-			const added = await backend.addComment(a.id, '  first note  ', { author: ' ann ' });
-			expect(added.comment).toMatchObject({ text: 'first note', author: 'ann' });
+			const added = authoredComments
+				? await backend.addComment(a.id, '  first note  ', { author: ' ann ' })
+				: await backend.addComment(a.id, '  first note  ');
+			expect(added.comment).toMatchObject(
+				authoredComments ? { text: 'first note', author: 'ann' } : { text: 'first note' }
+			);
 			expect(added.comment.id).toBeTypeOf('string');
 			expect(isIso(added.comment.at)).toBe(true);
 			expect(added.task.comments).toEqual([added.comment]);
 			const anonymous = await backend.addComment(a.id, 'second note');
-			expect(anonymous.comment.author).toBeUndefined();
+			if (authoredComments) expect(anonymous.comment.author).toBeUndefined();
+			else {
+				// The system writes the comment as its own user; choosing another author is refused, loudly.
+				expect(anonymous.comment.author).toBeTypeOf('string');
+				const refused = await rejectsWith(
+					backend.addComment(a.id, 'by someone else', { author: 'ann' }),
+					UnsupportedByBackendError
+				);
+				expect(refused.capability).toBe('comments');
+			}
 
 			await rejectsWith(backend.addComment(a.id, '   '), InvalidCommentTextError);
 
@@ -638,7 +655,9 @@ export const BACKEND_CONTRACT_CASES: readonly ContractCase[] = [
 				const lenient = await backend.getLinksLenient(a.id);
 				expect(lenient.dangling).toEqual([]);
 				expect(ids(lenient.links[type])).toEqual([b.id]);
-				expect((await backend.list()).find(t => t.id === a.id)?.links).toEqual([{ type, target: b.id }]);
+				if (caps.indexedGraph) {
+					expect((await backend.list()).find(t => t.id === a.id)?.links).toEqual([{ type, target: b.id }]);
+				}
 
 				if (caps.activity === 'stored') {
 					expect(entries(linked, 'link-added')).toEqual([
@@ -654,7 +673,7 @@ export const BACKEND_CONTRACT_CASES: readonly ContractCase[] = [
 				const unlinked = await backend.removeLink(a.id, type, b.id);
 				expect(unlinked.links).toBeUndefined();
 				expect((await backend.getLinks(b.id))[INVERSE_LINK_NAMES[type]]).toEqual([]);
-				expect((await backend.list()).find(t => t.id === a.id)?.links).toBeUndefined();
+				if (caps.indexedGraph) expect((await backend.list()).find(t => t.id === a.id)?.links).toBeUndefined();
 				await rejectsWith(backend.removeLink(a.id, type, b.id), TaskConflictError);
 				if (caps.activity === 'stored') {
 					expect(entries(unlinked, 'link-removed')).toHaveLength(1);
@@ -950,7 +969,7 @@ export const BACKEND_CONTRACT_CASES: readonly ContractCase[] = [
 		group: 'search',
 		name: 'text search over titles: case-insensitive substring, combined with the other filters',
 		needs: NEEDS.search,
-		async run({ backend, task, statuses }) {
+		async run({ backend, task, statuses, caps }) {
 			const alpha = await task('Alpha release');
 			await task('Beta');
 			const second = await task('ALPHA follow-up');
@@ -961,7 +980,10 @@ export const BACKEND_CONTRACT_CASES: readonly ContractCase[] = [
 				second.id,
 			]);
 			expect((await backend.listPage({ text: 'no such title' })).items).toEqual([]);
-			expect(ids((await backend.listPage({ text: 'a', limit: 2 })).items)).toHaveLength(2);
+			// A substring of a word is a match for an index over the titles, not for a system that searches whole words.
+			if (caps.search === 'index') {
+				expect(ids((await backend.listPage({ text: 'a', limit: 2 })).items)).toHaveLength(2);
+			}
 		},
 		async attempt({ backend, task }) {
 			await task('Alpha');
@@ -978,6 +1000,7 @@ function harnessFor(fixture: BackendFixture, options: ContractOptions): Harness 
 		backend,
 		caps: backend.capabilities,
 		statuses,
+		authoredComments: options.authoredComments !== false,
 		task: (title, extra = {}) => backend.create({ title, status: statuses.initial, ...extra }),
 	};
 }

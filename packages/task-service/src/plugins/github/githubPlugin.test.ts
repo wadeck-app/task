@@ -53,6 +53,7 @@ function config(extraOptions = '', section = 'github'): string {
         baseUrl: ${fake.baseUrl}
         tokenEnv: GH_TOKEN_FOR_TESTS
         cache: { ttlSeconds: 0 }
+        writeSpacingSeconds: 0
         statusMap:
             backlog: { state: open }
             in-progress: { state: open, label: 'status:in-progress' }
@@ -100,18 +101,24 @@ describe('the plugin is registered', () => {
 	it('declares its capabilities and the one fill it implements', () => {
 		expect(githubPlugin.backendKind).toBe('github');
 		expect(githubPlugin.capabilities).toMatchObject({
-			writes: 'none',
+			writes: 'full',
 			ids: 'assigned',
 			search: 'native',
 			meta: false,
+			delete: 'no',
 		});
-		expect(githubPlugin.fillTechniques).toEqual({ meta: ['labels'] });
+		expect(githubPlugin.fillTechniques).toEqual({
+			meta: ['labels', 'body-block'],
+			delete: ['tombstone', 'hard'],
+			'linkTypes.duplicateOf': ['duplicate-marker'],
+		});
 	});
 
 	it('documents itself: every option, and a snippet that is a working config', () => {
 		const { summary, options, snippet } = githubPlugin.describe();
 
-		expect(summary).toMatch(/read-only/i);
+		expect(summary).toMatch(/read and written/i);
+		expect(summary).not.toMatch(/read-only/i);
 		expect(Object.keys(options)).toEqual(
 			expect.arrayContaining([
 				'repo',
@@ -121,6 +128,7 @@ describe('the plugin is registered', () => {
 				'statusMap',
 				'typeMap',
 				'cache',
+				'writeSpacingSeconds',
 				'fills',
 			])
 		);
@@ -178,10 +186,23 @@ describe('configuration errors name the file and the key, at load', () => {
 		);
 	});
 
-	it('a fill other than meta: labels is refused with what the plugin implements', () => {
-		expect(() => open(config('        fills:\n            delete: hard\n'))).toThrow(
-			/does not implement the fill "hard" for delete \(it implements no fill for delete; its fills: meta: labels\)/
+	it('a fill the plugin does not implement is refused with what it implements', () => {
+		expect(() => open(config('        fills:\n            status: label\n'))).toThrow(
+			/does not implement the fill "label" for status \(it implements no fill for status; its fills: /
 		);
+	});
+
+	it('an approximate fill needs fidelity: degrade, an exact one does not', () => {
+		expect(() => open(config('        fills:\n            delete: tombstone\n'))).toThrow(
+			/"tombstone" is approximate and fidelity is strict/
+		);
+		expect(() => open(config('        fills:\n            delete: hard\n'))).not.toThrow();
+		expect(() => open(config('        fills:\n            meta: body-block\n'))).toThrow(
+			/"body-block" is approximate and fidelity is strict/
+		);
+		expect(() =>
+			open(config('        fills:\n            meta: { use: body-block, fidelity: degrade }\n'))
+		).not.toThrow();
 	});
 });
 
@@ -244,25 +265,71 @@ describe('a project on the github strategy, through the use cases', () => {
 		await ctx.dispose?.();
 	});
 
-	it('every write is refused with the capability, the stage and where to make the change: no no-op, no local fallback', async () => {
-		fake.addIssue({ title: 'Read only' });
+	it('writes reach GitHub through the same use cases and answer with the events of a local project', async () => {
+		fake.addIssue({ title: 'First' });
+		fake.addIssue({ title: 'Second' });
+		const ctx = open(config());
+
+		const created = await createTask(ctx, { title: 'New' });
+		const moved = await setStatus(ctx, { id: '1', status: 'in-progress' });
+		const text = await setTaskText(ctx, { id: '1', title: 'Changed' });
+		const labelled = await addLabel(ctx, { id: '1', label: 'urgent' });
+		const typed = await setType(ctx, { id: '1', type: 'bug' });
+		const parented = await setParent(ctx, { id: '2', parent: '1' });
+		const linked = await linkTasks(ctx, { id: '1', type: 'blockedBy', target: '2' });
+		const commented = await addComment(ctx, { id: '1', text: 'hi' });
+
+		expect(created.task).toMatchObject({ id: '3', title: 'New', status: 'backlog' });
+		expect(created.events.map(event => event.name)).toEqual(['onTaskCreated']);
+		expect(moved.events.map(event => event.name)).toEqual(['onStatusChange']);
+		expect(moved.events[0]!.payload).toMatchObject({ taskId: '1', oldStatus: 'backlog', newStatus: 'in-progress' });
+		expect(text.task.title).toBe('Changed');
+		expect(labelled.events.map(event => event.name)).toEqual(['onTaskLabelAdded']);
+		expect(typed.events.map(event => event.name)).toEqual(['onTaskTypeChanged']);
+		expect(parented.events.map(event => event.name)).toEqual(['onTaskParentChanged']);
+		expect(linked.events.map(event => event.name)).toEqual(['onTaskLinked']);
+		expect(commented.events.map(event => event.name)).toEqual(['onTaskCommentAdded']);
+		for (const result of [created, moved, labelled, typed, parented, linked, commented]) {
+			for (const event of result.events) {
+				expect(event.payload).toMatchObject({
+					taskProjectId: 'a1b2c3d4',
+					taskProjectName: 'shop',
+					taskProjectPath: root,
+				});
+			}
+		}
+		expect(fake.issues.get(1)).toMatchObject({
+			title: 'Changed',
+			labels: ['status:in-progress', 'urgent', 'type:bug'],
+		});
+		expect(fake.issues.get(2)!.parent).toBe(1);
+		expect(fake.issues.get(1)!.blockedBy).toEqual([2]);
+		await ctx.dispose?.();
+	});
+
+	it('an event is built only after the write succeeded: a refused write yields none and changes nothing', async () => {
+		fake.addIssue({ title: 'First' });
+		const ctx = open(config());
+		fake.failNext({ status: 422, method: 'PATCH', body: { message: 'Validation Failed' } });
+
+		const error = await setStatus(ctx, { id: '1', status: 'done' }).catch((caught: unknown) => caught as Error);
+
+		expect(describeError(error).kind).toBe('invalid');
+		expect(fake.issues.get(1)!.state).toBe('open');
+		await ctx.dispose?.();
+	});
+
+	it('what needs a fill is refused with the key to write, through the use cases, before any write', async () => {
+		fake.addIssue({ title: 'First' });
 		const ctx = open(config());
 		const attempts: Array<[string, () => Promise<unknown>]> = [
-			['createTask', () => createTask(ctx, { title: 'New' })],
-			['setStatus', () => setStatus(ctx, { id: '1', status: 'done' })],
-			['setTaskText', () => setTaskText(ctx, { id: '1', title: 'Changed' })],
-			['addLabel', () => addLabel(ctx, { id: '1', label: 'x' })],
-			['setType', () => setType(ctx, { id: '1', type: 'bug' })],
 			['setMeta', () => setMeta(ctx, { id: '1', key: 'k', value: 'v' })],
-			['setParent', () => setParent(ctx, { id: '1', parent: '1' })],
-			['linkTasks', () => linkTasks(ctx, { id: '1', type: 'blockedBy', target: '1' })],
-			['addComment', () => addComment(ctx, { id: '1', text: 'hi' })],
 			[
 				'executeDelete',
 				async () => executeDelete(ctx, await planDelete(ctx, { selector: { kind: 'ids', ids: ['1'] } })),
 			],
+			['linkTasks duplicateOf', () => linkTasks(ctx, { id: '1', type: 'duplicateOf', target: '1' })],
 		];
-		const sentBefore = fake.requests.length;
 
 		for (const [name, attempt] of attempts) {
 			const error = await attempt().catch((caught: unknown) => caught as Error);
@@ -270,13 +337,9 @@ describe('a project on the github strategy, through the use cases', () => {
 			expect(error, name).toBeInstanceOf(UnsupportedByBackendError);
 			const described = describeError(error);
 			expect(described.kind, name).toBe('unsupported');
-			expect(described.hint, name).toContain('read-only in this version (stage 1');
+			expect(described.hint, name).toContain('fills');
 		}
-
 		expect(fake.writes()).toEqual([]);
-		expect(fake.requests.slice(sentBefore).every(request => request.method === 'GET')).toBe(true);
-		// Nothing was created locally either.
-		expect(fs.existsSync(path.join(root, 'data', 'tasks'))).toBe(false);
 	});
 });
 
@@ -325,13 +388,13 @@ describe('the cache lives in the project data folder', () => {
 });
 
 describe('strategy show', () => {
-	it('lists the capabilities as the plugin declares them: writes unsupported, meta unsupported without the fill', () => {
+	it('lists the capabilities as the plugin declares them: writes native, meta and delete unsupported without their fill', () => {
 		const report = showStrategy(target(config()));
 
 		expect(report).toMatchObject({ type: 'github', kind: 'github', declared: true });
 		const states = Object.fromEntries(report.capabilities.map(row => [row.capability, row.state]));
 		expect(states).toMatchObject({
-			writes: 'unsupported',
+			writes: 'native',
 			meta: 'unsupported',
 			delete: 'unsupported',
 			hierarchy: 'partial',
@@ -356,6 +419,27 @@ describe('strategy show', () => {
 		expect(meta.detail).toContain('via labels');
 	});
 
+	it('the fills of stage 2 are listed as emulated, with their quality and the fidelity the project accepted', () => {
+		const report = showStrategy(
+			target(
+				config(
+					'        fills:\n            meta: { use: body-block, fidelity: degrade }\n            delete: hard\n            linkTypes.duplicateOf: { use: duplicate-marker, fidelity: degrade }\n'
+				)
+			)
+		);
+
+		const row = (name: string) => report.capabilities.find(candidate => candidate.capability === name)!;
+		expect(row('meta')).toMatchObject({
+			state: 'emulated',
+			detail: 'via body-block (approximate, fidelity degrade)',
+		});
+		expect(row('delete')).toMatchObject({ state: 'emulated', detail: 'via hard (exact, fidelity strict)' });
+		expect(row('linkTypes.duplicateOf')).toMatchObject({
+			state: 'emulated',
+			detail: 'via duplicate-marker (approximate, fidelity degrade)',
+		});
+	});
+
 	it('with fills.meta: labels the meta is read from the labels', async () => {
 		fake.addIssue({ title: 'M', labels: ['meta:owner=ann', 'billing'] });
 		const ctx = open(config('        fills:\n            meta: labels\n'));
@@ -368,7 +452,7 @@ describe('strategy show', () => {
 });
 
 describe('strategy check', () => {
-	it('a healthy project: reachable, token, repository, issues, limits, statuses, labels, hierarchy, mode', async () => {
+	it('a healthy project: reachable, token, repository, issues, limits, statuses, labels, hierarchy, writes', async () => {
 		fake.addIssue({ title: 'Probe me' });
 		fake.addRepoLabel('status:in-progress');
 
@@ -391,8 +475,12 @@ describe('strategy check', () => {
 			['hierarchy', 'ok'],
 			['dependencies', 'ok'],
 			['search', 'ok'],
-			['mode', 'ok'],
+			['writes', 'ok'],
 		]);
+		const writes = line(result.lines, 'writes')!;
+		expect(writes.text).toContain('one at a time');
+		expect(writes.text).toContain('not atomic');
+		expect(writes.text).toContain('5000');
 		expect(line(result.lines, 'repo')?.text).toBe('acme/shop (private)');
 		expect(line(result.lines, 'limits')?.text).toMatch(
 			/^\d+ of 5000 requests left this hour \(resets .*\); search 30 of 30 per minute$/
@@ -423,8 +511,47 @@ describe('strategy check', () => {
 		const labels = line(result.lines, 'labels')!;
 		expect(labels.status).toBe('warn');
 		expect(labels.text).toBe('1 of the 1 labels the mapping uses do not exist yet: status:in-progress');
-		expect(labels.fix).toContain('/labels');
+		expect(labels.fix).toContain('task labels sync -p shop');
 		expect(labels.fix).toContain('status:in-progress');
+	});
+
+	it('a token that cannot write issues is a warning on writes with the permission to give', async () => {
+		await fake.stop();
+		fake = await FakeGitHub.start({ repo: 'acme/shop', readOnlyToken: true });
+		fake.addIssue({ title: 'x' });
+
+		const result = await checkStrategy(target(config(), { GH_TOKEN_FOR_TESTS: fake.token }));
+
+		const writes = line(result.lines, 'writes')!;
+		expect(writes.status).toBe('warn');
+		expect(writes.text).toContain('cannot write');
+		expect(writes.fix).toContain('Issues: Read and write');
+		expect(result.ok).toBe(true);
+	});
+
+	it('fills.delete: hard on a token whose user does not administer the repository is a warning', async () => {
+		await fake.stop();
+		fake = await FakeGitHub.start({ repo: 'acme/shop', admin: false });
+		fake.addIssue({ title: 'x' });
+
+		const result = await checkStrategy(
+			target(config('        fills:\n            delete: hard\n'), { GH_TOKEN_FOR_TESTS: fake.token })
+		);
+
+		const writes = line(result.lines, 'writes')!;
+		expect(writes.status).toBe('warn');
+		expect(writes.text).toContain('delete: hard');
+		expect(writes.fix).toContain('use: tombstone');
+	});
+
+	it('the labels a tombstone delete needs are counted with the others', async () => {
+		fake.addIssue({ title: 'x' });
+
+		const result = await checkStrategy(
+			target(config('        fills:\n            delete: { use: tombstone, fidelity: degrade }\n'))
+		);
+
+		expect(line(result.lines, 'labels')!.text).toContain('task:deleted');
 	});
 
 	it('a wrong token fails with the 401 and the fix, and stops there', async () => {

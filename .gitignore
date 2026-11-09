@@ -57,3 +57,6 @@ task-cli-win32-x64/
 
 # Crash dumps of a git-bash session
 *.stackdump
+
+# Agent logs
+.claude/logs/

@@ -19,6 +19,17 @@ interface Entry {
 	status: string;
 	state: 'open' | 'closed';
 	reason: CloseReason | undefined;
+	/** Lower case, for comparisons. */
+	label: string | undefined;
+	/** As written in the config, for what is sent to GitHub. */
+	labelName: string | undefined;
+}
+
+/** What GitHub must hold for a status. */
+export interface StatusRepresentation {
+	state: 'open' | 'closed';
+	/** Closed statuses only. */
+	reason: CloseReason | undefined;
 	label: string | undefined;
 }
 
@@ -53,9 +64,31 @@ export class StatusMapper {
 				state: rule.state,
 				reason: effectiveReason(rule, status.outcome),
 				label: rule.label?.toLowerCase(),
+				labelName: rule.label,
 			};
 		});
 		this.statusLabels = new Set(this.entries.flatMap(entry => (entry.label === undefined ? [] : [entry.label])));
+	}
+
+	/** What to write on GitHub to give an issue this status. Throws for a status the project does not have. */
+	representation(status: string): StatusRepresentation {
+		const entry = this.entries.find(candidate => candidate.status === status);
+		if (entry === undefined) {
+			throw new Error(
+				`The status "${status}" is not mapped to GitHub (statuses of the project: ${this.entries.map(candidate => candidate.status).join(', ')})`
+			);
+		}
+		return { state: entry.state, reason: entry.reason, label: entry.labelName };
+	}
+
+	/** True when the status is one of the project's, mapped to GitHub. */
+	knows(status: string): boolean {
+		return this.entries.some(entry => entry.status === status);
+	}
+
+	/** True when some status closes the issue with this reason. */
+	hasClosedReason(reason: CloseReason): boolean {
+		return this.entries.some(entry => entry.state === 'closed' && entry.reason === reason);
 	}
 
 	isStatusLabel(name: string): boolean {

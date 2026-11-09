@@ -15,8 +15,8 @@ Concepts:
               strategy: the project's own; defaults: inherited). Defines valid statuses (default: backlog, in-progress, done). An unknown key is an error naming the file.
               The global config (~/.task/config.yml: defaults, hooks) stays task's own file
   strategy    Where the tasks of a project are stored: the 'strategy' section of the project config ({type, fidelity, options}). Without it the project uses
-              the local files of the registry (type: local), silently. type: github reads the issues of a GitHub repository, READ-ONLY in this version (stage 1:
-              every write is refused with a hint); gitlab and remote are declared but not installed yet and fail loudly. See: task strategy --help
+              the local files of the registry (type: local), silently. type: github keeps the tasks as the issues of a GitHub repository, read and written through
+              the official REST API; gitlab and remote are declared but not installed yet and fail loudly. See: task strategy --help
   id          Short prefix of the task UUID - any unambiguous prefix is accepted
 
 Usage:
@@ -39,6 +39,8 @@ Usage:
   task find <query> [--limit N] [--json]     Find tasks by id prefix or title text, best match first (id prefix, title word prefix, substring);
                                              N from 1 to 20 (default 8); text lines "id  headline  [status]", --json: [{id, headline, status}]
   task labels [--json]                       Labels in use with the number of tasks carrying each, most used first
+  task labels sync [--dry-run] [--json]      github strategy: create the status and type labels the config uses in the repository (colour and
+                                             description included); never deletes or changes a label. --dry-run lists what it would create
   task list [--json] [--all] [--follow|-f]   List tasks as JSON array (hides terminal statuses unless --all)
   task list --parent <id>                    List only the direct children of a task
   task list --tree                           List tasks as a nested forest (kept: matching tasks + the ancestors leading to them)
@@ -167,13 +169,12 @@ Usage:
 
 Configuration (the project's config.yml, section 'strategy'; no section = type: local, silently):
   strategy:
-      type: local            # local, or github (READ-ONLY in this version: every write is refused with a hint); gitlab, remote are declared but
-                             # not installed yet: a loud error, never a fallback
+      type: local            # local, or github; gitlab, remote are declared but not installed yet: a loud error, never a fallback
       fidelity: strict       # strict (default) | degrade: whether an approximate or lossy fill is accepted
       options: {}            # read by the strategy plugin only; local takes none. fills: <capability>: <technique> | { use, fidelity }
                              # secrets: tokenEnv: <NAME of an environment variable> or tokenFile: <path>; a literal token is refused
 
-The github strategy (the issues of one repository, through the official REST API; the token needs Issues: Read and Metadata: Read):
+The github strategy (the issues of one repository, through the official REST API; the token needs Issues: Read and write, Metadata: Read):
   strategy:
       type: github
       options:
@@ -186,8 +187,17 @@ The github strategy (the issues of one repository, through the official REST API
               done: { state: closed }            # a positive terminal status closes as completed (reason: completed)
               cancelled: { state: closed, reason: not_planned }   # a negative one as not_planned (or duplicate)
           # typePrefix: 'type:'  typeMap: { bug: { issueType: Bug } }  metaPrefix: 'meta:'  pageSize: 100  maxPages: 50
-          # cache: { ttlSeconds: 60 }  timeoutSeconds: 15; fills: { meta: labels } reads metadata from the labels meta:key=value
+          # cache: { ttlSeconds: 60 }  timeoutSeconds: 15  writeSpacingSeconds: 1
+          # fills:                               # what GitHub cannot hold natively; nothing is emulated unless declared here
+          #     meta: labels                     # metadata as labels meta:key=value (50 characters at most each), exact
+          #     meta: { use: body-block, fidelity: degrade }   # or in a hidden block of the issue body, approximate
+          #     delete: hard                     # GraphQL deleteIssue (repository administrator), or
+          #     delete: { use: tombstone, fidelity: degrade }  # close as not planned + label task:deleted, hidden from task
+          #     linkTypes.duplicateOf: { use: duplicate-marker, fidelity: degrade }  # marker in the body + closed as duplicate
   Task ids are the issue numbers. A read that GitHub cannot answer (offline, rate limited) shows the cached answer with a warning on stderr.
+  A write goes to GitHub at once (one at a time, at least 1 s apart); a change made of several calls that stops halfway says what GitHub holds and
+  how to finish it. causedBy links, comment authors and anything a fill would emulate but the config does not declare fail with the key to write.
+  Create the labels once with: task labels sync. Changes made on GitHub itself raise no task event (only changes made through task do).
 
 A 'strategy' key in the global ~/.task/config.yml, a literal credential, and 'pluginsDir' (external plugins) are errors naming the file and the key.`;
 

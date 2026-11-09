@@ -1,10 +1,9 @@
 // The built-in strategy `github` (plugins.github.default, alias github): the tasks of a project are the issues of a GitHub repository,
-// read through the official REST API with Node fetch (no vendor CLI, no octokit). READ-ONLY in this version (stage 1 of the storage
-// design, R3): every write is refused with UnsupportedByBackendError and a hint, never a no-op and never a local fallback.
+// read and written through the official REST API with Node fetch (no vendor CLI, no octokit). Writes are in githubWrites.ts.
 import * as path from 'node:path';
 
 import type { CheckLine, ReadNotice, StrategyContext, StrategyInstance, StrategyPlugin } from '../kinds.js';
-import { GITHUB_CAPABILITIES, GitHubBackend } from './GitHubBackend.js';
+import { GITHUB_CAPABILITIES, GitHubBackend, githubCapabilities } from './GitHubBackend.js';
 import { checkGitHub } from './githubCheck.js';
 import { GitHubClient } from './githubClient.js';
 import { checkOptionsAgainstProject, parseGitHubOptions } from './githubOptions.js';
@@ -30,8 +29,13 @@ export const githubPlugin: StrategyPlugin = {
 	extensionPoint: 'strategy',
 	backendKind: 'github',
 	capabilities: GITHUB_CAPABILITIES,
-	// Status, type and hierarchy are mapped by the options themselves; meta has no native place on a GitHub issue.
-	fillTechniques: { meta: ['labels'] },
+	capabilitiesFor: githubCapabilities,
+	// Status, type and hierarchy are mapped by the options themselves; meta, deletion and duplicates have no native place on GitHub.
+	fillTechniques: {
+		meta: ['labels', 'body-block'],
+		delete: ['tombstone', 'hard'],
+		'linkTypes.duplicateOf': ['duplicate-marker'],
+	},
 	// What is only partly true, said once and printed by `task strategy show` as `partial`.
 	capabilityNotes: {
 		hierarchy: 'sub-issues: 8 levels, 100 per parent; a parent in another repository reads as no parent',
@@ -39,7 +43,7 @@ export const githubPlugin: StrategyPlugin = {
 		activity: 'the timeline mapped; edits of the description are not readable (GraphQL only)',
 		search: 'Search API: 30 requests a minute, a new issue is searchable after a few seconds; find reads the full list',
 		'linkTypes.duplicateOf':
-			'read only from a managed task block in the body (GitHub keeps no readable target of a duplicate)',
+			'GitHub keeps no readable target of a duplicate: task reads it from a managed block in the body, which it writes only with the duplicate-marker fill',
 	},
 
 	validate(options) {
@@ -55,7 +59,7 @@ export const githubPlugin: StrategyPlugin = {
 	describe() {
 		return {
 			summary:
-				'The issues of a GitHub repository, read through the official REST API. Read-only in this version (stage 1): writes are refused with a hint.',
+				'The issues of a GitHub repository, read and written through the official REST API (no gh CLI). Metadata, deletion and duplicate links need a declared fill.',
 			options: {
 				repo: 'owner/name of the repository (required)',
 				baseUrl: 'API address; default https://api.github.com, GitHub Enterprise Server: https://HOST/api/v3',
@@ -72,7 +76,9 @@ export const githubPlugin: StrategyPlugin = {
 				maxPages: 'pages one read may walk before failing loudly, 1 to 1000; default 50',
 				cache: '{ ttlSeconds }: seconds a read is served without asking GitHub; default 60, 0 = always revalidate',
 				timeoutSeconds: 'time limit of one request; default 15',
-				fills: 'meta: labels (read meta from the labels meta:key=value)',
+				writeSpacingSeconds:
+					'least time between two writes; default 1 (GitHub asks integrators to go slowly with content-creating requests; lower it only on a server you administer)',
+				fills: 'meta: labels | body-block; delete: hard | tombstone; linkTypes.duplicateOf: duplicate-marker (the approximate ones need fidelity: degrade)',
 			},
 			snippet: [
 				'strategy:',
@@ -124,6 +130,7 @@ export const githubPlugin: StrategyPlugin = {
 			repo: repoFull,
 			tokenHint: tokenSentence(settings),
 			timeoutMs: settings.timeoutSeconds * 1000,
+			writeSpacingMs: settings.writeSpacingSeconds * 1000,
 			cacheTtlMs: settings.cacheTtlSeconds * 1000,
 			maxPages: settings.maxPages,
 			cache,
@@ -135,10 +142,12 @@ export const githubPlugin: StrategyPlugin = {
 			client,
 			issueUrl,
 			newIssueUrl: `${repoUrl}/issues/new`,
+			fills: context.fills,
 			map: {
 				settings,
 				mapper: new StatusMapper(settings.statusMap, context.statuses, issueUrl),
 				metaFromLabels: context.fills['meta']?.use === 'labels',
+				metaFromBlock: context.fills['meta']?.use === 'body-block',
 				projectTypes: context.types,
 				notice,
 				issueUrl,
@@ -151,7 +160,7 @@ export const githubPlugin: StrategyPlugin = {
 				`api: ${settings.baseUrl}`,
 				`token: ${tokenSentence(settings)}`,
 				`cache: ${cacheDir} (served without asking for ${settings.cacheTtlSeconds} s, then revalidated)`,
-				'mode: read-only (stage 1)',
+				'mode: read and write (writes one at a time, at least 1 s apart; optimistic, not atomic: GitHub has no conditional write)',
 			],
 			check: (): Promise<CheckLine[]> =>
 				checkGitHub({
@@ -161,6 +170,8 @@ export const githubPlugin: StrategyPlugin = {
 					repoUrl,
 					now: Date.now,
 					tokenHint: tokenSentence(settings),
+					fills: context.fills,
+					projectName: context.project.name,
 				}),
 			takeNotices: () => notices.splice(0, notices.length),
 			dispose: () => Promise.resolve(),

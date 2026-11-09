@@ -34,6 +34,8 @@ export interface GitHubSettings {
 	maxPages: number;
 	cacheTtlSeconds: number;
 	timeoutSeconds: number;
+	/** Least time between the start of two writes. GitHub asks integrators to go slowly with content-creating requests: 1 s. */
+	writeSpacingSeconds: number;
 }
 
 /** The documented option names, in the order the documentation lists them. */
@@ -50,6 +52,7 @@ export const GITHUB_OPTION_NAMES: readonly string[] = [
 	'maxPages',
 	'cache',
 	'timeoutSeconds',
+	'writeSpacingSeconds',
 ];
 
 export const DEFAULT_BASE_URL = 'https://api.github.com';
@@ -360,6 +363,8 @@ export function parseGitHubOptions(
 	if ('problem' in cache) return cache;
 	const timeout = parseNumber(options, 'timeoutSeconds', 15, n => n > 0, 'a positive number of seconds');
 	if ('problem' in timeout) return timeout;
+	const spacing = parseNumber(options, 'writeSpacingSeconds', 1, n => n >= 0, 'zero or a positive number of seconds');
+	if ('problem' in spacing) return spacing;
 	return {
 		settings: {
 			repo: repo.value,
@@ -373,6 +378,7 @@ export function parseGitHubOptions(
 			maxPages: maxPages.value,
 			cacheTtlSeconds: cache.value,
 			timeoutSeconds: timeout.value,
+			writeSpacingSeconds: spacing.value,
 		},
 	};
 }

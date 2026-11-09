@@ -128,3 +128,33 @@ describe('StatusMapper.statusLabels and tryStatusOf', () => {
 		expect(mapper().tryStatusOf(issue('closed', 'not_planned', []))).toBe('wontfix');
 	});
 });
+
+describe('StatusMapper.representation: what to write on GitHub for a status', () => {
+	it('an open status is open with its label as written in the config', () => {
+		expect(mapper().representation('todo')).toEqual({ state: 'open', reason: undefined, label: undefined });
+		expect(mapper().representation('review')).toEqual({ state: 'open', reason: undefined, label: 'Status:Review' });
+	});
+
+	it('a closed status carries its effective reason: completed after a good ending, not planned after a bad one, or what the map says', () => {
+		expect(mapper().representation('done')).toEqual({ state: 'closed', reason: 'completed', label: undefined });
+		expect(mapper().representation('shipped').label).toBe('status:shipped');
+		expect(mapper().representation('wontfix').reason).toBe('not_planned');
+		expect(mapper().representation('dupe').reason).toBe('duplicate');
+	});
+
+	it('a status the project does not have is an error that lists the valid ones', () => {
+		expect(() => mapper().representation('nope')).toThrow(
+			/nope.*todo, doing, review, done, shipped, wontfix, dupe/
+		);
+	});
+
+	it('knows whether a status exists for a close reason', () => {
+		expect(mapper().hasClosedReason('duplicate')).toBe(true);
+		const without = new StatusMapper(
+			{ todo: { state: 'open' }, done: { state: 'closed' } },
+			STATUSES.slice(0, 1).concat(STATUSES[3]!),
+			() => ''
+		);
+		expect(without.hasClosedReason('duplicate')).toBe(false);
+	});
+});

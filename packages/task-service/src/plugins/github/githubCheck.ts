@@ -8,7 +8,8 @@ import {
 	RateLimitedError,
 } from '@wadeck-app/task-core';
 
-import type { CheckLine, ProjectFacts } from '../kinds.js';
+import type { CheckLine, DeclaredFills, ProjectFacts } from '../kinds.js';
+import { wantedLabels } from './githubLabels.js';
 import { GitHubHttpError } from './githubClient.js';
 import type { GitHubClient } from './githubClient.js';
 import type { GitHubSettings } from './githubOptions.js';
@@ -22,6 +23,10 @@ export interface CheckInput {
 	now: () => number;
 	/** Where the token comes from, in words, for the fix. */
 	tokenHint: string;
+	/** The fills the project declared. */
+	fills: DeclaredFills;
+	/** The project as `-p` takes it, for the commands the fixes name. */
+	projectName: string;
 }
 
 interface RepoInfo {
@@ -29,6 +34,8 @@ interface RepoInfo {
 	private?: boolean;
 	has_issues?: boolean;
 	archived?: boolean;
+	/** What the token's user may do on the repository (absent for some tokens). */
+	permissions?: { admin?: boolean; push?: boolean };
 }
 
 interface LabelInfo {
@@ -125,17 +132,6 @@ function expiryLine(expires: string | undefined, now: number): CheckLine {
 	return { name: 'expiry', status: 'ok', text: `the token expires ${expires} (${days} days)` };
 }
 
-function expectedLabels(settings: GitHubSettings, project: ProjectFacts): string[] {
-	const labels = new Map<string, string>();
-	const add = (name: string): void => void (labels.has(name.toLowerCase()) || labels.set(name.toLowerCase(), name));
-	for (const rule of Object.values(settings.statusMap)) if (rule.label !== undefined) add(rule.label);
-	for (const rule of Object.values(settings.typeMap)) if (rule.label !== undefined) add(rule.label);
-	for (const type of project.types) {
-		if (settings.typeMap[type] === undefined) add(`${settings.typePrefix}${type}`);
-	}
-	return [...labels.values()];
-}
-
 function describeMap(settings: GitHubSettings): string {
 	return Object.entries(settings.statusMap)
 		.map(([status, rule]) => {
@@ -145,9 +141,37 @@ function describeMap(settings: GitHubSettings): string {
 		.join('; ');
 }
 
+/**
+ * What a write costs and risks, and whether this token can make one. Writes go one at a time, at least writeSpacingSeconds apart;
+ * GitHub has no conditional write, so a change made by someone else in the second between our read and our write can be overwritten.
+ */
+function writesLine(repo: RepoInfo, input: CheckInput): CheckLine {
+	const { settings, fills } = input;
+	const quota = input.client.rateLimit('core');
+	const left = quota === undefined ? '' : ` (${quota.remaining} of ${quota.limit} requests left this hour)`;
+	const budget = `a write is sent one at a time, ${settings.writeSpacingSeconds} s apart, and costs one request of the hourly quota${left}; optimistic, not atomic: GitHub has no conditional write, so a change made on GitHub in the second between the read and the write can be overwritten`;
+	if (repo.permissions?.push === false) {
+		return {
+			name: 'writes',
+			status: 'warn',
+			text: `this token cannot write issues on ${settings.repo.full} (the repository reports push: false); reads work, every write will fail`,
+			fix: `Give the token Issues: Read and write on ${settings.repo.full} (Settings > Developer settings > Fine-grained tokens), then run this check again. It is read from ${input.tokenHint}.`,
+		};
+	}
+	if (fills['delete']?.use === 'hard' && repo.permissions?.admin === false) {
+		return {
+			name: 'writes',
+			status: 'warn',
+			text: `fills.delete: hard needs a repository administrator, and the user of this token is not one: deleting a task will fail; ${budget}`,
+			fix: 'Use the token of an administrator, or declare "delete: { use: tombstone, fidelity: degrade }" in strategy.options.fills (the issue is closed and hidden instead of deleted)',
+		};
+	}
+	return { name: 'writes', status: 'ok', text: budget };
+}
+
 /** The lines of `task strategy check` for a github project. */
 export async function checkGitHub(input: CheckInput): Promise<CheckLine[]> {
-	const { client, settings, project, repoUrl } = input;
+	const { client, settings, project } = input;
 	const repoPath = `/repos/${settings.repo.full}`;
 	const lines: CheckLine[] = [];
 	const host = new URL(settings.baseUrl).host;
@@ -227,7 +251,7 @@ export async function checkGitHub(input: CheckInput): Promise<CheckLine[]> {
 		text: `${Object.keys(settings.statusMap).length} statuses mapped: ${describeMap(settings)}`,
 	});
 
-	const wanted = expectedLabels(settings, project);
+	const wanted = wantedLabels(settings, project.types, input.fills).map(label => label.name);
 	if (wanted.length > 0) {
 		try {
 			const present = await client.getAll<LabelInfo>(`${repoPath}/labels`, {
@@ -247,7 +271,7 @@ export async function checkGitHub(input: CheckInput): Promise<CheckLine[]> {
 							name: 'labels',
 							status: 'warn',
 							text: `${missing.length} of the ${wanted.length} labels the mapping uses do not exist yet: ${missing.join(', ')}`,
-							fix: `Reading works without them. Create them (names exactly as written) at ${repoUrl}/labels so a status can be set on GitHub: ${missing.join(', ')}`,
+							fix: `Reading works without them, and a write creates the label it needs the first time it uses it. Create them all now, with a colour and a description, with: task labels sync -p ${input.projectName} (add --dry-run to see first). Missing: ${missing.join(', ')}`,
 						}
 			);
 		} catch (error) {
@@ -298,11 +322,7 @@ export async function checkGitHub(input: CheckInput): Promise<CheckLine[]> {
 			status: 'ok',
 			text: 'native Search API: 30 requests a minute, a new issue is searchable after a few seconds (not read-your-writes); find and tree read the full list, which is exact',
 		},
-		{
-			name: 'mode',
-			status: 'ok',
-			text: 'read-only in this version (stage 1): reads work, every write is refused with a hint',
-		}
+		writesLine(repo, input)
 	);
 	return lines;
 }

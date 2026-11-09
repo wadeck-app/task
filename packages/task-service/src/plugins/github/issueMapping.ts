@@ -27,6 +27,7 @@ export interface ApiLabel {
 /** The fields of a GitHub issue this strategy reads (REST, verified against the real API). */
 export interface ApiIssue {
 	id: number;
+	node_id?: string;
 	number: number;
 	title: string;
 	body: string | null;
@@ -63,6 +64,8 @@ export interface MapContext {
 	mapper: StatusMapper;
 	/** `fills.meta: labels` is declared: meta labels are meta, not labels. */
 	metaFromLabels: boolean;
+	/** `fills.meta: body-block` is declared: the meta is read from the managed block of the body. */
+	metaFromBlock: boolean;
 	/** The valid task types of the project (empty = any). */
 	projectTypes: readonly string[];
 	/** Called for something left out of a read that the user should know. */
@@ -80,10 +83,19 @@ export function labelNames(issue: ApiIssue): string[] {
 	return issue.labels.map(label => (typeof label === 'string' ? label : label.name));
 }
 
+/** The label of a deleted task when `fills.delete: tombstone` is declared: such an issue is hidden from every read. Reserved. */
+export const TOMBSTONE_LABEL = 'task:deleted';
+
+export function isTombstone(issue: ApiIssue): boolean {
+	return labelNames(issue).some(name => name.toLowerCase() === TOMBSTONE_LABEL);
+}
+
 const ISSUE_PATH = /\/repos\/([^/]+)\/([^/]+)\/issues\/(\d+)$/;
 
 /** The label events of an issue created with labels come about a second after its creation (measured on the real API). */
 const CREATION_WINDOW_MS = 2000;
+/** Events of one request are at most a second apart (measured); two status changes closer than that read as one. */
+const GROUP_WINDOW_MS = 1000;
 
 /** The number in an issue API URL when it is an issue of the configured repository; undefined for another repository. */
 export function numberInRepo(url: string, repoFull: string): number | 'other' {
@@ -136,6 +148,12 @@ export interface BodyParts {
 	description: string | undefined;
 	/** The target of `duplicateOf` the managed block holds. */
 	duplicateOf: string | undefined;
+	/** The meta the managed block holds (always read; only used with `fills.meta: body-block`). */
+	blockMeta: Record<string, string> | undefined;
+	/** The whole content of the managed block, to be written back with a change; absent when the body has no block. */
+	blockData: Record<string, unknown> | undefined;
+	/** The body without the block, trimmed (CRLF as LF): what a write puts back in front of the block. */
+	visibleText: string;
 }
 
 /**
@@ -146,6 +164,8 @@ export function splitBody(issue: ApiIssue, ctx: MapContext): BodyParts {
 	const raw = (issue.body ?? '').replace(/\r\n/g, '\n');
 	let text = raw;
 	let duplicateOf: string | undefined;
+	let blockMeta: Record<string, string> | undefined;
+	let blockData: Record<string, unknown> | undefined;
 	const subject = `issue #${issue.number}`;
 	const fix = `Repair or remove the block between <!-- task:begin v1 --> and <!-- task:end --> on ${ctx.issueUrl(issue.number)}`;
 	const match = BLOCK.exec(raw);
@@ -175,6 +195,30 @@ export function splitBody(issue: ApiIssue, ctx: MapContext): BodyParts {
 		if (typeof data !== 'object' || data === null || Array.isArray(data)) {
 			throw new BackendDataError('github', subject, `the task block of ${subject} is not a JSON object`, fix);
 		}
+		blockData = data as Record<string, unknown>;
+		const meta = (data as { meta?: unknown }).meta;
+		if (meta !== undefined) {
+			if (typeof meta !== 'object' || meta === null || Array.isArray(meta)) {
+				throw new BackendDataError(
+					'github',
+					subject,
+					`the task block of ${subject} has a "meta" that is not an object`,
+					fix
+				);
+			}
+			blockMeta = {};
+			for (const [key, value] of Object.entries(meta)) {
+				if (typeof value !== 'string') {
+					throw new BackendDataError(
+						'github',
+						subject,
+						`the task block of ${subject} has a meta value that is not a text (${key})`,
+						fix
+					);
+				}
+				blockMeta[key] = value;
+			}
+		}
 		const links = (data as { links?: unknown }).links;
 		if (links !== undefined) {
 			if (!Array.isArray(links)) {
@@ -200,6 +244,9 @@ export function splitBody(issue: ApiIssue, ctx: MapContext): BodyParts {
 	return {
 		description: trimmed === '' || trimmed === issue.title ? undefined : trimmed,
 		duplicateOf,
+		blockMeta,
+		blockData,
+		visibleText: trimmed,
 	};
 }
 
@@ -229,7 +276,7 @@ export function userLabels(issue: ApiIssue, ctx: MapContext): string[] {
 }
 
 /** The task type name of a type label, or undefined when the label is not one. */
-function typeOfLabel(name: string, ctx: MapContext): string | undefined {
+export function typeOfLabel(name: string, ctx: MapContext): string | undefined {
 	const { typePrefix, typeMap } = ctx.settings;
 	for (const [type, rule] of Object.entries(typeMap)) {
 		if (rule.label !== undefined && lower(rule.label) === lower(name)) return type;
@@ -261,6 +308,10 @@ export function typeOf(issue: ApiIssue, ctx: MapContext): string | undefined {
 }
 
 export function metaOf(issue: ApiIssue, ctx: MapContext): Record<string, string> | undefined {
+	if (ctx.metaFromBlock) {
+		const meta = splitBody(issue, ctx).blockMeta;
+		return meta === undefined || Object.keys(meta).length === 0 ? undefined : meta;
+	}
 	if (!ctx.metaFromLabels) return undefined;
 	const meta: Record<string, string> = {};
 	for (const name of labelNames(issue)) {
@@ -276,7 +327,7 @@ export function metaOf(issue: ApiIssue, ctx: MapContext): Record<string, string>
 				`Rename it ${ctx.settings.metaPrefix}<key>=<value> or remove it on ${ctx.issueUrl(issue.number)}`
 			);
 		}
-		if (key in meta) {
+		if (Object.hasOwn(meta, key)) {
 			throw new BackendDataError(
 				'github',
 				`issue #${issue.number}`,
@@ -331,28 +382,39 @@ export function replayHistory(
 	const history: TaskRecord['history'] = [];
 	const first = ctx.mapper.tryStatusOf(view());
 	if (first !== undefined) history.push({ status: first, timestamp: createdAt });
+	// The events one request produces (a label swapped and the issue closed by one PATCH) are one change, judged after the last of them,
+	// so the status in between (the label gone, the issue not yet closed) never shows in the history. Measured on the real API: they
+	// carry the same second, or two neighbouring seconds. So events within GROUP_WINDOW_MS (1 s) of the first one of a group are its members.
+	const groups: ApiEvent[][] = [];
 	for (const event of events) {
 		if (event.created_at === undefined) continue;
-		if (event.event === 'labeled' || event.event === 'unlabeled') {
-			const name = (event['label'] as ApiLabel | undefined)?.name;
-			if (name === undefined) continue;
-			state.labels =
-				event.event === 'labeled'
-					? [...state.labels, name]
-					: state.labels.filter(held => lower(held) !== lower(name));
-		} else if (event.event === 'closed') {
-			state.state = 'closed';
-			// Measured: a `completed` close carries `state_reason: null` in the timeline.
-			state.reason = (event['state_reason'] as string | null | undefined) ?? 'completed';
-		} else if (event.event === 'reopened') {
-			state.state = 'open';
-			state.reason = null;
-		} else {
-			continue;
+		if (!['labeled', 'unlabeled', 'closed', 'reopened'].includes(event.event)) continue;
+		const last = groups.at(-1);
+		if (last !== undefined && Date.parse(event.created_at) - Date.parse(last[0]!.created_at!) <= GROUP_WINDOW_MS) {
+			last.push(event);
+		} else groups.push([event]);
+	}
+	for (const group of groups) {
+		for (const event of group) {
+			if (event.event === 'labeled' || event.event === 'unlabeled') {
+				const name = (event['label'] as ApiLabel | undefined)?.name;
+				if (name === undefined) continue;
+				state.labels =
+					event.event === 'labeled'
+						? [...state.labels, name]
+						: state.labels.filter(held => lower(held) !== lower(name));
+			} else if (event.event === 'closed') {
+				state.state = 'closed';
+				// Measured: a `completed` close carries `state_reason: null` in the timeline.
+				state.reason = (event['state_reason'] as string | null | undefined) ?? 'completed';
+			} else {
+				state.state = 'open';
+				state.reason = null;
+			}
 		}
 		const status = ctx.mapper.tryStatusOf(view());
 		if (status === undefined || status === history.at(-1)?.status) continue;
-		const timestamp = iso(event.created_at);
+		const timestamp = iso(group[0]!.created_at!);
 		// An issue created with its status label shows the label event about a second after the creation (measured on the real
 		// API): inside the creation window it is the creation status, not a change.
 		if (history.length === 1 && Date.parse(timestamp) - Date.parse(createdAt) <= CREATION_WINDOW_MS) {
@@ -522,4 +584,17 @@ export function linksOf(blockers: readonly number[], duplicateOf: string | undef
 		...blockers.map((target): TaskLink => ({ type: 'blockedBy', target: String(target) })),
 		...(duplicateOf === undefined ? [] : [{ type: 'duplicateOf' as const, target: duplicateOf }]),
 	];
+}
+
+const blockOf = (data: Record<string, unknown>): string =>
+	`<!-- task:begin v1 -->${JSON.stringify(data)}<!-- task:end -->`;
+
+/** The body to write: the visible text, then the managed block when it holds anything (the block is last, an empty one is dropped). */
+export function composeBody(visibleText: string, data: Record<string, unknown> | undefined): string {
+	if (data === undefined || Object.keys(data).length === 0) return visibleText;
+	return visibleText === ''
+		? blockOf(data)
+		: `${visibleText}
+
+${blockOf(data)}`;
 }

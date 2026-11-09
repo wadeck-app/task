@@ -1,5 +1,5 @@
 // Builds a GitHubBackend over a FakeGitHub for tests, with the pieces exposed (client, notices, settings). Test-only.
-import type { ProjectStatus, ReadNotice } from '../kinds.js';
+import type { DeclaredFills, ProjectStatus, ReadNotice } from '../kinds.js';
 import type { FakeGitHub } from './fakeGitHub.testkit.js';
 import { GitHubBackend } from './GitHubBackend.js';
 import { GitHubClient } from './githubClient.js';
@@ -21,12 +21,33 @@ export const TEST_STATUS_MAP = {
 	done: { state: 'closed' },
 };
 
+/** The statuses of the write tests: two open ones with a label, and three ways to end. */
+export const WRITE_STATUSES: ProjectStatus[] = [
+	{ name: 'backlog', terminal: false, default: true, outcome: undefined },
+	{ name: 'in-progress', terminal: false, default: false, outcome: undefined },
+	{ name: 'review', terminal: false, default: false, outcome: undefined },
+	{ name: 'done', terminal: true, default: false, outcome: 'positive' },
+	{ name: 'cancelled', terminal: true, default: false, outcome: 'negative' },
+	{ name: 'duplicate', terminal: true, default: false, outcome: 'negative' },
+];
+
+export const WRITE_STATUS_MAP = {
+	backlog: { state: 'open' },
+	'in-progress': { state: 'open', label: 'status:in-progress' },
+	review: { state: 'open', label: 'status:review' },
+	done: { state: 'closed' },
+	cancelled: { state: 'closed', reason: 'not_planned' },
+	duplicate: { state: 'closed', reason: 'duplicate' },
+};
+
 export interface TestBackend {
 	backend: GitHubBackend;
 	client: GitHubClient;
 	settings: GitHubSettings;
 	notices: ReadNotice[];
 	clock: { ms: number };
+	/** The waits the client asked for (spacing between writes, retry-after), instead of really waiting. */
+	waits: number[];
 }
 
 export function makeGitHubBackend(
@@ -36,6 +57,9 @@ export function makeGitHubBackend(
 		statuses?: ProjectStatus[];
 		projectTypes?: string[];
 		metaFromLabels?: boolean;
+		fills?: DeclaredFills;
+		/** What the test says the project accepted; the config loader enforces it, the backend only follows the fills. */
+		fidelity?: 'strict' | 'degrade';
 		client?: Partial<GitHubClientOptions>;
 	} = {}
 ): TestBackend {
@@ -51,7 +75,9 @@ export function makeGitHubBackend(
 	});
 	if ('problem' in parsed) throw new Error(`test options are invalid: ${parsed.problem}`);
 	const { settings } = parsed;
+	const fills = options.fills ?? {};
 	const notices: ReadNotice[] = [];
+	const waits: number[] = [];
 	const clock = { ms: Date.parse('2026-11-08T12:00:00Z') };
 	const issueUrl = (number: number): string => `https://github.com/${settings.repo.full}/issues/${number}`;
 	const client = new GitHubClient({
@@ -65,22 +91,36 @@ export function makeGitHubBackend(
 		cache: new MemoryResponseCache(),
 		now: () => clock.ms,
 		onNotice: notice => notices.push(notice),
+		// The tests do not wait: what the client would have waited for is in `waits`.
+		writeSpacingMs: 0,
+		sleep: ms => {
+			waits.push(ms);
+			return Promise.resolve();
+		},
 		...options.client,
 	});
 	const statuses = options.statuses ?? TEST_STATUSES;
+	const seen = new Set<string>();
+	const notice = (next: ReadNotice): void => {
+		if (seen.has(next.text)) return;
+		seen.add(next.text);
+		notices.push(next);
+	};
 	const backend = new GitHubBackend({
 		settings,
 		client,
 		issueUrl,
 		newIssueUrl: `https://github.com/${settings.repo.full}/issues/new`,
+		fills,
 		map: {
 			settings,
 			mapper: new StatusMapper(settings.statusMap, statuses, issueUrl),
-			metaFromLabels: options.metaFromLabels === true,
+			metaFromLabels: options.metaFromLabels === true || fills['meta']?.use === 'labels',
+			metaFromBlock: fills['meta']?.use === 'body-block',
 			projectTypes: options.projectTypes ?? [],
-			notice: notice => notices.push(notice),
+			notice,
 			issueUrl,
 		},
 	});
-	return { backend, client, settings, notices, clock };
+	return { backend, client, settings, notices, clock, waits };
 }

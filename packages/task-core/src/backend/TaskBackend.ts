@@ -72,6 +72,26 @@ export interface BackendCommentEdit extends Omit<CommentEdit, 'task'> {
 	task: VersionedRecord;
 }
 
+/** One label a project needs in the remote system, and why. */
+export interface LabelSyncEntry {
+	name: string;
+	kind: 'status' | 'type' | 'deleted';
+	why: string;
+}
+
+/** What `task labels sync` did (or, with `dryRun`, would do). */
+export interface LabelSyncReport {
+	dryRun: boolean;
+	/** Every label the configuration needs. */
+	wanted: LabelSyncEntry[];
+	/** The names created (dry run: that would be). */
+	created: string[];
+	/** The names that were already there. */
+	existing: string[];
+	/** What else the person should know (labels that are created on demand). */
+	notes: string[];
+}
+
 export interface TaskBackend {
 	readonly kind: BackendKind;
 	readonly capabilities: BackendCapabilities;
@@ -127,4 +147,8 @@ export interface TaskBackend {
 	// ---- delete ----
 	/** True when the task existed and was removed (or closed, `capabilities.delete` = `close-only`), false when it was not found. */
 	deleteTask(id: string, options?: WriteOptions): Promise<boolean>;
+
+	// ---- optional: only a backend that keeps labels in a remote system ----
+	/** Creates the labels the project's configuration needs (colour and description included); never deletes or changes one. */
+	syncLabels?(options: { dryRun?: boolean }): Promise<LabelSyncReport>;
 }

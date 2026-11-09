@@ -10,7 +10,7 @@ import { runTaskCommand } from '../TaskIndex.js';
 import { type RegisteredTestProject, registerTestProject } from '../testHelpers.js';
 
 // The github strategy through the real CLI entry (runTaskCommand): a project whose config.yml selects it, a fake GitHub server
-// on a loopback port, the token in an environment variable. The reads work end to end; every write fails with the hint.
+// on a loopback port, the token in an environment variable. Reads and writes work end to end; what needs a fill fails with the key to write.
 let tmpDir: string;
 let project: RegisteredTestProject;
 let fake: FakeGitHub;
@@ -37,6 +37,7 @@ strategy:
         tokenEnv: ${TOKEN_VARIABLE}
         cache: { ttlSeconds: 0 }
         timeoutSeconds: 3
+        writeSpacingSeconds: 0
         statusMap:
             backlog: { state: open }
             in-progress: { state: open, label: 'status:in-progress' }
@@ -193,50 +194,199 @@ describe('task, reads on a github project', () => {
 	});
 });
 
-describe('task, writes on a github project fail loudly', () => {
-	it.each([
-		[['new', 'A new task']],
-		[['set-status', '1', 'done']],
-		[['set-title', '1', 'Another title']],
-		[['add-label', '1', 'x']],
-		[['set-type', '1', 'bug']],
-		[['set-meta', '1', 'k', 'v']],
-		[['set-parent', '4', '1']],
-		[['link', '4', 'blockedBy', '1']],
-		[['comment', '1', 'hello']],
-		[['delete', '1']],
-	])('%j exits 1 with the stage and where to make the change', async args => {
+describe('task, writes on a github project', () => {
+	it('new, set-status, add-label, set-type, comment, link and set-parent reach GitHub, and the reads show them', async () => {
 		seed();
 
-		const result = await run(...args);
+		const created = await run('new', 'A new task');
+		const moved = await run('set-status', '6', 'in-progress');
+		const labelled = await run('add-label', '6', 'urgent');
+		const typed = await run('set-type', '6', 'bug');
+		const commented = await run('comment', '6', 'hello');
+		const linked = await run('link', '6', 'blockedBy', '4');
+		const parented = await run('set-parent', '6', '1');
 
-		expect(result.exitCode).toBe(1);
-		expect(result.output).toContain('does not support');
-		expect(result.output).toContain('capability "writes"');
-		expect(result.output).toContain('The github strategy is read-only in this version (stage 1');
-		// The fake server is not github.com: the page of the issue is on the server's own origin.
-		expect(result.output).toMatch(/http:\/\/127\.0\.0\.1:\d+\/acme\/shop\/issues\/(\d+|new)/);
-		expect(fake.writes()).toEqual([]);
+		for (const result of [created, moved, labelled, typed, commented, linked, parented]) {
+			expect(result.exitCode, result.output).toBe(0);
+		}
+		expect(JSON.parse(created.output)).toMatchObject({ id: '6', title: 'A new task', status: 'backlog' });
+		expect(fake.issues.get(6)).toMatchObject({
+			title: 'A new task',
+			labels: ['status:in-progress', 'urgent', 'type:bug'],
+		});
+		expect(fake.issues.get(6)!.blockedBy).toEqual([4]);
+		expect(fake.issues.get(6)!.parent).toBe(1);
+		const shown = JSON.parse((await run('show', '6', '--json')).output) as Record<string, unknown>;
+		expect(shown).toMatchObject({ id: '6', status: 'in-progress', type: 'bug', labels: ['urgent'], parentId: '1' });
+		expect((shown['comments'] as Array<{ text: string }>).map(comment => comment.text)).toEqual(['hello']);
+		const history = await run('history', '6', '--all');
+		expect(history.output).toContain('Created');
+		expect(history.output).toContain('in-progress');
 	});
 
-	it('--json carries the same error and hint', async () => {
-		seed();
-
-		const result = await run('set-status', '1', 'done', '--json');
-
-		expect(result.exitCode).toBe(1);
-		const body = JSON.parse(result.output) as { error: string; hint: string };
-		expect(body.error).toContain('capability "writes"');
-		expect(body.hint).toContain('read-only in this version (stage 1');
-	});
-
-	it('nothing is created locally: the data folder of the project stays empty of tasks', async () => {
+	it('writes nothing in the data folder of the project: the tasks are on GitHub, only the cache is local', async () => {
 		seed();
 		await run('new', 'A new task');
-		await run('set-status', '1', 'done');
+		await run('set-status', '6', 'done');
 
 		expect(fs.existsSync(path.join(project.storage.dataDir, 'tasks'))).toBe(false);
 		expect(fs.existsSync(path.join(project.storage.dataDir, 'task-index.json'))).toBe(false);
+	});
+
+	it('a change that GitHub does not know how to hold without a fill exits 1 with the key to write, in text and in --json', async () => {
+		seed();
+
+		const meta = await run('set-meta', '1', 'k', 'v');
+		const del = await run('delete', '1');
+		const json = JSON.parse((await run('set-meta', '1', 'k', 'v', '--json')).output) as {
+			error: string;
+			hint: string;
+		};
+
+		expect(meta.exitCode).toBe(1);
+		expect(meta.output).toContain('capability "meta"');
+		expect(meta.output).toContain('meta: labels');
+		expect(del.exitCode).toBe(1);
+		expect(del.output).toContain('capability "delete"');
+		expect(del.output).toContain('delete: tombstone');
+		expect(json.error).toContain('capability "meta"');
+		expect(json.hint).toContain('strategy.options.fills');
+		expect(fake.writes()).toEqual([]);
+	});
+
+	it('the author of a comment cannot be chosen: GitHub writes it as the token user', async () => {
+		seed();
+
+		const result = await run('comment', '1', 'hello', '--author', 'ann');
+
+		expect(result.exitCode).toBe(1);
+		expect(result.output).toContain('--author');
+		expect(fake.writes()).toEqual([]);
+	});
+
+	it('a status change that GitHub refuses is a clear error, nothing is created locally', async () => {
+		seed();
+		fake.failNext({ status: 422, method: 'PATCH', body: { message: 'Validation Failed' } });
+
+		const result = await run('set-status', '1', 'done');
+
+		expect(result.exitCode).toBe(1);
+		expect(result.output).toContain('GitHub refused');
+		expect(result.output).toContain('Nothing was changed');
+	});
+
+	it('a change that stops halfway says what GitHub holds and how to finish it, exit 1', async () => {
+		seed();
+		// The issue is created, then attached to its parent: the attachment is refused.
+		fake.failNext({
+			status: 422,
+			method: 'POST',
+			pathPrefix: '/repos/acme/shop/issues/1/sub_issues',
+			body: { message: 'Validation Failed' },
+		});
+
+		const result = await run('new', 'Under alpha', '--parent', '1');
+
+		expect(result.exitCode).toBe(1);
+		expect(result.output).toContain('only partly done');
+		expect(result.output).toContain('created issue #6');
+		expect(result.output).toContain('task set-parent 6 1');
+		expect(fake.issues.get(6)!.title).toBe('Under alpha');
+	});
+});
+
+describe('task delete on a github project with a delete fill', () => {
+	const withFills = (fills: string): void => {
+		const file = ownConfigFile(project.storage);
+		const text = fs.readFileSync(file, 'utf8');
+		fs.writeFileSync(
+			file,
+			text.replace('    options:\n', `    fidelity: degrade\n    options:\n        fills:\n${fills}`)
+		);
+	};
+
+	it('tombstone: the issue is closed as not planned and labelled task:deleted, then hidden; its children become root tasks', async () => {
+		seed();
+		withFills('            delete: tombstone\n');
+
+		const result = await run('delete', '2');
+
+		expect(result.exitCode, result.output).toBe(0);
+		expect(fake.issues.get(2)).toMatchObject({ state: 'closed', stateReason: 'not_planned' });
+		expect(fake.issues.get(2)!.labels).toContain('task:deleted');
+		expect(fake.issues.get(4)!.parent).toBeNull();
+		const listed = JSON.parse((await run('list', '--all', '--json')).output) as Array<{ id: string }>;
+		expect(listed.map(task => task.id)).toEqual(['1', '3', '4', '5']);
+		expect(stderr.join('')).toContain('delete is emulated');
+	});
+
+	it('a task created a moment ago is found by list and delete although GitHub lists a new issue seconds late', async () => {
+		await fake.stop();
+		fake = await FakeGitHub.start({ repo: 'acme/shop', listLagRequests: 6 });
+		fs.writeFileSync(
+			ownConfigFile(project.storage),
+			fs.readFileSync(ownConfigFile(project.storage), 'utf8').replace(/baseUrl: .*/, `baseUrl: ${fake.baseUrl}`)
+		);
+		vi.stubEnv(TOKEN_VARIABLE, fake.token);
+		withFills('            delete: hard\n');
+
+		const created = JSON.parse((await run('new', 'Fresh', '--json')).output) as { id: string };
+		const listed = JSON.parse((await run('list', '--json')).output) as Array<{ id: string }>;
+		const deleted = await run('delete', created.id);
+
+		expect(listed.map(task => task.id)).toEqual([created.id]);
+		expect(deleted.exitCode, deleted.output).toBe(0);
+		expect(fake.issues.get(Number(created.id))!.deleted).toBe(true);
+	});
+
+	it('hard: GraphQL deleteIssue, the issue is gone', async () => {
+		seed();
+		withFills('            delete: hard\n');
+
+		const result = await run('delete', '4');
+
+		expect(result.exitCode, result.output).toBe(0);
+		expect(fake.issues.get(4)!.deleted).toBe(true);
+		expect(fake.writes().map(request => request.path)).toEqual(['/graphql']);
+	});
+});
+
+describe('task labels sync on a github project', () => {
+	it('--dry-run lists the labels the configuration needs and creates none', async () => {
+		const result = await run('labels', 'sync', '--dry-run');
+
+		expect(result.exitCode).toBe(0);
+		expect(result.output).toContain('Dry run');
+		expect(result.output).toMatch(/would create\s+status:in-progress/);
+		expect(fake.writes()).toEqual([]);
+	});
+
+	it('creates the missing labels, then says there is nothing to do', async () => {
+		const first = await run('labels', 'sync');
+		const second = await run('labels', 'sync');
+
+		expect(first.exitCode).toBe(0);
+		expect(first.output).toMatch(/created\s+status:in-progress/);
+		expect([...fake.repoLabels.keys()]).toEqual(['status:in-progress']);
+		expect(second.output).toContain('nothing to create');
+		expect(fake.writes()).toHaveLength(1);
+	});
+
+	it('--json is the report of the service', async () => {
+		const report = JSON.parse((await run('labels', 'sync', '--json')).output) as {
+			dryRun: boolean;
+			created: string[];
+			existing: string[];
+		};
+
+		expect(report).toMatchObject({ dryRun: false, created: ['status:in-progress'], existing: [] });
+	});
+
+	it('an unknown argument is a usage error', async () => {
+		const result = await run('labels', 'sync', '--force');
+
+		expect(result.exitCode).toBe(1);
+		expect(result.output).toContain('Usage: task labels sync [--dry-run] [--json]');
 	});
 });
 
@@ -316,12 +466,14 @@ describe('task, the token and the network', () => {
 });
 
 describe('task strategy on a github project', () => {
-	it('show lists the capabilities (writes unsupported) and the token variable, never its value', async () => {
+	it('show lists the capabilities (writes native, meta and delete unsupported without their fill) and the token variable, never its value', async () => {
 		const result = await run('strategy', 'show');
 
 		expect(result.exitCode).toBe(0);
 		expect(result.output).toContain('github (plugins.github.default)');
-		expect(result.output).toMatch(/writes\s+unsupported/);
+		expect(result.output).toMatch(/writes\s+native\s+full/);
+		expect(result.output).toMatch(/meta\s+unsupported/);
+		expect(result.output).toMatch(/delete\s+unsupported/);
 		expect(result.output).toMatch(/ids\s+native\s+assigned/);
 		expect(result.output).toMatch(/hierarchy\s+partial\s+sub-issues: 8 levels, 100 per parent/);
 		expect(result.output).toContain(`${TOKEN_VARIABLE} (environment variable, set)`);

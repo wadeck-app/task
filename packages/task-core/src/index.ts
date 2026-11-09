@@ -34,13 +34,21 @@ export type {
 export { OpenTypeStrategy, FixedListTypeStrategy, resolveTypeValidationStrategy } from './TypeValidationStrategy.js';
 export { TaskNotFoundError, AmbiguousTaskPrefixError, TaskConflictError } from './errors.js';
 export type { CommentChange, CommentEdit, TaskComment } from './taskComments.js';
-export { COMMENT_AUTHOR_MAX, COMMENT_TEXT_MAX, CommentNotFoundError, InvalidCommentTextError } from './taskComments.js';
+export {
+	COMMENT_AUTHOR_MAX,
+	COMMENT_TEXT_MAX,
+	CommentNotFoundError,
+	InvalidCommentTextError,
+	normalizeCommentText,
+} from './taskComments.js';
 // The async port (stage 0 of the storage-strategies design): every caller reads and writes tasks through it.
 export type {
 	ActivitySupport,
 	BackendCapabilities,
 	BackendCommentChange,
 	BackendCommentEdit,
+	LabelSyncEntry,
+	LabelSyncReport,
 	BackendKind,
 	ConcurrencySupport,
 	CreateTaskInput,
@@ -64,10 +72,12 @@ export {
 	BackendAuthError,
 	BackendDataError,
 	BackendLimitError,
+	BackendRejectedError,
 	BackendTimeoutError,
 	BackendUnreachableError,
 	LOCAL_CAPABILITIES,
 	LocalFileBackend,
+	PartialWriteError,
 	RateLimitedError,
 	createLocalBackend,
 	StaleRevisionError,

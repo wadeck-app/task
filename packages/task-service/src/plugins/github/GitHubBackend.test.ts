@@ -1,10 +1,4 @@
-import {
-	BackendDataError,
-	BackendLimitError,
-	BackendUnreachableError,
-	TaskNotFoundError,
-	UnsupportedByBackendError,
-} from '@wadeck-app/task-core';
+import { BackendDataError, BackendLimitError, BackendUnreachableError, TaskNotFoundError } from '@wadeck-app/task-core';
 
 import { FakeGitHub } from './fakeGitHub.testkit.js';
 import { makeGitHubBackend } from './githubBackend.testkit.js';
@@ -284,6 +278,44 @@ describe('reads: the status history is replayed from the timeline', () => {
 	});
 });
 
+describe('reads: events of one instant are one change of status', () => {
+	it('a label swapped and an issue closed by one request is one step in the history, not a passage through the status in between', async () => {
+		fake.addIssue({ title: 'Moving', labels: ['status:in-progress'] });
+		// One request: the label goes and the issue closes. The timeline lists the removal first, so replayed one event at a time
+		// the issue would pass through "open without label" (backlog).
+		fake.updateIssue(1, { labels: [], state: 'closed', stateReason: 'completed' });
+		const timeline = fake.issues.get(1)!.events;
+		const instant = timeline.at(-1)!.createdAt;
+		for (const event of timeline.slice(-2)) event.createdAt = instant;
+
+		const record = await t.backend.get('1');
+
+		expect(record.history.map(entry => entry.status)).toEqual(['in-progress', 'done']);
+	});
+
+	it('events one second apart still belong to one request (measured: the label of a PATCH can land a second after its state)', async () => {
+		fake.addIssue({ title: 'Moving', labels: ['status:in-progress'] });
+		fake.updateIssue(1, { labels: [], state: 'closed', stateReason: 'completed' });
+		const timeline = fake.issues.get(1)!.events;
+		const instant = Date.parse(timeline.at(-1)!.createdAt);
+		timeline.at(-2)!.createdAt = new Date(instant - 1000).toISOString().replace('.000Z', 'Z');
+
+		const record = await t.backend.get('1');
+
+		expect(record.history.map(entry => entry.status)).toEqual(['in-progress', 'done']);
+	});
+
+	it('events five seconds apart are two changes', async () => {
+		fake.addIssue({ title: 'Moving', labels: ['status:in-progress'] });
+		fake.updateIssue(1, { labels: [] });
+		fake.updateIssue(1, { state: 'closed', stateReason: 'completed' });
+
+		const record = await t.backend.get('1');
+
+		expect(record.history.map(entry => entry.status)).toEqual(['in-progress', 'backlog', 'done']);
+	});
+});
+
 describe('reads: the activity is the timeline in the vocabulary of the local log', () => {
 	it('maps labels, renames, types, sub-issues, parents and dependencies, and leaves status changes and comments out', async () => {
 		fake.addIssue({ title: 'Parent' });
@@ -404,7 +436,8 @@ describe('reads: revision and staleness', () => {
 		fake.addComment(1, 'bumps updated_at');
 		const second = await t.backend.get('1');
 		expect(second.revision).not.toBe(first.revision);
-		expect(first.revision).toMatch(/^2026-11-08T\d\d:\d\d:\d\dZ#[0-9a-f]{40}$/);
+		// <updated_at>#<etag>#<one short hash per part of the issue>: the parts let a write tell a comment from a rename.
+		expect(first.revision).toMatch(/^2026-11-08T\d\d:\d\d:\d\dZ#[0-9a-f]{40}#([0-9a-f]{6}\.){7}[0-9a-f]{6}$/);
 	});
 
 	it('a record served from the cache after a failure says so: stale and the instant it was read', async () => {
@@ -571,23 +604,21 @@ describe('reads: links', () => {
 	});
 });
 
-describe('writes: all refused, before anything is sent', () => {
-	it('every write is UnsupportedByBackendError for writes, with the stage and where to make the change', async () => {
-		fake.addIssue({ title: 'Read only' });
-		const before = fake.requests.length;
+describe('reads never write', () => {
+	it('every read of a project sends GET requests only', async () => {
+		fake.addIssue({ title: 'Read' });
+		fake.addIssue({ title: 'Child' });
+		fake.setParent(2, 1);
+		fake.addBlockedBy(2, 1);
 
-		const error = (await failure(() => t.backend.updateStatus('1', 'done'))) as UnsupportedByBackendError;
+		await t.backend.list();
+		await t.backend.listPage({ text: 'Read' });
+		await t.backend.get('1');
+		await t.backend.getTree('1');
+		await t.backend.getFullTree('2');
+		await t.backend.getLinks('2');
+		await t.backend.listLabels();
 
-		expect(error).toBeInstanceOf(UnsupportedByBackendError);
-		expect(error.capability).toBe('writes');
-		expect(error.operation).toBe('updateStatus');
-		expect(error.hint).toContain('The github strategy is read-only in this version (stage 1');
-		expect(error.hint).toContain('https://github.com/acme/shop/issues/1');
-		const created = (await failure(() =>
-			t.backend.create({ title: 'x', status: 'backlog' })
-		)) as UnsupportedByBackendError;
-		expect(created.hint).toContain('https://github.com/acme/shop/issues/new');
-		expect(fake.requests.length).toBe(before);
 		expect(fake.writes()).toEqual([]);
 	});
 });

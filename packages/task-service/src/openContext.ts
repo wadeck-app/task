@@ -51,20 +51,23 @@ export function openTaskContext(input: OpenTaskContextInput): TaskServiceContext
 		...(projectPath === undefined ? {} : { path: projectPath }),
 	};
 	const facts = projectFactsOf(config);
-	const lazy = createLazyBackend(strategy.plugin, () =>
-		createInstance(strategy, {
-			source: strategy.source,
-			statuses: facts.statuses,
-			types: facts.types,
-			project,
-			tasksDir: tasksDirOf(storage),
-			dataDir: storage.dataDir,
-			writeFile: writeAtomically,
-			env: input.env ?? process.env,
-			fidelity: strategy.fidelity,
-			fills: strategy.fills,
-			log: taskLogWriter(),
-		})
+	const lazy = createLazyBackend(
+		strategy.plugin,
+		() =>
+			createInstance(strategy, {
+				source: strategy.source,
+				statuses: facts.statuses,
+				types: facts.types,
+				project,
+				tasksDir: tasksDirOf(storage),
+				dataDir: storage.dataDir,
+				writeFile: writeAtomically,
+				env: input.env ?? process.env,
+				fidelity: strategy.fidelity,
+				fills: strategy.fills,
+				log: taskLogWriter(),
+			}),
+		strategy.plugin.capabilitiesFor?.(strategy.fills) ?? strategy.plugin.capabilities
 	);
 	return {
 		store: lazy.backend,

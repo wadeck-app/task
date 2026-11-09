@@ -1,6 +1,6 @@
 // The backend of a context, created at its first call (design 3A.3: construction stays cheap and synchronous, a remote or forge
 // instance connects when it is first needed). `kind` and `capabilities` are answered by the plugin before anything is created.
-import type { TaskBackend } from '@wadeck-app/task-core';
+import type { BackendCapabilities, TaskBackend } from '@wadeck-app/task-core';
 
 import type { StrategyInstance, StrategyPlugin } from './plugins/kinds.js';
 
@@ -12,7 +12,12 @@ export interface LazyBackend {
 	dispose(): Promise<void>;
 }
 
-export function createLazyBackend(plugin: StrategyPlugin, open: () => Promise<StrategyInstance>): LazyBackend {
+export function createLazyBackend(
+	plugin: StrategyPlugin,
+	open: () => Promise<StrategyInstance>,
+	/** What the backend can do for this project (its fills included); default the static ones of the plugin. */
+	capabilities: BackendCapabilities = plugin.capabilities
+): LazyBackend {
 	let pending: Promise<StrategyInstance> | undefined;
 	let created: StrategyInstance | undefined;
 	let disposed = false;
@@ -27,7 +32,7 @@ export function createLazyBackend(plugin: StrategyPlugin, open: () => Promise<St
 	const backend = new Proxy({} as TaskBackend, {
 		get(_target, property) {
 			if (property === 'kind') return plugin.backendKind;
-			if (property === 'capabilities') return plugin.capabilities;
+			if (property === 'capabilities') return capabilities;
 			// A symbol or `then` must read as absent: the proxy is awaited and logged like any object.
 			if (typeof property === 'symbol' || property === 'then') return undefined;
 			return async (...args: unknown[]): Promise<unknown> => {

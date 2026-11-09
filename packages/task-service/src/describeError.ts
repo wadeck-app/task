@@ -12,10 +12,12 @@ import {
 	BackendAuthError,
 	BackendDataError,
 	BackendLimitError,
+	BackendRejectedError,
 	BackendTimeoutError,
 	BackendUnreachableError,
 	CommentNotFoundError,
 	InvalidCommentTextError,
+	PartialWriteError,
 	RateLimitedError,
 	TaskConflictError,
 	TaskNotFoundError,
@@ -104,6 +106,18 @@ export function describeError(error: unknown): ErrorDescription {
 		error instanceof BackendAuthError
 	) {
 		return describe('unavailable', error, error.hint);
+	}
+	if (error instanceof BackendRejectedError) {
+		return describe('invalid', error, error.hint, { backend: error.backendKind, operation: error.operation });
+	}
+	if (error instanceof PartialWriteError) {
+		return describe('internal', error, error.hint, {
+			backend: error.backendKind,
+			operation: error.operation,
+			taskId: error.taskId,
+			applied: error.applied,
+			notApplied: error.notApplied,
+		});
 	}
 	if (error instanceof BackendDataError) {
 		return describe('conflict', error, error.hint, { subject: error.subject });
