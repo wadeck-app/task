@@ -9,11 +9,14 @@ import { describe, expect, it } from 'vitest';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.join(__dirname, '..', '..', '..');
+// The platforms task supports (owner decision: no Intel Mac, no linux).
+const PLATFORMS = 'win32-x64,darwin-arm64';
 
 interface Step {
 	name?: string;
 	run?: string;
 	uses?: string;
+	env?: Record<string, string>;
 }
 interface Job {
 	needs?: string | string[];
@@ -77,13 +80,32 @@ describe('publish workflow', () => {
 		expect(published).toContain('task-cli-win32-x64 task-cli-darwin-arm64');
 	});
 
-	it.each(['generate-platform-packages.sh', 'copy-binaries.sh', 'restore-exec-bits.sh', 'smoke-packed.sh'])(
-		'ci/scripts/%s has no darwin-x64 / amd64 mac reference',
-		script => {
-			const raw = readFileSync(path.join(REPO, 'packages', 'task-cli', 'ci', 'scripts', script), 'utf8');
-			expect(raw).not.toMatch(/darwin-x64|darwin_amd64|x86_64/);
-		}
-	);
+	// The scripts are synchronized copies of ci-templates (commit 0099d00) and know darwin-x64; task never asks for it:
+	// every call site passes the explicit list below, in the canonical argument conventions.
+	it('copy-binaries.sh has no darwin-x64 / amd64 mac reference', () => {
+		const raw = readFileSync(path.join(REPO, 'packages', 'task-cli', 'ci', 'scripts', 'copy-binaries.sh'), 'utf8');
+		expect(raw).not.toMatch(/darwin-x64|darwin_amd64|x86_64/);
+	});
+
+	it('generate-platform-packages.sh gets PLATFORMS=win32-x64,darwin-arm64 explicitly', () => {
+		const build = workflow.jobs['build-and-test'];
+		const step = (build.steps ?? []).find(s => s.run?.includes('generate-platform-packages.sh'));
+		expect(step, 'generate step').toBeDefined();
+		expect(step?.env?.PLATFORMS).toBe(PLATFORMS);
+		expect(step?.run).toContain('generate-platform-packages.sh task:app-module/');
+	});
+
+	it.each(['macos-smoke', 'publish'])('%s calls restore-exec-bits.sh <packages dir> task <platforms>', jobName => {
+		const step = (workflow.jobs[jobName].steps ?? []).find(s => s.run?.includes('restore-exec-bits.sh'));
+		expect(step?.run).toContain(`restore-exec-bits.sh packages task ${PLATFORMS}`);
+	});
+
+	it('macos-smoke calls smoke-packed.sh <packages dir> task <version> <platforms>', () => {
+		const step = (workflow.jobs['macos-smoke'].steps ?? []).find(s => s.run?.includes('smoke-packed.sh'));
+		expect(step?.run).toContain(
+			`smoke-packed.sh packages task "\${{ needs.build-and-test.outputs.version }}" ${PLATFORMS}`
+		);
+	});
 
 	it('only uses actions the workflow already used before (checkout, setup-node, upload/download-artifact, compute-version)', () => {
 		const used = Object.values(workflow.jobs).flatMap(j => (j.steps ?? []).flatMap(s => (s.uses ? [s.uses] : [])));

@@ -3,7 +3,7 @@
 // get a raw Node stack trace ("Cannot find module ... MODULE_NOT_FOUND ... Node.js v24"), or on macOS the Go launcher's
 // "LAUNCHER_BUNDLE_OVERRIDE points at ..., which is not a file": neither says what to do.
 //
-// The shim is rendered into a throwaway tree exactly as ci/scripts/generate-platform-packages.sh does (sed on the two
+// The shim is rendered into a throwaway tree exactly as ci/scripts/generate-platform-packages.sh does (sed on the three
 // placeholders) and run through runIsolated(): own HOME / config dir / npm prefix, unreachable registry.
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -31,7 +31,11 @@ function installWrapper(e: IsolatedCliEnv, opts: { bundle: string | undefined })
 	const shim = path.join(wrapper, 'bin', 'task.js');
 	fs.writeFileSync(
 		shim,
-		fs.readFileSync(TEMPLATE, 'utf8').replaceAll('{{CLI_NAME}}', 'task').replaceAll('{{PKG_PREFIX}}', 'task-cli')
+		fs
+			.readFileSync(TEMPLATE, 'utf8')
+			.replaceAll('{{CLI_NAME}}', 'task')
+			.replaceAll('{{PKG_PREFIX}}', 'task-cli')
+			.replaceAll('{{PLATFORMS}}', 'win32-x64,darwin-arm64')
 	);
 	const bundle = path.join(wrapper, 'task.cjs');
 	if (opts.bundle !== undefined) fs.writeFileSync(bundle, opts.bundle);

@@ -31,7 +31,11 @@ function installWrapper(e: IsolatedCliEnv, bundle: string): string {
 	const shim = path.join(wrapper, 'bin', 'task.js');
 	fs.writeFileSync(
 		shim,
-		fs.readFileSync(TEMPLATE, 'utf8').replaceAll('{{CLI_NAME}}', 'task').replaceAll('{{PKG_PREFIX}}', 'task-cli')
+		fs
+			.readFileSync(TEMPLATE, 'utf8')
+			.replaceAll('{{CLI_NAME}}', 'task')
+			.replaceAll('{{PKG_PREFIX}}', 'task-cli')
+			.replaceAll('{{PLATFORMS}}', 'win32-x64,darwin-arm64')
 	);
 	return shim;
 }
@@ -118,9 +122,7 @@ it.skipIf(HOST_SUPPORTED).each([['--version'], ['cli', 'version'], ['start']])(
 
 		expect(result.status, result.stderr).toBe(1);
 		expect(result.stdout).toBe('');
-		expect(result.stderr).toBe(
-			`task: unsupported platform ${HOST_KEY}. Supported: win32-x64, darwin-arm64 (Apple silicon).\n`
-		);
+		expect(result.stderr).toBe(`task: unsupported platform ${HOST_KEY}. Supported: win32-x64, darwin-arm64.\n`);
 		expect(fs.readdirSync(path.join(iso.npmPrefix, 'node_modules', '@wadeck-app'))).toEqual(['task-cli']);
 	}
 );

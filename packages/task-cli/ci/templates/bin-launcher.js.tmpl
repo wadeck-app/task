@@ -5,8 +5,8 @@
 // side effect; the real wiring is at the bottom and only runs when this file is the entry point.
 //
 // Contract:
-//  - Supported platforms: win32-x64 and darwin-arm64 (Apple silicon) ONLY. Anything else (Intel Macs, linux, ...) is
-//    refused first thing, for every command, with exit 1: the owner does not want partial support.
+//  - Supported platforms: exactly the PLATFORMS list below, set at generation time. Any other host is
+//    refused first thing, for every command, with exit 1: there is no partial support.
 //  - Every command except `start` runs `node <bundle> <args>` directly, on ALL platforms. The Go launcher is a daemon
 //    supervisor; a short-lived command does not need it (and on Windows its GUI-subsystem build swallows stdout).
 //  - `start` goes through the Go launcher of the platform package (installed lazily, only then).
@@ -14,10 +14,9 @@
 
 const BUNDLE_FILE = '{{CLI_NAME}}.cjs';
 const WRAPPER_PKG = '@wadeck-app/{{PKG_PREFIX}}';
-const PLATFORM_PKG = {
-  'win32-x64': '@wadeck-app/{{PKG_PREFIX}}-win32-x64',
-  'darwin-arm64': '@wadeck-app/{{PKG_PREFIX}}-darwin-arm64',
-};
+const PLATFORMS = '{{PLATFORMS}}'.split(',');
+const PLATFORM_PKG = {};
+for (const p of PLATFORMS) PLATFORM_PKG[p] = '@wadeck-app/{{PKG_PREFIX}}-' + p;
 
 /**
  * @param {object} deps injected side effects
@@ -33,8 +32,8 @@ const PLATFORM_PKG = {
  * @param {(bin: string, args: string[], opts: object) => void} deps.execFile execFileSync; throws on failure
  * @param {(p: string) => void} deps.assertExecutable throws when the file is not executable
  * @param {(p: string) => void} deps.makeExecutable chmod +x; throws on failure
- * @param {{ write: (s: string) => unknown }} deps.stdout
- * @param {{ write: (s: string) => unknown }} deps.stderr
+ * @param {NodeJS.WritableStream} deps.stdout only write(string) is used
+ * @param {NodeJS.WritableStream} deps.stderr only write(string) is used
  * @returns {number} the exit code
  */
 function run(deps) {
@@ -43,7 +42,7 @@ function run(deps) {
 
   // Before anything else (bundle check included): an unsupported host runs nothing and installs nothing.
   if (!Object.prototype.hasOwnProperty.call(PLATFORM_PKG, key)) {
-    say('unsupported platform ' + key + '. Supported: win32-x64, darwin-arm64 (Apple silicon).');
+    say('unsupported platform ' + key + '. Supported: ' + PLATFORMS.join(', ') + '.');
     return 1;
   }
 

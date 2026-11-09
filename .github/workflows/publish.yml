@@ -70,7 +70,9 @@ jobs:
                   BUNDLE_VERSION: ${{ steps.version.outputs.version }}
 
             - name: Generate platform package directories
-              run: bash packages/task-cli/ci/scripts/generate-platform-packages.sh
+              run: bash packages/task-cli/ci/scripts/generate-platform-packages.sh task:app-module/
+              env:
+                  PLATFORMS: win32-x64,darwin-arm64
 
             - name: Copy artifacts to platform packages
               run: bash packages/task-cli/ci/scripts/copy-binaries.sh
@@ -118,10 +120,10 @@ jobs:
                   path: packages
 
             - name: Restore exec bits lost by the artifact transfer
-              run: bash packages/task-cli/ci/scripts/restore-exec-bits.sh packages
+              run: bash packages/task-cli/ci/scripts/restore-exec-bits.sh packages task win32-x64,darwin-arm64
 
             - name: Smoke test the packed CLI
-              run: bash packages/task-cli/ci/scripts/smoke-packed.sh packages "${{ needs.build-and-test.outputs.version }}"
+              run: bash packages/task-cli/ci/scripts/smoke-packed.sh packages task "${{ needs.build-and-test.outputs.version }}" win32-x64,darwin-arm64
 
     publish:
         needs: build-and-test
@@ -144,7 +146,7 @@ jobs:
 
             # upload/download-artifact drop file modes: without this the published launcher is 0644 (EACCES on macOS).
             - name: Restore exec bits lost by the artifact transfer
-              run: bash packages/task-cli/ci/scripts/restore-exec-bits.sh packages
+              run: bash packages/task-cli/ci/scripts/restore-exec-bits.sh packages task win32-x64,darwin-arm64
 
             - name: Publish platform packages
               run: |

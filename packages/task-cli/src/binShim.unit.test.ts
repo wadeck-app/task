@@ -40,6 +40,7 @@ function loadRun(): (deps: Deps) => number {
 	const source = readFileSync(TEMPLATE, 'utf8')
 		.replaceAll('{{CLI_NAME}}', 'task')
 		.replaceAll('{{PKG_PREFIX}}', 'task-cli')
+		.replaceAll('{{PLATFORMS}}', 'win32-x64,darwin-arm64')
 		.replace(/^#!.*\n/, '');
 	const mod: { exports: { run?: (deps: Deps) => number } } = { exports: {} };
 	// require.main is undefined here, so `require.main === module` is false: the shim does not run itself.
@@ -212,7 +213,7 @@ describe('bin shim: unsupported platforms fail early and loudly', () => {
 			expect(run(t.deps)).toBe(1);
 
 			expect(t.err()).toBe(
-				`task: unsupported platform ${platform}-${arch}. Supported: win32-x64, darwin-arm64 (Apple silicon).\n`
+				`task: unsupported platform ${platform}-${arch}. Supported: win32-x64, darwin-arm64.\n`
 			);
 			expect(t.out()).toBe('');
 			expect(t.calls).toHaveLength(0);
@@ -233,6 +234,16 @@ describe('bin shim: unsupported platforms fail early and loudly', () => {
 		const source = readFileSync(TEMPLATE, 'utf8');
 		expect(source).not.toMatch(/PKG_PREFIX\}\}-darwin-x64/);
 		expect(source).not.toContain("'darwin-x64'");
+	});
+
+	// A placeholder the generator does not know would reach users as a literal `{{NAME}}` in the shipped shim.
+	it('the rendered shim has no `{{` left (every placeholder of the template is substituted)', () => {
+		const rendered = readFileSync(TEMPLATE, 'utf8')
+			.replaceAll('{{CLI_NAME}}', 'task')
+			.replaceAll('{{PKG_PREFIX}}', 'task-cli')
+			.replaceAll('{{PLATFORMS}}', 'win32-x64,darwin-arm64');
+		expect(rendered).not.toContain('{{');
+		expect(rendered).toContain("'win32-x64,darwin-arm64'.split(',')");
 	});
 });
 
