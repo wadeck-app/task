@@ -8,6 +8,7 @@ import { loadProjectSetup, projectFactsOf } from './projectConfig.js';
 import type { ResolvedProject } from './resolveProject.js';
 import { taskLogWriter } from './strategyLog.js';
 import { tasksDirOf } from './storage.js';
+import { transportOpener } from './strategyTransport.js';
 import type { TaskStorage } from './storage.js';
 
 export interface OpenTaskContextInput {
@@ -24,6 +25,10 @@ export interface OpenTaskContextInput {
 	registry?: TaskPluginRegistry;
 	/** The environment plugins read tokens from. Default: `process.env`. */
 	env?: NodeJS.ProcessEnv;
+	/** Every read comes from the system itself, never from a cache (the source of a migration). Default: the plugin's own policy. */
+	freshReads?: boolean;
+	/** The writes must raise no queue event (a migration): a remote strategy asks its server to stay silent. Default: events as usual. */
+	suppressEvents?: boolean;
 }
 
 /** Task files are written whole or not at all (temp file, fsync, rename): a crash never leaves half a task. */
@@ -51,6 +56,7 @@ export function openTaskContext(input: OpenTaskContextInput): TaskServiceContext
 		...(projectPath === undefined ? {} : { path: projectPath }),
 	};
 	const facts = projectFactsOf(config);
+	const opener = transportOpener(strategy, input.env ?? process.env);
 	const lazy = createLazyBackend(
 		strategy.plugin,
 		() =>
@@ -66,6 +72,9 @@ export function openTaskContext(input: OpenTaskContextInput): TaskServiceContext
 				fidelity: strategy.fidelity,
 				fills: strategy.fills,
 				log: taskLogWriter(),
+				...(input.freshReads === true ? { freshReads: true } : {}),
+				...(input.suppressEvents === true ? { suppressEvents: true } : {}),
+				...(opener === undefined ? {} : { openTransport: opener }),
 			}),
 		strategy.plugin.capabilitiesFor?.(strategy.fills) ?? strategy.plugin.capabilities
 	);
@@ -80,11 +89,19 @@ export function openTaskContext(input: OpenTaskContextInput): TaskServiceContext
 	};
 }
 
-/** Opens the context of a project found by `resolveProject` (its storage, id, name and path). */
-export function openResolvedProject(resolved: ResolvedProject, globalConfigDir?: string): TaskServiceContext {
+/**
+ * Opens the context of a project found by `resolveProject` (its storage, id, name and path). `extra` carries what only a caller with
+ * special needs sets (tests: the environment tokens are read from; a migration: fresh reads).
+ */
+export function openResolvedProject(
+	resolved: ResolvedProject,
+	globalConfigDir?: string,
+	extra: Pick<OpenTaskContextInput, 'env' | 'registry' | 'freshReads' | 'suppressEvents'> = {}
+): TaskServiceContext {
 	return openTaskContext({
 		storage: resolved.storage,
 		globalConfigDir,
 		project: { id: resolved.id, name: resolved.name, path: resolved.path },
+		...extra,
 	});
 }

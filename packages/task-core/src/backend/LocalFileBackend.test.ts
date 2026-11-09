@@ -44,6 +44,7 @@ describe('LocalFileBackend', () => {
 			comments: true,
 			writes: 'full',
 			indexedGraph: true,
+			events: 'client',
 		});
 	});
 

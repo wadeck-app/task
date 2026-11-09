@@ -125,3 +125,28 @@ export type { CapabilityRow, FillRow, StrategyReport, StrategyTarget, TokenRow }
 export { showStrategy } from './strategyReport.js';
 export type { CheckLine, ReadNotice } from './plugins/kinds.js';
 export { StrategyConfigError } from './strategyConfig.js';
+// task migrate (design 1.8): the engine over any two backends, and the entry over two registered projects.
+export type { MigrateProjectsInput } from './migrate/migrateProjects.js';
+export { migrateProjects } from './migrate/migrateProjects.js';
+export type {
+	LossKind,
+	LossRow,
+	MigrationCounts,
+	MigrationEstimate,
+	MigrationFailure,
+	MigrationMismatch,
+	MigrationOptions,
+	MigrationProgress,
+	MigrationResult,
+	MigrationSide,
+	MigrationStatus,
+} from './migrate/migrateTypes.js';
+export { DEFAULT_MIGRATION_OPTIONS, LOSS_GROUPS, LOSS_KINDS } from './migrate/migrateTypes.js';
+export { MigrationRefusedError, MigrationStateError } from './migrate/migrateErrors.js';
+// `task serve`: the server side of the remote strategy (stage 4).
+export type { RunningTaskServer, TaskServerOptions } from './server/taskServer.js';
+export { TaskServerStartError, assertServable, startTaskServer } from './server/taskServer.js';
+export { MIN_TOKEN_LENGTH } from './server/serverAuth.js';
+export { eventSinkFor, eventsRaisedByServer } from './eventsRaisedByServer.js';
+export type { ServerTokenInput, TokenOrigin } from './server/serverToken.js';
+export { DEFAULT_TOKEN_ENV, resolveServerToken } from './server/serverToken.js';

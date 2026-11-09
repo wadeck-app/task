@@ -19,11 +19,14 @@ import {
 	InvalidCommentTextError,
 	PartialWriteError,
 	RateLimitedError,
+	RemoteIncompatibleError,
+	RemoteProjectMismatchError,
 	TaskConflictError,
 	TaskNotFoundError,
 	UnsupportedByBackendError,
 } from '@wadeck-app/task-core';
 
+import { MigrationRefusedError, MigrationStateError } from './migrate/migrateErrors.js';
 import { PluginCreateError } from './plugin-host/index.js';
 import { PluginNotImplementedError } from './plugins/kinds.js';
 import { StrategyConfigError } from './strategyConfig.js';
@@ -103,7 +106,8 @@ export function describeError(error: unknown): ErrorDescription {
 	if (
 		error instanceof BackendUnreachableError ||
 		error instanceof BackendTimeoutError ||
-		error instanceof BackendAuthError
+		error instanceof BackendAuthError ||
+		error instanceof RemoteIncompatibleError
 	) {
 		return describe('unavailable', error, error.hint);
 	}
@@ -144,6 +148,8 @@ export function describeError(error: unknown): ErrorDescription {
 	) {
 		return describe('invalid', error, error.hint);
 	}
+	if (error instanceof MigrationRefusedError) return describe('invalid', error, error.hint);
+	if (error instanceof MigrationStateError) return describe('conflict', error, error.hint);
 	if (error instanceof NoReadableProjectsError) {
 		return describe('internal', error, error.hint, { skipped: error.failures });
 	}
@@ -209,6 +215,8 @@ export function isRemoteFailure(error: unknown): boolean {
 		error instanceof BackendUnreachableError ||
 		error instanceof BackendTimeoutError ||
 		error instanceof BackendAuthError ||
+		error instanceof RemoteIncompatibleError ||
+		error instanceof RemoteProjectMismatchError ||
 		error instanceof RateLimitedError ||
 		error instanceof BackendDataError ||
 		error instanceof BackendLimitError ||

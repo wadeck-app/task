@@ -8,6 +8,10 @@ import {
 	BackendUnreachableError,
 	PartialWriteError,
 	RateLimitedError,
+	RemoteIncompatibleError,
+	RemoteTimeoutError,
+	RemoteUnauthorizedError,
+	RemoteUnreachableError,
 	StaleRevisionError,
 	UnsupportedByBackendError,
 } from './backendErrors';
@@ -185,5 +189,60 @@ describe('BackendRejectedError', () => {
 		expect(error.operation).toBe('addLabel');
 		expect(error.message).toBe('GitHub refused it: name is too long');
 		expect(error.hint).toBe('Use at most 50');
+	});
+});
+
+describe('the errors of the remote strategy', () => {
+	it('RemoteUnreachableError is a BackendUnreachableError of kind remote whose hint names the address and `task serve`', () => {
+		const error = new RemoteUnreachableError('http://nas.lan:7788/', 'connect ECONNREFUSED 192.168.1.5:7788');
+
+		expect(error).toBeInstanceOf(BackendUnreachableError);
+		expect(error.name).toBe('RemoteUnreachableError');
+		expect(error.backendKind).toBe('remote');
+		expect(error.host).toBe('nas.lan:7788');
+		expect(error.message).toBe('Cannot reach nas.lan:7788 (connect ECONNREFUSED 192.168.1.5:7788)');
+		expect(error.hint).toContain('task serve');
+		expect(error.hint).toContain('http://nas.lan:7788/');
+		expect(error.hint).toContain('firewall');
+		expect(error.hint).toContain('task strategy check');
+	});
+
+	it('RemoteUnauthorizedError is a BackendAuthError of kind remote and needs a hint', () => {
+		const error = new RemoteUnauthorizedError(
+			'unauthenticated',
+			'The server refused the token',
+			'Check TASK_TOKEN'
+		);
+
+		expect(error).toBeInstanceOf(BackendAuthError);
+		expect(error.name).toBe('RemoteUnauthorizedError');
+		expect(error.backendKind).toBe('remote');
+		expect(error.reason).toBe('unauthenticated');
+		expect(() => new RemoteUnauthorizedError('missing', 'm', ' ')).toThrow(/hint/);
+	});
+
+	it('RemoteIncompatibleError shows both versions and says which machine to update', () => {
+		const clientNewer = new RemoteIncompatibleError('http://h:1', 3, { min: 1, max: 2 });
+		const serverNewer = new RemoteIncompatibleError('http://h:1', 1, { min: 2, max: 3 });
+		const unknown = new RemoteIncompatibleError('http://h:1', 1, undefined);
+
+		expect(clientNewer.name).toBe('RemoteIncompatibleError');
+		expect(clientNewer.message).toBe('The task server at http://h:1 does not speak protocol 3 (it supports 1..2)');
+		expect(clientNewer.hint).toMatch(/update task on the machine that runs task serve/i);
+		expect(serverNewer.hint).toMatch(/update task on this machine/i);
+		expect(unknown.message).toContain('does not say which protocols it supports');
+		expect(unknown.hint).toContain('task serve');
+	});
+
+	it('RemoteTimeoutError says a read can be repeated, and that a write MAY have been applied', () => {
+		const read = new RemoteTimeoutError('nas.lan:7788', 10_000, 'read');
+		const write = new RemoteTimeoutError('nas.lan:7788', 10_000, 'write');
+
+		expect(read).toBeInstanceOf(BackendTimeoutError);
+		expect(read.backendKind).toBe('remote');
+		expect(read.message).toBe('nas.lan:7788 did not answer within 10 s');
+		expect(read.hint).toContain('timeoutSeconds');
+		expect(write.hint).toMatch(/may have been applied/i);
+		expect(write.hint).toContain('task show');
 	});
 });

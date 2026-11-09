@@ -805,6 +805,7 @@ describe('queue events - the task events are declared to the queue (registerEven
 			'onTaskTypeChanged',
 			'onTaskUnblocked',
 			'onTaskUnlinked',
+			'onTasksMigrated',
 		]);
 		const marker = JSON.parse(fs.readFileSync(markerFile(), 'utf8')) as Record<string, string>;
 		expect(marker['hash']).toMatch(/^[0-9a-f]{64}$/);

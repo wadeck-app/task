@@ -28,6 +28,12 @@ export function revisionOf(record: TaskRecord): string {
 	return crypto.createHash('sha256').update(JSON.stringify(stored)).digest('hex').slice(0, 16);
 }
 
+/** True for an ISO 8601 instant that round-trips (so it sorts as text like every other instant of a record). */
+function isIsoInstant(text: string): boolean {
+	const time = Date.parse(text);
+	return !Number.isNaN(time) && new Date(time).toISOString() === text;
+}
+
 function versioned(record: TaskRecord): VersionedRecord {
 	return { ...record, revision: revisionOf(record) };
 }
@@ -162,7 +168,14 @@ export class LocalFileBackend implements TaskBackend {
 
 	// ---- writes: fields ----
 	async create(input: CreateTaskInput): Promise<VersionedRecord> {
-		return versioned(this.store.create(input.title, input.status, input.parentId, input.description));
+		if (input.createdAt !== undefined && !isIsoInstant(input.createdAt)) {
+			throw new Error(
+				`createdAt "${input.createdAt}" is not an ISO 8601 instant (for example 2026-11-09T10:00:00.000Z)`
+			);
+		}
+		return versioned(
+			this.store.create(input.title, input.status, input.parentId, input.description, input.createdAt)
+		);
 	}
 
 	async updateStatus(id: string, status: TaskStatus, options?: WriteOptions): Promise<VersionedRecord> {

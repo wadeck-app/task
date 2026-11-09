@@ -158,14 +158,23 @@ export class TaskStore {
 
 	private readonly writeFile: (file: string, content: string) => void;
 
-	/** @param description stored only when it differs from `title`. */
-	create(title: string, initialStatus: TaskStatus, parentId?: string, description?: string): TaskRecord {
+	/**
+	 * @param description stored only when it differs from `title`.
+	 * @param createdAt ISO instant to record instead of now (a task migrated from another system); not validated here.
+	 */
+	create(
+		title: string,
+		initialStatus: TaskStatus,
+		parentId?: string,
+		description?: string,
+		createdAt?: string
+	): TaskRecord {
 		if (parentId !== undefined) {
 			this.requireParent(parentId);
 		}
 		this.ensureDirectory();
 
-		const now = new Date().toISOString();
+		const now = createdAt ?? new Date().toISOString();
 		const id = generateExecutionId();
 
 		const record: TaskRecord = {

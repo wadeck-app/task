@@ -7,7 +7,8 @@ import type { BackendCapabilities } from '../backend/capabilities.js';
 import { LOCAL_CAPABILITIES } from '../backend/capabilities.js';
 import { LocalFileBackend } from '../backend/LocalFileBackend.js';
 import type { ListQuery, Page, TaskBackend, VersionedRecord, WriteOptions } from '../backend/TaskBackend.js';
-import type { TaskSummary } from '../TaskStore.js';
+import { TaskStore } from '../TaskStore.js';
+import type { TaskStoreOptions, TaskSummary } from '../TaskStore.js';
 
 export const RESTRICTED_CAPABILITIES: BackendCapabilities = Object.freeze({
 	...LOCAL_CAPABILITIES,
@@ -175,4 +176,12 @@ export class RestrictedBackend extends LocalFileBackend {
 		}
 		return super.listPage(query);
 	}
+}
+
+/**
+ * The restricted backend over `tasksDir`, for the packages that test against a backend with fewer capabilities (task migrate):
+ * the store class is not exported by task-core, so they ask for the backend by directory like `createLocalBackend`.
+ */
+export function createRestrictedBackend(tasksDir: string, options: TaskStoreOptions = {}): RestrictedBackend {
+	return new RestrictedBackend(new TaskStore(tasksDir, options));
 }

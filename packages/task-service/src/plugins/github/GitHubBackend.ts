@@ -71,6 +71,7 @@ export const GITHUB_CAPABILITIES: BackendCapabilities = Object.freeze({
 	writes: 'full',
 	// The list carries the parent of each issue, not its links.
 	indexedGraph: false,
+	events: 'client',
 });
 
 /** The capabilities of a backend whose project declared these fills (the base ones plus what each fill enables). */

@@ -7,12 +7,13 @@ import { fileURLToPath } from 'node:url';
 import {
 	appendTaskLog,
 	createQueueEventSink,
+	eventSinkFor,
 	getTaskLogDir,
 	openResolvedProject,
 	readProjectOption,
 	resolveProjectFromArgs,
 } from '@wadeck-app/task-service';
-import type { ProjectOption, ResolvedProject } from '@wadeck-app/task-service';
+import type { ProjectOption, ResolvedProject, TaskServiceContext } from '@wadeck-app/task-service';
 import { declareBeforeFirstDelivery } from './QueueEventsDeclaration.js';
 import { TASK_BUNDLE_NAME } from './TaskBundleName.js';
 import { parseArgs, usesProjectDirOption } from './cli/args.js';
@@ -25,7 +26,9 @@ import { installUnhandledRejectionHandler } from './cli/unhandledRejection.js';
 import { printUpdateNotice } from './cli/updateNotice.js';
 import { runCliSubcommand } from './commands/CliSubcommands.js';
 import { describeProjectSelection, runListAllProjects } from './commands/GlobalViewCommands.js';
+import { isMigrateHelp, migrateHelp, projectFlagRefusal, runMigrate } from './commands/MigrateCommand.js';
 import { runProjectsCommand } from './commands/ProjectsCommand.js';
+import { isServeHelp, runServe, serveHelp } from './commands/ServeCommand.js';
 import { isStatusHelp } from './commands/StatusCommand.js';
 import { isStrategyHelp, parseStrategyInvocation, runStrategy, strategyHelp } from './commands/StrategyCommand.js';
 import { PROJECT_COMMANDS, VALID_COMMANDS_HINT } from './commands/projectCommands.js';
@@ -71,10 +74,12 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 		command === '--help' ||
 		command === '--version' ||
 		command === '-V' ||
+		command === '-v' ||
 		command === 'cli' ||
 		command === 'projects' ||
 		(command === 'status' && isStatusHelp(rest)) ||
-		(command === 'strategy' && isStrategyHelp(rest));
+		(command === 'strategy' && isStrategyHelp(rest)) ||
+		(command === 'serve' && isServeHelp(rest));
 	if (notScoped && projectOptionError === undefined && projectOption.flag !== undefined) {
 		const typed = typedProjectFlag(args);
 		if (typed !== undefined) process.stderr.write(ignoredProjectFlagNote(typed) + '\n');
@@ -83,7 +88,7 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 	if (!command || command === '--help') {
 		return { exitCode: 0, output: taskHelp() };
 	}
-	if (command === '--version' || command === '-V') {
+	if (command === '--version' || command === '-V' || command === '-v') {
 		return { exitCode: 0, output: VERSION };
 	}
 	if (command === 'cli') {
@@ -95,6 +100,21 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 	// Help needs no project (the listing itself does: it goes through the handler below).
 	if (command === 'status' && isStatusHelp(rest)) {
 		return { exitCode: 0, output: STATUS_HELP };
+	}
+
+	// Migration names its two projects itself (--from, --to): no project of its own, so -p is refused (it would name a third one),
+	// TASK_PROJECT is not read. The events (one summary, the per-task ones with --emit-events) go through the same queue sink.
+	if (command === 'migrate') {
+		if (isMigrateHelp(rest)) return migrateHelp();
+		if (projectOptionError !== undefined || projectOption.flag !== undefined) return projectFlagRefusal(jsonMode);
+		return runMigrate(rest, jsonMode, {
+			configDir,
+			makeSink: () =>
+				declareBeforeFirstDelivery(
+					createQueueEventSink({ getLogDir: () => getTaskLogDir(ConfigDir.get('task')) }),
+					{ configDir: ConfigDir.get('task'), taskVersion: VERSION }
+				),
+		});
 	}
 
 	// The strategy commands open the project themselves: a config problem is their answer (a line of the check), not a failure
@@ -114,6 +134,54 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 		return runStrategy(invocation.sub, jsonMode, resolved, configDir);
 	}
 
+	// task serve: one project (like any command), then it runs in the foreground until the process is asked to stop. Its own events are
+	// raised through the queue of THIS machine: the server is the only place a served project's events come from.
+	if (command === 'serve') {
+		if (isServeHelp(rest)) return serveHelp();
+		let ctx: TaskServiceContext;
+		try {
+			if (projectOptionError !== undefined) throw projectOptionError;
+			const resolved = resolveProjectFromArgs({ cwd, argv: args }).project;
+			announceResolution(resolved);
+			ctx = openResolvedProject(resolved, configDir);
+		} catch (error) {
+			return failure(jsonMode, error);
+		}
+		const stop = new AbortController();
+		const onSignal = (): void => stop.abort();
+		process.once('SIGINT', onSignal);
+		process.once('SIGTERM', onSignal);
+		const logDir = getTaskLogDir(ConfigDir.get('task'));
+		try {
+			return await runServe(rest, jsonMode, {
+				ctx,
+				env: process.env,
+				makeSink: () =>
+					declareBeforeFirstDelivery(createQueueEventSink({ getLogDir: () => logDir }), {
+						configDir: ConfigDir.get('task'),
+						taskVersion: VERSION,
+					}),
+				out: text => process.stdout.write(`${text}\n`),
+				warn: text => process.stderr.write(`${text}\n`),
+				stop: stop.signal,
+				version: VERSION,
+				// Request lines (info) only with TASK_DEBUG=1; warnings and errors always.
+				log: (level, message) => {
+					if (level === 'info' && process.env['TASK_DEBUG'] !== '1') return;
+					try {
+						appendTaskLog(logDir, level, message);
+					} catch {
+						/* a log that cannot be written must not stop the server */
+					}
+				},
+			});
+		} finally {
+			process.off('SIGINT', onSignal);
+			process.off('SIGTERM', onSignal);
+			await ctx.dispose?.();
+		}
+	}
+
 	// Across every registered project: needs no project here.
 	if (command === 'list' && rest.includes('--all-projects')) {
 		if (projectOptionError !== undefined) return failure(jsonMode, projectOptionError);
@@ -131,14 +199,19 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 		if (projectOptionError !== undefined) throw projectOptionError;
 		const resolved = resolveProjectFromArgs({ cwd, argv: args }).project;
 		announceResolution(resolved);
+		const ctx = openResolvedProject(resolved, configDir);
 		env = {
 			command,
 			jsonMode,
-			ctx: openResolvedProject(resolved, configDir),
-			// The first event of the process declares the task events to the queue, unless the marker says it was done.
-			eventSink: declareBeforeFirstDelivery(
-				createQueueEventSink({ getLogDir: () => getTaskLogDir(ConfigDir.get('task')) }),
-				{ configDir: ConfigDir.get('task'), taskVersion: VERSION }
+			ctx,
+			// The first event of the process declares the task events to the queue, unless the marker says it was done. A remote project
+			// raises none here: its server did (eventSinkFor), so delivering them as well would run every subscriber twice.
+			eventSink: eventSinkFor(
+				ctx,
+				declareBeforeFirstDelivery(
+					createQueueEventSink({ getLogDir: () => getTaskLogDir(ConfigDir.get('task')) }),
+					{ configDir: ConfigDir.get('task'), taskVersion: VERSION }
+				)
 			),
 		};
 	} catch (error) {

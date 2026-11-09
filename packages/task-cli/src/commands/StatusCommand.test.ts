@@ -196,6 +196,6 @@ describe('task status list', () => {
 	it('is in the list of valid commands shown for an unknown command', async () => {
 		const result = await runTaskCommand(['nope'], await project('shop'));
 
-		expect(result.output).toContain('type, status, strategy, projects');
+		expect(result.output).toContain('type, status, strategy, serve, projects');
 	});
 });

@@ -9,6 +9,7 @@ import { collectTokenKeys, fillRows, showStrategy } from './strategyReport.js';
 import type { StrategyReport, StrategyTarget } from './strategyReport.js';
 import { taskLogWriter } from './strategyLog.js';
 import { tasksDirOf } from './storage.js';
+import { transportOpener } from './strategyTransport.js';
 import { checkTokenEnv, checkTokenFile } from './tokenCheck.js';
 import type { ResolvedStrategy } from './strategyResolve.js';
 
@@ -91,6 +92,7 @@ async function backendLines(
 	facts: ProjectFacts
 ): Promise<CheckLine[]> {
 	let instance: Awaited<ReturnType<typeof createInstance<typeof strategy.plugin>>>;
+	const opener = transportOpener(strategy, target.env ?? process.env);
 	try {
 		instance = await createInstance(strategy, {
 			source: strategy.source,
@@ -107,6 +109,7 @@ async function backendLines(
 			fidelity: strategy.fidelity,
 			fills: strategy.fills,
 			log: taskLogWriter(),
+			...(opener === undefined ? {} : { openTransport: opener }),
 		});
 	} catch (error) {
 		const hint = describeError(error).hint;

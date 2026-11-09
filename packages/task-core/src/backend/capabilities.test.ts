@@ -10,6 +10,12 @@ describe('the runtime lists that mirror the capability types', () => {
 	});
 });
 
+describe('the events capability', () => {
+	it('the local store emits its events from the process that changes the tasks', () => {
+		expect(LOCAL_CAPABILITIES.events).toBe('client');
+	});
+});
+
 describe('the writes capability', () => {
 	it('the local store writes in full', () => {
 		expect(LOCAL_CAPABILITIES.writes).toBe('full');

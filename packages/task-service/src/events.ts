@@ -151,8 +151,37 @@ export interface TaskDeletedEvent {
 	} & TaskProjectEnv;
 }
 
+/**
+ * A migration (`task migrate`) wrote tasks into this project: one summary event per run, after the last write, never one per task
+ * (unless --emit-events asks for those). The project fields of the payload are the TARGET project's (the tasks now live there).
+ */
+export interface TasksMigratedEvent {
+	name: 'onTasksMigrated';
+	payload: {
+		/** The summary is about no single task; the key exists so that code reading `payload.taskId` of any event still type-checks. */
+		taskId?: undefined;
+		fromProjectId: string;
+		fromProjectName: string;
+		toProjectId: string;
+		toProjectName: string;
+		/** Tasks created on the target by this run. */
+		created: number;
+		/** Tasks an earlier run had created and this run finished. */
+		resumed: number;
+		/** Tasks already migrated: nothing was done. */
+		skipped: number;
+		/** Tasks the run stopped on (0 or 1). */
+		failed: number;
+		/** Tasks not reached because the run stopped. */
+		remaining: number;
+		/** True when every task of the source is migrated and verified. */
+		complete: boolean;
+	} & TaskProjectEnv;
+}
+
 /** Event produced by an operation. Operations never deliver events: the caller hands them to an EventSink. */
 export type TaskEvent =
+	| TasksMigratedEvent
 	| TaskCreatedEvent
 	| TaskStatusChangeEvent
 	| TaskLinkedEvent

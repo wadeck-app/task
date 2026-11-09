@@ -3,7 +3,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { createLocalBackend, LOCAL_CAPABILITIES } from '@wadeck-app/task-core';
+import { createLocalBackend, LOCAL_CAPABILITIES, LOCAL_TRAITS } from '@wadeck-app/task-core';
 
 import type { CheckLine, StrategyContext, StrategyInstance, StrategyPlugin } from '../kinds.js';
 
@@ -91,6 +91,7 @@ export const localPlugin: StrategyPlugin = {
 	capabilities: LOCAL_CAPABILITIES,
 	// Everything is native: no fill applies.
 	fillTechniques: {},
+	traitsFor: () => LOCAL_TRAITS,
 
 	validate(options) {
 		const [first] = Object.keys(options);

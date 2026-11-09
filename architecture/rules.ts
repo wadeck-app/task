@@ -161,7 +161,15 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 					'the github strategy reads its token from the file the config names (the value goes to the HTTP client only, never into a result)',
 				'packages/task-service/src/plugins/github/responseCache.ts':
 					'the read-through cache of the github strategy: answers of GitHub as files in the project data folder',
+				'packages/task-service/src/migrate/migrateJournal.ts':
+					'the journal and the lock of a migration: files in the data folder of the target project (task data goes through the backends)',
+				'packages/task-service/src/migrate/migrate.testkit.ts':
+					'test fixture of the migration tests (disposable folders, folder snapshots); nothing shipped imports it',
 				'packages/task-service/src/projectsHealth.ts': 'existence of the registered folders',
+				'packages/task-service/src/plugins/plain-http/transportToken.ts':
+					'the plain-http transport reads its token from the file the config names (the value goes to the request headers only, never into a result)',
+				'packages/task-service/src/server/serverToken.ts':
+					'task serve reads its bearer token from the file --token-file names (the value goes to the token check only, never into a message)',
 				'packages/task-service/src/queueEventSink.ts': 'the queue publisher configuration files',
 				'packages/task-service/src/taskLog.ts': 'the task log files',
 				'packages/task-service/src/tokenCheck.ts':
@@ -338,6 +346,7 @@ export function checkSource(
 		}
 	}
 	violations.push(...checkPluginFolders(file, source, options));
+	violations.push(...checkServerFolder(file, source, options));
 	return violations;
 }
 
@@ -442,6 +451,73 @@ export function checkPluginFolders(
 					'only plugins/builtinPlugins.ts imports a plugin folder; ask the registry for the plugin'
 				);
 			}
+		}
+	}
+	return violations;
+}
+
+// ---- the task server (stage 4 of the storage design, `task serve`) ----
+
+const SERVER_DIR = 'packages/task-service/src/server/';
+const SERVER_BARREL = 'packages/task-service/src/index.ts';
+const NODE_NETWORK = /^(node:)?(http|https|http2|net|tls|dgram)$/;
+
+/**
+ * Rules of the server folder, by the folder of the file checked (task tests are free):
+ * - `server/` imports neither a plugin (the client side of the remote strategy: the two ends of the protocol meet only through
+ *   task-core/remote), nor the plugin host, nor the migration engine, nor the queue or project SDKs (it is handed its sink and its
+ *   project), and makes no HTTP request of its own.
+ * - Outside `server/`, only the package barrel imports it, and no Node network module is imported (`node:http`, `node:net`...): the
+ *   forge and remote clients use the global `fetch`, and the one place that listens is the server.
+ */
+export function checkServerFolder(
+	file: string,
+	source: string,
+	options: { isTest: boolean; resolveRelative: (specifier: string) => string }
+): Violation[] {
+	// A testkit is a fixture (fake servers); nothing shipped imports it.
+	if (options.isTest || /\.testkit\.ts$/.test(file) || !file.startsWith('packages/task-service/src/')) return [];
+	const violations: Violation[] = [];
+	const specifiers = importedModules(source);
+	const code = stripComments(source);
+	if (file.startsWith(SERVER_DIR)) {
+		for (const specifier of specifiers) {
+			const target = landing(specifier, options.resolveRelative);
+			if (
+				/^packages\/task-service\/src\/(plugins|plugin-host|migrate)\//.test(target) ||
+				/^@wadeck-app\/(queue-sdk|project-sdk)(\/|$)/.test(target)
+			) {
+				violations.push({
+					file,
+					rule: 'server-imports-client-side',
+					detail: `imports "${specifier}": the server is handed its sink and its project; it does not reach the clients, the plugins, the migration or the SDKs (the protocol is shared through task-core/remote)`,
+				});
+			}
+		}
+		if (/\bfetch\s*\(/.test(code)) {
+			violations.push({
+				file,
+				rule: 'server-makes-requests',
+				detail: 'the server answers requests, it makes none (the clients are in plugins/)',
+			});
+		}
+		return violations;
+	}
+	for (const specifier of specifiers) {
+		const target = landing(specifier, options.resolveRelative);
+		if (specifier.startsWith('.') && target.startsWith(SERVER_DIR) && file !== SERVER_BARREL) {
+			violations.push({
+				file,
+				rule: 'server-folder-import',
+				detail: `imports "${specifier}": only the package barrel (index.ts) exposes the server; ask task-service for it`,
+			});
+		}
+		if (NODE_NETWORK.test(specifier)) {
+			violations.push({
+				file,
+				rule: 'node-network-outside-server',
+				detail: `imports "${specifier}": the task server (server/taskServer.ts) is the one place that listens; clients use the global fetch`,
+			});
 		}
 	}
 	return violations;

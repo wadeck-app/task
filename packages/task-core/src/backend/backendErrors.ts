@@ -50,7 +50,7 @@ function requireHint(errorName: string, hint: string): void {
 
 /** The server cannot be reached at all (DNS, refused, reset, TLS): nothing was read or written. */
 export class BackendUnreachableError extends Error {
-	readonly hint =
+	readonly hint: string =
 		'Check the network connection, a proxy or firewall, and the address in the strategy options (baseUrl).';
 
 	constructor(
@@ -65,7 +65,7 @@ export class BackendUnreachableError extends Error {
 
 /** The server did not answer in time. */
 export class BackendTimeoutError extends Error {
-	readonly hint =
+	readonly hint: string =
 		'Retry; on a slow network raise strategy.options.timeoutSeconds in the project config, or check the status page of the service.';
 
 	constructor(
@@ -199,5 +199,95 @@ export class PartialWriteError extends Error {
 		this.notApplied = init.notApplied;
 		this.hint = init.hint;
 		requireHint('PartialWriteError', init.hint);
+	}
+}
+
+// ---- the remote strategy (task serve): the typed failures of the HTTP client, each with a next step ----
+
+/** The task server cannot be reached (DNS, refused, reset, a redirect): nothing was read or written. */
+export class RemoteUnreachableError extends BackendUnreachableError {
+	override readonly hint: string;
+
+	constructor(
+		readonly url: string,
+		reason: string
+	) {
+		super('remote', RemoteUnreachableError.hostOf(url), reason);
+		this.name = 'RemoteUnreachableError';
+		this.hint = `Is "task serve" running on ${this.host}? Check the address (${url}), the port and the firewall of the machine that serves the tasks, then run: task strategy check`;
+	}
+
+	static hostOf(url: string): string {
+		try {
+			return new URL(url).host;
+		} catch {
+			return url;
+		}
+	}
+}
+
+/** The server did not answer in time. A write that timed out MAY have been applied: the hint says how to find out. */
+export class RemoteTimeoutError extends BackendTimeoutError {
+	override readonly hint: string;
+
+	constructor(host: string, timeoutMs: number, kind: 'read' | 'write') {
+		super('remote', host, timeoutMs);
+		this.name = 'RemoteTimeoutError';
+		this.hint =
+			kind === 'write'
+				? 'The change may have been applied: check with task show (or task list) before repeating it. To wait longer, raise timeoutSeconds in strategy.options.transport.options.'
+				: 'Retry; on a slow network raise timeoutSeconds in strategy.options.transport.options, or check that the machine that runs task serve is up (task strategy check).';
+	}
+}
+
+/** The token is missing here, or the server refused it (401, 403). */
+export class RemoteUnauthorizedError extends BackendAuthError {
+	constructor(reason: 'missing' | 'unauthenticated' | 'forbidden', message: string, hint: string) {
+		super('remote', reason, message, hint);
+		this.name = 'RemoteUnauthorizedError';
+	}
+}
+
+/** This task and the server do not speak a common protocol version (HTTP 426, or a range that excludes ours). */
+export class RemoteIncompatibleError extends Error {
+	readonly hint: string;
+
+	constructor(
+		readonly url: string,
+		readonly clientProtocol: number,
+		readonly serverProtocol: { min: number; max: number } | undefined
+	) {
+		super(
+			serverProtocol === undefined
+				? `The task server at ${url} does not speak protocol ${clientProtocol} and does not say which protocols it supports`
+				: `The task server at ${url} does not speak protocol ${clientProtocol} (it supports ${serverProtocol.min}..${serverProtocol.max})`
+		);
+		this.name = 'RemoteIncompatibleError';
+		if (serverProtocol === undefined) {
+			this.hint =
+				'Update task on both machines (the one that runs task serve and this one) to the same version, then run: task strategy check';
+		} else {
+			this.hint =
+				clientProtocol > serverProtocol.max
+					? 'Update task on the machine that runs task serve, then run: task strategy check'
+					: 'Update task on this machine, then run: task strategy check';
+		}
+	}
+}
+
+/** The server answers, but serves another project than the config expects (strategy.options.project): nothing was read or written. */
+export class RemoteProjectMismatchError extends BackendRejectedError {
+	constructor(
+		readonly url: string,
+		readonly expected: string,
+		readonly served: { id?: string; name: string }
+	) {
+		super(
+			'remote',
+			'connect',
+			`The task server at ${url} serves project "${served.name}"${served.id === undefined ? '' : ` (${served.id})`}, not "${expected}" (strategy.options.project)`,
+			`Point transport.options.url at the server of "${expected}", or change strategy.options.project to "${served.name}" (or remove it to accept whatever the server serves), then run: task strategy check`
+		);
+		this.name = 'RemoteProjectMismatchError';
 	}
 }

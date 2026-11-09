@@ -1,4 +1,5 @@
 import type { ModuleContext } from '@wadeck-app/app-core-sdk';
+import { eventsRaisedByServer } from '@wadeck-app/task-service';
 import type { EventSink, QueueEventSinkOptions, ReadNotice, TaskEvent } from '@wadeck-app/task-service';
 
 import { toHttpError, toInlineError } from '../errors.js';
@@ -46,6 +47,9 @@ export function createRouteKit(
 	deps: { eventSink: EventSink; logDir: string; writeStderr: (text: string) => void }
 ): RouteKit {
 	const { eventSink, logDir, writeStderr } = deps;
+	// Projects (ids) opened by this module whose server raises their queue events: the events a use case returns for them are not
+	// delivered here, the server already raised them. Refreshed by every `open`, so a project switched to another strategy follows.
+	const raisedByServer = new Set<string>();
 	return {
 		dataDir: ctx.dataDir,
 		route(method, subPath, run) {
@@ -77,9 +81,16 @@ export function createRouteKit(
 			});
 		},
 		open(req) {
-			return openProject(queryValue(req.query, 'project'));
+			const opened = openProject(queryValue(req.query, 'project'));
+			if (eventsRaisedByServer(opened)) raisedByServer.add(opened.project.id);
+			else raisedByServer.delete(opened.project.id);
+			return opened;
 		},
-		deliver: events => deliverForRequest(eventSink, events),
+		deliver: events =>
+			deliverForRequest(
+				eventSink,
+				events.filter(event => !raisedByServer.has(event.payload.taskProjectId ?? ''))
+			),
 	};
 }
 

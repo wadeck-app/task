@@ -1,6 +1,6 @@
 // The plugin kinds of task and their typed instances (design 3A.3): the one place where the generic host seam (../plugin-host)
 // meets task types. Built-in plugins import this file, the seam and task-core types only (architecture rule PLUGINS_IMPORT_SEAM_ONLY).
-import type { BackendCapabilities, BackendKind, TaskBackend } from '@wadeck-app/task-core';
+import type { BackendCapabilities, BackendKind, BackendTraits, TaskBackend } from '@wadeck-app/task-core';
 
 import type { Plugin, PluginInstance, PluginRegistry } from '../plugin-host/index.js';
 
@@ -17,10 +17,11 @@ export interface CheckLine {
 /**
  * Something a read did that the user should know and that is not a failure: data served from the cache because the server could
  * not be asked (`stale`), something of the remote system that has no task equivalent and was left out (`ignored`), or a write done
- * through a declared fill that is only approximate (`emulated`: a human edit on the remote system may overwrite it).
+ * through a declared fill that is only approximate (`emulated`: a human edit on the remote system may overwrite it), or queue events a
+ * task server saved the change for but could not hand to its queue (`events`).
  */
 export interface ReadNotice {
-	kind: 'stale' | 'ignored' | 'emulated';
+	kind: 'stale' | 'ignored' | 'emulated' | 'events';
 	/** One sentence, ready to print after `warning: `. */
 	text: string;
 	/** `stale`: when the data served was read from the server. */
@@ -75,6 +76,22 @@ export interface StrategyContext {
 	fills: DeclaredFills;
 	/** Appends a line to the task log (`task cli logs`). Never throws. Request lines are logged only when `TASK_DEBUG=1`. */
 	log: (level: 'info' | 'warn' | 'error', message: string) => void;
+	/**
+	 * Every read must come from the system itself, never from a cache the plugin keeps (a migration copies what the source holds NOW).
+	 * Absent: the plugin's own cache policy applies.
+	 */
+	freshReads?: boolean;
+	/**
+	 * Opens the transport the project's `strategy.options.transport` slot selects (a remote strategy talks through it; the host resolved
+	 * and validated the slot at load). Absent when the strategy has no transport slot.
+	 */
+	openTransport?: () => Promise<TransportInstance>;
+	/**
+	 * The writes of this context must not raise queue events (a migration, which raises one summary instead). Honoured by a strategy
+	 * whose server raises the events (`capabilities.events: 'server'`): it asks the server to stay silent. Other strategies raise
+	 * their events in the process, which simply does not hand them to a sink.
+	 */
+	suppressEvents?: boolean;
 }
 
 /**
@@ -101,6 +118,16 @@ export interface StrategyPlugin extends Plugin<'strategy', StrategyInstance, Str
 	 * options alone: the same single-sentence shape, a problem about one option starting with its dotted key and ": ".
 	 */
 	validateForProject?(options: Record<string, unknown>, project: ProjectFacts): string | undefined;
+	/**
+	 * What the backend keeps and where its limits are (`task migrate` reads it to build the loss table before it writes). Called with
+	 * options that passed `validate`. Absent: the plugin promises nothing (the migration then assumes the backend keeps nothing).
+	 */
+	traitsFor?(options: Record<string, unknown>, fills: DeclaredFills, project: ProjectFacts): BackendTraits;
+	/**
+	 * Where the tasks live, as a string two projects share only when they share the storage (the repository of a forge). `task migrate`
+	 * refuses a migration whose two sides have the same location. Absent: the storage is private to the project (the data folder).
+	 */
+	locationOf?(options: Record<string, unknown>): string | undefined;
 }
 
 /** What a transport plugin builds (design 3.1): how bytes reach the server. It never parses protocol payloads. */
@@ -115,6 +142,10 @@ export interface TransportInstance extends PluginInstance {
 
 export interface TransportContext {
 	env: NodeJS.ProcessEnv;
+	/** The HTTP client to use (tests inject a fake one). Default: the global `fetch`. */
+	fetch?: typeof fetch;
+	/** The timers the time limit of a request uses (tests drive them by hand). Default: the global ones. */
+	timers?: { setTimeout: typeof setTimeout; clearTimeout: typeof clearTimeout };
 }
 
 export type TransportPlugin = Plugin<'transport', TransportInstance, TransportContext>;

@@ -16,7 +16,8 @@ Concepts:
               The global config (~/.task/config.yml: defaults, hooks) stays task's own file
   strategy    Where the tasks of a project are stored: the 'strategy' section of the project config ({type, fidelity, options}). Without it the project uses
               the local files of the registry (type: local), silently. type: github keeps the tasks as the issues of a GitHub repository, read and written through
-              the official REST API; gitlab and remote are declared but not installed yet and fail loudly. See: task strategy --help
+              the official REST API; type: remote keeps them on another computer, behind a 'task serve' there; gitlab is declared but not installed yet and fails
+              loudly. See: task strategy --help, task serve --help
   id          Short prefix of the task UUID - any unambiguous prefix is accepted
 
 Usage:
@@ -79,6 +80,10 @@ Usage:
   task delete ... --cascade-delete           Also delete all descendants of the matched tasks (default: children become root tasks)
   task strategy show [--json]                Strategy of the project (type, fidelity, fills, tokens, capabilities native/emulated/unsupported); opens nothing
   task strategy check [--json]               Validate the strategy: config, tokens, backend; exit 1 with the fix of each problem
+  task serve [--port N] [--host H] [--allow-lan] [--token-env NAME | --token-file PATH] [--json]
+                                             Serve this project's tasks to other computers (HTTP/JSON, protocol 1, bearer token, single writer), in the
+                                             foreground until Ctrl+C. Loopback only unless --allow-lan. Another computer reaches it with strategy type remote.
+                                             See: task serve --help
   task cli self-check                        Validate installation
   task cli update [--check] [--log]         Update to latest version
   task cli logs [--follow]                   Print today's invocation log
@@ -86,6 +91,10 @@ Usage:
   task cli unregister [--json]               Remove the task app-module from app-core
   task cli declare-events [--json]           Tell the queue which events task pushes, now (normally automatic, see Events below)
   task projects summary [--json]             Open/total tasks per registered project and in total (unreadable projects listed with their reason)
+  task migrate --from <project> --to <project> [--dry-run] [--allow-loss <kinds>] [--resume] [--history-comment] [--emit-events] [--json]
+                                             Copy every task of one registered project into another, between any two storages (local files, github):
+                                             plan and loss table first (--dry-run stops there), then create, link, comment and read back; resumable and
+                                             idempotent, never changes the source. Needs no project of its own: see task migrate --help
 
 Global flags:
   --config <dir>       Global config directory (default: ~/.task)
@@ -113,6 +122,8 @@ Events (pushed to queue through @wadeck-app/queue-sdk after the change is saved,
   onTaskCommentRemoved comment-rm                       taskId, commentId
   onTaskParentChanged  set-parent, remove-parent        taskId, oldParentId, newParentId
   onTaskDeleted        delete                           taskId, description (the full text), status, parentId, orphanedChildIds, removedLinkCount, commentCount (only when the task had comments)
+  onTasksMigrated      migrate                          fromProjectId, fromProjectName, toProjectId, toProjectName, created, resumed, skipped, failed, remaining, complete (one per run, after
+                                                        the last write; its project fields are the target's; migrate raises no per-task event unless --emit-events)
   Absent fields are omitted (no oldType for a first type, no oldValue for a new key or a description the task did not have, no oldParentId / newParentId for a root task).
   Nothing fires when nothing changed (same type, label already there or absent, same meta value, same parent) or when the command fails.
   delete fires one onTaskDeleted per deleted task, after the deletion; never for --dry-run. With --cascade-delete the order is
@@ -140,6 +151,68 @@ Environment variables:
   TASK_CONFIG       Override global config directory (default: ~/.task)
   TASK_PROJECT      Project of the shared registry (name, alias or id), below -p; refused by 'task list --all-projects'`;
 }
+
+/** `task migrate --help`. */
+export const MIGRATE_HELP = `task migrate - copy the tasks of one registered project into another
+
+Usage:
+  task migrate --from <project> --to <project> [--dry-run] [--allow-loss <kind>[,<kind>...]] [--resume] [--history-comment] [--emit-events] [--json]
+
+  --from <project>      The source: a registered project (id, unique id prefix of 4 or more, name or alias; never a path). Only read.
+  --to <project>        The target: another registered project. Its own strategy (config.yml) decides where its tasks go: local files or
+                        github. To move a project onto GitHub, register a second project with the project CLI (project add <dir>), give it
+                        a strategy section (task strategy show/check) and migrate into it. The same project on both sides, or two projects
+                        on the same repository, is refused. TASK_PROJECT and -p are not read: the two sides are these options.
+  --dry-run             Read both sides, print the plan, the loss table and the estimate, and stop: nothing is written (no task, no journal,
+                        no lock, no request that changes anything); exit 0 even when the plan is blocked.
+  --allow-loss <kinds>  Accept losses by kind (comma separated, repeatable). Without it a plan that loses anything is BLOCKED (exit 1,
+                        nothing written). A group covers its kinds (links, hierarchy); all covers everything. The dry run prints the kinds
+                        that apply and the exact command to accept them.
+  --resume              Continue a run that stopped (rate limit, network, crash): the journal says what was done, nothing is created twice.
+                        Without it, an unfinished journal is refused with this hint.
+  --history-comment     Write one note comment per task with its original creation instant and status history, so those are not lost
+                        (resolves the history and created-at kinds when the target has comments).
+  --emit-events         Also deliver the events the same writes raise in an ordinary session (onTaskCreated, onTaskLabelAdded, ...). By default
+                        a migration raises ONE summary event (onTasksMigrated) after the last write: a bulk copy is not a user changing tasks
+                        one by one, and a subscriber that reacts to onTaskCreated would otherwise run once per task.
+  --json                The result as JSON (plan, counts, losses, id map, verification, journal); progress lines stay on stderr.
+
+What is copied (through the storage port, never by touching files or the API): title, description, status, type, labels, metadata, parent,
+links, comments. Tasks are created parents first; fields, then links (once both ends exist), then comments in order; then every task written
+to is read back and compared with the plan (a difference is reported, never repaired). Ids change: the target gets its own, the id map is in
+the result and the marker meta migratedFrom=<source project id>/<source task id> is written on each task (when the target has metadata).
+Texts are not rewritten: a reference to an old id stays as it was (counted in the notes). A comment is written by the migrating user: its first
+line carries the original time (and the author when the target cannot store one) and a marker; a migration never writes a comment twice.
+Statuses are kept by name; one the target project lacks is a loss. The source is never changed, and a task already on the target is never
+overwritten (a field a person set is left alone). updatedAt is the migration time.
+
+Loss kinds (--dry-run lists the ones that apply):
+  status, status-outcome   a status the target lacks (task gets its default) / ends a task differently there
+  type, labels, meta       a type the target does not list, a label it refuses (length, reserved), metadata it cannot store
+  comments                 the target has no comments
+  history, created-at      the status history and activity log cannot be replayed through the port; the target assigns the creation instant
+                           (--history-comment keeps both in a note comment)
+  marker                   the target has no metadata, so migrated tasks are recognised by the journal only
+  text-length              a text longer than the target accepts is cut with a note
+  hierarchy:unsupported, hierarchy:depth, hierarchy:children, hierarchy:orphan, hierarchy:cycle
+                           parents the target cannot keep, or the source does not hold together; the task becomes a root
+  links:blockedBy, links:duplicateOf, links:causedBy, links:dangling
+                           link types the target cannot store (causedBy on GitHub), links to tasks that are not in the source
+
+Journal and idempotence: <target data folder>/migrate-journal-<source id>-<target id>.json (atomic writes; a damaged file is a loud error, never
+replaced). A second run recognises the tasks it already migrated by the journal, else by the marker in the target, and creates nothing. A lock
+file (migrate.lock) keeps two runs from writing the same target. Only one run at a time; a lock left by a dead process is taken over.
+Rate limits: the run stops cleanly, prints when the limit lifts and the exact command to continue. Any other failure stops at the first one,
+with the journal saved and the command to continue; the dry run prints an estimate of the writes, requests and time first.
+
+Exit codes:
+  0  done, or a dry run
+  1  blocked by a loss, stopped (rate limit, failure), differences found on the read-back, or an error (nothing was changed)
+
+Examples:
+  task migrate --from shop --to shop-github --dry-run
+  task migrate --from shop --to shop-github --allow-loss history,created-at,marker
+  task migrate --from shop --to shop-github --allow-loss history,created-at,marker --resume`;
 
 /** `task projects --help`. */
 export const PROJECTS_HELP = `task projects - figures over the projects of the shared project registry
@@ -169,7 +242,7 @@ Usage:
 
 Configuration (the project's config.yml, section 'strategy'; no section = type: local, silently):
   strategy:
-      type: local            # local, or github; gitlab, remote are declared but not installed yet: a loud error, never a fallback
+      type: local            # local, github or remote; gitlab is declared but not installed yet: a loud error, never a fallback
       fidelity: strict       # strict (default) | degrade: whether an approximate or lossy fill is accepted
       options: {}            # read by the strategy plugin only; local takes none. fills: <capability>: <technique> | { use, fidelity }
                              # secrets: tokenEnv: <NAME of an environment variable> or tokenFile: <path>; a literal token is refused
@@ -199,7 +272,56 @@ The github strategy (the issues of one repository, through the official REST API
   how to finish it. causedBy links, comment authors and anything a fill would emulate but the config does not declare fail with the key to write.
   Create the labels once with: task labels sync. Changes made on GitHub itself raise no task event (only changes made through task do).
 
+The remote strategy (the tasks are stored by a 'task serve' on another computer, which is the single writer and raises the queue events;
+this computer raises none for the project; see: task serve --help):
+  strategy:
+      type: remote
+      options:
+          project: shop                          # optional: the id (or name) of the project the server serves; checked before the first call
+          transport:                             # how to reach the server (plugin plain-http: plain HTTP, trusted LAN only)
+              type: plain-http
+              options:
+                  url: http://nas.lan:7788       # required; no credentials in it
+                  tokenEnv: TASK_REMOTE_TOKEN    # the NAME of the variable (or tokenFile: <absolute path>); the token task serve was started with
+                  timeoutSeconds: 10             # per request (default 10); a write that times out may still have been applied
+  The statuses and types of this project should equal those of the served project (strategy check compares them; the server refuses a status it
+  does not know). A server that cannot be reached, a refused token and another protocol version are errors with their fix; strategy check names them.
+
 A 'strategy' key in the global ~/.task/config.yml, a literal credential, and 'pluginsDir' (external plugins) are errors naming the file and the key.`;
+
+/** `task serve --help`. */
+export const SERVE_HELP = `task serve - serve this project's tasks to other computers
+
+Usage:
+  task serve [-p <project>] [--port <n>] [--host <address>] [--allow-lan] [--token-env <NAME> | --token-file <path>] [--json]
+  task serve --help
+
+What it does: serves the tasks of ONE project (the one -p, TASK_PROJECT or the cwd selects; its strategy must be local) over HTTP/JSON, protocol 1,
+to computers whose project says 'strategy: type: remote' (task strategy --help). This server is the single writer of the project: it runs the
+writes one at a time and raises the queue events of the changes itself (the computers that connect raise none). It runs in the foreground until
+Ctrl+C or SIGTERM, finishing the writes in flight; task has no daemon manager and this does not detach: use the means of your shell or service manager.
+
+Options:
+  --port <n>            Port to listen on (default 7788); 0 lets the system pick a free one (the address is printed)
+  --host <address>      Address to listen on (default 127.0.0.1: this computer only). Any other address needs --allow-lan
+  --allow-lan           Accept a host that other computers can reach (for example 0.0.0.0 or 192.168.1.5). Prints a loud warning: plain HTTP,
+                        the token and the tasks are readable by anyone on that network. Trusted LAN only
+  --token-env <NAME>    NAME of the environment variable that holds the bearer token (default TASK_SERVE_TOKEN)
+  --token-file <path>   Absolute path of a file that holds the token (POSIX: mode 600). Instead of --token-env
+  --json                One JSON line on stdout when it listens: {listening, url, host, port, lan, protocol, project, auth, events}
+
+The token: required (no anonymous mode), at least 16 characters, never on the command line. Make one, for example:
+  node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))"
+and give the same value to both computers: export TASK_SERVE_TOKEN=<token> here, and the variable named by tokenEnv in the transport options of the
+client project there.
+
+Security (v1): plain HTTP, no TLS: anyone who can read the network traffic reads the token and the tasks and can replay the token. Failed
+authentications are counted, delayed by 500 ms each and logged (task cli logs); there is no lockout. Request bodies are limited to 1 MiB, every input
+is validated, ids are never paths, there is no CORS. For anything beyond a trusted LAN put a TLS wrapper in front (the client accepts https:// addresses).
+
+Example:
+  export TASK_SERVE_TOKEN=$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")
+  task serve -p shop --host 0.0.0.0 --allow-lan --port 7788`;
 
 /** `task type --help`. */
 export const TYPE_HELP = `task type - manage valid task types for this project

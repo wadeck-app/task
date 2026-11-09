@@ -2,12 +2,13 @@ import { isPlugin } from '../plugin-host/index.js';
 import { createBuiltinRegistry } from './builtinPlugins.js';
 
 describe('the built-in plugins', () => {
-	it('registers strategies github and local and transport plain-http, each by ref and alias', () => {
+	it('registers strategies github, local and remote and transport plain-http, each by ref and alias', () => {
 		const registry = createBuiltinRegistry();
 
 		expect(registry.list('strategy').map(entry => [entry.ref, entry.aliases])).toEqual([
 			['plugins.github.default', ['github']],
 			['plugins.local.default', ['local']],
+			['plugins.remote.default', ['remote']],
 		]);
 		expect(registry.list('transport').map(entry => [entry.ref, entry.aliases])).toEqual([
 			['plugins.plain-http.default', ['plain-http']],

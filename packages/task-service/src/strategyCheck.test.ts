@@ -2,9 +2,11 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import { createPluginRegistry } from './plugin-host/index.js';
 import { createBuiltinRegistry } from './plugins/builtinPlugins.js';
+import { plainHttpPlugin } from './plugins/plain-http/plainHttpPlugin.js';
 import { PluginNotImplementedError } from './plugins/kinds.js';
-import type { CheckLine, StrategyPlugin } from './plugins/kinds.js';
+import type { CheckLine, StrategyPlugin, TaskPluginKinds } from './plugins/kinds.js';
 import { checkStrategy } from './strategyCheck.js';
 import type { StrategyTarget } from './strategyReport.js';
 
@@ -36,6 +38,19 @@ function target(configYml: string | undefined, extra: Partial<StrategyTarget> = 
 /** A strategy derived from local, to change one thing at a time. */
 function derived(overrides: Partial<StrategyPlugin>): StrategyPlugin {
 	return { ...createBuiltinRegistry().lookup('local', 'strategy'), validate: () => undefined, ...overrides };
+}
+
+/** The built-ins with the remote strategy replaced by one that never touches the network (these tests check the configuration lines). */
+function remoteRegistry() {
+	return createPluginRegistry<TaskPluginKinds>([
+		{
+			ref: 'plugins.local.default',
+			plugin: createBuiltinRegistry().lookup('local', 'strategy'),
+			aliases: ['local'],
+		},
+		{ ref: 'plugins.remote.default', plugin: derived({ backendKind: 'remote' }), aliases: ['remote'] },
+		{ ref: 'plugins.plain-http.default', plugin: plainHttpPlugin, aliases: ['plain-http'] },
+	]);
 }
 
 function registryWith(plugins: Record<string, StrategyPlugin>) {
@@ -95,9 +110,9 @@ describe('checkStrategy: a config that cannot be used', () => {
 		expect(result.lines).toHaveLength(1);
 		expect(result.lines[0]).toMatchObject({ name: 'config', status: 'error' });
 		expect(result.lines[0]!.text).toContain(
-			'strategy.type: strategy type gitlab is declared but no plugin is installed; built-in types: github, local'
+			'strategy.type: strategy type gitlab is declared but no plugin is installed; built-in types: github, local, remote'
 		);
-		expect(result.lines[0]!.fix).toMatch(/Set strategy.type to a built-in type \(github, local\)/);
+		expect(result.lines[0]!.fix).toMatch(/Set strategy.type to a built-in type \((github, local, remote)\)/);
 		expect(result.report).toBeUndefined();
 	});
 
@@ -170,7 +185,7 @@ describe('checkStrategy: the transport', () => {
 		async url => {
 			const result = await checkStrategy(
 				target(remoteConfig(url), {
-					registry: registryWith({ remote: derived({}) }),
+					registry: remoteRegistry(),
 					env: { TASK_REMOTE_TOKEN: 'x' },
 				})
 			);
@@ -191,7 +206,7 @@ describe('checkStrategy: the transport', () => {
 		async url => {
 			const result = await checkStrategy(
 				target(remoteConfig(url), {
-					registry: registryWith({ remote: derived({}) }),
+					registry: remoteRegistry(),
 					env: { TASK_REMOTE_TOKEN: 'x' },
 				})
 			);
@@ -203,7 +218,7 @@ describe('checkStrategy: the transport', () => {
 
 	it('a typo in the transport options is a config error naming the dotted key', async () => {
 		const yml = remoteConfig('http://nas.lan').replace('tokenEnv', 'tokenEnvv');
-		const result = await checkStrategy(target(yml, { registry: registryWith({ remote: derived({}) }) }));
+		const result = await checkStrategy(target(yml, { registry: remoteRegistry() }));
 
 		expect(result.lines[0]!.text).toContain(
 			'strategy.options.transport.options.tokenEnvv: unknown option for transport "plain-http"'

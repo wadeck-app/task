@@ -133,7 +133,7 @@ describe('task strategy show', () => {
 			fills: [],
 			tokens: [],
 		});
-		expect((report['capabilities'] as unknown[]).length).toBe(14);
+		expect((report['capabilities'] as unknown[]).length).toBe(15);
 	});
 
 	it('creates nothing in the data folder', async () => {
@@ -152,7 +152,7 @@ describe('task strategy show', () => {
 			`Error: ${ownConfigFile(project.storage)}: strategy.type: strategy type gitlab is declared but no plugin is installed; built-in types: github, local`
 		);
 		expect(result.output).toContain(
-			'Set strategy.type to a built-in type (github, local) or remove the strategy section'
+			'Set strategy.type to a built-in type (github, local, remote) or remove the strategy section'
 		);
 	});
 
@@ -164,7 +164,7 @@ describe('task strategy show', () => {
 		expect(result.exitCode).toBe(1);
 		const body = JSON.parse(result.output) as { error: string; hint: string };
 		expect(body.error).toContain('strategy.type: strategy type gitlab is declared but no plugin is installed');
-		expect(body.hint).toContain('built-in type (github, local)');
+		expect(body.hint).toContain('built-in type (github, local, remote)');
 	});
 });
 
@@ -214,7 +214,7 @@ describe('task strategy check', () => {
 
 		expect(result.exitCode).toBe(1);
 		expect(result.output).toMatch(/config\s+error\s+.*strategy type gitlab is declared but no plugin is installed/);
-		expect(result.output).toContain('fix: Set strategy.type to a built-in type (github, local)');
+		expect(result.output).toContain('fix: Set strategy.type to a built-in type (github, local, remote)');
 		expect(result.output).toContain('Result: FAILED (1 error, 0 warnings)');
 		expect(result.output).not.toMatch(/tasks\s+ok/);
 	});

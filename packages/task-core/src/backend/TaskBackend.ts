@@ -62,6 +62,11 @@ export interface CreateTaskInput {
 	parentId?: string;
 	/** Stored only when it differs from the title. */
 	description?: string;
+	/**
+	 * ISO 8601 instant of the creation, for a task that existed elsewhere before (a migration). Honoured only by a backend whose
+	 * traits say `keepsCreatedAt`; any other ignores it. Absent: now.
+	 */
+	createdAt?: string;
 }
 
 export interface BackendCommentChange extends Omit<CommentChange, 'task'> {

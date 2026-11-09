@@ -590,3 +590,114 @@ describe('the plugin host seam and the built-in plugins', () => {
 		expect(files['packages/task-service/src/plugins/local/localPlugin.ts']).toMatch(/local/);
 	});
 });
+
+// Stage 4 of the same design (`task serve`): the server and the clients are the two ends of one protocol and meet only through
+// task-core/remote; the one place that listens is the server.
+describe('the task server and the remote client stay apart', () => {
+	const SRC = 'packages/task-service/src';
+	const resolver = (target: string) => (): string => target;
+	const check = (file: string, source: string, resolved: string, isTest = false): string[] =>
+		checkSource(file, source, PACKAGE_RULES['task-service'], { isTest, resolveRelative: resolver(resolved) }).map(
+			v => v.rule
+		);
+
+	it('the server folder exists and holds sources (a scan of nothing proves nothing)', () => {
+		expect(fs.readdirSync(path.join(ROOT, SRC, 'server')).length).toBeGreaterThan(0);
+	});
+
+	describe('server/ reaches no client, plugin, migration or SDK', () => {
+		const file = `${SRC}/server/taskServer.ts`;
+
+		it('may import its own files, task-core, the context, the events and Node', () => {
+			expect(check(file, "import { x } from './serverAuth.js';", `${SRC}/server/serverAuth.js`)).toEqual([]);
+			expect(check(file, "import { x } from '../events.js';", `${SRC}/events.js`)).toEqual([]);
+			expect(check(file, "import { x } from '@wadeck-app/task-core';", '@wadeck-app/task-core')).toEqual([]);
+			expect(check(file, "import * as http from 'node:http';", 'node:http')).toEqual([]);
+		});
+
+		it.each([
+			["import { x } from '../plugins/remote/RemoteBackend.js';", `${SRC}/plugins/remote/RemoteBackend.js`],
+			["import { x } from '../plugins/kinds.js';", `${SRC}/plugins/kinds.js`],
+			["import { x } from '../plugin-host/index.js';", `${SRC}/plugin-host/index.js`],
+			["import { x } from '../migrate/migrateRun.js';", `${SRC}/migrate/migrateRun.js`],
+			["import { x } from '@wadeck-app/queue-sdk';", '@wadeck-app/queue-sdk'],
+			["import { x } from '@wadeck-app/project-sdk';", '@wadeck-app/project-sdk'],
+		])('refuses %s', (source, resolved) => {
+			expect(check(file, source, resolved)).toContain('server-imports-client-side');
+		});
+
+		it('makes no request of its own', () => {
+			expect(check(file, 'const r = await fetch(url);', 'x')).toContain('server-makes-requests');
+			expect(check(file, '// no fetch(url) here, only a comment', 'x')).toEqual([]);
+		});
+
+		it('its tests are free', () => {
+			expect(
+				check(
+					`${SRC}/server/x.test.ts`,
+					"import { x } from '../plugins/remote/RemoteBackend.js';",
+					`${SRC}/plugins/remote/RemoteBackend.js`,
+					true
+				)
+			).toEqual([]);
+		});
+	});
+
+	describe('the remote client reaches no server', () => {
+		const file = `${SRC}/plugins/remote/RemoteBackend.ts`;
+
+		it('a plugin cannot import the server folder (it may import task-core only)', () => {
+			expect(
+				check(file, "import { x } from '../../server/taskServer.js';", `${SRC}/server/taskServer.js`)
+			).toContain('plugin-imports-outside-seam');
+		});
+	});
+
+	describe('only the package barrel exposes the server, and only the server listens', () => {
+		it('the barrel may import it, another file may not', () => {
+			expect(
+				check(`${SRC}/index.ts`, "export { x } from './server/taskServer.js';", `${SRC}/server/taskServer.js`)
+			).toEqual([]);
+			expect(
+				check(
+					`${SRC}/openContext.ts`,
+					"import { x } from './server/taskServer.js';",
+					`${SRC}/server/taskServer.js`
+				)
+			).toContain('server-folder-import');
+		});
+
+		it.each(['node:http', 'http', 'node:https', 'node:net', 'node:tls', 'node:http2'])(
+			'%s outside server/ is reported',
+			specifier => {
+				expect(
+					check(`${SRC}/plugins/github/githubClient.ts`, `import * as x from '${specifier}';`, specifier)
+				).toContain('node-network-outside-server');
+				expect(check(`${SRC}/server/taskServer.ts`, `import * as x from '${specifier}';`, specifier)).toEqual(
+					[]
+				);
+				expect(check(`${SRC}/x.test.ts`, `import * as x from '${specifier}';`, specifier, true)).toEqual([]);
+			}
+		);
+
+		it('the other packages keep their own rules (the CLI and the module do not import the server folder by path)', () => {
+			expect(
+				checkSource(
+					'packages/task-cli/src/x.ts',
+					"import { x } from '../../task-service/src/server/taskServer.js';",
+					PACKAGE_RULES['task-cli'],
+					{
+						isTest: false,
+						resolveRelative: () => `${SRC}/server/taskServer.js`,
+					}
+				).map(v => v.rule)
+			).toEqual([]);
+		});
+	});
+
+	it('the files that read token files are on the fs allowlist, each with its reason', () => {
+		const files = PACKAGE_RULES['task-service'].fsAllowlist!.files;
+		expect(files[`${SRC}/server/serverToken.ts`]).toMatch(/token/);
+		expect(files[`${SRC}/plugins/plain-http/transportToken.ts`]).toMatch(/token/);
+	});
+});

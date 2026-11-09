@@ -47,6 +47,7 @@ export const TASK_EVENT_NAMES: Record<TaskEvent['name'], true> = {
 	onTaskCommentRemoved: true,
 	onTaskParentChanged: true,
 	onTaskDeleted: true,
+	onTasksMigrated: true,
 };
 
 /** The limits the queue daemon enforces on a declaration (queue-core `EventCatalog`); a test holds ours to them. */
@@ -471,6 +472,61 @@ export const queueEventDeclarations: readonly QueueEventDeclaration[] = [
 		correlationKey: 'payload.taskId',
 		terminal: true,
 		outcome: 'info',
+	},
+	{
+		name: 'onTasksMigrated',
+		description:
+			'A migration (task migrate) wrote tasks into a project. Fires once per run that created, finished or failed on at ' +
+			'least one task, after its last write; never per task (the per-task events only fire with --emit-events). The ' +
+			'project fields are the TARGET project. complete is true when every task is migrated. Does NOT fire for --dry-run, ' +
+			'a blocked plan, or a run that found nothing to do.',
+		schema: {
+			type: 'object',
+			properties: {
+				fromProjectId: { type: 'string', description: 'Registry id of the source project.' },
+				fromProjectName: { type: 'string' },
+				toProjectId: {
+					type: 'string',
+					description: 'Registry id of the target project (the tasks now live there).',
+				},
+				toProjectName: { type: 'string' },
+				created: { type: 'integer', description: 'Tasks created on the target by this run.' },
+				resumed: { type: 'integer', description: 'Tasks an earlier run had created and this run finished.' },
+				skipped: { type: 'integer', description: 'Tasks already migrated: nothing was done.' },
+				failed: { type: 'integer', description: 'Tasks the run stopped on (0 or 1).' },
+				remaining: { type: 'integer', description: 'Tasks not reached because the run stopped.' },
+				complete: { type: 'boolean', description: 'True when every task of the source is migrated.' },
+				...projectProperties,
+			},
+			required: [
+				'fromProjectId',
+				'fromProjectName',
+				'toProjectId',
+				'toProjectName',
+				'created',
+				'resumed',
+				'skipped',
+				'failed',
+				'remaining',
+				'complete',
+				...projectRequired,
+			],
+			additionalProperties: false,
+		},
+		example: {
+			fromProjectId: '9b1d4e7a',
+			fromProjectName: 'my-project',
+			toProjectId: '3fa9c1d2',
+			toProjectName: 'my-project-github',
+			created: 42,
+			resumed: 0,
+			skipped: 0,
+			failed: 0,
+			remaining: 0,
+			complete: true,
+			...projectExample,
+		},
+		correlationKey: 'payload.toProjectId',
 	},
 ];
 

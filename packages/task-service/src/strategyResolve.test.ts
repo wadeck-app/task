@@ -67,16 +67,16 @@ describe('resolveStrategy: the default', () => {
 });
 
 describe('resolveStrategy: types declared but not installed fail loudly, never fall back to local', () => {
-	it.each(['gitlab', 'remote', 'plugins.gitlab.default'])('%s', type => {
+	it.each(['gitlab', 'plugins.gitlab.default'])('%s', type => {
 		const error = failure({ type });
 		const bare = type.replace(/^plugins\.|\.default$/g, '');
 
 		expect(error.message).toBe(
-			`${FILE}: strategy.type: strategy type ${bare} is declared but no plugin is installed; built-in types: github, local`
+			`${FILE}: strategy.type: strategy type ${bare} is declared but no plugin is installed; built-in types: github, local, remote`
 		);
 		expect(error.path).toBe('strategy.type');
 		expect(error.hint).toMatch(
-			/Set strategy.type to a built-in type \(github, local\) or remove the strategy section/
+			/Set strategy.type to a built-in type \((github, local, remote)\) or remove the strategy section/
 		);
 	});
 
@@ -85,7 +85,7 @@ describe('resolveStrategy: types declared but not installed fail loudly, never f
 
 		expect(error.message).toBe(`${FILE}: strategy.type: unknown strategy plugin "foo"`);
 		expect(error.hint).toBe(
-			'Registered strategy plugins: github (plugins.github.default), local (plugins.local.default). Declared but not installed: gitlab, remote.'
+			'Registered strategy plugins: github (plugins.github.default), local (plugins.local.default), remote (plugins.remote.default). Declared but not installed: gitlab.'
 		);
 	});
 
@@ -158,7 +158,7 @@ describe('resolveStrategy: the transport slot of a declared remote strategy', ()
 
 		expect(error.path).toBe('strategy.options.transport.options.urll');
 		expect(error.message).toBe(
-			`${FILE}: strategy.options.transport.options.urll: unknown option for transport "plain-http" (known: url, tokenEnv, timeoutSeconds)`
+			`${FILE}: strategy.options.transport.options.urll: unknown option for transport "plain-http" (known: url, tokenEnv, tokenFile, timeoutSeconds)`
 		);
 	});
 
@@ -175,15 +175,31 @@ describe('resolveStrategy: the transport slot of a declared remote strategy', ()
 		expect(error.path).toBe('strategy.options.transport.options.url');
 	});
 
-	it('a valid transport still ends in the loud "no plugin installed" for the remote strategy', () => {
-		const error = failure({
+	it('a valid transport resolves with the remote strategy, which carries the resolved transport slot', () => {
+		const resolved = resolve({
 			type: 'remote',
 			options: { transport: { type: 'plain-http', options: { url: 'http://nas.lan:7788', tokenEnv: 'T' } } },
 		});
 
-		expect(error.message).toBe(
-			`${FILE}: strategy.type: strategy type remote is declared but no plugin is installed; built-in types: github, local`
+		expect(resolved.ref).toBe('plugins.remote.default');
+		expect(resolved.plugin.backendKind).toBe('remote');
+		expect(resolved.transport?.ref).toBe('plugins.plain-http.default');
+		expect(resolved.transport?.options).toEqual({ url: 'http://nas.lan:7788', tokenEnv: 'T' });
+	});
+
+	it('the remote strategy needs its transport slot, and refuses an unknown option, naming the key', () => {
+		expect(failure({ type: 'remote', options: {} }).message).toBe(
+			`${FILE}: strategy.options.transport: required (how to reach the server: { type: plain-http, options: { url, tokenEnv } })`
 		);
+		expect(
+			failure({
+				type: 'remote',
+				options: {
+					prject: 'shop',
+					transport: { options: { url: 'http://nas.lan:7788', tokenEnv: 'T' } },
+				},
+			}).path
+		).toBe('strategy.options.prject');
 	});
 });
 

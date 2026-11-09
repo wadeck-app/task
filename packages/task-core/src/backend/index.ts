@@ -5,6 +5,7 @@ export type {
 	BackendKind,
 	ConcurrencySupport,
 	DeleteSupport,
+	EventSupport,
 	HierarchySupport,
 	HistorySupport,
 	IdSupport,
@@ -12,7 +13,7 @@ export type {
 	StatusSupport,
 	WriteSupport,
 } from './capabilities.js';
-export { BACKEND_CAPABILITY_NAMES, BACKEND_KINDS, LOCAL_CAPABILITIES } from './capabilities.js';
+export { BACKEND_CAPABILITY_NAMES, BACKEND_KINDS, LOCAL_CAPABILITIES, REMOTE_CAPABILITIES } from './capabilities.js';
 export {
 	BackendAuthError,
 	BackendDataError,
@@ -22,6 +23,11 @@ export {
 	BackendUnreachableError,
 	PartialWriteError,
 	RateLimitedError,
+	RemoteIncompatibleError,
+	RemoteProjectMismatchError,
+	RemoteTimeoutError,
+	RemoteUnauthorizedError,
+	RemoteUnreachableError,
 	StaleRevisionError,
 	UnsupportedByBackendError,
 } from './backendErrors.js';
@@ -38,4 +44,6 @@ export type {
 	VersionedRecord,
 	WriteOptions,
 } from './TaskBackend.js';
+export type { BackendTraits } from './traits.js';
+export { LOCAL_TRAITS, NO_TRAITS } from './traits.js';
 export { LocalFileBackend, createLocalBackend, revisionOf } from './LocalFileBackend.js';

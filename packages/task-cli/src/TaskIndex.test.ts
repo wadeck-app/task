@@ -29,6 +29,13 @@ describe('runTaskCommand - version and help', () => {
 		expect(result.output).toMatch(/^\d{4}\.\d{2}\.\d{2}-\d{6}-\d+-[0-9a-zA-Z]+/);
 	});
 
+	it('-v (lowercase short form) prints the same version as --version', async () => {
+		const long = await runTaskCommand(['--version'], tmpDir);
+		const short = await runTaskCommand(['-v'], tmpDir);
+		expect(short.exitCode).toBe(0);
+		expect(short.output).toBe(long.output);
+	});
+
 	it('no args returns usage without requiring project init', async () => {
 		const result = await runTaskCommand([], tmpDir);
 		expect(result.exitCode).toBe(0);

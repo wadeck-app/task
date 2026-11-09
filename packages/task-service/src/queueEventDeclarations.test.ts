@@ -52,6 +52,7 @@ describe('queueEventDeclarations', () => {
 			'onTaskTypeChanged',
 			'onTaskUnblocked',
 			'onTaskUnlinked',
+			'onTasksMigrated',
 		]);
 		const declared = queueEventDeclarations.map(entry => entry.name);
 		expect([...declared].sort()).toEqual(expected);
@@ -68,7 +69,10 @@ describe('queueEventDeclarations', () => {
 			expect(Buffer.byteLength(JSON.stringify(entry.example))).toBeLessThanOrEqual(
 				QUEUE_EVENT_LIMITS.exampleBytes
 			);
-			expect(entry.correlationKey).toBe('payload.taskId');
+			// Every event is about one task, except the migration summary: it is about the target project.
+			expect(entry.correlationKey).toBe(
+				entry.name === 'onTasksMigrated' ? 'payload.toProjectId' : 'payload.taskId'
+			);
 		});
 
 		it('stays under the events-per-source limit', () => {

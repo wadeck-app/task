@@ -9,6 +9,7 @@ import { GitHubClient } from './githubClient.js';
 import { checkOptionsAgainstProject, parseGitHubOptions } from './githubOptions.js';
 import type { GitHubSettings } from './githubOptions.js';
 import { resolveToken } from './githubToken.js';
+import { githubTraits } from './githubTraits.js';
 import { DiskResponseCache } from './responseCache.js';
 import { StatusMapper } from './statusMapping.js';
 
@@ -54,6 +55,18 @@ export const githubPlugin: StrategyPlugin = {
 	validateForProject(options, project) {
 		const parsed = parseGitHubOptions(options);
 		return 'problem' in parsed ? parsed.problem : checkOptionsAgainstProject(parsed.settings, project);
+	},
+
+	traitsFor(options, fills) {
+		const parsed = parseGitHubOptions(options);
+		if ('problem' in parsed) throw new Error(parsed.problem);
+		return githubTraits(parsed.settings, fills);
+	},
+
+	locationOf(options) {
+		const parsed = parseGitHubOptions(options);
+		if ('problem' in parsed) return undefined;
+		return `github ${parsed.settings.baseUrl.toLowerCase()} ${parsed.settings.repo.full.toLowerCase()}`;
 	},
 
 	describe() {
@@ -131,7 +144,8 @@ export const githubPlugin: StrategyPlugin = {
 			tokenHint: tokenSentence(settings),
 			timeoutMs: settings.timeoutSeconds * 1000,
 			writeSpacingMs: settings.writeSpacingSeconds * 1000,
-			cacheTtlMs: settings.cacheTtlSeconds * 1000,
+			// A migration reads the system as it is now: no answer is served from the cache, every read is revalidated.
+			cacheTtlMs: context.freshReads === true ? 0 : settings.cacheTtlSeconds * 1000,
 			maxPages: settings.maxPages,
 			cache,
 			onNotice: notice,

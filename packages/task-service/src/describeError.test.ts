@@ -9,12 +9,17 @@ import {
 	BackendUnreachableError,
 	PartialWriteError,
 	RateLimitedError,
+	RemoteIncompatibleError,
+	RemoteProjectMismatchError,
+	RemoteTimeoutError,
+	RemoteUnauthorizedError,
+	RemoteUnreachableError,
 	TaskConflictError,
 	TaskNotFoundError,
 	UnsupportedByBackendError,
 } from '@wadeck-app/task-core';
 
-import { describeError } from './describeError.js';
+import { describeError, isRemoteFailure } from './describeError.js';
 import { PluginCreateError } from './plugin-host/index.js';
 import { PluginNotImplementedError } from './plugins/kinds.js';
 import { StrategyConfigError } from './strategyConfig.js';
@@ -297,5 +302,41 @@ describe('describeError: github writes', () => {
 			applied: ['removed the label status:todo'],
 			notApplied: ['close the issue'],
 		});
+	});
+});
+
+describe('describeError: the remote strategy', () => {
+	it('an unreachable, silent or refused task server is "unavailable" with the fix of its own error', () => {
+		const unreachable = describeError(new RemoteUnreachableError('http://nas.lan:7788', 'connect ECONNREFUSED'));
+		const timeout = describeError(new RemoteTimeoutError('nas.lan:7788', 10_000, 'write'));
+		const refused = describeError(
+			new RemoteUnauthorizedError('unauthenticated', 'token refused', 'Compare the tokens')
+		);
+		const incompatible = describeError(new RemoteIncompatibleError('http://nas.lan:7788', 2, { min: 1, max: 1 }));
+
+		for (const description of [unreachable, timeout, refused, incompatible]) {
+			expect(description.kind).toBe('unavailable');
+			expect(description.hint).toBeDefined();
+		}
+		expect(unreachable.hint).toContain('task serve');
+		expect(timeout.hint).toContain('may have been applied');
+		expect(refused.hint).toBe('Compare the tokens');
+		expect(incompatible.hint).toContain('Update task');
+	});
+
+	it('a server that serves another project than the config expects is "invalid" with the fix', () => {
+		const description = describeError(
+			new RemoteProjectMismatchError('http://nas.lan:7788', 'shop', { id: 'ab12cd34', name: 'warehouse' })
+		);
+
+		expect(description.kind).toBe('invalid');
+		expect(description.hint).toContain('strategy.options.project');
+	});
+
+	it('a project behind such a server counts as unreadable in the views that list several projects', () => {
+		expect(isRemoteFailure(new RemoteUnreachableError('http://nas.lan:7788', 'x'))).toBe(true);
+		expect(isRemoteFailure(new RemoteTimeoutError('nas.lan:7788', 1000, 'read'))).toBe(true);
+		expect(isRemoteFailure(new RemoteIncompatibleError('http://nas.lan:7788', 2, undefined))).toBe(true);
+		expect(isRemoteFailure(new RemoteProjectMismatchError('http://h:1', 'a', { name: 'b' }))).toBe(true);
 	});
 });

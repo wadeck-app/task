@@ -8,6 +8,7 @@ export {
 	runBackendContract,
 	runContractCase,
 } from './backendContract.js';
+export { RESTRICTED_CAPABILITIES, RestrictedBackend, createRestrictedBackend } from './restrictedBackend.js';
 export type {
 	ReadHarness,
 	ReadOnlyCase,
