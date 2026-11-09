@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ownConfigFile } from '@wadeck-app/task-service';
 import type { TaskEvent } from '@wadeck-app/task-service';
 import { FakeGitHub } from '@wadeck-app/task-service/fakeGitHub';
+import { FakeGitLab } from '@wadeck-app/task-service/fakeGitLab';
 
 import { runTaskCommand } from '../TaskIndex.js';
 import { type RegisteredTestProject, registerTestProject } from '../testHelpers.js';
@@ -33,6 +34,7 @@ let source: RegisteredTestProject;
 let target: RegisteredTestProject;
 let stderr: string[];
 let fake: FakeGitHub | undefined;
+let fakeLab: FakeGitLab | undefined;
 const TOKEN_VARIABLE = 'TASK_CLI_MIGRATE_TEST_TOKEN';
 
 beforeEach(async () => {
@@ -55,6 +57,8 @@ afterEach(async () => {
 	vi.unstubAllEnvs();
 	await fake?.stop();
 	fake = undefined;
+	await fakeLab?.stop();
+	fakeLab = undefined;
 	fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -386,5 +390,55 @@ describe('task migrate over a GitHub target (the fake server)', () => {
 		const again = await migrate(...allow);
 		expect(again.output).toMatch(/created 0, finished 0, skipped 3/);
 		expect(fake.writes().length).toBe(writes);
+	});
+});
+
+describe('task migrate over a GitLab target (the fake server, free tier; not verified against a real GitLab)', () => {
+	it('prints the estimate and the losses of the tier, copies the tasks, and a second run does nothing', async () => {
+		fakeLab = await FakeGitLab.start({ project: 'acme/shop', tier: 'free' });
+		fs.writeFileSync(
+			ownConfigFile(target.storage),
+			`statuses:
+    - backlog
+    - in-progress
+    - { name: done, terminal: true }
+strategy:
+    type: gitlab
+    options:
+        project: acme/shop
+        tier: free
+        baseUrl: ${fakeLab.baseUrl}
+        tokenEnv: ${TOKEN_VARIABLE}
+        writeSpacingSeconds: 0
+        timeoutSeconds: 3
+        statusMap:
+            backlog: { state: open }
+            in-progress: { state: open, label: 'status:in-progress' }
+            done: { state: closed }
+`
+		);
+		vi.stubEnv(TOKEN_VARIABLE, fakeLab.token);
+		await seed();
+
+		const blocked = await migrate('--dry-run');
+		expect(blocked.output).toContain('BLOCKING');
+		expect(blocked.output).toContain('hierarchy:unsupported');
+		expect(blocked.output).toContain('links:blockedBy');
+
+		const allow = ['--allow-loss', 'history,created-at,marker,hierarchy:unsupported,links:blockedBy'];
+		const dry = await migrate('--dry-run', ...allow);
+		expect(dry.exitCode, dry.output).toBe(0);
+		expect(dry.output).toMatch(/Estimate: +about \d+ writes, \d+ requests, /);
+		expect(fakeLab.writes()).toEqual([]);
+
+		const result = await migrate(...allow);
+		expect(result.exitCode, result.output).toBe(0);
+		expect([1, 2, 3].map(iid => fakeLab!.issue(iid)!.title).sort()).toEqual(['Child', 'Epic', 'Shipped']);
+		expect(fakeLab.issue(3)!.state).toBe('closed');
+
+		const writes = fakeLab.writes().length;
+		const again = await migrate(...allow);
+		expect(again.output).toMatch(/created 0, finished 0, skipped 3/);
+		expect(fakeLab.writes().length).toBe(writes);
 	});
 });

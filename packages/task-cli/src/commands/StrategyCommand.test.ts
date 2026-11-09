@@ -142,18 +142,16 @@ describe('task strategy show', () => {
 		expect(fs.existsSync(project.storage.dataDir)).toBe(false);
 	});
 
-	it('type: gitlab fails loudly with the file and the key, exit 1, and the fix', async () => {
+	it('type: gitlab without its options fails loudly with the file and the key, exit 1, and the fix', async () => {
 		writeStrategy('strategy:\n    type: gitlab\n');
 
 		const result = await runTaskCommand(['strategy', 'show'], project.dir);
 
 		expect(result.exitCode).toBe(1);
 		expect(result.output).toContain(
-			`Error: ${ownConfigFile(project.storage)}: strategy.type: strategy type gitlab is declared but no plugin is installed; built-in types: github, local`
+			`Error: ${ownConfigFile(project.storage)}: strategy.options.project: required (the path group/project, group/subgroup/project, or the numeric id)`
 		);
-		expect(result.output).toContain(
-			'Set strategy.type to a built-in type (github, local, remote) or remove the strategy section'
-		);
+		expect(result.output).toContain('Options of plugins.gitlab.default: project, baseUrl, tokenEnv');
 	});
 
 	it('--json error is {error, hint}', async () => {
@@ -163,8 +161,8 @@ describe('task strategy show', () => {
 
 		expect(result.exitCode).toBe(1);
 		const body = JSON.parse(result.output) as { error: string; hint: string };
-		expect(body.error).toContain('strategy.type: strategy type gitlab is declared but no plugin is installed');
-		expect(body.hint).toContain('built-in type (github, local, remote)');
+		expect(body.error).toContain('strategy.options.project: required');
+		expect(body.hint).toContain('Options of plugins.gitlab.default');
 	});
 });
 
@@ -213,8 +211,8 @@ describe('task strategy check', () => {
 		const result = await runTaskCommand(['strategy', 'check'], project.dir);
 
 		expect(result.exitCode).toBe(1);
-		expect(result.output).toMatch(/config\s+error\s+.*strategy type gitlab is declared but no plugin is installed/);
-		expect(result.output).toContain('fix: Set strategy.type to a built-in type (github, local, remote)');
+		expect(result.output).toMatch(/config\s+error\s+.*strategy\.options\.project: required/);
+		expect(result.output).toContain('fix: Options of plugins.gitlab.default');
 		expect(result.output).toContain('Result: FAILED (1 error, 0 warnings)');
 		expect(result.output).not.toMatch(/tasks\s+ok/);
 	});

@@ -1,0 +1,88 @@
+// The revision of an issue (design 1.6) and the check of a write against the revision the caller read.
+//
+// GitLab documents no optimistic-lock parameter on the issue edit (VERIFIED absence on docs.gitlab.com/api/issues; the ETag of the
+// REST API is UNVERIFIED), and `updated_at` is bumped by notes, label changes and state changes alike. So the revision is
+// `<updated_at>#<one short hash per part of the issue>`, and a write compares the PARTS IT CHANGES: a comment, or a label added to a
+// task whose title is being edited, is not a conflict, while a rename made behind our back is, even when both fall in the same
+// second. The hashes hide the text (the revision is shown in JSON and logs). The issue links are not part of the revision: the
+// issue JSON does not carry them, and a link write reads the link list right before it writes.
+import * as crypto from 'node:crypto';
+
+import { labelNames, splitBody, typeOfLabel, userLabels } from './gitlabMapping.js';
+import type { MapContext } from './gitlabMapping.js';
+import type { ApiIssue } from './gitlabTypes.js';
+
+/** The parts of an issue a write can change. */
+export const FIELD_GROUPS = ['title', 'body', 'status', 'type', 'labels', 'meta'] as const;
+export type FieldGroup = (typeof FIELD_GROUPS)[number];
+export type FieldHashes = Record<FieldGroup, string>;
+
+function hash(text: string): string {
+	return crypto.createHash('sha1').update(text).digest('hex').slice(0, 6);
+}
+
+const lowerSorted = (names: readonly string[]): string =>
+	names
+		.map(name => name.toLowerCase())
+		.sort()
+		.join('\n');
+
+function metaPart(issue: ApiIssue, ctx: MapContext): string {
+	if (ctx.metaFromBlock) {
+		try {
+			const meta = splitBody(issue, ctx).blockMeta ?? {};
+			return JSON.stringify(
+				Object.keys(meta)
+					.sort()
+					.map(key => [key, meta[key]])
+			);
+		} catch {
+			// An unreadable block still has a stable hash: the write that reads it reports the problem.
+			return 'unreadable';
+		}
+	}
+	if (!ctx.metaFromLabels) return '';
+	const prefix = ctx.settings.metaPrefix.toLowerCase();
+	return lowerSorted(labelNames(issue).filter(name => name.toLowerCase().startsWith(prefix)));
+}
+
+/** One short hash per part of the issue. */
+export function fieldHashes(issue: ApiIssue, ctx: MapContext): FieldHashes {
+	const names = labelNames(issue);
+	const statusLabels = names.filter(name => ctx.mapper.isStatusLabel(name));
+	const typeLabels = names.filter(name => typeOfLabel(name, ctx) !== undefined);
+	return {
+		title: hash(issue.title),
+		body: hash((issue.description ?? '').replace(/\r\n/g, '\n')),
+		status: hash(`${issue.state}|${lowerSorted(statusLabels)}`),
+		type: hash(`${lowerSorted(typeLabels)}|${issue.issue_type ?? ''}`),
+		labels: hash(lowerSorted(userLabels(issue, ctx))),
+		meta: hash(metaPart(issue, ctx)),
+	};
+}
+
+/** The revision string of an issue as read. */
+export function revisionOf(issue: ApiIssue, ctx: MapContext): string {
+	const hashes = fieldHashes(issue, ctx);
+	return `${issue.updated_at}#${FIELD_GROUPS.map(group => hashes[group]).join('.')}`;
+}
+
+function partsOf(revision: string): FieldHashes | undefined {
+	const at = revision.lastIndexOf('#');
+	if (at < 0) return undefined;
+	const values = revision.slice(at + 1).split('.');
+	if (values.length !== FIELD_GROUPS.length || values.some(value => !/^[0-9a-f]{6}$/.test(value))) return undefined;
+	return Object.fromEntries(FIELD_GROUPS.map((group, index) => [group, values[index]!])) as FieldHashes;
+}
+
+/**
+ * The parts among `groups` that differ between the revision the caller read and the current one; empty = the write may go on. The
+ * same revision is never stale. A revision this backend did not issue is `['revision']` (stale for any write).
+ */
+export function checkRevision(expected: string, actual: string, groups: readonly FieldGroup[]): string[] {
+	if (expected === actual) return [];
+	const wanted = partsOf(expected);
+	const current = partsOf(actual);
+	if (wanted === undefined || current === undefined) return ['revision'];
+	return groups.filter(group => wanted[group] !== current[group]);
+}

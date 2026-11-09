@@ -6,6 +6,7 @@ import { LOCAL_CAPABILITIES } from '@wadeck-app/task-core';
 
 import { openTaskContext } from './openContext.js';
 import { createBuiltinRegistry } from './plugins/builtinPlugins.js';
+import { registryWithout } from './plugins/registryWithout.testkit.js';
 import type { StrategyContext, StrategyPlugin } from './plugins/kinds.js';
 import { StrategyConfigError } from './strategyConfig.js';
 import type { TaskStorage } from './storage.js';
@@ -65,8 +66,9 @@ describe('openTaskContext: the strategy', () => {
 	});
 
 	it('a declared type with no plugin fails at open, loudly, naming the file: no local fallback', () => {
-		expect(() => open('strategy:\n    type: gitlab\n')).toThrow(StrategyConfigError);
-		expect(() => open('strategy:\n    type: gitlab\n')).toThrow(
+		const bare = registryWithout('gitlab');
+		expect(() => open('strategy:\n    type: gitlab\n', bare)).toThrow(StrategyConfigError);
+		expect(() => open('strategy:\n    type: gitlab\n', bare)).toThrow(
 			'strategy type gitlab is declared but no plugin is installed; built-in types: github, local'
 		);
 	});

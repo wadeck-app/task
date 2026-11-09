@@ -23,6 +23,11 @@ export default defineConfig({
 				import.meta.dirname,
 				'../task-service/src/plugins/github/fakeGitHub.testkit.ts'
 			),
+			// The fake GitLab server of the gitlab strategy tests (test-only, Node http).
+			'@wadeck-app/task-service/fakeGitLab': path.resolve(
+				import.meta.dirname,
+				'../task-service/src/plugins/gitlab/fakeGitLab.testkit.ts'
+			),
 			'@wadeck-app/task-service': path.resolve(import.meta.dirname, '../task-service/src/index.ts'),
 		},
 	},

@@ -48,8 +48,18 @@ describe('syncLabels', () => {
 		expect(seen).toEqual([{ dryRun: true }]);
 	});
 
+	it('a gitlab backend is asked for its labels like a github one', async () => {
+		const report = { dryRun: false, wanted: [], created: ['status:x'], existing: [], notes: [] };
+		const ctx = {
+			...t.ctx,
+			store: { ...t.ctx.store, kind: 'gitlab' as const, syncLabels: () => Promise.resolve(report) },
+		};
+
+		expect(await syncLabels(ctx, {})).toBe(report);
+	});
+
 	it('a backend of another kind that cannot create labels is refused the same way', async () => {
-		const ctx = { ...t.ctx, store: { ...t.ctx.store, kind: 'gitlab' as const } };
+		const ctx = { ...t.ctx, store: { ...t.ctx.store, kind: 'remote' as const } };
 
 		const error = await syncLabels(ctx, {}).catch((caught: unknown) => caught as Error);
 

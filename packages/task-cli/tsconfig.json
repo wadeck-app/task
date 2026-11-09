@@ -7,7 +7,8 @@
 		"paths": {
 			"@wadeck-app/task-core": ["../task-core/src/index.ts"],
 			"@wadeck-app/task-service": ["../task-service/src/index.ts"],
-			"@wadeck-app/task-service/fakeGitHub": ["../task-service/src/plugins/github/fakeGitHub.testkit.ts"]
+			"@wadeck-app/task-service/fakeGitHub": ["../task-service/src/plugins/github/fakeGitHub.testkit.ts"],
+			"@wadeck-app/task-service/fakeGitLab": ["../task-service/src/plugins/gitlab/fakeGitLab.testkit.ts"]
 		},
 		"lib": ["ES2022"],
 		"strict": true,

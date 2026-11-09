@@ -161,6 +161,8 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 					'the github strategy reads its token from the file the config names (the value goes to the HTTP client only, never into a result)',
 				'packages/task-service/src/plugins/github/responseCache.ts':
 					'the read-through cache of the github strategy: answers of GitHub as files in the project data folder',
+				'packages/task-service/src/plugins/gitlab/gitlabToken.ts':
+					'the gitlab strategy reads its token from the file the config names (the value goes to the HTTP client only, never into a result)',
 				'packages/task-service/src/migrate/migrateJournal.ts':
 					'the journal and the lock of a migration: files in the data folder of the target project (task data goes through the backends)',
 				'packages/task-service/src/migrate/migrate.testkit.ts':

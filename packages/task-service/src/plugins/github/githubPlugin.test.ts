@@ -95,7 +95,12 @@ describe('the plugin is registered', () => {
 
 		expect(registry.lookup('github', 'strategy')).toBe(githubPlugin);
 		expect(registry.lookup('plugins.github.default', 'strategy')).toBe(githubPlugin);
-		expect(registry.list('strategy').map(entry => entry.aliases[0])).toEqual(['github', 'local', 'remote']);
+		expect(registry.list('strategy').map(entry => entry.aliases[0])).toEqual([
+			'github',
+			'gitlab',
+			'local',
+			'remote',
+		]);
 	});
 
 	it('declares its capabilities and the one fill it implements', () => {

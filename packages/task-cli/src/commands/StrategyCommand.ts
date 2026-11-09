@@ -68,6 +68,8 @@ export function formatReport(report: StrategyReport): string {
 			}`,
 		]),
 		...field('Fidelity:', [report.fidelity]),
+		// The plan a gitlab project declares decides what exists (scoped labels, blocking links): said where the capabilities are.
+		...(typeof report.options['tier'] === 'string' ? field('Tier:', [`${report.options['tier']} (declared)`]) : []),
 		...field('Data:', [report.dataDir]),
 		...field('Config:', [report.source]),
 		...field('Summary:', [report.summary]),

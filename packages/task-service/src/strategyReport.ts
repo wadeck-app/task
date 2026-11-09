@@ -203,7 +203,7 @@ export function showStrategy(target: StrategyTarget): StrategyReport {
 			? {}
 			: { transport: { ref: strategy.transport.ref, options: strategy.transport.options } }),
 		capabilities: describeCapabilities(
-			strategy.plugin.capabilities,
+			strategy.plugin.capabilitiesFor?.({}, strategy.options) ?? strategy.plugin.capabilities,
 			strategy.fills,
 			strategy.plugin.capabilityNotes
 		),

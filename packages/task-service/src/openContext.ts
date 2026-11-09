@@ -76,7 +76,7 @@ export function openTaskContext(input: OpenTaskContextInput): TaskServiceContext
 				...(input.suppressEvents === true ? { suppressEvents: true } : {}),
 				...(opener === undefined ? {} : { openTransport: opener }),
 			}),
-		strategy.plugin.capabilitiesFor?.(strategy.fills) ?? strategy.plugin.capabilities
+		strategy.plugin.capabilitiesFor?.(strategy.fills, strategy.options) ?? strategy.plugin.capabilities
 	);
 	return {
 		store: lazy.backend,

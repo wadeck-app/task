@@ -4,6 +4,7 @@ import * as path from 'node:path';
 
 import { createPluginRegistry } from './plugin-host/index.js';
 import { createBuiltinRegistry } from './plugins/builtinPlugins.js';
+import { registryWithout } from './plugins/registryWithout.testkit.js';
 import { plainHttpPlugin } from './plugins/plain-http/plainHttpPlugin.js';
 import { PluginNotImplementedError } from './plugins/kinds.js';
 import type { CheckLine, StrategyPlugin, TaskPluginKinds } from './plugins/kinds.js';
@@ -103,7 +104,9 @@ describe('checkStrategy: a project without a strategy section', () => {
 
 describe('checkStrategy: a config that cannot be used', () => {
 	it('reports the error of the config instead of throwing, with the fix, and checks nothing else', async () => {
-		const result = await checkStrategy(target('strategy:\n    type: gitlab\n'));
+		const result = await checkStrategy(
+			target('strategy:\n    type: gitlab\n', { registry: registryWithout('gitlab') })
+		);
 
 		expect(result.ok).toBe(false);
 		expect(result.errors).toBe(1);

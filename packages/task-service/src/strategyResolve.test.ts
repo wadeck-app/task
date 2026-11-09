@@ -2,6 +2,7 @@ import { LOCAL_CAPABILITIES } from '@wadeck-app/task-core';
 
 import { createBuiltinRegistry } from './plugins/builtinPlugins.js';
 import type { StrategyPlugin, TaskPluginRegistry } from './plugins/kinds.js';
+import { registryWithout } from './plugins/registryWithout.testkit.js';
 import { parseStrategySection, StrategyConfigError } from './strategyConfig.js';
 import { resolveStrategy } from './strategyResolve.js';
 
@@ -68,7 +69,7 @@ describe('resolveStrategy: the default', () => {
 
 describe('resolveStrategy: types declared but not installed fail loudly, never fall back to local', () => {
 	it.each(['gitlab', 'plugins.gitlab.default'])('%s', type => {
-		const error = failure({ type });
+		const error = failure({ type }, registryWithout('gitlab'));
 		const bare = type.replace(/^plugins\.|\.default$/g, '');
 
 		expect(error.message).toBe(
@@ -81,7 +82,7 @@ describe('resolveStrategy: types declared but not installed fail loudly, never f
 	});
 
 	it('a type that is not even declared lists what is registered and what is declared but missing', () => {
-		const error = failure({ type: 'foo' });
+		const error = failure({ type: 'foo' }, registryWithout('gitlab'));
 
 		expect(error.message).toBe(`${FILE}: strategy.type: unknown strategy plugin "foo"`);
 		expect(error.hint).toBe(

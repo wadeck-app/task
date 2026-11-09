@@ -4,6 +4,8 @@ import * as path from 'node:path';
 import { loadRegistry, setParent } from '@wadeck-app/project-sdk';
 
 import { createBuiltinRegistry } from './plugins/builtinPlugins.js';
+import type { TaskPluginRegistry } from './plugins/kinds.js';
+import { registryWithout } from './plugins/registryWithout.testkit.js';
 import { loadProjectSetup, loadTaskConfig } from './projectConfig.js';
 import { StrategyConfigError } from './strategyConfig.js';
 import { ownConfigFile, registryStorage } from './storage.js';
@@ -43,10 +45,10 @@ async function chain(): Promise<TaskStorage> {
 	);
 }
 
-function setup(storage: TaskStorage) {
+function setup(storage: TaskStorage, registry: TaskPluginRegistry = createBuiltinRegistry()) {
 	return loadProjectSetup(storage, {
 		globalConfigDir: path.join(sandbox.root, 'global'),
-		registry: createBuiltinRegistry(),
+		registry,
 	});
 }
 
@@ -99,7 +101,7 @@ describe('loadProjectSetup: the strategy section', () => {
 		const [parentFile] = storage.configFiles as [string, string];
 		write(parentFile, 'strategy:\n    type: gitlab\n');
 
-		expect(setup(storage).strategy.type).toBe('local');
+		expect(setup(storage, registryWithout('gitlab')).strategy.type).toBe('local');
 	});
 
 	it('a structural error in an ANCESTOR layer names the ancestor file', async () => {
@@ -131,7 +133,7 @@ describe('loadProjectSetup: the strategy section', () => {
 		const storage = await single();
 		write(ownConfigFile(storage), 'strategy:\n    type: gitlab\n');
 
-		expect(() => setup(storage)).toThrow(
+		expect(() => setup(storage, registryWithout('gitlab'))).toThrow(
 			`${ownConfigFile(storage)}: strategy.type: strategy type gitlab is declared but no plugin is installed; built-in types: github, local`
 		);
 	});
