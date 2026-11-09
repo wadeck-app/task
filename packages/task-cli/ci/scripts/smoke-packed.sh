@@ -12,8 +12,7 @@ VERSION="${2:?usage: smoke-packed.sh <packages dir> <expected version>}"
 
 case "$(uname -s)-$(uname -m)" in
   Darwin-arm64)  PLATFORM="darwin-arm64" ;;
-  Darwin-x86_64) PLATFORM="darwin-x64" ;;
-  *) echo "smoke-packed: unsupported host $(uname -s)-$(uname -m): run it on macOS (darwin-arm64 or darwin-x64)" >&2; exit 1 ;;
+  *) echo "smoke-packed: unsupported host $(uname -s)-$(uname -m): run it on Apple silicon macOS (darwin-arm64); Intel Macs are not supported" >&2; exit 1 ;;
 esac
 
 WORK="$(mktemp -d)"

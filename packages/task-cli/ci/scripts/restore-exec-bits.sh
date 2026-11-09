@@ -5,7 +5,7 @@
 # Usage (repo root): bash packages/task-cli/ci/scripts/restore-exec-bits.sh <packages dir>
 set -euo pipefail
 DIR="${1:?usage: restore-exec-bits.sh <packages dir>}"
-for f in "$DIR"/task-cli-darwin-arm64/task "$DIR"/task-cli-darwin-x64/task "$DIR"/task-cli-dist/bin/task.js; do
+for f in "$DIR"/task-cli-darwin-arm64/task "$DIR"/task-cli-dist/bin/task.js; do
   [ -f "$f" ] || { echo "restore-exec-bits: $f is missing (artifact incomplete)" >&2; exit 1; }
   chmod +x "$f"
   echo "chmod +x $f"

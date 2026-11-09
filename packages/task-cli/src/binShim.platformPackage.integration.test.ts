@@ -13,8 +13,9 @@ import { createIsolatedCliEnv, type IsolatedCliEnv, runIsolated } from './isolat
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEMPLATE = path.join(__dirname, '..', 'ci', 'templates', 'bin-launcher.js.tmpl');
-const SUPPORTED = ['win32-x64', 'darwin-arm64', 'darwin-x64'];
-const HOST_KEY = `${process.platform}-${process.arch === 'arm64' ? 'arm64' : 'x64'}`;
+const SUPPORTED = ['win32-x64', 'darwin-arm64'];
+const HOST_KEY = `${process.platform}-${process.arch}`;
+const HOST_SUPPORTED = SUPPORTED.includes(HOST_KEY);
 
 let iso: IsolatedCliEnv | undefined;
 afterEach(() => {
@@ -40,7 +41,7 @@ const MARKER_BUNDLE =
 	"process.stderr.write('MARKER-ERR\\n');" +
 	'process.exitCode = Number(process.env.FAKE_BUNDLE_EXIT || 0);';
 
-it.each([['cli', 'version'], ['--version'], ['cli', 'update', '--help']])(
+it.skipIf(!HOST_SUPPORTED).each([['cli', 'version'], ['--version'], ['cli', 'update', '--help']])(
 	'`task %s` without the platform package: the bundle output reaches stdout/stderr, no install, no platform message',
 	async (...args) => {
 		iso = createIsolatedCliEnv();
@@ -55,7 +56,7 @@ it.each([['cli', 'version'], ['--version'], ['cli', 'update', '--help']])(
 	}
 );
 
-it('the exit code of the bundle is the exit code of the shim', async () => {
+it.skipIf(!HOST_SUPPORTED)('the exit code of the bundle is the exit code of the shim', async () => {
 	iso = createIsolatedCliEnv({ extra: { FAKE_BUNDLE_EXIT: '3' } });
 	const shim = installWrapper(iso, MARKER_BUNDLE);
 
@@ -65,7 +66,7 @@ it('the exit code of the bundle is the exit code of the shim', async () => {
 	expect(result.stdout).toContain('MARKER-OUT ["list"]');
 });
 
-it('`start` without the platform package attempts the global install (announced) or says the platform is unsupported', async () => {
+it.skipIf(!HOST_SUPPORTED)('`start` without the platform package attempts the global install (announced)', async () => {
 	iso = createIsolatedCliEnv();
 	const shim = installWrapper(iso, MARKER_BUNDLE);
 
@@ -73,20 +74,14 @@ it('`start` without the platform package attempts the global install (announced)
 
 	expect(result.status, result.stderr).toBe(1);
 	expect(result.stdout).not.toContain('MARKER-OUT');
-	if (SUPPORTED.includes(`${process.platform}-${process.arch === 'arm64' ? 'arm64' : 'x64'}`)) {
-		expect(result.stderr).toContain('platform package @wadeck-app/task-cli-');
-		expect(result.stderr).toContain('missing -- installing...');
-		// The registry is unreachable in the isolated tree: npm's own error is relayed, then the shim's verdict and fix.
-		expect(result.stderr).toContain('ECONNREFUSED');
-		expect(result.stderr).toMatch(/task: install of @wadeck-app\/task-cli-\S+ failed \(exit 1\)/);
-		expect(result.stderr).toMatch(/fix: npm install -g @wadeck-app\/task-cli-/);
-		// Nothing was installed anywhere but the throwaway prefix.
-		expect(fs.existsSync(path.join(iso.npmPrefix, 'node_modules', '@wadeck-app', 'task-cli-win32-x64'))).toBe(
-			false
-		);
-	} else {
-		expect(result.stderr).toContain(`there is none for ${process.platform}-`);
-	}
+	expect(result.stderr).toContain('platform package @wadeck-app/task-cli-');
+	expect(result.stderr).toContain('missing -- installing...');
+	// The registry is unreachable in the isolated tree: npm's own error is relayed, then the shim's verdict and fix.
+	expect(result.stderr).toContain('ECONNREFUSED');
+	expect(result.stderr).toMatch(/task: install of @wadeck-app\/task-cli-\S+ failed \(exit 1\)/);
+	expect(result.stderr).toMatch(/fix: npm install -g @wadeck-app\/task-cli-/);
+	// Nothing was installed anywhere but the throwaway prefix.
+	expect(fs.existsSync(path.join(iso.npmPrefix, 'node_modules', '@wadeck-app', 'task-cli-win32-x64'))).toBe(false);
 });
 
 it.skipIf(!SUPPORTED.includes(HOST_KEY))(
@@ -107,5 +102,25 @@ it.skipIf(!SUPPORTED.includes(HOST_KEY))(
 		expect(result.status, result.stderr).not.toBe(0);
 		expect(result.stderr).toContain('task: cannot run the launcher');
 		expect(result.stderr).toContain(path.join(dir, file));
+	}
+);
+
+// Intel Macs, linux and every other host are unsupported (owner decision): the real shim says so before running
+// anything. Only runs on such a host (the supported ones are covered above and by binShim.unit.test.ts, which injects
+// the platform).
+it.skipIf(HOST_SUPPORTED).each([['--version'], ['cli', 'version'], ['start']])(
+	'unsupported host %s: `task %s` fails early with the unsupported-platform message, nothing runs or installs',
+	async (...args) => {
+		iso = createIsolatedCliEnv();
+		const shim = installWrapper(iso, MARKER_BUNDLE);
+
+		const result = await runIsolated(shim, args, iso);
+
+		expect(result.status, result.stderr).toBe(1);
+		expect(result.stdout).toBe('');
+		expect(result.stderr).toBe(
+			`task: unsupported platform ${HOST_KEY}. Supported: win32-x64, darwin-arm64 (Apple silicon).\n`
+		);
+		expect(fs.readdirSync(path.join(iso.npmPrefix, 'node_modules', '@wadeck-app'))).toEqual(['task-cli']);
 	}
 );

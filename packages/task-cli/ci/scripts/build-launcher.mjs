@@ -32,3 +32,11 @@ fs.mkdirSync(OUT_DIR, { recursive: true });
 const toUnix = p => p.replace(/\\/g, '/');
 console.log('Building task launchers...');
 execFileSync('bash', [toUnix(BUILD_SH), toUnix(TASK_CONFIG), toUnix(OUT_DIR)], { stdio: 'inherit', windowsHide: true });
+
+// Intel Macs are not supported (owner decision). The SDK's build.sh always cross-compiles its 3 targets and has no
+// option to skip one, so the Intel binary it produced is deleted: nothing downstream (copy-binaries.sh) may pick it up.
+const intelMacBinary = path.join(OUT_DIR, 'task_darwin_amd64_release');
+if (fs.existsSync(intelMacBinary)) {
+	fs.rmSync(intelMacBinary);
+	console.log(`Removed ${intelMacBinary} (Intel Macs are not supported)`);
+}

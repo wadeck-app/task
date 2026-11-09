@@ -5,6 +5,8 @@
 // side effect; the real wiring is at the bottom and only runs when this file is the entry point.
 //
 // Contract:
+//  - Supported platforms: win32-x64 and darwin-arm64 (Apple silicon) ONLY. Anything else (Intel Macs, linux, ...) is
+//    refused first thing, for every command, with exit 1: the owner does not want partial support.
 //  - Every command except `start` runs `node <bundle> <args>` directly, on ALL platforms. The Go launcher is a daemon
 //    supervisor; a short-lived command does not need it (and on Windows its GUI-subsystem build swallows stdout).
 //  - `start` goes through the Go launcher of the platform package (installed lazily, only then).
@@ -15,7 +17,6 @@ const WRAPPER_PKG = '@wadeck-app/{{PKG_PREFIX}}';
 const PLATFORM_PKG = {
   'win32-x64': '@wadeck-app/{{PKG_PREFIX}}-win32-x64',
   'darwin-arm64': '@wadeck-app/{{PKG_PREFIX}}-darwin-arm64',
-  'darwin-x64': '@wadeck-app/{{PKG_PREFIX}}-darwin-x64',
 };
 
 /**
@@ -38,8 +39,13 @@ const PLATFORM_PKG = {
  */
 function run(deps) {
   const say = (line) => deps.stderr.write('{{CLI_NAME}}: ' + line + '\n');
-  const arch = deps.arch === 'arm64' ? 'arm64' : 'x64';
-  const key = deps.platform + '-' + arch;
+  const key = deps.platform + '-' + deps.arch;
+
+  // Before anything else (bundle check included): an unsupported host runs nothing and installs nothing.
+  if (!Object.prototype.hasOwnProperty.call(PLATFORM_PKG, key)) {
+    say('unsupported platform ' + key + '. Supported: win32-x64, darwin-arm64 (Apple silicon).');
+    return 1;
+  }
 
   // First thing: a package without its bundle is an incomplete install, and what follows (Node's MODULE_NOT_FOUND
   // stack, the Go launcher's "LAUNCHER_BUNDLE_OVERRIDE ... is not a file") never says so.
@@ -90,10 +96,6 @@ function run(deps) {
 
   // `start` only: the Go launcher supervises the background process.
   const pkgName = PLATFORM_PKG[key];
-  if (!pkgName) {
-    say('`start` needs the platform launcher, and there is none for ' + key + ' (supported: ' + Object.keys(PLATFORM_PKG).join(', ') + ')');
-    return 1;
-  }
   const spec = pkgName + '/{{CLI_NAME}}' + (deps.platform === 'win32' ? '.exe' : '');
   let launcherPath;
   try {

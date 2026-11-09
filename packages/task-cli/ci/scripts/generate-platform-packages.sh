@@ -29,7 +29,6 @@ EOF
 
 generate "task-cli-win32-x64"    "win32"  "x64"   "task.exe"
 generate "task-cli-darwin-arm64" "darwin" "arm64" "task"
-generate "task-cli-darwin-x64"   "darwin" "x64"   "task"
 
 # Generates the -dist wrapper package (bin launcher + package.json) for a CLI.
 # The .cjs bundles are copied by copy-binaries.sh; this only creates the scaffolding.
@@ -68,8 +67,7 @@ ${extra_files_json}		"package.json"
 	],
 	"optionalDependencies": {
 		"@wadeck-app/${cli}-cli-win32-x64": ">=0.0.0-0",
-		"@wadeck-app/${cli}-cli-darwin-arm64": ">=0.0.0-0",
-		"@wadeck-app/${cli}-cli-darwin-x64": ">=0.0.0-0"
+		"@wadeck-app/${cli}-cli-darwin-arm64": ">=0.0.0-0"
 	},
 	"publishConfig": {
 		"registry": "${REGISTRY}"

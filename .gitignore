@@ -47,7 +47,6 @@ Thumbs.db
 # Generated entirely by CI -- do not commit
 task-cli-dist/
 task-cli-darwin-arm64/
-task-cli-darwin-x64/
 task-cli-win32-x64/
 
 *-errors.log

@@ -94,9 +94,6 @@ function errnoError(code: string, message: string): Error {
 describe('bin shim: common path (every command but start)', () => {
 	it.each([
 		['darwin', 'arm64'],
-		['darwin', 'x64'],
-		['linux', 'x64'],
-		['linux', 'arm64'],
 		['win32', 'x64'],
 	])(
 		'%s-%s: runs `node <bundle> <args>` directly, never resolves nor installs a platform package',
@@ -153,14 +150,6 @@ describe('bin shim: common path (every command but start)', () => {
 		expect(t.err()).toBe('');
 	});
 
-	it('works on a platform with no launcher at all (linux-arm64): nothing needs the platform package', () => {
-		const run = loadRun();
-		const t = setup({ platform: 'linux', arch: 'arm64', args: ['--version'] });
-		expect(run(t.deps)).toBe(0);
-		expect(t.calls[0].args).toEqual(['/pkg/task.cjs', '--version']);
-		expect(t.err()).toBe('');
-	});
-
 	it('the old silent failure is gone: node that cannot be started is reported with code, platform and fix, exit 1', () => {
 		const run = loadRun();
 		const t = setup({
@@ -190,6 +179,63 @@ describe('bin shim: common path (every command but start)', () => {
 	});
 });
 
+// Owner decision: Intel Macs (and linux, and every other platform) are not supported at all, so no command runs there,
+// not even the ones that only need node.
+describe('bin shim: unsupported platforms fail early and loudly', () => {
+	const platforms: [string, string][] = [
+		['darwin', 'x64'],
+		['linux', 'x64'],
+		['linux', 'arm64'],
+		['win32', 'arm64'],
+		['win32', 'ia32'],
+		['freebsd', 'x64'],
+	];
+	const argLists: string[][] = [['cli', 'version'], ['--version'], ['list'], ['start']];
+	const cases = platforms.flatMap(([platform, arch]) => argLists.map(args => [platform, arch, args] as const));
+
+	it.each(cases)(
+		'%s-%s `task %s`: exact message, exit 1, nothing executed, resolved nor installed',
+		(platform, arch, args) => {
+			const run = loadRun();
+			const t = setup({
+				platform,
+				arch,
+				args: [...args],
+				resolve: () => {
+					throw new Error('resolve must not be called');
+				},
+				install: () => {
+					throw new Error('install must not be called');
+				},
+			});
+
+			expect(run(t.deps)).toBe(1);
+
+			expect(t.err()).toBe(
+				`task: unsupported platform ${platform}-${arch}. Supported: win32-x64, darwin-arm64 (Apple silicon).\n`
+			);
+			expect(t.out()).toBe('');
+			expect(t.calls).toHaveLength(0);
+			expect(t.installs).toHaveLength(0);
+			expect(t.chmods).toHaveLength(0);
+		}
+	);
+
+	it('the platform check comes before the bundle check (an unsupported host is not told to reinstall)', () => {
+		const run = loadRun();
+		const t = setup({ platform: 'darwin', arch: 'x64', exists: () => false });
+		expect(run(t.deps)).toBe(1);
+		expect(t.err()).toContain('unsupported platform darwin-x64');
+		expect(t.err()).not.toContain('incomplete');
+	});
+
+	it('the template has no trace of darwin-x64 outside the unsupported message', () => {
+		const source = readFileSync(TEMPLATE, 'utf8');
+		expect(source).not.toMatch(/PKG_PREFIX\}\}-darwin-x64/);
+		expect(source).not.toContain("'darwin-x64'");
+	});
+});
+
 describe('bin shim: incomplete install', () => {
 	it('bundle missing: names the file, says incomplete, gives the reinstall command, runs nothing', () => {
 		const run = loadRun();
@@ -206,7 +252,6 @@ describe('bin shim: incomplete install', () => {
 describe('bin shim: start (the only command that needs the Go launcher)', () => {
 	it.each([
 		['darwin', 'arm64', '@wadeck-app/task-cli-darwin-arm64/task'],
-		['darwin', 'x64', '@wadeck-app/task-cli-darwin-x64/task'],
 		['win32', 'x64', '@wadeck-app/task-cli-win32-x64/task.exe'],
 	])('%s-%s: runs the launcher with LAUNCHER_BUNDLE_OVERRIDE and the args', (platform, arch, spec) => {
 		const run = loadRun();
@@ -233,15 +278,6 @@ describe('bin shim: start (the only command that needs the Go launcher)', () => 
 		});
 		expect(run(t.deps)).toBe(7);
 		expect(t.err()).toBe('');
-	});
-
-	it('unsupported platform: says so, lists the supported ones, exit 1', () => {
-		const run = loadRun();
-		const t = setup({ platform: 'linux', arch: 'x64', args: ['start'] });
-		expect(run(t.deps)).toBe(1);
-		expect(t.err()).toContain('there is none for linux-x64');
-		expect(t.err()).toContain('darwin-arm64');
-		expect(t.calls).toHaveLength(0);
 	});
 
 	it('platform package missing: installs it (announced), resolves again, then runs the launcher', () => {

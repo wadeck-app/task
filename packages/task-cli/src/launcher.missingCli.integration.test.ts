@@ -14,6 +14,9 @@ import { createIsolatedCliEnv, type IsolatedCliEnv, runIsolated } from './isolat
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEMPLATE = path.join(__dirname, '..', 'ci', 'templates', 'bin-launcher.js.tmpl');
+// The shim refuses unsupported hosts (Intel Macs, linux...) before it looks at the bundle; those hosts are covered in
+// binShim.platformPackage.integration.test.ts and binShim.unit.test.ts.
+const HOST_SUPPORTED = ['win32-x64', 'darwin-arm64'].includes(`${process.platform}-${process.arch}`);
 
 let iso: IsolatedCliEnv | undefined;
 afterEach(() => {
@@ -35,7 +38,7 @@ function installWrapper(e: IsolatedCliEnv, opts: { bundle: string | undefined })
 	return { shim, bundle };
 }
 
-describe('bin shim when the CLI bundle (task.cjs) is missing', () => {
+describe.skipIf(!HOST_SUPPORTED)('bin shim when the CLI bundle (task.cjs) is missing', () => {
 	it.each([['--version'], ['list'], ['cli', 'version']])(
 		'`task %s...` names the missing file, says the install is incomplete and gives the reinstall command',
 		async (...args) => {
