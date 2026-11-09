@@ -28,12 +28,12 @@ const workflow = load(readFileSync(path.join(REPO, '.github', 'workflows', 'publ
 const runs = (job: Job): string[] => (job.steps ?? []).flatMap(s => (s.run === undefined ? [] : [s.run]));
 
 describe('publish workflow', () => {
-	it('has the macos-smoke job on an arm64 and an x64 macOS runner', () => {
+	it('has the macos-smoke job on an Apple silicon (arm64) macOS runner only', () => {
 		const smoke = workflow.jobs['macos-smoke'];
 		expect(smoke, 'job macos-smoke').toBeDefined();
 		const os = smoke.strategy?.matrix?.os ?? [];
 		expect(os).toContain('macos-14');
-		expect(os.some(label => label.startsWith('macos-') && label !== 'macos-14')).toBe(true);
+		expect(os).toEqual(['macos-14']);
 		expect(smoke['runs-on']).toContain('matrix.os');
 	});
 

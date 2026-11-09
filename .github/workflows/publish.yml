@@ -91,14 +91,14 @@ jobs:
     # Real macOS verification of the PACKED packages (nothing published, throwaway npm prefix): `task --version`,
     # `task cli version`, `task --help` must print the version / something and exit 0, with and without the platform
     # package. Gates `publish`: a package that is silent or broken on macOS must not be released.
-    # Runner labels (unverified from here, check against the GitHub docs if a job never starts): macos-14 is arm64;
-    # macos-13 (x64) was retired, macos-15-intel is its x64 replacement.
+    # Apple silicon only (the owner does not support Intel Macs): macos-14 is arm64 (label unverified from here, check
+    # against the GitHub docs if the job never starts).
     macos-smoke:
         needs: build-and-test
         strategy:
             fail-fast: false
             matrix:
-                os: [macos-14, macos-15-intel]
+                os: [macos-14]
         runs-on: ${{ matrix.os }}
         steps:
             - uses: actions/checkout@v5
