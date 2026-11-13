@@ -73,7 +73,8 @@ echo "--- installed launcher"
 ls -l "$PLATFORM_DIR"
 file "$PLATFORM_DIR/$CLI" || true
 
-# check <label> <stdout must contain (may be empty)> <args...>
+# check <label> <output must contain (may be empty)> <args...>
+# COMBINE=1 judges stdout and stderr together (a command whose only output, on purpose, is an error line on stderr).
 check() {
   local label="$1" needle="$2"
   shift 2
@@ -83,6 +84,7 @@ check() {
   out="$("$BIN" "$@" 2> "$err")"
   code=$?
   set -e
+  if [ "${COMBINE:-0}" = "1" ]; then out="$out$(cat "$err")"; fi
   if [ "$code" -ne 0 ] || [ -z "$out" ] || { [ -n "$needle" ] && [[ "$out" != *"$needle"* ]]; }; then
     failures=$((failures + 1))
     echo "FAIL [$label] $CLI $* -> exit $code, stdout (${#out} chars):" >&2
@@ -98,7 +100,9 @@ run_all() {
   local label="$1"
   check "$label" "$VERSION" --version
   # task-specific (not in the ci-templates copy): `cli version` goes through the CLI's own command tree.
-  check "$label" "$VERSION" cli version
+  # The registry is unreachable on purpose here, so shared-cli prints only "Failed to fetch latest version for <package>"
+  # on stderr (exit 0, nothing on stdout): what is checked is that the command runs and answers something naming the package.
+  COMBINE=1 check "$label" "@wadeck-app/${CLI}-cli" cli version
   check "$label" "" --help
 }
 
