@@ -11,7 +11,6 @@ import type { GitLabSettings } from './gitlabOptions.js';
 const BASE = {
 	project: 'acme/shop',
 	tokenEnv: 'GITLAB_TOKEN',
-	tier: 'free',
 	statusMap: { backlog: { state: 'open' }, done: { state: 'closed' } },
 };
 
@@ -94,43 +93,58 @@ describe('parseGitLabOptions: token', () => {
 	});
 });
 
-describe('parseGitLabOptions: tier', () => {
-	it('is required, explicit and one of free, premium, ultimate', () => {
-		expect(problemOf({ tier: undefined })).toMatch(/^tier: required.*free, premium, ultimate/);
-		expect(problemOf({ tier: 'gold' })).toMatch(/^tier: must be one of/);
-		expect(settingsOf({ tier: 'free' }).scopedLabels).toBe(false);
-		expect(settingsOf({ tier: 'premium' }).scopedLabels).toBe(true);
-		expect(settingsOf({ tier: 'ultimate' }).scopedLabels).toBe(true);
+describe('parseGitLabOptions: Free tier only', () => {
+	it('refuses a tier key, whatever its value, naming the key and the fix (an old config is never read silently)', () => {
+		for (const tier of ['free', 'premium', 'ultimate']) {
+			expect(problemOf({ tier })).toBe(
+				'tier: the gitlab strategy supports the Free tier only; remove `tier` (the blocking links of the paid tiers are not supported)'
+			);
+		}
 	});
 
-	it('refuses a scoped label on free, in statusMap, typeMap and prefixes', () => {
-		expect(
-			problemOf({ statusMap: { backlog: { state: 'open', label: 'status::x' }, done: { state: 'closed' } } })
-		).toMatch(/^statusMap\.backlog\.label:.*Premium and Ultimate/);
-		expect(problemOf({ typeMap: { bug: { label: 'type::bug' } } })).toMatch(/^typeMap\.bug\.label:.*scoped/);
-		expect(problemOf({ typePrefix: 'kind::' })).toMatch(/^typePrefix:.*scoped/);
-		expect(problemOf({ metaPrefix: 'm::' })).toMatch(/^metaPrefix:.*scoped/);
-	});
-
-	it('accepts scoped labels on premium', () => {
+	it('a scoped-looking label is a plain label on Free: accepted in statusMap, typeMap and the prefixes', () => {
 		const settings = settingsOf({
-			tier: 'premium',
-			statusMap: { backlog: { state: 'open', label: 'status::backlog' }, done: { state: 'closed' } },
+			statusMap: {
+				backlog: { state: 'open' },
+				doing: { state: 'open', label: 'status::doing' },
+				done: { state: 'closed' },
+			},
+			typeMap: { bug: { label: 'type::bug' } },
+			typePrefix: 'kind::',
+			metaPrefix: 'meta::',
 		});
-		expect(settings.statusMap['backlog']).toEqual({ state: 'open', label: 'status::backlog' });
+		expect(settings.statusMap['doing']).toEqual({ state: 'open', label: 'status::doing' });
+		expect(settings.typeMap['bug']).toEqual({ label: 'type::bug' });
+		expect(settings).toMatchObject({ typePrefix: 'kind::', metaPrefix: 'meta::' });
+	});
+});
+
+describe('parseGitLabOptions: rateLimit', () => {
+	it('defaults to waiting up to 70 s', () => {
+		expect(settingsOf()).toMatchObject({ rateLimitMaxWaitSeconds: 70 });
+	});
+
+	it('accepts maxWaitSeconds, zero included', () => {
+		expect(settingsOf({ rateLimit: { maxWaitSeconds: 120 } })).toMatchObject({ rateLimitMaxWaitSeconds: 120 });
+		expect(settingsOf({ rateLimit: { maxWaitSeconds: 0 } })).toMatchObject({ rateLimitMaxWaitSeconds: 0 });
+		expect(settingsOf({ rateLimit: {} })).toMatchObject({ rateLimitMaxWaitSeconds: 70 });
+	});
+
+	it('names the dotted key of a mistake', () => {
+		expect(problemOf({ rateLimit: 5 })).toMatch(/^rateLimit: must be a mapping/);
+		expect(problemOf({ rateLimit: { wait: 5 } })).toBe('rateLimit.wait: unknown key (valid: maxWaitSeconds)');
+		expect(problemOf({ rateLimit: { maxWaitSeconds: -1 } })).toMatch(
+			/^rateLimit.maxWaitSeconds: must be zero or a positive/
+		);
+		expect(problemOf({ rateLimit: { maxWaitSeconds: 'soon' } })).toMatch(
+			/^rateLimit.maxWaitSeconds:.*found "soon"/
+		);
 	});
 });
 
 describe('parseGitLabOptions: prefixes', () => {
-	it('defaults to one colon on free and the scoped syntax on premium and ultimate', () => {
+	it('defaults to one colon', () => {
 		expect(settingsOf()).toMatchObject({ typePrefix: 'type:', metaPrefix: 'meta:' });
-		expect(settingsOf({ tier: 'premium' })).toMatchObject({ typePrefix: 'type::', metaPrefix: 'meta::' });
-		expect(settingsOf({ tier: 'ultimate' })).toMatchObject({ typePrefix: 'type::', metaPrefix: 'meta::' });
-	});
-
-	it('needs a metaPrefix ending with :: on premium', () => {
-		expect(problemOf({ tier: 'premium', metaPrefix: 'meta:' })).toMatch(/^metaPrefix:.*must end with "::"/);
-		expect(settingsOf({ tier: 'premium', metaPrefix: 'm::' }).metaPrefix).toBe('m::');
 	});
 
 	it('refuses prefixes that equal or contain each other', () => {
@@ -168,35 +182,57 @@ describe('parseGitLabOptions: statusMap', () => {
 		expect(problemOf({ statusMap: { a: 'open' } })).toMatch(/^statusMap\.a: must be a mapping/);
 	});
 
-	it('refuses two statuses with the same representation, labels compared case-insensitively', () => {
+	it('refuses two statuses with the same representation, the same label (exact compare)', () => {
 		expect(problemOf({ statusMap: { a: { state: 'open' }, b: { state: 'open' } } })).toMatch(
 			/^statusMap\.b: the same GitLab representation as "a".*give one of them a label/
 		);
 		expect(
 			problemOf({
-				statusMap: { a: { state: 'open', label: 'S:x' }, b: { state: 'open', label: 's:X' } },
+				statusMap: { a: { state: 'open', label: 'S:x' }, b: { state: 'open', label: 'S:x' } },
 			})
 		).toMatch(/^statusMap\.b:.*another label/);
 	});
 });
 
-describe('parseGitLabOptions: typeMap', () => {
-	it('accepts a label or a native incident / test_case', () => {
+describe('parseGitLabOptions: labels are case sensitive', () => {
+	it('two statuses whose labels differ only by case are two representations', () => {
 		const map = settingsOf({
-			typeMap: { bug: { issueType: 'incident' }, check: { issueType: 'test_case' }, f: { label: 'kind:f' } },
+			statusMap: {
+				backlog: { state: 'open' },
+				a: { state: 'open', label: 'Doing' },
+				b: { state: 'open', label: 'doing' },
+				done: { state: 'closed' },
+			},
+		}).statusMap;
+		expect(map['a']!.label).toBe('Doing');
+		expect(map['b']!.label).toBe('doing');
+	});
+});
+
+describe('parseGitLabOptions: typeMap', () => {
+	it('accepts a label or the native incident', () => {
+		const map = settingsOf({
+			typeMap: { bug: { issueType: 'incident' }, f: { label: 'kind:f' } },
 		}).typeMap;
 		expect(map).toEqual({
 			bug: { issueType: 'incident' },
-			check: { issueType: 'test_case' },
 			f: { label: 'kind:f' },
 		});
 	});
 
-	it('refuses task and issue (not both creatable and updatable) and unknown ones', () => {
-		expect(problemOf({ typeMap: { a: { issueType: 'task' } } })).toMatch(
-			/^typeMap\.a\.issueType: must be incident or test_case/
+	it('refuses the native task: it is the hierarchy child type, with the way out', () => {
+		expect(problemOf({ typeMap: { chore: { issueType: 'task' } } })).toBe(
+			'typeMap.chore.issueType: native Task is the hierarchy child type, it cannot also be a task type (every child would read back as that type); use a label type (label: <name>)'
 		);
-		expect(problemOf({ typeMap: { a: { issueType: 'issue' } } })).toMatch(/^typeMap\.a\.issueType/);
+	});
+
+	it('refuses test_case with the verified reason, and issue and unknown ones', () => {
+		expect(problemOf({ typeMap: { a: { issueType: 'test_case' } } })).toMatch(
+			/^typeMap.a.issueType: test_case cannot be used: .*silently creates a plain issue.*silently ignores it/
+		);
+		expect(problemOf({ typeMap: { a: { issueType: 'issue' } } })).toMatch(
+			/^typeMap.a.issueType: must be incident, found "issue"/
+		);
 	});
 
 	it('refuses both keys, none, unknown keys and a native type shared by two task types', () => {
@@ -283,24 +319,12 @@ describe('checkOptionsAgainstProject', () => {
 		expect(check(map)).toBeUndefined();
 	});
 
-	it('names a missing status with an example entry per tier', () => {
+	it('names a missing status with an example entry', () => {
 		const { cancelled: _omitted, ...rest } = map;
 		void _omitted;
 		expect(check(rest)).toBe(
 			'statusMap.cancelled: the status "cancelled" of the project has no entry; add it, for example: cancelled: { state: closed, label: \'status:cancelled\' }'
 		);
-		const scoped = checkOptionsAgainstProject(
-			settingsOf({
-				tier: 'premium',
-				statusMap: {
-					backlog: { state: 'open' },
-					done: { state: 'closed' },
-					cancelled: { state: 'closed', label: 'status::cancelled' },
-				},
-			}),
-			facts()
-		);
-		expect(scoped).toMatch(/^statusMap\.wip:.*wip: \{ state: open, label: 'status::wip' \}/);
 	});
 
 	it('refuses an unknown status entry', () => {

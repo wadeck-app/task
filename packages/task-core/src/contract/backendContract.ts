@@ -39,6 +39,11 @@ export interface ContractOptions {
 	 * has an author, instead of asserting the author it sent.
 	 */
 	authoredComments?: boolean;
+	/**
+	 * Deepest nesting the backend accepts (a root is level 1), as its traits declare it. Absent: unlimited. A backend limited to two levels
+	 * (GitLab Free: an issue and its tasks) gets the hierarchy cases without a grandchild and a case that checks the cap is refused.
+	 */
+	hierarchyDepth?: number;
 }
 
 export interface Need {
@@ -53,6 +58,8 @@ export interface Harness {
 	caps: BackendCapabilities;
 	statuses: { initial: string; next: string; terminal: string };
 	authoredComments: boolean;
+	/** The deepest nesting the backend accepts; undefined = unlimited. */
+	hierarchyDepth: number | undefined;
 	/** Creates a task in the initial status. */
 	task: (title: string, extra?: { parentId?: string; description?: string }) => Promise<VersionedRecord>;
 }
@@ -419,7 +426,8 @@ export const BACKEND_CONTRACT_CASES: readonly ContractCase[] = [
 			]);
 
 			const absent = await backend.removeLabel(a.id, 'absent');
-			expect(absent.labels ?? []).toEqual(['urgent', 'backend']);
+			// As a set: a forge may return the labels sorted by name (GitLab does), the local store keeps the insertion order.
+			expect([...(absent.labels ?? [])].sort()).toEqual(['backend', 'urgent']);
 			const removed = await backend.removeLabel(a.id, 'urgent');
 			expect(removed.labels).toEqual(['backend']);
 
@@ -551,24 +559,31 @@ export const BACKEND_CONTRACT_CASES: readonly ContractCase[] = [
 		group: 'graph',
 		name: 'parent and children: create under a parent, set, remove, and read the tree from every side',
 		needs: NEEDS.hierarchy,
-		async run({ backend, task, caps }) {
+		async run({ backend, task, caps, hierarchyDepth }) {
+			// A backend limited to two levels (GitLab Free: an issue and its tasks) has no grandchild: the checks go one level up.
+			const deep = hierarchyDepth === undefined || hierarchyDepth > 2;
 			const root = await task('Root');
 			const child = await task('Child', { parentId: root.id });
-			const grand = await task('Grand', { parentId: child.id });
+			const grand = deep ? await task('Grand', { parentId: child.id }) : undefined;
+			const leaf = grand ?? child;
 			const sibling = await task('Sibling');
 			expect(child.parentId).toBe(root.id);
 			await backend.setParent(sibling.id, root.id);
 
 			expect(ids(await backend.getChildren(root.id))).toEqual([child.id, sibling.id]);
-			expect(ids(await backend.getAncestors(grand.id))).toEqual([child.id, root.id]);
+			expect(ids(await backend.getAncestors(leaf.id))).toEqual(
+				grand === undefined ? [root.id] : [child.id, root.id]
+			);
 			const tree = await backend.getTree(root.id);
 			expect(tree.id).toBe(root.id);
 			expect(ids(tree.children)).toEqual([child.id, sibling.id]);
-			expect(ids(tree.children[0]!.children)).toEqual([grand.id]);
+			expect(ids(tree.children[0]!.children)).toEqual(grand === undefined ? [] : [grand.id]);
 			const descendants = ids(await backend.getDescendants(root.id));
-			expect([...descendants].sort()).toEqual([child.id, grand.id, sibling.id].sort());
-			expect(descendants.indexOf(child.id)).toBeLessThan(descendants.indexOf(grand.id));
-			const full = await backend.getFullTree(grand.id);
+			expect([...descendants].sort()).toEqual(
+				(grand === undefined ? [child.id, sibling.id] : [child.id, grand.id, sibling.id]).sort()
+			);
+			if (grand !== undefined) expect(descendants.indexOf(child.id)).toBeLessThan(descendants.indexOf(grand.id));
+			const full = await backend.getFullTree(leaf.id);
 			expect(full.id).toBe(root.id);
 			const selected: string[] = [];
 			const walk = (node: typeof full): void => {
@@ -576,15 +591,15 @@ export const BACKEND_CONTRACT_CASES: readonly ContractCase[] = [
 				node.children.forEach(walk);
 			};
 			walk(full);
-			expect(selected).toEqual([grand.id]);
+			expect(selected).toEqual([leaf.id]);
 			expect(ids(await backend.getForest({ parentId: root.id }))).toEqual([child.id, sibling.id]);
 			expect(ids(await backend.getForest())).toContain(root.id);
 			expect(ids((await backend.listPage({ parentId: root.id })).items)).toEqual([child.id, sibling.id]);
 			const roots = ids((await backend.listPage({ parentId: null })).items);
 			expect(roots).toContain(root.id);
 			expect(roots).not.toContain(child.id);
-			const summary: TaskSummary | undefined = (await backend.list()).find(t => t.id === grand.id);
-			expect(summary?.parentId).toBe(child.id);
+			const summary: TaskSummary | undefined = (await backend.list()).find(t => t.id === leaf.id);
+			expect(summary?.parentId).toBe(grand === undefined ? root.id : child.id);
 
 			const detached = await backend.removeParent(child.id);
 			expect(detached.parentId).toBeUndefined();
@@ -616,23 +631,56 @@ export const BACKEND_CONTRACT_CASES: readonly ContractCase[] = [
 		group: 'graph',
 		name: 'parent refusals: itself, a descendant (cycle), an unknown task; nothing changes',
 		needs: NEEDS.hierarchy,
-		async run({ backend, task }) {
+		async run({ backend, task, hierarchyDepth }) {
+			const deep = hierarchyDepth === undefined || hierarchyDepth > 2;
 			const root = await task('Root');
 			const child = await task('Child', { parentId: root.id });
-			const grand = await task('Grand', { parentId: child.id });
-			const before = await stateOf(backend, [root.id, child.id, grand.id]);
+			const grand = deep ? await task('Grand', { parentId: child.id }) : undefined;
+			const family = grand === undefined ? [root.id, child.id] : [root.id, child.id, grand.id];
+			const before = await stateOf(backend, family);
 
 			await rejectsWith(backend.setParent(root.id, root.id), TaskConflictError);
-			const cycle = await rejectsWith(backend.setParent(root.id, grand.id), TaskConflictError);
+			const cycle = await rejectsWith(backend.setParent(root.id, (grand ?? child).id), TaskConflictError);
 			expect(cycle.message).toContain('cycle');
 			await rejectsWith(backend.setParent(child.id, 'nope0000'), Error);
 			await rejectsWith(backend.create({ title: 'Orphan', status: 'backlog', parentId: 'nope0000' }), Error);
 
-			expect(await stateOf(backend, [root.id, child.id, grand.id])).toEqual(before);
+			expect(await stateOf(backend, family)).toEqual(before);
 		},
 		async attempt({ backend, task }) {
 			const a = await task('A');
 			return backend.setParent(a.id, a.id);
+		},
+	},
+	{
+		group: 'graph',
+		name: 'hierarchy depth: a chain as deep as the backend allows reads back, one level more is refused and changes nothing',
+		needs: NEEDS.hierarchy,
+		async run({ backend, task, hierarchyDepth }) {
+			// Unlimited: a chain of four levels. Limited: a chain of exactly the declared depth, then one task beyond it.
+			const levels = hierarchyDepth ?? 4;
+			const chain = [await task('L1')];
+			for (let level = 2; level <= levels; level++) {
+				chain.push(await task(`L${level}`, { parentId: chain[level - 2]!.id }));
+			}
+			const bottom = chain[levels - 1]!;
+			expect(ids(await backend.getAncestors(bottom.id))).toEqual(
+				chain
+					.slice(0, -1)
+					.map(t => t.id)
+					.reverse()
+			);
+			if (hierarchyDepth === undefined) return;
+			const beyond = await task('Beyond');
+			const before = await stateOf(backend, [...chain.map(t => t.id), beyond.id]);
+			await rejection(backend.setParent(beyond.id, bottom.id));
+			await rejection(task('Beyond child', { parentId: bottom.id }));
+			expect(await stateOf(backend, [...chain.map(t => t.id), beyond.id])).toEqual(before);
+		},
+		async attempt({ backend, task }) {
+			const a = await task('A');
+			const b = await task('B');
+			return backend.setParent(a.id, b.id);
 		},
 	},
 
@@ -860,25 +908,28 @@ export const BACKEND_CONTRACT_CASES: readonly ContractCase[] = [
 		group: 'delete',
 		name: 'deleting a parent orphans its children; deleting a link target drops the links held towards it',
 		needs: NEEDS.delete,
-		async run({ backend, task, caps }) {
+		async run({ backend, task, caps, hierarchyDepth }) {
 			const parent = await task('Parent');
 			if (caps.delete !== 'yes') {
 				expect(await backend.deleteTask(parent.id)).toBe(true);
 				return;
 			}
 			const child = caps.hierarchy === 'none' ? undefined : await task('Child', { parentId: parent.id });
-			const grand = child && (await task('Grand', { parentId: child.id }));
+			const grand =
+				child && (hierarchyDepth === undefined || hierarchyDepth > 2)
+					? await task('Grand', { parentId: child.id })
+					: undefined;
 			const holder = await task('Holder');
 			const canLink = (caps.linkTypes as readonly string[]).includes('blockedBy');
 			if (canLink) await backend.addLink(holder.id, 'blockedBy', parent.id);
 
 			expect(await backend.deleteTask(parent.id)).toBe(true);
 
-			if (child && grand) {
-				// The child becomes a root; its own subtree stays attached to it.
+			if (child) {
+				// The child becomes a root; its own subtree (when the backend allows one) stays attached to it.
 				expect((await backend.get(child.id)).parentId).toBeUndefined();
 				expect((await backend.list()).find(t => t.id === child.id)?.parentId).toBeUndefined();
-				expect((await backend.get(grand.id)).parentId).toBe(child.id);
+				if (grand) expect((await backend.get(grand.id)).parentId).toBe(child.id);
 			}
 			if (canLink) {
 				expect((await backend.get(holder.id)).links).toBeUndefined();
@@ -1001,6 +1052,7 @@ function harnessFor(fixture: BackendFixture, options: ContractOptions): Harness 
 		caps: backend.capabilities,
 		statuses,
 		authoredComments: options.authoredComments !== false,
+		hierarchyDepth: options.hierarchyDepth,
 		task: (title, extra = {}) => backend.create({ title, status: statuses.initial, ...extra }),
 	};
 }

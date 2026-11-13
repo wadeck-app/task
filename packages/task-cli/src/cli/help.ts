@@ -16,7 +16,7 @@ Concepts:
               The global config (~/.task/config.yml: defaults, hooks) stays task's own file
   strategy    Where the tasks of a project are stored: the 'strategy' section of the project config ({type, fidelity, options}). Without it the project uses
               the local files of the registry (type: local), silently. type: github keeps the tasks as the issues of a GitHub repository, read and written through
-              the official REST API; type: gitlab keeps them as the issues of a GitLab project (REST API v4; NOT verified against a real GitLab instance); type: remote keeps
+              the official REST API; type: gitlab keeps them as the issues of a GitLab project (REST API v4, Free tier; verified live on gitlab.com Free only); type: remote keeps
               them on another computer, behind a 'task serve' there. See: task strategy --help, task serve --help
   id          Short prefix of the task UUID - any unambiguous prefix is accepted
 
@@ -236,8 +236,7 @@ Usage:
                                                 you only), the transport warns on plain http:// to a non-loopback host, the backend opens
                                                 (local: data folder, writable, task counts; github: it contacts GitHub: token accepted and its
                                                 expiry, repository and Issues readable, quota left, statuses mapped, labels that exist,
-                                                sub-issues and dependencies available; gitlab: the same kind of reads, plus the declared tier
-                                                against what GitLab says, and always a warning that the strategy is not verified live). Each problem prints its fix; exit 1 on any error
+                                                sub-issues and dependencies available; gitlab: one line per capability the token gives or lacks (read, write, labels, hierarchy: the missing fine-grained permission and how to add it), quota, statuses and labels, and what was verified live). Each problem prints its fix; exit 1 on any error
                                                 (warnings do not fail it).
   task strategy --help                          Show this help
 
@@ -273,28 +272,27 @@ The github strategy (the issues of one repository, through the official REST API
   how to finish it. causedBy links, comment authors and anything a fill would emulate but the config does not declare fail with the key to write.
   Create the labels once with: task labels sync. Changes made on GitHub itself raise no task event (only changes made through task do).
 
-The gitlab strategy (the issues of one GitLab project, through the official REST API v4; the token needs the scope api, or read_api to read only).
-NOT VERIFIED AGAINST A REAL GITLAB: built from docs.gitlab.com and a fake server; 'task strategy check' says so on every run:
+The gitlab strategy (the issues of one GitLab project, through the official REST API v4; a fine-grained token with the permissions Work Item: Read, Create, Update, Delete and Label: Read, Create, or a classic token with the scope api, read_api to read only).
+Verified live on gitlab.com Free with a fine-grained token (not on self-managed instances, not with classic tokens); 'task strategy check' says what each token can do:
   strategy:
       type: gitlab
       options:
           project: group/subgroup/project        # required: the path, or the numeric project id
-          tier: free                             # required: free | premium | ultimate, declared by you (never guessed; strategy check warns when it looks wrong)
           tokenEnv: GITLAB_TOKEN                 # the NAME of the variable (or tokenFile: <path>); required
           baseUrl: https://gitlab.com/api/v4     # self-managed: https://HOST/api/v4
           statusMap:                             # every status of the project; one open and one closed status have no label (GitLab has no close reason)
               backlog: { state: open }
-              in-progress: { state: open, label: 'status:in-progress' }   # premium and ultimate may use the scoped form 'status::in-progress'
+              in-progress: { state: open, label: 'status:in-progress' }
               done: { state: closed }
               cancelled: { state: closed, label: 'status:cancelled' }
-          # typePrefix, typeMap: { bug: { issueType: incident } }, metaPrefix, pageSize: 100, maxPages: 50, cache: { ttlSeconds: 30 }, timeoutSeconds: 15, writeSpacingSeconds: 1
+          # typePrefix, typeMap: { bug: { issueType: incident } }, metaPrefix, pageSize: 100, maxPages: 50, cache: { ttlSeconds: 30 }, timeoutSeconds: 15, writeSpacingSeconds: 1, rateLimit: { maxWaitSeconds: 70 }
           # fills:                               # what GitLab cannot hold natively; nothing is emulated unless declared here
-          #     meta: labels                     # metadata as labels meta:key=value (free) or meta::key::value (premium, ultimate), exact
+          #     meta: labels                     # metadata as labels meta:key=value, exact
           #     meta: { use: body-block, fidelity: degrade }
           #     delete: hard                     # DELETE the issue (Planner or Owner), or
           #     delete: { use: tombstone, fidelity: degrade }  # close + label task:deleted, hidden from task
           #     linkTypes.duplicateOf: { use: relate-block, fidelity: degrade }   # managed block in the description + a relates_to link (same for causedBy)
-  Task ids are the issue numbers (iid). blockedBy links need tier premium or ultimate (GitLab's blocks / is_blocked_by). There is no parent/child (the REST API has none).
+  Task ids are the issue numbers (iid). Free tier only: blockedBy links are refused (GitLab's blocks / is_blocked_by need a paid tier). A label like status::x is a plain label here (no exclusivity). When the quota (100 requests per minute on gitlab.com) is used up, a command waits for the window to reopen (up to rateLimit.maxWaitSeconds) and says so on stderr.
   Create the labels once with: task labels sync. Changes made on GitLab itself raise no task event (only changes made through task do).
 
 The remote strategy (the tasks are stored by a 'task serve' on another computer, which is the single writer and raises the queue events;

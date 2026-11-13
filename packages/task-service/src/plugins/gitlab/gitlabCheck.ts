@@ -1,8 +1,11 @@
 // `task strategy check` for the gitlab strategy: what a person needs to know before relying on the project. Each finding is a line
-// with its fix; a failed probe is a line, never a throw. Nothing is written: GET only, cache bypassed (a check must see the server).
+// with its fix; a failed probe is a line, never a throw. GET only, cache bypassed (a check must see the server), with ONE documented
+// exception: the `write` probe sends a PUT with the title the issue already has (VERIFIED-LIVE 2026-11-09: 200, no new `updated_at`,
+// no event, no system note), and it needs an existing issue (the check never creates one).
 //
-// NOT VERIFIED AGAINST A REAL GITLAB: the list ALWAYS ends with the `verification` warning, also when an earlier line stopped the
-// list (the failing line stays the one before it), so the limitation is never missing from the output.
+// The probes depend only on what the live fine-grained test token could do (issues, notes, links, labels, GraphQL work items): the
+// endpoints it could NOT read (`/version`, `/user`, `/personal_access_tokens/self`, `GET /projects/:id`) only add facts when the token
+// may read them, and are never a failure. One line per row of CREDENTIAL_REQUIREMENTS says whether the capability is enabled.
 import {
 	BackendAuthError,
 	BackendLimitError,
@@ -12,10 +15,13 @@ import {
 } from '@wadeck-app/task-core';
 
 import type { CheckLine, DeclaredFills, ProjectFacts } from '../kinds.js';
-import { GitLabHttpError } from './gitlabClient.js';
+import { CREDENTIAL_REQUIREMENTS } from './credentialRequirements.js';
+import type { CredentialKey, CredentialRequirement } from './credentialRequirements.js';
+import { GitLabPermissionError, GitLabProjectNotFoundError } from './gitlabClient.js';
 import type { GitLabClient } from './gitlabClient.js';
 import { wantedLabels } from './gitlabLabels.js';
-import type { GitLabSettings, GitLabTier } from './gitlabOptions.js';
+import { GQL_READ } from './gitlabWorkItems.js';
+import type { GitLabSettings } from './gitlabOptions.js';
 import type { ApiProject, ApiProjectLabel } from './gitlabTypes.js';
 
 export interface GitLabCheckInput {
@@ -43,10 +49,13 @@ interface TokenInfo {
 
 interface VersionInfo {
 	version?: string;
+	enterprise?: boolean;
 }
 
-interface PlanInfo {
-	plan?: string | null;
+interface FirstIssue {
+	iid: number;
+	id?: number;
+	title: string;
 }
 
 const DAY_MS = 86_400_000;
@@ -64,62 +73,111 @@ const ACCESS_LEVELS: Readonly<Record<number, string>> = {
 	50: 'Owner',
 };
 
-const TIER_RANK: Record<GitLabTier, number> = { free: 0, premium: 1, ultimate: 2 };
+export const VERIFICATION_TEXT =
+	'verified live on gitlab.com Free on 2026-11-09 with a fine-grained personal access token (issues, notes, links, labels, resource events, work items); NOT verified: classic tokens (api, read_api), self-managed instances, and GitLab Premium or Ultimate (which task does not support)';
 
-/** The tier a `plan` word of GitLab means; undefined for a word this code does not know. */
-export function tierOfPlan(plan: string): GitLabTier | undefined {
-	switch (plan.trim().toLowerCase()) {
-		case 'free':
-		case 'default':
-			return 'free';
-		case 'premium':
-		case 'silver':
-			return 'premium';
-		case 'ultimate':
-		case 'gold':
-			return 'ultimate';
-		default:
-			return undefined;
-	}
+function row(key: CredentialKey): CredentialRequirement {
+	const found = CREDENTIAL_REQUIREMENTS.find(candidate => candidate.key === key);
+	if (found === undefined) throw new Error(`gitlab credential requirement "${key}" is not in the table`);
+	return found;
 }
 
-export const VERIFICATION_TEXT =
-	'this strategy has not been verified against a real GitLab instance: it was built from docs.gitlab.com and a fake server';
+const needs = (requirement: CredentialRequirement): string => requirement.fineGrained.join(', ');
 
-/** The line a failed probe becomes. */
-function failureLine(name: string, error: unknown, input: GitLabCheckInput): CheckLine {
-	if (error instanceof BackendUnreachableError || error instanceof BackendTimeoutError) {
-		return { name: 'reachable', status: 'error', text: error.message, fix: error.hint };
-	}
-	if (error instanceof BackendAuthError) {
-		// A refused token is the `auth` finding; a missing permission belongs to the probe that needed it.
+function enabled(requirement: CredentialRequirement, note = ''): CheckLine {
+	return { name: requirement.key, status: 'ok', text: `enabled: ${requirement.title}${note}` };
+}
+
+function notTested(requirement: CredentialRequirement): CheckLine {
+	return {
+		name: requirement.key,
+		status: 'ok',
+		text: `not tested (cannot be probed without changing data); needs ${needs(requirement)}: ${requirement.title}`,
+	};
+}
+
+/** The line a refused capability probe becomes: a warning, an error for a row without which nothing works. */
+function disabled(requirement: CredentialRequirement, error: unknown, input: GitLabCheckInput): CheckLine {
+	const status = requirement.required ? 'error' : 'warn';
+	if (error instanceof GitLabPermissionError) {
 		return {
-			name: error.reason === 'forbidden' ? name : 'auth',
-			status: 'error',
-			text: error.message,
+			name: requirement.key,
+			status,
+			text: `disabled (missing ${error.denied.permissions.join(', ')}): ${requirement.title}`,
 			fix: error.hint,
 		};
 	}
-	if (error instanceof RateLimitedError) {
-		return { name: 'limits', status: 'error', text: error.message, fix: error.hint };
-	}
-	if (error instanceof BackendLimitError) {
-		return { name, status: 'error', text: error.message, fix: error.hint };
-	}
-	if (error instanceof GitLabHttpError && error.status === 404) {
+	if (error instanceof BackendAuthError) {
 		return {
-			name: 'project',
-			status: 'error',
-			text: `${input.settings.project.ref} was not found, or this token cannot see it`,
-			fix: `Check strategy.options.project (the path group/project, or the numeric id) in the project config, and that the user of the token is a member of ${input.settings.project.ref} (GitLab answers 404 for a private project the user cannot see). It is read from ${input.tokenHint}.`,
+			name: requirement.key,
+			status,
+			text: `disabled (${error.message}): ${requirement.title}`,
+			fix: error.hint,
 		};
 	}
 	return {
-		name,
-		status: 'error',
-		text: error instanceof Error ? error.message : String(error),
-		fix: 'Run the command again; if it keeps failing, task cli logs shows the cause',
+		name: requirement.key,
+		status,
+		text: `could not be tested: ${error instanceof Error ? error.message : String(error)}`,
+		fix: `Run the command again; if it keeps failing, task cli logs shows the cause. Needs ${needs(requirement)} (token read from ${input.tokenHint}).`,
 	};
+}
+
+/** An optional information row that the token cannot read: never a warning, never a failure. */
+function notReadable(requirement: CredentialRequirement): CheckLine {
+	return {
+		name: requirement.key,
+		status: 'ok',
+		text: `not readable with this token (needs ${needs(requirement)}); optional, only used for information`,
+	};
+}
+
+const isDenied = (error: unknown): boolean => error instanceof BackendAuthError && error.reason === 'forbidden';
+
+/** The line a failed first probe becomes (the server did not give the issues). */
+function firstProbeFailure(error: unknown, input: GitLabCheckInput): CheckLine[] {
+	if (error instanceof BackendUnreachableError || error instanceof BackendTimeoutError) {
+		return [{ name: 'reachable', status: 'error', text: error.message, fix: error.hint }];
+	}
+	if (error instanceof BackendAuthError && error.reason !== 'forbidden') {
+		return [
+			{ name: 'reachable', status: 'ok', text: `${new URL(input.settings.baseUrl).host} answered` },
+			{ name: 'auth', status: 'error', text: error.message, fix: error.hint },
+		];
+	}
+	const answered: CheckLine = {
+		name: 'reachable',
+		status: 'ok',
+		text: `${new URL(input.settings.baseUrl).host} answered`,
+	};
+	if (error instanceof GitLabProjectNotFoundError) {
+		return [
+			answered,
+			{ name: 'auth', status: 'ok', text: 'the token is accepted' },
+			{ name: 'project', status: 'error', text: error.message, fix: error.hint },
+		];
+	}
+	if (error instanceof GitLabPermissionError || isDenied(error)) {
+		return [
+			answered,
+			{ name: 'auth', status: 'ok', text: 'the token is accepted' },
+			disabled(row('read'), error, input),
+		];
+	}
+	if (error instanceof RateLimitedError) {
+		return [{ name: 'limits', status: 'error', text: error.message, fix: error.hint }];
+	}
+	if (error instanceof BackendLimitError) {
+		return [{ name: 'read', status: 'error', text: error.message, fix: error.hint }];
+	}
+	return [
+		{
+			name: 'read',
+			status: 'error',
+			text: error instanceof Error ? error.message : String(error),
+			fix: 'Run the command again; if it keeps failing, task cli logs shows the cause',
+		},
+	];
 }
 
 function describeMap(settings: GitLabSettings): string {
@@ -128,28 +186,24 @@ function describeMap(settings: GitLabSettings): string {
 		.join('; ');
 }
 
-function authLine(token: TokenInfo | undefined, now: number): { line: CheckLine; canWrite: boolean | undefined } {
+/** The `token-info` line from `GET /personal_access_tokens/self` (readable only with `Personal Access Token: Read`). */
+function tokenLine(token: TokenInfo | undefined, now: number): CheckLine {
+	const requirement = row('token-info');
 	if (token === undefined) {
 		return {
-			canWrite: undefined,
-			line: {
-				name: 'auth',
-				status: 'ok',
-				text: 'the token is accepted; it is not a personal access token (a project or group access token, or OAuth), so its scopes and expiry cannot be read',
-			},
+			name: requirement.key,
+			status: 'ok',
+			text: 'the token is not a personal access token (a project or group access token, or OAuth), so its scopes and expiry cannot be read',
 		};
 	}
 	const scopes = token.scopes ?? [];
 	const shown = scopes.length === 0 ? 'no scope listed' : `scopes ${scopes.join(', ')}`;
 	if (token.active === false || token.revoked === true) {
 		return {
-			canWrite: false,
-			line: {
-				name: 'auth',
-				status: 'error',
-				text: `the token is ${token.revoked === true ? 'revoked' : 'inactive'} (${shown})`,
-				fix: 'Create a new access token with the scope api and put it where the config points',
-			},
+			name: requirement.key,
+			status: 'error',
+			text: `the token is ${token.revoked === true ? 'revoked' : 'inactive'} (${shown})`,
+			fix: 'Create a new access token and put it where the config points',
 		};
 	}
 	const expires = token.expires_at ?? undefined;
@@ -160,41 +214,23 @@ function authLine(token: TokenInfo | undefined, now: number): { line: CheckLine;
 	}
 	if (days !== undefined && days <= 0) {
 		return {
-			canWrite: false,
-			line: {
-				name: 'auth',
-				status: 'error',
-				text: `the token expired on ${expires} (${shown})`,
-				fix: 'Create a new access token with the scope api and put it where the config points',
-			},
+			name: requirement.key,
+			status: 'error',
+			text: `the token expired on ${expires} (${shown})`,
+			fix: 'Create a new access token and put it where the config points',
 		};
 	}
-	const canWrite = scopes.includes('api');
-	const expiry =
-		expires === undefined ? 'no expiry date' : `expires ${expires}${days === undefined ? '' : ` (${days} days)`}`;
 	if (days !== undefined && days <= 7) {
 		return {
-			canWrite,
-			line: {
-				name: 'auth',
-				status: 'warn',
-				text: `the token expires in ${days} day${days === 1 ? '' : 's'} (${expires}); ${shown}`,
-				fix: 'Create its replacement before then: every command on this project fails once it expires',
-			},
+			name: requirement.key,
+			status: 'warn',
+			text: `the token expires in ${days} day${days === 1 ? '' : 's'} (${expires}); ${shown}`,
+			fix: 'Create its replacement before then: every command on this project fails once it expires',
 		};
 	}
-	if (!canWrite) {
-		return {
-			canWrite,
-			line: {
-				name: 'auth',
-				status: 'warn',
-				text: `the token is accepted (${shown}, ${expiry}) but lacks the scope api: it can only read, every write will be refused`,
-				fix: 'Create an access token with the scope api (GitLab > Preferences > Access tokens) and put it where the config points',
-			},
-		};
-	}
-	return { canWrite, line: { name: 'auth', status: 'ok', text: `the token is accepted (${shown}, ${expiry})` } };
+	const expiry =
+		expires === undefined ? 'no expiry date' : `expires ${expires}${days === undefined ? '' : ` (${days} days)`}`;
+	return { name: requirement.key, status: 'ok', text: `${shown}, ${expiry}` };
 }
 
 function levelOf(project: ApiProject): number | undefined {
@@ -203,7 +239,9 @@ function levelOf(project: ApiProject): number | undefined {
 	return known.length === 0 ? undefined : Math.max(...known);
 }
 
+/** The `project-info` line from `GET /projects/:id` (readable only with `Project: Read`). */
 function projectLine(project: ApiProject, input: GitLabCheckInput): CheckLine {
+	const name = row('project-info').key;
 	const level = levelOf(project);
 	const access =
 		level === undefined
@@ -212,7 +250,7 @@ function projectLine(project: ApiProject, input: GitLabCheckInput): CheckLine {
 	const text = `${project.path_with_namespace} (${access}${project.archived === true ? ', archived' : ''})`;
 	if (project.issues_access_level === 'disabled' || project.issues_enabled === false) {
 		return {
-			name: 'project',
+			name,
 			status: 'error',
 			text: `Issues are disabled on ${project.path_with_namespace}`,
 			fix: `Enable Issues in the project settings (Settings > General > Visibility, project features, permissions): ${input.projectUrl}/edit`,
@@ -220,7 +258,7 @@ function projectLine(project: ApiProject, input: GitLabCheckInput): CheckLine {
 	}
 	if (project.archived === true) {
 		return {
-			name: 'project',
+			name,
 			status: 'warn',
 			text,
 			fix: 'An archived project is read-only on GitLab: reads work, every write will be refused',
@@ -228,81 +266,13 @@ function projectLine(project: ApiProject, input: GitLabCheckInput): CheckLine {
 	}
 	if (input.fills['delete']?.use === 'hard' && level !== undefined && level < 15) {
 		return {
-			name: 'project',
+			name,
 			status: 'warn',
 			text,
 			fix: 'fills.delete: hard needs the Planner or Owner role (or being the author of the issue, since GitLab 18.10): deleting a task will fail. Use a user with that role, or declare "delete: { use: tombstone, fidelity: degrade }" in strategy.options.fills',
 		};
 	}
-	return { name: 'project', status: 'ok', text };
-}
-
-/** What GitLab says the plan is: the namespace first, then the instance metadata; undefined when neither tells. */
-async function planFound(
-	client: GitLabClient,
-	project: ApiProject
-): Promise<{ plan: string; from: string } | undefined> {
-	const namespace = project.namespace?.id;
-	if (namespace !== undefined) {
-		try {
-			const answer = await client.get<PlanInfo>(`/namespaces/${namespace}`, {
-				cache: false,
-				allowNotFound: true,
-			});
-			const plan = answer.status === 404 ? undefined : answer.body.plan;
-			if (typeof plan === 'string' && plan !== '') return { plan, from: `namespace ${namespace}` };
-		} catch {
-			// hidden or refused: the instance metadata is tried next
-		}
-	}
-	try {
-		const answer = await client.get<PlanInfo>('/metadata', { cache: false, allowNotFound: true });
-		const plan = answer.status === 404 ? undefined : answer.body.plan;
-		if (typeof plan === 'string' && plan !== '') return { plan, from: 'the instance metadata' };
-	} catch {
-		// not readable
-	}
-	return undefined;
-}
-
-async function tierLine(client: GitLabClient, project: ApiProject, input: GitLabCheckInput): Promise<CheckLine> {
-	const declared = input.settings.tier;
-	const found = await planFound(client, project);
-	if (found === undefined) {
-		return {
-			name: 'tier',
-			status: 'ok',
-			text: `tier: ${declared} (declared); GitLab does not tell the plan to this token, so it could not be probed and the declaration is trusted`,
-		};
-	}
-	const actual = tierOfPlan(found.plan);
-	if (actual === undefined) {
-		return {
-			name: 'tier',
-			status: 'ok',
-			text: `tier: ${declared} (declared); ${found.from} reports the plan "${found.plan}", which this version does not know: the declaration is trusted`,
-		};
-	}
-	if (TIER_RANK[declared] > TIER_RANK[actual]) {
-		return {
-			name: 'tier',
-			status: 'warn',
-			text: `tier: ${declared} (declared) but ${found.from} reports the plan "${found.plan}" (${actual}): scoped labels and blocking links will be refused by GitLab`,
-			fix: `Set strategy.options.tier to ${actual} in the project config, or upgrade the plan of ${input.settings.project.ref}`,
-		};
-	}
-	if (TIER_RANK[declared] < TIER_RANK[actual]) {
-		return {
-			name: 'tier',
-			status: 'ok',
-			text: `tier: ${declared} (declared); ${found.from} reports the plan "${found.plan}" (${actual}): more exists than task uses, set tier: ${actual} to use scoped labels and blocking links`,
-		};
-	}
-	return {
-		name: 'tier',
-		status: 'ok',
-		text: `tier: ${declared} (declared), matches the plan "${found.plan}" (${found.from})`,
-	};
+	return { name, status: 'ok', text };
 }
 
 function limitsLine(client: GitLabClient): CheckLine {
@@ -316,169 +286,231 @@ function limitsLine(client: GitLabClient): CheckLine {
 		name: 'limits',
 		status: low ? 'warn' : 'ok',
 		text: `${rate.remaining} of ${rate.limit} requests left in this window (resets ${resets})`,
-		...(low ? { fix: `Wait until ${resets}, or use a token of a user with a larger quota` } : {}),
+		...(low
+			? {
+					fix: `Wait until ${resets}, or use a token of a user with a larger quota. A command that meets the limit waits for the window to reopen (strategy.options.rateLimit.maxWaitSeconds)`,
+				}
+			: {}),
 	};
 }
 
-function writesLine(input: GitLabCheckInput, canWrite: boolean | undefined): CheckLine {
+function writesLine(input: GitLabCheckInput): CheckLine {
 	const { settings } = input;
 	const rate = input.client.rateLimit();
 	const left = rate === undefined ? '' : ` (${rate.remaining} of ${rate.limit} requests left in this window)`;
-	const budget = `a write is sent one at a time, ${settings.writeSpacingSeconds} s apart${left}; optimistic, not atomic: GitLab has no conditional write, so a change made on GitLab in the second between the read and the write can be overwritten`;
-	if (canWrite === false) {
+	return {
+		name: 'writes',
+		status: 'ok',
+		text: `a write is sent one at a time, ${settings.writeSpacingSeconds} s apart${left}; optimistic, not atomic: GitLab has no conditional write, so a change made on GitLab in the second between the read and the write can be overwritten`,
+	};
+}
+
+/** `GET /projects/:id/labels` (the project's labels and its groups'), exact case: `bug` and `Bug` are two labels. */
+function labelsLine(present: readonly ApiProjectLabel[], input: GitLabCheckInput): CheckLine | undefined {
+	const wanted = wantedLabels(input.settings, input.project.types, input.fills).map(label => label.name);
+	if (wanted.length === 0) return undefined;
+	const known = new Set(present.map(label => label.name));
+	const missing = wanted.filter(label => !known.has(label));
+	if (missing.length === 0) {
 		return {
-			name: 'writes',
-			status: 'warn',
-			text: `this token has no write scope (see auth): reads work, every write will fail; ${budget}`,
-			fix: `Give the token the scope api, then run this check again. It is read from ${input.tokenHint}.`,
+			name: 'labels',
+			status: 'ok',
+			text: `the ${wanted.length} labels the mapping uses exist (${wanted.join(', ')})`,
 		};
 	}
-	return { name: 'writes', status: 'ok', text: budget };
+	return {
+		name: 'labels',
+		status: 'warn',
+		text: `${missing.length} of the ${wanted.length} labels the mapping uses do not exist yet: ${missing.join(', ')}`,
+		fix: `Reading works without them, and GitLab creates a label the first time a write names it (with a default colour). Create them all now, with a colour and a description, with: task labels sync -p ${input.projectName} (add --dry-run to see first). Names are case sensitive. Missing: ${missing.join(', ')}`,
+	};
+}
+
+interface WorkItemAnswer {
+	data?: { workItem?: { id?: string } | null } | null;
+	errors?: Array<{ message?: string }>;
 }
 
 async function probeLines(input: GitLabCheckInput, lines: CheckLine[]): Promise<void> {
-	const { client, settings, project } = input;
+	const { client, settings } = input;
 	const projectPath = `/projects/${settings.project.apiId}`;
+	const host = new URL(settings.baseUrl).host;
+
+	// 1. One read of the issues gives reachable, auth and the read permission.
 	const started = input.now();
-	let version: VersionInfo;
+	let issues: FirstIssue[];
 	try {
-		version = (await client.get<VersionInfo>('/version', { cache: false })).body;
+		issues = (await client.get<FirstIssue[]>(`${projectPath}/issues`, { query: { per_page: 1 }, cache: false }))
+			.body;
 	} catch (error) {
-		lines.push(failureLine('reachable', error, input));
+		lines.push(...firstProbeFailure(error, input));
 		return;
 	}
 	const ms = input.now() - started;
 	lines.push({
 		name: 'reachable',
 		status: ms > SLOW_MS ? 'warn' : 'ok',
-		text: `${new URL(settings.baseUrl).host} answered (GitLab ${version.version ?? 'version not reported'}, ${ms} ms)`,
+		text: `${host} answered (${ms} ms)`,
 		...(ms > SLOW_MS
 			? {
 					fix: 'Every task command makes several requests: a slow network makes them slow; raise timeoutSeconds if they time out',
 				}
 			: {}),
 	});
+	lines.push({
+		name: 'auth',
+		status: 'ok',
+		text: 'the token is accepted (its expiry cannot be read without Personal Access Token: Read, see token-info)',
+	});
+	lines.push(enabled(row('read')));
+	const first = issues[0];
 
-	let token: TokenInfo | undefined;
+	// 2. write: the no-op PUT, on the first issue found.
+	const write = row('write');
+	let writeLine: CheckLine;
+	let updateDenied = false;
+	if (first === undefined) {
+		writeLine = {
+			name: write.key,
+			status: 'ok',
+			text: `not tested: the project has no issue to rewrite without changing it (the check never creates one); needs ${needs(write)}: ${write.title}`,
+		};
+	} else {
+		try {
+			await client.write('PUT', `${projectPath}/issues/${first.iid}`, { title: first.title });
+			writeLine = enabled(
+				write,
+				' (Work Item: Update tested with a rewrite of the title of the first issue; nothing in the issue changes, but an issue never edited since its creation gets its updated_at refreshed once; Work Item: Create cannot be tested without creating a task)'
+			);
+		} catch (error) {
+			updateDenied = error instanceof BackendAuthError;
+			writeLine = disabled(write, error, input);
+		}
+	}
+	lines.push(writeLine);
+	lines.push(notTested(row('delete')));
+
+	// 3. labels: read (also gives the labels of the mapping) and write.
+	const labelsRead = row('labels-read');
+	let present: ApiProjectLabel[] | undefined;
+	try {
+		present = (
+			await client.getAll<ApiProjectLabel>(`${projectPath}/labels`, {
+				query: { per_page: settings.pageSize },
+				cache: false,
+			})
+		).items;
+		lines.push(enabled(labelsRead));
+	} catch (error) {
+		lines.push(disabled(labelsRead, error, input));
+	}
+	lines.push(notTested(row('labels-write')));
+
+	// 4. hierarchy: the work item of the first issue, read through GraphQL.
+	const hierarchy = row('hierarchy');
+	if (first === undefined || first.id === undefined) {
+		lines.push({
+			name: hierarchy.key,
+			status: 'ok',
+			text: `not tested: the project has no issue to read as a work item; needs ${needs(hierarchy)}: ${hierarchy.title}`,
+		});
+	} else {
+		try {
+			const answer = (
+				await client.graphql<WorkItemAnswer>({
+					query: GQL_READ,
+					variables: { id: `gid://gitlab/WorkItem/${first.id}` },
+				})
+			).body;
+			const error = answer.errors?.[0]?.message;
+			if (error !== undefined || answer.data?.workItem === null || answer.data?.workItem === undefined) {
+				lines.push({
+					name: hierarchy.key,
+					status: 'warn',
+					text: `disabled (GraphQL did not return the work item${error === undefined ? '' : `: ${error}`}): ${hierarchy.title}`,
+					fix: `Needs ${needs(hierarchy)} (token read from ${input.tokenHint}); run this check again`,
+				});
+			} else if (updateDenied) {
+				lines.push({
+					name: hierarchy.key,
+					status: 'warn',
+					text: `disabled (missing Work Item: Update, see write): ${hierarchy.title}`,
+					fix: lines.find(line => line.name === 'write')?.fix ?? `Add the permission Work Item: Update`,
+				});
+			} else {
+				lines.push(enabled(hierarchy, ' (Work Item: Read tested)'));
+			}
+		} catch (error) {
+			lines.push(disabled(hierarchy, error, input));
+		}
+	}
+
+	// 5. Optional information: only shown when the token may read it, never a failure.
+	const projectInfo = row('project-info');
+	try {
+		const found = (await client.get<ApiProject>(projectPath, { cache: false })).body;
+		lines.push(projectLine(found, input));
+	} catch (error) {
+		lines.push(
+			isDenied(error) ? notReadable(projectInfo) : disabled({ ...projectInfo, required: false }, error, input)
+		);
+	}
+	const tokenInfo = row('token-info');
 	try {
 		const answer = await client.get<TokenInfo>('/personal_access_tokens/self', {
 			cache: false,
 			allowNotFound: true,
 		});
-		token = answer.status === 404 ? undefined : answer.body;
+		lines.push(tokenLine(answer.status === 404 ? undefined : answer.body, input.now()));
 	} catch (error) {
-		lines.push(failureLine('auth', error, input));
-		return;
+		lines.push(isDenied(error) ? notReadable(tokenInfo) : disabled(tokenInfo, error, input));
 	}
-	const auth = authLine(token, input.now());
-	lines.push(auth.line);
-	if (auth.line.status === 'error') return;
-
-	let found: ApiProject;
+	const serverInfo = row('server-info');
 	try {
-		found = (await client.get<ApiProject>(projectPath, { cache: false })).body;
-	} catch (error) {
-		lines.push(failureLine('project', error, input));
-		return;
-	}
-	const projectLineResult = projectLine(found, input);
-	lines.push(projectLineResult);
-	if (projectLineResult.status === 'error') return;
-
-	lines.push(await tierLine(client, found, input));
-
-	let firstIid: number | undefined;
-	try {
-		const answer = await client.get<Array<{ iid: number }>>(`${projectPath}/issues`, {
-			query: { per_page: 1 },
-			cache: false,
+		const version = (await client.get<VersionInfo>('/version', { cache: false })).body;
+		lines.push({
+			name: serverInfo.key,
+			status: 'ok',
+			text: `GitLab ${version.version ?? 'version not reported'}`,
 		});
-		firstIid = answer.body[0]?.iid;
-		lines.push({ name: 'issues', status: 'ok', text: 'Issues are readable with this token' });
 	} catch (error) {
-		lines.push(failureLine('issues', error, input));
-		return;
+		lines.push(isDenied(error) ? notReadable(serverInfo) : disabled(serverInfo, error, input));
 	}
 
+	// 6. What the mapping needs.
 	lines.push(limitsLine(client));
 	lines.push({
 		name: 'statuses',
 		status: 'ok',
 		text: `${Object.keys(settings.statusMap).length} statuses mapped: ${describeMap(settings)}`,
 	});
-
-	const wanted = wantedLabels(settings, project.types, input.fills).map(label => label.name);
-	if (wanted.length > 0) {
-		try {
-			const present = await client.getAll<ApiProjectLabel>(`${projectPath}/labels`, {
-				query: { per_page: settings.pageSize },
-				cache: false,
-			});
-			const known = new Set(present.items.map(label => label.name.toLowerCase()));
-			const missing = wanted.filter(label => !known.has(label.toLowerCase()));
-			lines.push(
-				missing.length === 0
-					? {
-							name: 'labels',
-							status: 'ok',
-							text: `the ${wanted.length} labels the mapping uses exist (${wanted.join(', ')})`,
-						}
-					: {
-							name: 'labels',
-							status: 'warn',
-							text: `${missing.length} of the ${wanted.length} labels the mapping uses do not exist yet: ${missing.join(', ')}`,
-							fix: `Reading works without them, and GitLab creates a label the first time a write names it (with a default colour). Create them all now, with a colour and a description, with: task labels sync -p ${input.projectName} (add --dry-run to see first). Missing: ${missing.join(', ')}`,
-						}
-			);
-		} catch (error) {
-			lines.push(failureLine('labels', error, input));
-		}
+	if (present !== undefined) {
+		const labels = labelsLine(present, input);
+		if (labels !== undefined) lines.push(labels);
 	}
-
-	if (settings.tier === 'free') {
-		lines.push({
-			name: 'links',
-			status: 'ok',
-			text: 'tier free: blockedBy links are refused (the blocks / is_blocked_by issue links are GitLab Premium and Ultimate); relates_to exists on every tier and backs the relate-block fills',
-		});
-	} else if (firstIid === undefined) {
-		lines.push({
-			name: 'links',
-			status: 'ok',
-			text: `tier ${settings.tier}: blocking links are used; they cannot be probed without writing (UNVERIFIED), and the project has no issue yet to read the link list of`,
-		});
-	} else {
-		try {
-			await client.get(`${projectPath}/issues/${firstIid}/links`, { query: { per_page: 1 }, cache: false });
-			lines.push({
-				name: 'links',
-				status: 'ok',
-				text: `tier ${settings.tier}: the issue links answer; blocking links (blocks / is_blocked_by) cannot be probed without writing (UNVERIFIED), GitLab refuses them at the first write if the plan lacks them`,
-			});
-		} catch (error) {
-			lines.push(failureLine('links', error, input));
-		}
-	}
-
+	// Blocking links cannot exist on the Free tier: nothing to probe, the refusal is stated.
 	lines.push({
-		name: 'hierarchy',
+		name: 'links',
 		status: 'ok',
-		text: 'the GitLab REST API has no parent of an issue: set-parent and children are refused, every task reads as a root task',
+		text: 'blockedBy links are refused (the blocks / is_blocked_by issue links need a paid GitLab tier, which task does not support); relates_to exists on the Free tier and backs the relate-block fills',
 	});
-	lines.push(
-		writesLine(input, auth.line.status === 'warn' && /lacks the scope api/.test(auth.line.text) ? false : undefined)
-	);
+	lines.push(writesLine(input));
 }
 
 /** The lines of `task strategy check` for a gitlab project. */
 export async function checkGitLab(input: GitLabCheckInput): Promise<CheckLine[]> {
 	const lines: CheckLine[] = [];
-	await probeLines(input, lines);
-	lines.push({
-		name: 'verification',
-		status: 'warn',
-		text: VERIFICATION_TEXT,
-		fix: 'try it on a scratch project first: task strategy check, task migrate --dry-run; report any difference',
-	});
+	try {
+		await probeLines(input, lines);
+	} catch (error) {
+		// A probe turns its own failure into a line; this is the net for what nobody expected, so the check never throws.
+		lines.push({
+			name: 'check',
+			status: 'error',
+			text: error instanceof Error ? error.message : String(error),
+			fix: 'Run the command again; if it keeps failing, task cli logs shows the cause',
+		});
+	}
+	lines.push({ name: 'verification', status: 'ok', text: VERIFICATION_TEXT });
 	return lines;
 }

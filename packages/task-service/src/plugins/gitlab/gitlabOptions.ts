@@ -1,31 +1,37 @@
 // The options of the `gitlab` strategy (`strategy.options` of a project's config.yml): parsed once, every problem a sentence that
 // starts with the dotted key (the host turns it into `<file>: strategy.options.<key>: <problem>`). Pure: no I/O, no environment.
 //
-// NOT VERIFIED AGAINST A REAL GITLAB: everything here follows docs.gitlab.com (see the "GitLab verification log" of the storage
-// plan). The tier is DECLARED by the user and never guessed: scoped labels and the `blocks` / `is_blocked_by` links are Premium and
-// Ultimate only, and nothing task does depends on a silent probe.
+// Only the Free tier is supported (verified live on gitlab.com Free, 2026-11-09): the `blocks` / `is_blocked_by` links are a paid
+// feature that task does not offer. A label written with the scoped syntax (`status::todo`) is a PLAIN label on Free (no exclusivity,
+// accepted by the API and the UI): it is allowed everywhere, and the wrapper itself keeps a task to one status label.
 import type { ProjectFacts } from '../kinds.js';
-
-/** The GitLab plan the user declares. It decides which features the strategy offers (scoped labels, blocking links). */
-export type GitLabTier = 'free' | 'premium' | 'ultimate';
-export const GITLAB_TIERS: readonly GitLabTier[] = ['free', 'premium', 'ultimate'];
 
 /** How GitLab represents a task status: opened or closed, and an optional label (GitLab has no close reason). */
 export interface StatusRule {
 	state: 'open' | 'closed';
-	/** A label that must be on the issue (`status:in-progress`, or the scoped `status::in-progress` on Premium and Ultimate). */
+	/** A label that must be on the issue (`status:in-progress`). */
 	label?: string;
 }
 
-/** A task type as GitLab holds it: a native issue type (REST accepts `incident` and `test_case` on create AND update) or a label. */
+/** A task type as GitLab holds it: the native issue type `incident`, or a label. */
 export interface TypeRule {
 	issueType?: NativeIssueType;
 	label?: string;
 }
 
-/** The issue types the REST API can both create and update (`task` is create-only, `issue` is the default for everything else). */
-export type NativeIssueType = 'incident' | 'test_case';
-export const NATIVE_ISSUE_TYPES: readonly NativeIssueType[] = ['incident', 'test_case'];
+/**
+ * The native issue types a task type can map to (`issue` is the default for everything else). `test_case` is refused: see
+ * TEST_CASE_REASON. `task` is refused too: the native Task is the type of a hierarchy child (see TASK_RESERVED_REASON).
+ */
+export type NativeIssueType = 'incident';
+export const NATIVE_ISSUE_TYPES: readonly NativeIssueType[] = ['incident'];
+
+const TASK_RESERVED_REASON =
+	'native Task is the hierarchy child type, it cannot also be a task type (every child would read back as that type)';
+
+// VERIFIED-LIVE on gitlab.com Free (2026-11-09): the REST API does not really support it.
+const TEST_CASE_REASON =
+	'test_case cannot be used: on gitlab.com Free a POST with issue_type test_case silently creates a plain issue and a PUT silently ignores it, so the type would never be stored';
 
 export type TokenSource = { kind: 'env'; name: string } | { kind: 'file'; path: string };
 
@@ -43,9 +49,6 @@ export interface GitLabSettings {
 	/** No trailing slash: `https://gitlab.com/api/v4`, or `https://HOST/api/v4` for a self-managed instance. */
 	baseUrl: string;
 	token: TokenSource;
-	tier: GitLabTier;
-	/** `tier` is premium or ultimate: scoped labels (`key::value`) exist and exclude each other natively. */
-	scopedLabels: boolean;
 	statusMap: Record<string, StatusRule>;
 	typePrefix: string;
 	typeMap: Record<string, TypeRule>;
@@ -56,6 +59,8 @@ export interface GitLabSettings {
 	timeoutSeconds: number;
 	/** Least time between the start of two writes (a polite pace: GitLab.com allows 60 notes and 200 issues a minute). */
 	writeSpacingSeconds: number;
+	/** Longest wait for the rate limit window to reopen (reads and writes); a longer one fails with the instant to retry at. */
+	rateLimitMaxWaitSeconds: number;
 }
 
 /** The documented option names, in the order the documentation lists them. */
@@ -64,7 +69,6 @@ export const GITLAB_OPTION_NAMES: readonly string[] = [
 	'baseUrl',
 	'tokenEnv',
 	'tokenFile',
-	'tier',
 	'statusMap',
 	'typePrefix',
 	'typeMap',
@@ -74,8 +78,11 @@ export const GITLAB_OPTION_NAMES: readonly string[] = [
 	'cache',
 	'timeoutSeconds',
 	'writeSpacingSeconds',
+	'rateLimit',
 ];
 
+/** gitlab.com counts requests in a fixed window of about 60 s: waiting one window out is the default. */
+export const DEFAULT_MAX_WAIT_SECONDS = 70;
 export const DEFAULT_BASE_URL = 'https://gitlab.com/api/v4';
 /** GitLab allows 100 labels on one issue (docs.gitlab.com/administration/instance_limits, `limit_labels_per_work_item`). */
 export const LABELS_PER_ISSUE = 100;
@@ -184,30 +191,15 @@ function parseToken(options: Record<string, unknown>): Parsed<TokenSource> {
 	return { value: { kind: 'env', name: tokenEnv } };
 }
 
-function parseTier(value: unknown): Parsed<GitLabTier> {
-	if (value === undefined) {
-		return {
-			problem: `tier: required, one of ${GITLAB_TIERS.join(', ')}: the plan of the GitLab project decides what exists (scoped labels and blocking links are Premium and Ultimate only) and task never guesses it; \`task strategy check\` warns when the declaration looks wrong`,
-		};
-	}
-	if (typeof value !== 'string' || !(GITLAB_TIERS as readonly string[]).includes(value)) {
-		return { problem: `tier: must be one of ${GITLAB_TIERS.join(', ')}, found ${found(value)}` };
-	}
-	return { value: value as GitLabTier };
-}
-
-/** True for a label written with the scoped syntax (`key::value`), which only Premium and Ultimate give a meaning to. */
-export const isScopedLabelName = (name: string): boolean => name.includes('::');
-
 function signatureOf(rule: StatusRule): string {
-	return `${rule.state}|${rule.label?.toLowerCase() ?? ''}`;
+	return `${rule.state}|${rule.label ?? ''}`;
 }
 
 function describeSignature(rule: StatusRule): string {
 	return `state ${rule.state}, ${rule.label === undefined ? 'no label' : `label ${rule.label}`}`;
 }
 
-function parseStatusEntry(status: string, value: unknown, tier: GitLabTier): Parsed<StatusRule> {
+function parseStatusEntry(status: string, value: unknown): Parsed<StatusRule> {
 	const at = `statusMap.${status}`;
 	if (!isMapping(value)) {
 		return { problem: `${at}: must be a mapping with state (and optionally label), found ${found(value)}` };
@@ -231,21 +223,13 @@ function parseStatusEntry(status: string, value: unknown, tier: GitLabTier): Par
 		if (typeof label !== 'string' || label === '') {
 			return { problem: `${at}.label: must be a label name, found ${found(label)}` };
 		}
-		const bad = labelProblem(label) ?? scopedProblem(label, tier);
+		const bad = labelProblem(label);
 		if (bad !== undefined) return { problem: `${at}.label: ${bad}` };
 	}
 	return { value: { state, ...(label === undefined ? {} : { label: label as string }) } };
 }
 
-/** A scoped label on the Free plan is an ordinary label with colons in its name: refused, because it would promise an exclusivity it does not have. */
-function scopedProblem(name: string, tier: GitLabTier): string | undefined {
-	if (tier === 'free' && isScopedLabelName(name)) {
-		return `"${name}" is a scoped label (key::value), which exists on GitLab Premium and Ultimate only; on the free tier use one colon (for example "status:in-progress") or declare tier: premium`;
-	}
-	return undefined;
-}
-
-function parseStatusMap(value: unknown, tier: GitLabTier): Parsed<Record<string, StatusRule>> {
+function parseStatusMap(value: unknown): Parsed<Record<string, StatusRule>> {
 	if (value === undefined) {
 		return {
 			problem:
@@ -259,7 +243,7 @@ function parseStatusMap(value: unknown, tier: GitLabTier): Parsed<Record<string,
 	const map: Record<string, StatusRule> = {};
 	const owners = new Map<string, string>();
 	for (const [status, entry] of Object.entries(value)) {
-		const parsed = parseStatusEntry(status, entry, tier);
+		const parsed = parseStatusEntry(status, entry);
 		if ('problem' in parsed) return parsed;
 		const signature = signatureOf(parsed.value);
 		const owner = owners.get(signature);
@@ -290,30 +274,20 @@ function parseNumber(
 	return { value };
 }
 
-function parsePrefixes(
-	options: Record<string, unknown>,
-	tier: GitLabTier
-): Parsed<{ typePrefix: string; metaPrefix: string }> {
-	// Scoped labels exclude each other natively on Premium and Ultimate: the defaults use them there, one colon on Free.
-	const scoped = tier !== 'free';
+function parsePrefixes(options: Record<string, unknown>): Parsed<{ typePrefix: string; metaPrefix: string }> {
 	const read = (key: 'typePrefix' | 'metaPrefix', fallback: string): Parsed<string> => {
 		const value = options[key] ?? fallback;
 		if (typeof value !== 'string' || value === '') {
 			return { problem: `${key}: must be a non-empty label prefix, found ${found(value)}` };
 		}
-		const bad = labelProblem(value) ?? scopedProblem(value, tier);
+		const bad = labelProblem(value);
 		if (bad !== undefined) return { problem: `${key}: ${bad}` };
 		return { value };
 	};
-	const type = read('typePrefix', scoped ? 'type::' : 'type:');
+	const type = read('typePrefix', 'type:');
 	if ('problem' in type) return type;
-	const meta = read('metaPrefix', scoped ? 'meta::' : 'meta:');
+	const meta = read('metaPrefix', 'meta:');
 	if ('problem' in meta) return meta;
-	if (scoped && !meta.value.endsWith('::')) {
-		return {
-			problem: `metaPrefix: "${meta.value}" must end with "::" on tier ${tier}: a metadata entry is the scoped label ${meta.value}key::value, so two values of one key exclude each other`,
-		};
-	}
 	if (type.value === meta.value) return { problem: `metaPrefix: must differ from typePrefix ("${type.value}")` };
 	if (meta.value.startsWith(type.value)) {
 		return {
@@ -328,7 +302,7 @@ function parsePrefixes(
 	return { value: { typePrefix: type.value, metaPrefix: meta.value } };
 }
 
-function parseTypeMap(value: unknown, tier: GitLabTier): Parsed<Record<string, TypeRule>> {
+function parseTypeMap(value: unknown): Parsed<Record<string, TypeRule>> {
 	if (value === undefined) return { value: {} };
 	if (!isMapping(value)) {
 		return { problem: `typeMap: must be a mapping of task type to { issueType | label }, found ${found(value)}` };
@@ -352,9 +326,15 @@ function parseTypeMap(value: unknown, tier: GitLabTier): Parsed<Record<string, T
 			return { problem: `${at}.label: give issueType or label, not both` };
 		}
 		if (issueType !== undefined) {
+			if (issueType === 'test_case')
+				return { problem: `${at}.issueType: ${TEST_CASE_REASON}; use incident or a label` };
+			if (issueType === 'task')
+				return {
+					problem: `${at}.issueType: ${TASK_RESERVED_REASON}; use a label type (label: <name>)`,
+				};
 			if (typeof issueType !== 'string' || !(NATIVE_ISSUE_TYPES as readonly string[]).includes(issueType)) {
 				return {
-					problem: `${at}.issueType: must be ${NATIVE_ISSUE_TYPES.join(' or ')} (the issue types the REST API can both create and update; "task" can only be given at creation), found ${found(issueType)}`,
+					problem: `${at}.issueType: must be ${NATIVE_ISSUE_TYPES.join(' or ')}, found ${found(issueType)}`,
 				};
 			}
 			map[type] = { issueType: issueType as NativeIssueType };
@@ -363,7 +343,7 @@ function parseTypeMap(value: unknown, tier: GitLabTier): Parsed<Record<string, T
 		if (typeof label !== 'string' || label.trim() === '') {
 			return { problem: `${at}.label: must be a non-empty name, found ${found(label)}` };
 		}
-		const bad = labelProblem(label) ?? scopedProblem(label, tier);
+		const bad = labelProblem(label);
 		if (bad !== undefined) return { problem: `${at}.label: ${bad}` };
 		map[type] = { label };
 	}
@@ -397,10 +377,35 @@ function parseCache(value: unknown): Parsed<number> {
 	return { value: ttl };
 }
 
+function parseRateLimit(value: unknown): Parsed<number> {
+	if (value === undefined) return { value: DEFAULT_MAX_WAIT_SECONDS };
+	if (!isMapping(value)) {
+		return { problem: `rateLimit: must be a mapping like { maxWaitSeconds: 70 }, found ${found(value)}` };
+	}
+	for (const key of Object.keys(value)) {
+		if (key !== 'maxWaitSeconds') return { problem: `rateLimit.${key}: unknown key (valid: maxWaitSeconds)` };
+	}
+	const wait = value['maxWaitSeconds'];
+	if (wait === undefined) return { value: DEFAULT_MAX_WAIT_SECONDS };
+	if (typeof wait !== 'number' || !Number.isFinite(wait) || wait < 0) {
+		return {
+			problem: `rateLimit.maxWaitSeconds: must be zero or a positive number of seconds (0 = never wait, fail with the instant to retry at), found ${found(wait)}`,
+		};
+	}
+	return { value: wait };
+}
+
 /** Parses `strategy.options` (without `fills`, which the host reads). Returns the settings, or the first problem as a sentence starting with its key. */
 export function parseGitLabOptions(
 	options: Record<string, unknown>
 ): { settings: GitLabSettings } | { problem: string } {
+	// An old config may still declare a plan: never ignored silently.
+	if (Object.prototype.hasOwnProperty.call(options, 'tier')) {
+		return {
+			problem:
+				'tier: the gitlab strategy supports the Free tier only; remove `tier` (the blocking links of the paid tiers are not supported)',
+		};
+	}
 	for (const key of Object.keys(options)) {
 		if (!GITLAB_OPTION_NAMES.includes(key)) {
 			return {
@@ -414,13 +419,11 @@ export function parseGitLabOptions(
 	if ('problem' in baseUrl) return baseUrl;
 	const token = parseToken(options);
 	if ('problem' in token) return token;
-	const tier = parseTier(options['tier']);
-	if ('problem' in tier) return tier;
-	const statusMap = parseStatusMap(options['statusMap'], tier.value);
+	const statusMap = parseStatusMap(options['statusMap']);
 	if ('problem' in statusMap) return statusMap;
-	const prefixes = parsePrefixes(options, tier.value);
+	const prefixes = parsePrefixes(options);
 	if ('problem' in prefixes) return prefixes;
-	const typeMap = parseTypeMap(options['typeMap'], tier.value);
+	const typeMap = parseTypeMap(options['typeMap']);
 	if ('problem' in typeMap) return typeMap;
 	const pageSize = parseNumber(
 		options,
@@ -444,13 +447,13 @@ export function parseGitLabOptions(
 	if ('problem' in timeout) return timeout;
 	const spacing = parseNumber(options, 'writeSpacingSeconds', 1, n => n >= 0, 'zero or a positive number of seconds');
 	if ('problem' in spacing) return spacing;
+	const rateLimit = parseRateLimit(options['rateLimit']);
+	if ('problem' in rateLimit) return rateLimit;
 	return {
 		settings: {
 			project: project.value,
 			baseUrl: baseUrl.value,
 			token: token.value,
-			tier: tier.value,
-			scopedLabels: tier.value !== 'free',
 			statusMap: statusMap.value,
 			typePrefix: prefixes.value.typePrefix,
 			typeMap: typeMap.value,
@@ -460,12 +463,13 @@ export function parseGitLabOptions(
 			cacheTtlSeconds: cache.value,
 			timeoutSeconds: timeout.value,
 			writeSpacingSeconds: spacing.value,
+			rateLimitMaxWaitSeconds: rateLimit.value,
 		},
 	};
 }
 
-function exampleEntry(status: ProjectFacts['statuses'][number], tier: GitLabTier): string {
-	const label = (name: string): string => `'status${tier === 'free' ? ':' : '::'}${name}'`;
+function exampleEntry(status: ProjectFacts['statuses'][number]): string {
+	const label = (name: string): string => `'status:${name}'`;
 	if (status.terminal) {
 		return status.default || status.outcome !== 'negative'
 			? `${status.name}: { state: closed }`
@@ -486,7 +490,7 @@ export function checkOptionsAgainstProject(settings: GitLabSettings, project: Pr
 	const names = project.statuses.map(status => status.name);
 	for (const status of project.statuses) {
 		if (statusMap[status.name] === undefined) {
-			return `statusMap.${status.name}: the status "${status.name}" of the project has no entry; add it, for example: ${exampleEntry(status, settings.tier)}`;
+			return `statusMap.${status.name}: the status "${status.name}" of the project has no entry; add it, for example: ${exampleEntry(status)}`;
 		}
 	}
 	for (const mapped of Object.keys(statusMap)) {

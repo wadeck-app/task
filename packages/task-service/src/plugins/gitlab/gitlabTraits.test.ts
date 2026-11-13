@@ -14,7 +14,6 @@ function settingsWith(extra: Record<string, unknown> = {}) {
 	const parsed = parseGitLabOptions({
 		project: 'acme/shop',
 		tokenEnv: 'GITLAB_TOKEN',
-		tier: 'free',
 		statusMap: STATUS_MAP,
 		...extra,
 	});
@@ -34,16 +33,17 @@ describe('gitlabTraits (what task migrate needs to know about GitLab as a target
 		// Room is left for the managed block the strategy may add to the description.
 		expect(traits.descriptionMax).toBeLessThan(1_048_576);
 		expect(traits.descriptionMax).toBeGreaterThan(1_040_000);
-		// No hierarchy at all: no depth or children limit is declared (the capability itself is none).
-		expect(traits.hierarchyDepth).toBeUndefined();
-		expect(traits.childrenPerParent).toBeUndefined();
+		// Two levels (an issue or incident and its native tasks, VERIFIED-LIVE): `task migrate` drops a deeper parent with a loss row.
+		// A parent holds 99 children: the read returns 100 at most and a longer list is refused, never cut.
+		expect(traits.hierarchyDepth).toBe(2);
+		expect(traits.childrenPerParent).toBe(99);
 	});
 
 	it('costs about seven requests and the write spacing plus three seconds per write; no hourly quota is claimed', () => {
 		expect(gitlabTraits(settingsWith(), {}).cost).toEqual({
 			requests: 7,
 			seconds: 4,
-			read: { requests: 5, seconds: 1.5 },
+			read: { requests: 6, seconds: 1.8 },
 		});
 		expect(gitlabTraits(settingsWith({ writeSpacingSeconds: 4 }), {}).cost).toMatchObject({ seconds: 7 });
 		expect(gitlabTraits(settingsWith(), {}).cost?.quotaPerHour).toBeUndefined();
@@ -56,17 +56,14 @@ describe('gitlabTraits (what task migrate needs to know about GitLab as a target
 		expect(labelProblem?.('a,b')).toMatch(/comma/);
 		expect(labelProblem?.(' padded')).toMatch(/space/);
 		expect(labelProblem?.('status:in-progress')).toMatch(/reserved.*status/);
-		expect(labelProblem?.('STATUS:IN-PROGRESS')).toMatch(/reserved/);
+		// Names are case sensitive on GitLab: another case is another label, so it is not reserved.
+		expect(labelProblem?.('STATUS:IN-PROGRESS')).toBeUndefined();
 		expect(labelProblem?.('type:bug')).toMatch(/reserved.*type/);
 		expect(labelProblem?.('task:deleted')).toMatch(/reserved/);
 	});
 
-	it('a scoped label is refused on the free tier, allowed on premium', () => {
-		expect(gitlabTraits(settingsWith(), {}).labelProblem?.('team::red')).toMatch(/Premium and Ultimate only/);
-		const premium = settingsWith({ tier: 'premium' });
-
-		expect(gitlabTraits(premium, {}).labelProblem?.('team::red')).toBeUndefined();
-		expect(gitlabTraits(premium, {}).labelProblem?.('type::bug')).toMatch(/reserved.*type/);
+	it('a label written with the scoped syntax is a plain label on Free: not refused', () => {
+		expect(gitlabTraits(settingsWith(), {}).labelProblem?.('team::red')).toBeUndefined();
 	});
 
 	it('the meta prefix is reserved only when metadata is stored in labels', () => {
@@ -74,9 +71,6 @@ describe('gitlabTraits (what task migrate needs to know about GitLab as a target
 
 		expect(gitlabTraits(settingsWith(), {}).labelProblem?.('meta:owner=ann')).toBeUndefined();
 		expect(gitlabTraits(settingsWith(), metaLabels).labelProblem?.('meta:owner=ann')).toMatch(/reserved/);
-		expect(gitlabTraits(settingsWith({ tier: 'ultimate' }), metaLabels).labelProblem?.('meta::owner::ann')).toMatch(
-			/reserved/
-		);
 	});
 
 	it('the plugin hands them out for the options of a project', () => {
@@ -84,7 +78,6 @@ describe('gitlabTraits (what task migrate needs to know about GitLab as a target
 			{
 				project: 'acme/shop',
 				tokenEnv: 'GITLAB_TOKEN',
-				tier: 'free',
 				statusMap: STATUS_MAP,
 				writeSpacingSeconds: 0,
 			},
@@ -92,6 +85,6 @@ describe('gitlabTraits (what task migrate needs to know about GitLab as a target
 			{ statuses: [], types: [] }
 		);
 
-		expect(traits?.cost).toEqual({ requests: 7, seconds: 3, read: { requests: 5, seconds: 1.5 } });
+		expect(traits?.cost).toEqual({ requests: 7, seconds: 3, read: { requests: 6, seconds: 1.8 } });
 	});
 });

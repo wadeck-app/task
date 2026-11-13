@@ -36,9 +36,13 @@ describe('StatusMapper.statusOf', () => {
 		const m = mapper();
 		expect(m.statusOf({ iid: 1, state: 'opened', labels: [] })).toBe('backlog');
 		expect(m.statusOf({ iid: 1, state: 'opened', labels: ['bug'] })).toBe('backlog');
-		expect(m.statusOf({ iid: 1, state: 'opened', labels: ['status:wip'] })).toBe('wip');
+		expect(m.statusOf({ iid: 1, state: 'opened', labels: ['Status:WIP'] })).toBe('wip');
+		// Label names are case sensitive on GitLab: another case is another label, which tells nothing.
+		expect(m.statusOf({ iid: 1, state: 'opened', labels: ['status:wip'] })).toBe('backlog');
 		expect(m.statusOf({ iid: 1, state: 'closed', labels: [] })).toBe('done');
-		expect(m.statusOf({ iid: 1, state: 'closed', labels: ['STATUS:CANCELLED'] })).toBe('cancelled');
+		expect(m.statusOf({ iid: 1, state: 'closed', labels: ['status:cancelled'] })).toBe('cancelled');
+		// Label names are case sensitive on GitLab: another case does not tell the status.
+		expect(m.statusOf({ iid: 1, state: 'closed', labels: ['STATUS:CANCELLED'] })).toBe('done');
 	});
 
 	it('ignores a status label that belongs to the other state', () => {
@@ -87,12 +91,14 @@ describe('StatusMapper.representation and labels', () => {
 		expect(() => new StatusMapper({ backlog: { state: 'open' } }, STATUSES, url)).toThrow(/no entry for "wip"/);
 	});
 
-	it('knows its statuses and recognises its labels case-insensitively', () => {
+	it('knows its statuses and recognises its labels exactly', () => {
 		const m = mapper();
 		expect(m.knows('wip')).toBe(true);
 		expect(m.knows('x')).toBe(false);
-		expect(m.isStatusLabel('status:wip')).toBe(true);
-		expect(m.isStatusLabel('STATUS:CANCELLED')).toBe(true);
+		expect(m.isStatusLabel('Status:WIP')).toBe(true);
+		expect(m.isStatusLabel('status:wip')).toBe(false);
+		expect(m.isStatusLabel('status:cancelled')).toBe(true);
+		expect(m.isStatusLabel('STATUS:CANCELLED')).toBe(false);
 		expect(m.isStatusLabel('bug')).toBe(false);
 	});
 });

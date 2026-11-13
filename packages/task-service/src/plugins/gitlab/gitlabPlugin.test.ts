@@ -64,7 +64,6 @@ function config(extraOptions = ''): string {
     options:
         project: ${fake.project}
         baseUrl: ${fake.baseUrl}
-        tier: free
         tokenEnv: GL_TOKEN_FOR_TESTS
         cache: { ttlSeconds: 0 }
         writeSpacingSeconds: 0
@@ -116,7 +115,7 @@ describe('the plugin is registered', () => {
 			writes: 'full',
 			ids: 'assigned',
 			search: 'native',
-			hierarchy: 'none',
+			hierarchy: 'limited',
 			meta: false,
 			delete: 'no',
 			linkTypes: [],
@@ -129,26 +128,27 @@ describe('the plugin is registered', () => {
 		});
 	});
 
-	it('documents itself: every option, the not-verified warning, and a snippet that is a working config', () => {
+	it('documents itself: every option, what was verified, and a snippet that is a working config', () => {
 		const { summary, options, snippet } = gitlabPlugin.describe();
 
-		expect(summary).toMatch(/NOT verified against a real GitLab/);
+		expect(summary).not.toMatch(/NOT verified/);
+		expect(summary).toMatch(/Free tier only/);
 		expect(Object.keys(options)).toEqual(
 			expect.arrayContaining([
 				'project',
 				'baseUrl',
 				'tokenEnv',
 				'tokenFile',
-				'tier',
 				'statusMap',
 				'typeMap',
 				'cache',
 				'writeSpacingSeconds',
+				'rateLimit',
 				'fills',
 			])
 		);
 		expect(snippet).toContain('type: gitlab');
-		expect(snippet).toContain('tier: free');
+		expect(snippet).not.toContain('tier');
 		expect(snippet).toContain('tokenEnv: GITLAB_TOKEN');
 		// The snippet parses with the plugin's own options parser.
 		const lines = snippet.split('\n').slice(3);
@@ -156,13 +156,11 @@ describe('the plugin is registered', () => {
 	});
 });
 
-describe('capabilitiesFor: the tier and the fills decide', () => {
-	const options = (tier: string) => ({ project: 'g/p', tokenEnv: 'T', tier, statusMap: STATUS_MAP });
+describe('capabilitiesFor: the fills decide', () => {
+	const options = { project: 'g/p', tokenEnv: 'T', statusMap: STATUS_MAP };
 
-	it('free has no link type; premium and ultimate have blockedBy', () => {
-		expect(gitlabPlugin.capabilitiesFor?.({}, options('free')).linkTypes).toEqual([]);
-		expect(gitlabPlugin.capabilitiesFor?.({}, options('premium')).linkTypes).toEqual(['blockedBy']);
-		expect(gitlabPlugin.capabilitiesFor?.({}, options('ultimate')).linkTypes).toEqual(['blockedBy']);
+	it('has no link type without a fill (blockedBy needs a paid tier)', () => {
+		expect(gitlabPlugin.capabilitiesFor?.({}, options).linkTypes).toEqual([]);
 	});
 
 	it('the fills add duplicateOf, causedBy, meta and delete', () => {
@@ -173,28 +171,30 @@ describe('capabilitiesFor: the tier and the fills decide', () => {
 			'linkTypes.causedBy': { use: 'relate-block', fidelity: 'degrade' as const },
 		};
 
-		const caps = gitlabPlugin.capabilitiesFor?.(fills, options('premium'));
+		const caps = gitlabPlugin.capabilitiesFor?.(fills, options);
 
-		expect(caps).toMatchObject({ meta: true, delete: 'yes', hierarchy: 'none' });
-		expect(caps?.linkTypes).toEqual(['blockedBy', 'duplicateOf', 'causedBy']);
+		expect(caps).toMatchObject({ meta: true, delete: 'yes', hierarchy: 'limited' });
+		expect(caps?.linkTypes).toEqual(['duplicateOf', 'causedBy']);
 		expect(
-			gitlabPlugin.capabilitiesFor?.({ delete: { use: 'tombstone', fidelity: 'degrade' } }, options('free'))
+			gitlabPlugin.capabilitiesFor?.({ delete: { use: 'tombstone', fidelity: 'degrade' } }, options)
 		).toMatchObject({
 			delete: 'close-only',
 		});
-		expect(caps).toEqual(gitlabCapabilities('premium', fills));
+		expect(caps).toEqual(gitlabCapabilities(fills));
 	});
 });
 
 describe('validate, validateForProject, traitsFor, locationOf', () => {
-	const good = { project: 'g/p', tokenEnv: 'T', tier: 'free', statusMap: STATUS_MAP };
+	const good = { project: 'g/p', tokenEnv: 'T', statusMap: STATUS_MAP };
 
 	it('validate returns the raw "key: problem" sentence of the first problem', () => {
 		expect(gitlabPlugin.validate(good, { slot: 'strategy' })).toBeUndefined();
 		expect(gitlabPlugin.validate({ ...good, colour: 'red' }, { slot: 'strategy' })).toMatch(
 			/^colour: unknown option for strategy "gitlab"/
 		);
-		expect(gitlabPlugin.validate({ ...good, tier: undefined }, { slot: 'strategy' })).toMatch(/^tier: required/);
+		expect(gitlabPlugin.validate({ ...good, tier: 'free' }, { slot: 'strategy' })).toMatch(
+			/^tier: the gitlab strategy supports the Free tier only; remove `tier`/
+		);
 		expect(gitlabPlugin.validate({ ...good, project: 'shop' }, { slot: 'strategy' })).toMatch(/^project: "shop"/);
 	});
 
@@ -221,12 +221,11 @@ describe('validate, validateForProject, traitsFor, locationOf', () => {
 
 describe('issueUrlOf', () => {
 	it('a path project has a page, a numeric one only the API address', () => {
-		const path_ = parseGitLabOptions({ project: 'g/sub/p', tokenEnv: 'T', tier: 'free', statusMap: STATUS_MAP });
+		const path_ = parseGitLabOptions({ project: 'g/sub/p', tokenEnv: 'T', statusMap: STATUS_MAP });
 		const numeric = parseGitLabOptions({
 			project: 42,
 			baseUrl: 'https://git.example.com/api/v4',
 			tokenEnv: 'T',
-			tier: 'free',
 			statusMap: STATUS_MAP,
 		});
 		if ('problem' in path_ || 'problem' in numeric) throw new Error('options');
@@ -237,11 +236,13 @@ describe('issueUrlOf', () => {
 });
 
 describe('configuration errors name the file and the key, at load', () => {
-	it('the tier is required, with what it decides', () => {
-		const text = config().replace('        tier: free\n', '');
+	it('a tier key (an old config) is refused, never ignored', () => {
+		const text = config().replace('        tokenEnv:', '        tier: free\n        tokenEnv:');
 
 		expect(() => open(text)).toThrow(StrategyConfigError);
-		expect(() => open(text)).toThrow(/strategy\.options\.tier: tier: required|strategy\.options\.tier: required/);
+		expect(() => open(text)).toThrow(
+			/strategy\.options\.tier: the gitlab strategy supports the Free tier only; remove `tier`/
+		);
 	});
 
 	it('a status without an entry in the map', () => {
@@ -301,7 +302,6 @@ describe('the instance', () => {
 		const parsed = parseGitLabOptions({
 			project: fake.project,
 			baseUrl: fake.baseUrl,
-			tier: 'premium',
 			tokenEnv: 'GL_TOKEN_FOR_TESTS',
 			statusMap: STATUS_MAP,
 		});
@@ -323,7 +323,6 @@ describe('the instance', () => {
 			{
 				project: fake.project,
 				baseUrl: fake.baseUrl,
-				tier: 'premium',
 				tokenEnv: 'GL_TOKEN_FOR_TESTS',
 				statusMap: STATUS_MAP,
 			},
@@ -331,11 +330,14 @@ describe('the instance', () => {
 		);
 	}
 
-	it('describes the tier and says it is not verified against a real GitLab', async () => {
+	it('names the rate limit wait, no tier and no "not verified" claim', async () => {
 		const lines = (await instance()).describe();
 
-		expect(lines.some(l => l.startsWith('tier: premium (declared'))).toBe(true);
-		expect(lines.some(l => l.includes('NOT verified against a real GitLab instance'))).toBe(true);
+		expect(lines.some(l => l.startsWith('tier'))).toBe(false);
+		expect(lines.some(l => l.includes('NOT verified'))).toBe(false);
+		expect(lines).toContain(
+			'rate limit: waits up to 70 s for the window to reopen (strategy.options.rateLimit.maxWaitSeconds)'
+		);
 		expect(lines.join('\n')).not.toContain(fake.token);
 	});
 
@@ -348,34 +350,37 @@ describe('the instance', () => {
 });
 
 describe('task strategy show and check through the host', () => {
-	it('show prints the capability table of the tier (blockedBy unsupported on free)', () => {
+	it('show prints the capability table (blockedBy unsupported)', () => {
 		const report = showStrategy(target(config()));
 
 		expect(report.kind).toBe('gitlab');
 		expect(report.capabilities.find(row => row.capability === 'linkTypes.blockedBy')).toMatchObject({
 			state: 'unsupported',
 		});
-		expect(report.capabilities.find(row => row.capability === 'hierarchy')).toMatchObject({ state: 'unsupported' });
-		expect(report.options['tier']).toBe('free');
+		expect(report.capabilities.find(row => row.capability === 'hierarchy')).toMatchObject({ state: 'partial' });
+		expect(report.options['tier']).toBeUndefined();
 	});
 
-	it('show on premium has blockedBy native', () => {
-		const report = showStrategy(target(config().replace('tier: free', 'tier: premium')));
-
-		expect(report.capabilities.find(row => row.capability === 'linkTypes.blockedBy')).toMatchObject({
-			state: 'native',
-		});
-	});
-
-	it('check runs the gitlab lines and always ends with the verification warning (exit stays ok)', async () => {
+	it('check runs one line per capability and ends with the verification line (exit stays ok)', async () => {
 		const result = await checkStrategy(target(config()));
 
 		const names = result.lines.map(l => l.name);
 		expect(names).toEqual(
-			expect.arrayContaining(['reachable', 'auth', 'project', 'tier', 'issues', 'verification'])
+			expect.arrayContaining([
+				'reachable',
+				'auth',
+				'read',
+				'write',
+				'labels-read',
+				'hierarchy',
+				'project-info',
+				'verification',
+			])
 		);
+		expect(names).not.toContain('tier');
+		expect(names).not.toContain('issues');
 		expect(names.at(-1)).toBe('verification');
-		expect(result.lines.at(-1)).toMatchObject({ status: 'warn' });
+		expect(result.lines.at(-1)).toMatchObject({ status: 'ok' });
 		expect(result.errors).toBe(0);
 		expect(result.ok).toBe(true);
 	});

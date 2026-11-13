@@ -5,7 +5,7 @@ import { GitLabBackend } from './GitLabBackend.js';
 import { GitLabClient } from './gitlabClient.js';
 import type { GitLabClientOptions } from './gitlabClient.js';
 import { parseGitLabOptions } from './gitlabOptions.js';
-import type { GitLabSettings, GitLabTier } from './gitlabOptions.js';
+import type { GitLabSettings } from './gitlabOptions.js';
 import { StatusMapper } from './gitlabStatusMapping.js';
 
 /** The statuses of the read tests: one open without label, one open with, one terminal. */
@@ -15,13 +15,10 @@ export const TEST_STATUSES: ProjectStatus[] = [
 	{ name: 'done', terminal: true, default: false, outcome: 'positive' },
 ];
 
-/** The separator of a status label: one colon on the free tier, the scoped `::` on Premium and Ultimate. */
-const sep = (tier: GitLabTier): string => (tier === 'free' ? ':' : '::');
-
-export function testStatusMap(tier: GitLabTier): Record<string, unknown> {
+export function testStatusMap(): Record<string, unknown> {
 	return {
 		backlog: { state: 'open' },
-		'in-progress': { state: 'open', label: `status${sep(tier)}in-progress` },
+		'in-progress': { state: 'open', label: 'status:in-progress' },
 		done: { state: 'closed' },
 	};
 }
@@ -36,14 +33,14 @@ export const WRITE_STATUSES: ProjectStatus[] = [
 	{ name: 'duplicate', terminal: true, default: false, outcome: 'negative' },
 ];
 
-export function writeStatusMap(tier: GitLabTier): Record<string, unknown> {
+export function writeStatusMap(): Record<string, unknown> {
 	return {
 		backlog: { state: 'open' },
-		'in-progress': { state: 'open', label: `status${sep(tier)}in-progress` },
-		review: { state: 'open', label: `status${sep(tier)}review` },
+		'in-progress': { state: 'open', label: 'status:in-progress' },
+		review: { state: 'open', label: 'status:review' },
 		done: { state: 'closed' },
-		cancelled: { state: 'closed', label: `status${sep(tier)}cancelled` },
-		duplicate: { state: 'closed', label: `status${sep(tier)}duplicate` },
+		cancelled: { state: 'closed', label: 'status:cancelled' },
+		duplicate: { state: 'closed', label: 'status:duplicate' },
 	};
 }
 
@@ -60,7 +57,6 @@ export interface TestBackend {
 export function makeGitLabBackend(
 	fake: FakeGitLab,
 	options: {
-		tier?: GitLabTier;
 		options?: Record<string, unknown>;
 		statuses?: ProjectStatus[];
 		projectTypes?: string[];
@@ -68,13 +64,11 @@ export function makeGitLabBackend(
 		client?: Partial<GitLabClientOptions>;
 	} = {}
 ): TestBackend {
-	const tier = options.tier ?? fake.tier;
 	const parsed = parseGitLabOptions({
 		project: fake.project,
 		baseUrl: fake.baseUrl,
 		tokenEnv: 'GITLAB_TOKEN',
-		tier,
-		statusMap: testStatusMap(tier),
+		statusMap: testStatusMap(),
 		// A TTL of zero: every read asks the server.
 		cache: { ttlSeconds: 0 },
 		timeoutSeconds: 2,

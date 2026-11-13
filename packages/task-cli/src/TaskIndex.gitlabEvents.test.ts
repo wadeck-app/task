@@ -57,8 +57,8 @@ beforeEach(async () => {
 		registerEvents: registerMock,
 		flush: flushMock,
 	}));
-	// Premium: blocking links exist, so the same script as a local project can run (no parent: GitLab has none).
-	fake = await FakeGitLab.start({ project: 'acme/shop', tier: 'premium' });
+	// The same script as a local project runs, minus the blocking links (paid tiers only) and the parent (GitLab has none).
+	fake = await FakeGitLab.start({ project: 'acme/shop' });
 	vi.stubEnv(TOKEN_VARIABLE, fake.token);
 	local = await registerTestProject(path.join(tmpDir, 'local'));
 	gitlab = await registerTestProject(path.join(tmpDir, 'remote'));
@@ -72,7 +72,6 @@ strategy:
     type: gitlab
     options:
         project: acme/shop
-        tier: premium
         baseUrl: ${fake.baseUrl}
         tokenEnv: ${TOKEN_VARIABLE}
         cache: { ttlSeconds: 0 }
@@ -80,7 +79,7 @@ strategy:
         writeSpacingSeconds: 0
         statusMap:
             backlog: { state: open }
-            in-progress: { state: open, label: 'status::in-progress' }
+            in-progress: { state: open, label: 'status:in-progress' }
             done: { state: closed }
 `
 	);
@@ -117,13 +116,12 @@ async function bothProjects(script: Script): Promise<{ local: Pushed[]; gitlab: 
 const shape = (events: Pushed[]): Array<[string, string[]]> => events.map(event => [event.event, event.keys]);
 
 describe('queue events: a gitlab project emits what a local one does', () => {
-	it('status, labels, type, link and comment: same events, same payload keys', async () => {
-		const events = await bothProjects(async (run, [a, b]) => {
+	it('status, labels, type and comment: same events, same payload keys', async () => {
+		const events = await bothProjects(async (run, [a]) => {
 			await run('set-status', a, 'in-progress');
 			await run('add-label', a, 'urgent');
 			await run('remove-label', a, 'urgent');
 			await run('set-type', a, 'bug');
-			await run('link', b, 'blockedBy', a);
 			await run('comment', a, 'hello');
 			await run('set-status', a, 'done');
 		});
@@ -133,10 +131,8 @@ describe('queue events: a gitlab project emits what a local one does', () => {
 			'onTaskLabelAdded',
 			'onTaskLabelRemoved',
 			'onTaskTypeChanged',
-			'onTaskLinked',
 			'onTaskCommentAdded',
 			'onStatusChange',
-			'onTaskUnblocked',
 		]);
 		// One declared difference: GitLab writes a comment as the user of the token, so the comment event always carries `author`.
 		const comment = events.gitlab.find(event => event.event === 'onTaskCommentAdded')!;

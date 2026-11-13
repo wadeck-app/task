@@ -3,7 +3,7 @@
 
 /** `GET /projects/:id/issues/:issue_iid` and the items of the list (docs.gitlab.com/api/issues). */
 export interface ApiIssue {
-	/** The global id: not an address (the URLs use `iid`). */
+	/** The global id: not an address (the URLs use `iid`); GraphQL work items are addressed as `gid://gitlab/WorkItem/<id>`. */
 	id: number;
 	/** The number inside the project: the task id. */
 	iid: number;
@@ -17,7 +17,7 @@ export interface ApiIssue {
 	created_at: string;
 	updated_at: string;
 	closed_at?: string | null;
-	/** `issue`, `incident`, `test_case` or `task`. */
+	/** `issue`, `incident` or `task` (a `test_case` cannot be created or set: GitLab turns it into `issue`, VERIFIED-LIVE). */
 	issue_type?: string;
 	web_url?: string;
 	/** UNVERIFIED whether system notes are counted: never used to skip a read. */

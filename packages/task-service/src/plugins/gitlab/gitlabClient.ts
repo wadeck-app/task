@@ -4,8 +4,10 @@
 // retry), the typed failures with their hints, the stale fallback, a concurrency limit, and the guarantee that the token appears
 // in no message and no log line. `fetch` and the clock are injectable: tests drive it against a fake server and a fake clock.
 //
-// NOT VERIFIED AGAINST A REAL GITLAB. Sources: docs.gitlab.com/api/rest (pagination, status codes), api/rest/authentication
-// (`PRIVATE-TOKEN`), administration/settings/user_and_ip_rate_limits (`RateLimit-*`, `Retry-After`).
+// Verified live on gitlab.com Free (2026-11-09, fine-grained token): the 403 `insufficient_granular_scope` (names the permission), the
+// 404 `Project Not Found`, and the rate limit (100 requests per fixed window of about 60 s, `ratelimit-reset` = epoch seconds of the
+// reopening; the 429 `Retry-After: 2` is MISLEADING, the window is still closed two seconds later). Not verified live: classic tokens,
+// self-managed instances. Sources: docs.gitlab.com/api/rest (pagination, status codes), api/rest/authentication (`PRIVATE-TOKEN`).
 import {
 	BackendAuthError,
 	BackendDataError,
@@ -16,6 +18,8 @@ import {
 } from '@wadeck-app/task-core';
 
 import type { ReadNotice } from '../kinds.js';
+import { deniedPermissionHint, parseDeniedPermissions } from './credentialRequirements.js';
+import type { DeniedPermission } from './credentialRequirements.js';
 
 export interface GitLabClientOptions {
 	/** No trailing slash: `https://gitlab.com/api/v4`, `https://HOST/api/v4`. */
@@ -39,8 +43,13 @@ export interface GitLabClientOptions {
 	debug?: (line: string) => void;
 	/** Least time between the start of two writes. Default 1000. */
 	writeSpacingMs?: number;
-	/** Longest `Retry-After` of a 429 that a write waits out; a longer one is a RateLimitedError at once. Default 15000. */
-	maxRetryWaitMs?: number;
+	/**
+	 * Longest wait for the rate limit window to reopen (`ratelimit-reset`), before sending (quota known empty) or after a 429; a longer
+	 * one is a RateLimitedError at once. Reads and writes alike. Default 70000 (a window is about 60 s).
+	 */
+	maxWaitMs?: number;
+	/** Called once per wait with the sentence to show ("GitLab rate limit reached ...: waiting 38 s ..."). Default: nothing. */
+	notice?: (text: string) => void;
 	/** Injectable wait (tests). */
 	sleep?: (ms: number) => Promise<void>;
 }
@@ -92,6 +101,48 @@ export class GitLabHttpError extends Error {
 	}
 }
 
+/** A project path answered `404 Project Not Found`: the project does not exist, or the token cannot see it (GitLab does not tell which). */
+export class GitLabProjectNotFoundError extends GitLabHttpError {
+	readonly hint: string;
+
+	constructor(path: string, project: string, tokenHint: string) {
+		super(
+			404,
+			path,
+			'404 Project Not Found',
+			`GitLab does not know the project ${project}, or the token cannot see it (404 Project Not Found)`
+		);
+		this.name = 'GitLabProjectNotFoundError';
+		this.hint = `Check strategy.options.project in the project config (the path group/project, or the numeric id) and that the user of the token is a member of ${project} (GitLab answers 404 for a private project the user cannot see). The token is read from ${tokenHint}.`;
+	}
+}
+
+/** A fine-grained token lacks a permission (403 insufficient_granular_scope): `denied` names it, for the `strategy check` lines. */
+export class GitLabPermissionError extends BackendAuthError {
+	constructor(
+		readonly denied: DeniedPermission,
+		message: string,
+		hint: string
+	) {
+		super('gitlab', 'forbidden', message, hint);
+		this.name = 'GitLabPermissionError';
+	}
+}
+
+/** The rate limit is reached and the wait is longer than the maximum: says when to come back and how to wait longer. */
+export class GitLabRateLimitedError extends RateLimitedError {
+	override readonly hint: string;
+
+	constructor(scope: 'primary' | 'secondary', retryAt: Date | undefined, message: string, hint: string) {
+		super('gitlab', scope, retryAt);
+		this.message = message;
+		this.hint = hint;
+	}
+}
+
+/** Waits for the rate limit window to reopen at most this many times for one request (a skewed clock must not loop for ever). */
+const MAX_LIMIT_WAITS = 5;
+
 /** GitLab answered 5xx: the request may or may not have been applied (for a write, read the issue again before saying anything). */
 export class GitLabServerFailure extends BackendUnreachableError {
 	constructor(
@@ -139,6 +190,8 @@ export class GitLabClient {
 	/** The writes wait for each other: this is the end of the last one queued. */
 	private writeChain: Promise<unknown> = Promise.resolve();
 	private lastWriteStartedAt: number | undefined;
+	/** The wait for the window to reopen that is in progress: the requests that meet the same limit join it (one notice). */
+	private pause: { key: number; done: Promise<void> } | undefined;
 
 	constructor(private readonly options: GitLabClientOptions) {
 		this.sleep = options.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
@@ -223,12 +276,28 @@ export class GitLabClient {
 
 	/**
 	 * One write (POST, PUT, DELETE) of a path under the base address. Writes go one at a time and at least `writeSpacingMs` apart; a
-	 * 429 with a short `Retry-After` is waited out (the request was refused before it did anything, so sending it again is safe), a
-	 * long one is a RateLimitedError. A 5xx or a lost connection is NOT retried: the write may have been applied, the caller reads
-	 * the issue again to know. The read cache is expired afterwards.
+	 * 429 is waited out like for a read (the request was refused before it did anything, so sending it again is safe, see `send`). A
+	 * 5xx or a lost connection is NOT retried: the write may have been applied, the caller reads the issue again to know. The read
+	 * cache is expired afterwards.
 	 */
 	async write<T>(method: 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<ClientResponse<T>> {
 		return this.serialized(() => this.writeNow<T>(method, this.urlOf(path), body));
+	}
+
+	/**
+	 * One GraphQL request (`POST <origin>/api/graphql`, derived from the REST base address). A query is sent like a read (no cache);
+	 * `write: true` goes through the write queue (one at a time, spaced, the read cache expired afterwards). The answer body is
+	 * `{ data, errors }`: GraphQL errors come with HTTP 200, so the caller reads `errors`.
+	 */
+	async graphql<T>(
+		body: { query: string; variables?: Record<string, unknown> },
+		options: { write?: boolean } = {}
+	): Promise<ClientResponse<T>> {
+		const url = `${this.options.baseUrl.replace(/\/v4$/, '')}/graphql`;
+		if (options.write === true) return this.serialized(() => this.writeNow<T>('POST', url, body));
+		const stamp = new Date(this.now()).toISOString();
+		const raw = await this.send(url, undefined, false, { method: 'POST', body });
+		return { status: raw.status, body: raw.body as T, fromCache: false, stale: false, cachedAt: stamp };
 	}
 
 	private serialized<T>(task: () => Promise<T>): Promise<T> {
@@ -248,27 +317,9 @@ export class GitLabClient {
 
 	private async writeNow<T>(method: string, url: string, body: unknown): Promise<ClientResponse<T>> {
 		const stamp = new Date(this.now()).toISOString();
-		const maxWait = this.options.maxRetryWaitMs ?? 15_000;
 		try {
-			for (let attempt = 0; ; attempt++) {
-				try {
-					const raw = await this.send(url, undefined, false, { method, body });
-					return { status: raw.status, body: raw.body as T, fromCache: false, stale: false, cachedAt: stamp };
-				} catch (error) {
-					const wait =
-						error instanceof RateLimitedError && error.scope === 'secondary' && error.retryAt !== undefined
-							? error.retryAt.getTime() - this.now()
-							: undefined;
-					if (wait === undefined || attempt >= 2 || wait > maxWait) throw error;
-					this.options.debug?.(
-						`${method} ${this.shortPath(url)} -> 429, waiting ${Math.ceil(wait / 1000)} s before sending it again`
-					);
-					await this.sleep(Math.max(wait, 0));
-					// The 429 carried `RateLimit-Remaining: 0` and a reset instant that may be a moment later than `Retry-After`; having
-					// waited as the server asked, the retry must reach the server, not be refused here on that stale state.
-					this.rate = undefined;
-				}
-			}
+			const raw = await this.send(url, undefined, false, { method, body });
+			return { status: raw.status, body: raw.body as T, fromCache: false, stale: false, cachedAt: stamp };
 		} finally {
 			// Whatever happened, what the cache holds may be out of date now.
 			this.expiredAt = new Date(this.now()).toISOString();
@@ -432,23 +483,67 @@ export class GitLabClient {
 		return this.expiredAt !== undefined && entry.cachedAt <= this.expiredAt;
 	}
 
+	/**
+	 * One request with the rate limit handled: a quota known to be empty is waited out BEFORE sending, and a 429 is waited out until
+	 * the window reopens (`ratelimit-reset`; `Retry-After` only when that header is absent, it is misleading on gitlab.com) and the
+	 * request is sent again. A wait longer than `maxWaitMs` is a RateLimitedError at once; at most `MAX_LIMIT_WAITS` waits per request.
+	 */
 	private async send(
 		url: string,
 		etag: string | undefined,
 		allowNotFound: boolean,
 		write?: { method: string; body: unknown }
 	): Promise<Raw> {
-		const known = this.rate;
-		if (known !== undefined && known.remaining <= 0 && this.now() < known.resetAt * 1000) {
-			// No request while the quota is known to be empty: a retry loop would only make it worse.
-			throw new RateLimitedError('gitlab', 'primary', new Date(known.resetAt * 1000));
+		for (let waits = 0; ; waits++) {
+			const known = this.rate;
+			if (known !== undefined && known.remaining <= 0 && this.now() < known.resetAt * 1000) {
+				await this.waitForWindow(new Date(known.resetAt * 1000), 'primary');
+			}
+			await this.acquire();
+			let limited: RateLimitedError;
+			try {
+				return await this.sendNow(url, etag, allowNotFound, write);
+			} catch (error) {
+				if (!(error instanceof RateLimitedError) || error.retryAt === undefined || waits >= MAX_LIMIT_WAITS) {
+					throw error;
+				}
+				limited = error;
+			} finally {
+				this.release();
+			}
+			// The slot is free while this request waits.
+			await this.waitForWindow(limited.retryAt!, limited.scope === 'primary' ? 'primary' : 'secondary');
 		}
-		await this.acquire();
-		try {
-			return await this.sendNow(url, etag, allowNotFound, write);
-		} finally {
-			this.release();
+	}
+
+	/** Waits until `reopensAt`, telling the user once; throws when that is further away than the maximum wait. */
+	private async waitForWindow(reopensAt: Date, scope: 'primary' | 'secondary'): Promise<void> {
+		const maxWait = this.options.maxWaitMs ?? 70_000;
+		const wait = Math.max(reopensAt.getTime() - this.now(), 1000);
+		const limit = this.rate?.limit;
+		const quota = limit === undefined ? '' : ` (${limit} requests per window)`;
+		if (wait > maxWait) {
+			const maxSeconds = Math.floor(maxWait / 1000);
+			throw new GitLabRateLimitedError(
+				scope,
+				reopensAt,
+				`GitLab rate limit reached${quota}: the window reopens at ${reopensAt.toISOString()}, in ${Math.ceil(wait / 1000)} s, which is more than the ${maxSeconds} s task waits`,
+				`Retry after ${reopensAt.toISOString()}; nothing was changed. To let task wait longer, raise strategy.options.rateLimit.maxWaitSeconds (now ${maxSeconds}) in the project config.`
+			);
 		}
+		const key = Math.ceil(reopensAt.getTime() / 1000);
+		if (this.pause?.key !== key) {
+			this.options.notice?.(
+				`GitLab rate limit reached${quota}: waiting ${Math.ceil(wait / 1000)} s for the window to reopen`
+			);
+			const done = this.sleep(wait).then(() => {
+				if (this.pause?.key === key) this.pause = undefined;
+				// What said "empty" belongs to the closed window: the next answer tells the new one.
+				this.rate = undefined;
+			});
+			this.pause = { key, done };
+		}
+		await this.pause.done;
 	}
 
 	private async sendNow(
@@ -562,6 +657,14 @@ export class GitLabClient {
 				parsed = false;
 			}
 		}
+		// LIVE-VERIFIED: a project path that does not exist (or that the token cannot see) answers 404 "404 Project Not Found", an issue
+		// that does not exist "404 Not found": the first is never "the issue is missing", even when a 404 is allowed.
+		const projectMissing =
+			status === 404 &&
+			parsed &&
+			/^404 Project Not Found/i.test(this.errorTexts(body).message) &&
+			/^\/projects\//.test(path);
+		if (projectMissing) throw new GitLabProjectNotFoundError(path, this.options.project, this.options.tokenHint);
 		if (status === 304 || (status === 404 && allowNotFound)) return { status, headers, body: undefined };
 		if (status >= 200 && status < 300) {
 			if (!parsed) {
@@ -586,6 +689,12 @@ export class GitLabClient {
 			);
 		}
 		if (status === 429) {
+			// LIVE-VERIFIED: `ratelimit-reset` (epoch seconds) is when the window reopens; `Retry-After: 2` is misleading (still 429 two
+			// seconds later), so it only counts when the reset header is absent.
+			const reset = Number(headers.get('ratelimit-reset'));
+			if (headers.get('ratelimit-reset') !== null && Number.isFinite(reset) && reset > 0) {
+				throw new RateLimitedError('gitlab', 'primary', new Date(reset * 1000));
+			}
 			const retryAfter = headers.get('retry-after');
 			const seconds = retryAfter !== null && Number.isFinite(Number(retryAfter)) ? Number(retryAfter) : undefined;
 			throw new RateLimitedError(
@@ -595,6 +704,15 @@ export class GitLabClient {
 			);
 		}
 		if (status === 403) {
+			// LIVE-VERIFIED: a fine-grained token without the permission gets 403 insufficient_granular_scope, which names it.
+			const denied = parsed ? parseDeniedPermissions(body) : undefined;
+			if (denied !== undefined) {
+				throw new GitLabPermissionError(
+					denied,
+					`GitLab refused the request: the token lacks the permission ${denied.permissions.join(', ')} (403 insufficient_granular_scope)`,
+					deniedPermissionHint(denied, this.options.tokenHint, this.options.project)
+				);
+			}
 			const challenge = headers.get('www-authenticate') ?? '';
 			if (/insufficient_scope/.test(challenge)) {
 				throw new BackendAuthError(

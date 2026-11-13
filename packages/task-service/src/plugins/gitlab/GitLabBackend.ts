@@ -1,9 +1,9 @@
 // The gitlab strategy's backend: the TaskBackend port over the GitLab REST API v4. Every read goes through the one GitLabClient
 // (token, cache, pagination, rate limits); the mapping lives in gitlabMapping.ts; every write is in gitlabWrites.ts. What GitLab
-// cannot do is an UnsupportedByBackendError naming the tier or the fill that would give it, never a silent fallback.
+// cannot do is an UnsupportedByBackendError naming the fill that would give it (blockedBy: the paid tier), never a silent fallback.
 //
-// NOT VERIFIED AGAINST A REAL GITLAB: built from docs.gitlab.com and a fake server modelled on it (see the "GitLab verification log"
-// of the storage plan).
+// Checked against gitlab.com Free on 2026-11-09 (fixtures/live-conformance.json). The hierarchy (a native Task under an Issue or an
+// Incident, two levels) and the native Task type go through GraphQL work items (gitlabWorkItems.ts).
 import { BackendDataError, BackendLimitError, TaskNotFoundError } from '@wadeck-app/task-core';
 import type {
 	BackendCapabilities,
@@ -33,7 +33,6 @@ import {
 	commentsOf,
 	isTombstone,
 	iso,
-	linksOf,
 	metaOf,
 	replayHistory,
 	splitBody,
@@ -43,20 +42,21 @@ import {
 	userLabels,
 } from './gitlabMapping.js';
 import type { MapContext } from './gitlabMapping.js';
-import type { GitLabSettings, GitLabTier } from './gitlabOptions.js';
+import type { GitLabSettings } from './gitlabOptions.js';
 import { revisionOf } from './gitlabRevision.js';
 import type { ApiIssue, ApiLabelEvent, ApiLinkedIssue, ApiNote, ApiStateEvent } from './gitlabTypes.js';
 import { GitLabWriter } from './gitlabWrites.js';
+import { HIERARCHY_DEPTH, WorkItems, isPermissionFailure } from './gitlabWorkItems.js';
 
 /**
- * What this backend can do with NO fill declared and on the FREE tier. Static: it is the floor. The tier and the fills add to it (see
+ * What this backend can do with NO fill declared (GitLab Free tier only). Static: it is the floor. The fills add to it (see
  * {@link gitlabCapabilities}); `task strategy show` prints those as `emulated via <technique>`.
  */
 export const GITLAB_CAPABILITIES: BackendCapabilities = Object.freeze({
-	// The REST API has no parent of an issue (docs.gitlab.com/api/issues: no field, no endpoint; the work item hierarchy is GraphQL
-	// and its issue-to-issue rules per tier are not documented): UNVERIFIED, so refused, never emulated with a task list.
-	hierarchy: 'none',
-	// `blocks` / `is_blocked_by` links are Premium and Ultimate (docs.gitlab.com/user/project/issues/related_issues).
+	// VERIFIED-LIVE: GraphQL work items give an Issue or Incident parent and native Task children, two levels (hierarchyDepth trait).
+	// The REST API has no such field; a task list in the body is never used.
+	hierarchy: 'limited',
+	// `blocks` / `is_blocked_by` links are a paid-tier feature (docs.gitlab.com/user/project/issues/related_issues): never offered.
 	linkTypes: Object.freeze([] as const),
 	status: 'mapped',
 	// Rebuilt from resource_label_events and resource_state_events (which do not record the initial state).
@@ -67,24 +67,23 @@ export const GITLAB_CAPABILITIES: BackendCapabilities = Object.freeze({
 	concurrency: 'check-then-write',
 	ids: 'assigned',
 	labels: true,
-	// With fills.meta: labels the labels `meta:key=value` / `meta::key::value` are read as meta; the plugin reports it as emulated.
+	// With fills.meta: labels the labels `meta:key=value` are read as meta; the plugin reports it as emulated.
 	meta: false,
 	comments: true,
 	writes: 'full',
-	// The list carries neither the parent nor the links of an issue.
+	// The list carries the parent (one batched GraphQL read per page) but not the links of an issue.
 	indexedGraph: false,
 	events: 'client',
 });
 
-/** The capabilities of a backend of this tier whose project declared these fills (the base ones plus what each adds). */
-export function gitlabCapabilities(tier: GitLabTier, fills: DeclaredFills): BackendCapabilities {
+/** The capabilities of a backend whose project declared these fills (the base ones plus what each adds). */
+export function gitlabCapabilities(fills: DeclaredFills): BackendCapabilities {
 	const deleteUse = fills['delete']?.use;
 	return Object.freeze({
 		...GITLAB_CAPABILITIES,
 		meta: fills['meta'] !== undefined,
 		delete: deleteUse === 'hard' ? 'yes' : deleteUse === 'tombstone' ? 'close-only' : GITLAB_CAPABILITIES.delete,
 		linkTypes: Object.freeze([
-			...(tier === 'free' ? [] : (['blockedBy'] as const)),
 			...(fills['linkTypes.duplicateOf']?.use === 'relate-block' ? (['duplicateOf'] as const) : []),
 			...(fills['linkTypes.causedBy']?.use === 'relate-block' ? (['causedBy'] as const) : []),
 		]),
@@ -132,6 +131,7 @@ export class GitLabBackend implements TaskBackend {
 	private readonly fills: DeclaredFills;
 	private readonly writer: GitLabWriter;
 	private readonly client: GitLabClient;
+	private readonly workItems: WorkItems;
 	private readonly map: MapContext;
 	private readonly issueUrl: (iid: number) => string;
 	private readonly projectPath: string;
@@ -139,14 +139,16 @@ export class GitLabBackend implements TaskBackend {
 	constructor(init: GitLabBackendInit) {
 		this.settings = init.settings;
 		this.client = init.client;
+		this.workItems = new WorkItems(init.client);
 		this.map = init.map;
 		this.issueUrl = init.issueUrl;
 		this.projectPath = `/projects/${init.settings.project.apiId}`;
 		this.fills = init.fills;
-		this.capabilities = gitlabCapabilities(init.settings.tier, init.fills);
+		this.capabilities = gitlabCapabilities(init.fills);
 		this.writer = new GitLabWriter({
 			settings: init.settings,
 			client: init.client,
+			workItems: this.workItems,
 			map: init.map,
 			fills: init.fills,
 			projectPath: this.projectPath,
@@ -215,9 +217,57 @@ export class GitLabBackend implements TaskBackend {
 
 	// ---------------------------------------------------------------- reads: records
 
+	/**
+	 * The parent of each issue that can have one (a native Task), ONE batched GraphQL read per 50 issues. When the token cannot read
+	 * work items the list degrades -- every task shows as a root -- with a warning (never silently, and the list does not fail).
+	 */
+	private async parentMap(issues: readonly ApiIssue[]): Promise<Map<number, number | undefined>> {
+		// Only a native Task has a parent (GitLab refuses an Issue under an Issue and the like).
+		const candidates = issues.filter(issue => issue.issue_type === undefined || issue.issue_type === 'task');
+		if (candidates.length === 0) return new Map();
+		try {
+			const { parents, unreadable } = await this.workItems.parentsOf(candidates);
+			if (unreadable.length > 0) {
+				this.map.notice({
+					kind: 'ignored',
+					text: `GitLab did not return the work item of ${unreadable.map(iid => `#${iid}`).join(', ')}: their parent is not shown (they appear as roots)`,
+				});
+			}
+			return parents;
+		} catch (error) {
+			if (!isPermissionFailure(error)) throw error;
+			this.map.notice({
+				kind: 'ignored',
+				text: 'the parent of a task is not shown: GitLab refused the work item read (GraphQL), so every task appears as a root. The token needs the permission "Work Item: Read" (fine-grained) or the scope read_api / api (classic); task strategy check tells which one is missing',
+			});
+			return new Map();
+		}
+	}
+
 	async list(): Promise<TaskSummary[]> {
 		const { issues } = await this.issuesAll();
-		return issues.map(issue => toSummary(issue, this.map));
+		const parents = await this.parentMap(issues);
+		return issues.map(issue => toSummary(issue, this.map, parents.get(issue.iid)));
+	}
+
+	/** The issues with these numbers (tombstones left out), oldest first. */
+	private async issuesByIid(iids: readonly number[]): Promise<ApiIssue[]> {
+		const found: ApiIssue[] = [];
+		for (let start = 0; start < iids.length; start += 100) {
+			const chunk = iids.slice(start, start + 100);
+			const all = await this.client.getAll<ApiIssue>(
+				`${this.projectPath}/issues?${chunk.map(iid => `iids[]=${iid}`).join('&')}`,
+				{ query: { per_page: 100 } }
+			);
+			found.push(...all.items.filter(issue => !isTombstone(issue)));
+		}
+		return found.sort((a, b) => a.iid - b.iid);
+	}
+
+	/** The children of an issue as summaries (their parent is that issue). */
+	private async childrenOf(issue: Pick<ApiIssue, 'id' | 'iid'>): Promise<TaskSummary[]> {
+		const hierarchy = await this.workItems.read(issue);
+		return (await this.issuesByIid(hierarchy.childIids)).map(child => toSummary(child, this.map, issue.iid));
 	}
 
 	async listPage(query: ListQuery = {}): Promise<Page<TaskSummary>> {
@@ -226,14 +276,15 @@ export class GitLabBackend implements TaskBackend {
 			throw new Error(`Invalid page request: limit must be a positive integer (got ${String(limit)})`);
 		}
 		const start = cursor === undefined ? undefined : decodeCursor(cursor);
+		if (typeof parentId === 'string') return this.childrenPage(parentId, query, start);
 		let url: string | undefined = start?.u ?? this.listUrl(text);
 		let skip = start?.s ?? 0;
 		const items: TaskSummary[] = [];
 		const needle = text?.toLowerCase();
-		// No issue has a parent here (capability hierarchy: none): every task is a root.
+		// `parentId: null` asks for the roots; a task id is answered by childrenPage above.
 		const matches = (summary: TaskSummary): boolean =>
 			(statusIn === undefined || statusIn.includes(summary.status)) &&
-			(parentId === undefined || parentId === null) &&
+			(parentId === undefined || summary.parentId === undefined) &&
 			// The server searches title AND description by a rule the docs do not give: only the title counts, as the port says.
 			(needle === undefined || summary.title.toLowerCase().includes(needle));
 
@@ -248,8 +299,10 @@ export class GitLabBackend implements TaskBackend {
 			}
 			const page: ClientResponse<ApiIssue[]> = await this.client.getUrl(url);
 			const issues = page.body.filter(issue => !isTombstone(issue));
+			// One GraphQL read for the parents of the page (a cursor can start inside it: the whole page is read anyway).
+			const parents = await this.parentMap(issues);
 			for (let index = skip; index < issues.length; index++) {
-				const summary = toSummary(issues[index]!, this.map);
+				const summary = toSummary(issues[index]!, this.map, parents.get(issues[index]!.iid));
 				if (!matches(summary)) continue;
 				if (limit !== undefined && items.length === limit) {
 					// One more match exists: the next page starts at it.
@@ -261,6 +314,28 @@ export class GitLabBackend implements TaskBackend {
 			url = page.next;
 		}
 		return { items };
+	}
+
+	/** The page of the children of one task: the hierarchy gives their numbers, then they are read in one list. */
+	private async childrenPage(
+		parentId: string,
+		query: ListQuery,
+		start: Cursor | undefined
+	): Promise<Page<TaskSummary>> {
+		const { statusIn, text, limit } = query;
+		const { issue } = await this.issue(parentId);
+		const needle = text?.toLowerCase();
+		const matching = (await this.childrenOf(issue)).filter(
+			summary =>
+				(statusIn === undefined || statusIn.includes(summary.status)) &&
+				(needle === undefined || summary.title.toLowerCase().includes(needle))
+		);
+		const from = start?.s ?? 0;
+		const items = limit === undefined ? matching.slice(from) : matching.slice(from, from + limit);
+		const end = from + items.length;
+		return end < matching.length
+			? { items, nextCursor: encodeCursor({ u: `children:${issue.iid}`, s: end }) }
+			: { items };
 	}
 
 	private listUrl(text: string | undefined): string {
@@ -293,9 +368,10 @@ export class GitLabBackend implements TaskBackend {
 		const counts = new Map<string, { label: string; count: number }>();
 		for (const issue of issues) {
 			for (const label of userLabels(issue, this.map)) {
-				const entry = counts.get(label.toLowerCase()) ?? { label, count: 0 };
+				// Label names are case sensitive on GitLab: `bug` and `Bug` are two labels.
+				const entry = counts.get(label) ?? { label, count: 0 };
 				entry.count += 1;
-				counts.set(label.toLowerCase(), entry);
+				counts.set(label, entry);
 			}
 		}
 		return [...counts.values()].sort(
@@ -303,33 +379,29 @@ export class GitLabBackend implements TaskBackend {
 		);
 	}
 
-	/** True when the tier has the issue links that give `blockedBy` / `blocks` (Premium, Ultimate). */
-	private get hasBlockLinks(): boolean {
-		return this.settings.tier !== 'free';
-	}
-
 	/** The whole record of an issue: the issue, its notes, its label and state events and its blockers, fetched together. */
 	private async recordOf(issue: ApiIssue, response: ClientResponse<ApiIssue>): Promise<VersionedRecord> {
 		const base = `${this.projectPath}/issues/${issue.iid}`;
 		const query = { per_page: this.settings.pageSize };
-		const [notes, labelEvents, stateEvents, linked] = await Promise.all([
+		// ONE request for the notes: the comments are the user notes, the activity (title, description, type, hierarchy) the system ones.
+		// The token has 100 requests per minute, so the two are not asked for separately.
+		const [notes, labelEvents, stateEvents, parents] = await Promise.all([
 			this.client.getAll<ApiNote>(`${base}/notes`, {
-				query: { ...query, activity_filter: 'only_comments', order_by: 'created_at', sort: 'asc' },
+				query: { ...query, activity_filter: 'all_notes', order_by: 'created_at', sort: 'asc' },
 			}),
 			this.client.getAll<ApiLabelEvent>(`${base}/resource_label_events`, { query }),
 			this.client.getAll<ApiStateEvent>(`${base}/resource_state_events`, { query }),
-			this.hasBlockLinks ? this.linked(issue) : Promise.resolve([] as ApiLinkedIssue[]),
+			this.parentMap([issue]),
 		]);
+		const parentIid = parents.get(issue.iid);
 		const { description, blockLinks } = splitBody(issue, this.map);
 		const status = statusOfIssue(issue, this.map);
 		const type = typeOf(issue, this.map);
 		const labels = userLabels(issue, this.map);
 		const meta = metaOf(issue, this.map);
-		const links = linksOf(
-			linked.filter(item => item.link_type === 'is_blocked_by').map(item => item.iid),
-			blockLinks
-		);
-		const activity = activityOf(labelEvents.items, this.map, issue.iid);
+		// blockedBy needs a paid tier: only duplicateOf / causedBy from the managed block are links of a record.
+		const links = blockLinks.map((link): TaskLink => ({ type: link.type, target: link.target }));
+		const activity = activityOf(labelEvents.items, this.map, issue.iid, notes.items);
 		const comments = commentsOf(notes.items);
 		const stales = [response, notes, labelEvents, stateEvents].filter(part => part.stale === true);
 		const oldest = stales
@@ -341,6 +413,7 @@ export class GitLabBackend implements TaskBackend {
 			title: issue.title,
 			...(description === undefined ? {} : { description }),
 			status,
+			...(parentIid === undefined ? {} : { parentId: String(parentIid) }),
 			...(links.length === 0 ? {} : { links }),
 			...(type === undefined ? {} : { type }),
 			...(labels.length === 0 ? {} : { labels }),
@@ -378,10 +451,9 @@ export class GitLabBackend implements TaskBackend {
 
 	async getLinksLenient(id: string): Promise<{ links: TaskLinks; dangling: TaskLink[] }> {
 		const { issue } = await this.issue(id);
-		const linked = this.hasBlockLinks ? await this.linked(issue) : [];
 		const links: TaskLinks = {
-			blockedBy: linked.filter(item => item.link_type === 'is_blocked_by').map(item => toSummary(item, this.map)),
-			blocks: linked.filter(item => item.link_type === 'blocks').map(item => toSummary(item, this.map)),
+			blockedBy: [],
+			blocks: [],
 			duplicateOf: [],
 			duplicates: [],
 			causedBy: [],
@@ -438,32 +510,46 @@ export class GitLabBackend implements TaskBackend {
 		return (await this.getLinksLenient(id)).links.blockedBy.filter(task => !isTerminal(task.status));
 	}
 
-	async getUnblockedBy(blockerId: string, isTerminal: (status: TaskStatus) => boolean): Promise<TaskSummary[]> {
-		const { issue } = await this.issue(blockerId);
-		if (!isTerminal(statusOfIssue(issue, this.map))) return [];
-		if (!this.hasBlockLinks) return [];
-		const blocked = (await this.linked(issue)).filter(item => item.link_type === 'blocks');
-		const unblocked: TaskSummary[] = [];
-		for (const candidate of blocked) {
-			const summary = toSummary(candidate, this.map);
-			if (isTerminal(summary.status)) continue;
-			const blockers = (await this.linked(candidate)).filter(item => item.link_type === 'is_blocked_by');
-			if (blockers.every(other => isTerminal(statusOfIssue(other, this.map)))) unblocked.push(summary);
-		}
-		return unblocked;
+	async getUnblockedBy(blockerId: string): Promise<TaskSummary[]> {
+		// Nothing is blocked by an issue: blockedBy needs a paid tier. A missing issue is still TaskNotFoundError.
+		await this.issue(blockerId);
+		return [];
 	}
 
-	// No parent, no children: the hierarchy is refused by the writes (capability hierarchy: none); the reads answer "none" after
-	// checking that the issue exists, so a caller sees the same shapes as for a project whose tasks happen to have no parent.
+	// The hierarchy: GraphQL work items (two levels on Free: an Issue or Incident and its native Tasks). A native Task has no children,
+	// so the tree of a task is read without asking GitLab.
 
 	async getChildren(id: string): Promise<TaskSummary[]> {
-		await this.issue(id);
-		return [];
+		const { issue } = await this.issue(id);
+		return this.childrenOf(issue);
+	}
+
+	private async treeOf(issue: ApiIssue, depth: number, seen: Set<number>): Promise<TaskTreeNode> {
+		if (depth > HIERARCHY_DEPTH || seen.has(issue.iid)) {
+			throw new BackendLimitError(
+				'gitlab',
+				'hierarchy depth',
+				HIERARCHY_DEPTH,
+				`The child items below #${issue.iid} go deeper than ${HIERARCHY_DEPTH} levels, or loop; check ${this.issueUrl(issue.iid)}`
+			);
+		}
+		seen.add(issue.iid);
+		const hierarchy = issue.issue_type === 'task' ? undefined : await this.workItems.read(issue);
+		const children = hierarchy === undefined ? [] : await this.issuesByIid(hierarchy.childIids);
+		const node: TaskTreeNode = { ...toSummary(issue, this.map), children: [] };
+		for (const child of children) {
+			const below = await this.treeOf(child, depth + 1, seen);
+			node.children.push({ ...below, parentId: String(issue.iid) });
+		}
+		return node;
 	}
 
 	async getTree(id: string): Promise<TaskTreeNode> {
 		const { issue } = await this.issue(id);
-		return { ...toSummary(issue, this.map), children: [] };
+		const parents = await this.parentMap([issue]);
+		const root = await this.treeOf(issue, 1, new Set());
+		const parent = parents.get(issue.iid);
+		return parent === undefined ? root : { ...root, parentId: String(parent) };
 	}
 
 	async getForest(
@@ -471,27 +557,90 @@ export class GitLabBackend implements TaskBackend {
 	): Promise<TaskTreeNode[]> {
 		const { parentId, predicate } = options;
 		const tasks = await this.list();
-		if (parentId !== undefined) {
-			if (!tasks.some(task => task.id === parentId)) throw new TaskNotFoundError(parentId);
-			return [];
+		if (parentId !== undefined && !tasks.some(task => task.id === parentId)) throw new TaskNotFoundError(parentId);
+		const childrenByParent = new Map<string | undefined, TaskSummary[]>();
+		for (const task of tasks) {
+			const siblings = childrenByParent.get(task.parentId) ?? [];
+			siblings.push(task);
+			childrenByParent.set(task.parentId, siblings);
 		}
-		const roots = tasks.map((task): TaskTreeNode => ({ ...task, children: [] }));
-		return predicate === undefined ? roots : roots.filter(root => predicate(root));
+		const roots: TaskTreeNode[] = (childrenByParent.get(parentId) ?? []).map(task => ({ ...task, children: [] }));
+		const preorder: TaskTreeNode[] = [];
+		const visited = new Set<string>();
+		const pending = [...roots].reverse();
+		while (pending.length > 0) {
+			const node = pending.pop()!;
+			if (visited.has(node.id)) {
+				throw new BackendDataError(
+					'gitlab',
+					`issue #${node.id}`,
+					`issue #${node.id} is its own ancestor in the hierarchy`,
+					`Remove the child item link that closes the loop on ${this.issueUrl(Number(node.id))}`
+				);
+			}
+			visited.add(node.id);
+			preorder.push(node);
+			node.children = (childrenByParent.get(node.id) ?? []).map(task => ({ ...task, children: [] }));
+			pending.push(...[...node.children].reverse());
+		}
+		if (predicate === undefined) return roots;
+		const keep = new Set<string>();
+		for (const node of [...preorder].reverse()) {
+			node.children = node.children.filter(child => keep.has(child.id));
+			if (node.children.length > 0 || predicate(node)) keep.add(node.id);
+		}
+		return roots.filter(root => keep.has(root.id));
 	}
 
 	async getDescendants(id: string): Promise<TaskSummary[]> {
-		await this.issue(id);
-		return [];
+		const tree = await this.getTree(id);
+		const descendants: TaskSummary[] = [];
+		const pending: TaskTreeNode[] = [...tree.children].reverse();
+		while (pending.length > 0) {
+			const { children, ...summary } = pending.pop()!;
+			descendants.push(summary);
+			pending.push(...[...children].reverse());
+		}
+		return descendants;
 	}
 
 	async getAncestors(id: string): Promise<TaskSummary[]> {
-		await this.issue(id);
-		return [];
+		const ancestors: TaskSummary[] = [];
+		const seen = new Set<number>();
+		let { issue } = await this.issue(id);
+		seen.add(issue.iid);
+		for (;;) {
+			const parent = issue.issue_type === 'task' ? (await this.parentMap([issue])).get(issue.iid) : undefined;
+			if (parent === undefined) return ancestors;
+			if (seen.has(parent) || ancestors.length >= HIERARCHY_DEPTH) {
+				throw new BackendLimitError(
+					'gitlab',
+					'hierarchy depth',
+					HIERARCHY_DEPTH,
+					`The parents of #${id} loop or go deeper than ${HIERARCHY_DEPTH} levels; check ${this.issueUrl(parent)}`
+				);
+			}
+			seen.add(parent);
+			({ issue } = await this.issue(String(parent)));
+			ancestors.push(toSummary(issue, this.map));
+		}
 	}
 
 	async getFullTree(id: string): Promise<TaskTreeNode> {
-		const { issue } = await this.issue(id);
-		return { ...toSummary(issue, this.map), children: [], selected: true };
+		const ancestors = await this.getAncestors(id);
+		const rootId = ancestors.at(-1)?.id ?? String((await this.issue(id)).issue.iid);
+		const tree = await this.getTree(rootId);
+		const pending: TaskTreeNode[] = [tree];
+		const target = String(this.iidOf(id));
+		while (pending.length > 0) {
+			const node = pending.pop()!;
+			if (node.id === target) {
+				node.selected = true;
+				break;
+			}
+			pending.push(...node.children);
+		}
+		return tree;
 	}
 
 	// ---------------------------------------------------------------- writes (gitlabWrites.ts)

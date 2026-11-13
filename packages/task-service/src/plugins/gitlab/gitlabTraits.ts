@@ -1,9 +1,10 @@
 // What the gitlab strategy keeps and where its limits are, for `task migrate` (the loss table is built from this before any write).
-// NOT VERIFIED AGAINST A REAL GITLAB: the limits are the documented ones, the costs are estimates (nothing was measured).
+// The limits are the documented or recorded ones (gitlab.com Free, 2026-11-09), the costs are estimates.
 import type { BackendTraits } from '@wadeck-app/task-core';
 
 import type { DeclaredFills } from '../kinds.js';
 import { COMMENT_MAX, DESCRIPTION_MAX, labelProblem } from './gitlabOptions.js';
+import { CHILDREN_READ_MAX, HIERARCHY_DEPTH } from './gitlabWorkItems.js';
 import type { GitLabSettings } from './gitlabOptions.js';
 import { TOMBSTONE_LABEL } from './gitlabMapping.js';
 
@@ -18,16 +19,16 @@ const SECONDS_BESIDES_SPACING = 3;
 export function gitlabTraits(settings: GitLabSettings, fills: DeclaredFills): BackendTraits {
 	const statusLabels = new Set(
 		Object.values(settings.statusMap)
-			.map(rule => rule.label?.toLowerCase())
+			.map(rule => rule.label)
 			.filter((label): label is string => label !== undefined)
 	);
 	const typeLabels = new Set(
 		Object.values(settings.typeMap)
-			.map(rule => rule.label?.toLowerCase())
+			.map(rule => rule.label)
 			.filter((label): label is string => label !== undefined)
 	);
-	const typePrefix = settings.typePrefix.toLowerCase();
-	const metaPrefix = settings.metaPrefix.toLowerCase();
+	const typePrefix = settings.typePrefix;
+	const metaPrefix = settings.metaPrefix;
 	const metaInLabels = fills['meta']?.use === 'labels';
 
 	return {
@@ -36,26 +37,25 @@ export function gitlabTraits(settings: GitLabSettings, fills: DeclaredFills): Ba
 		authoredComments: false,
 		commentTextMax: COMMENT_MAX,
 		descriptionMax: DESCRIPTION_MAX - BODY_ROOM,
-		// No hierarchy at all (capability hierarchy: none): the migration plan drops parents with a loss row, so no depth is declared.
+		// Free tier: an Issue or Incident and its native Tasks, two levels (VERIFIED-LIVE). The migration plan drops a deeper parent with a
+		// loss row. Children: task reads 100 at most and refuses a longer list, so a parent holds 99 here.
+		hierarchyDepth: HIERARCHY_DEPTH,
+		childrenPerParent: CHILDREN_READ_MAX - 1,
 		cost: {
 			requests: REQUESTS_PER_WRITE,
 			seconds: settings.writeSpacingSeconds + SECONDS_BESIDES_SPACING,
-			read: { requests: 5, seconds: 1.5 },
+			read: { requests: 6, seconds: 1.8 },
 		},
 		labelProblem: label => {
 			const refused = labelProblem(label);
 			if (refused !== undefined) return refused;
-			const lower = label.toLowerCase();
-			if (statusLabels.has(lower)) return `"${label}" is reserved: it carries the status of a task`;
-			if (typeLabels.has(lower) || lower.startsWith(typePrefix)) {
+			if (statusLabels.has(label)) return `"${label}" is reserved: it carries the status of a task`;
+			if (typeLabels.has(label) || label.startsWith(typePrefix)) {
 				return `"${label}" is reserved: it carries the type of a task`;
 			}
-			if (metaInLabels && lower.startsWith(metaPrefix))
+			if (metaInLabels && label.startsWith(metaPrefix))
 				return `"${label}" is reserved: it carries the metadata of a task`;
-			if (lower === TOMBSTONE_LABEL) return `"${label}" is reserved: it marks a deleted task`;
-			if (settings.tier === 'free' && label.includes('::')) {
-				return `"${label}" is a scoped label, which exists on GitLab Premium and Ultimate only`;
-			}
+			if (label === TOMBSTONE_LABEL) return `"${label}" is reserved: it marks a deleted task`;
 			return undefined;
 		},
 	};

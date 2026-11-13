@@ -1,6 +1,6 @@
-// The write path of the gitlab backend over the fake server: create, status, title and description, type, labels, meta, hierarchy.
+// The write path of the gitlab backend over the fake server: create, status, title and description, type, labels, meta (the hierarchy is in GitLabBackend.hierarchy.test.ts).
 // Every test says what reached GitLab (`sent()`), because the order and the number of calls are part of the design.
-// The fake is modelled on docs.gitlab.com: these tests prove agreement with the documentation as read, not with a real GitLab.
+// The fake is a copy of gitlab.com Free as recorded on 2026-11-09 (gitlabConformance.test.ts keeps it honest).
 import {
 	BackendLimitError,
 	BackendRejectedError,
@@ -16,26 +16,24 @@ import { FakeGitLab } from './fakeGitLab.testkit.js';
 import { WRITE_STATUSES, makeGitLabBackend, writeStatusMap } from './gitlabBackend.testkit.js';
 import type { TestBackend } from './gitlabBackend.testkit.js';
 import type { DeclaredFills } from '../kinds.js';
-import type { GitLabTier } from './gitlabOptions.js';
 
 let fake: FakeGitLab;
 let t: TestBackend;
 
 const P = '/projects/42';
 
-async function start(tier: GitLabTier, extra: { fills?: DeclaredFills; types?: Record<string, unknown> } = {}) {
-	fake = await FakeGitLab.start({ tier });
+async function start(extra: { fills?: DeclaredFills; types?: Record<string, unknown> } = {}) {
+	fake = await FakeGitLab.start();
 	t = makeGitLabBackend(fake, {
-		tier,
 		statuses: WRITE_STATUSES,
 		projectTypes: ['bug', 'feature', 'incident'],
-		options: { statusMap: writeStatusMap(tier), ...(extra.types === undefined ? {} : { typeMap: extra.types }) },
+		options: { statusMap: writeStatusMap(), ...(extra.types === undefined ? {} : { typeMap: extra.types }) },
 		...(extra.fills === undefined ? {} : { fills: extra.fills }),
 	});
 }
 
 beforeEach(async () => {
-	await start('free');
+	await start();
 });
 
 afterEach(async () => {
@@ -98,15 +96,13 @@ describe('create', () => {
 		expect(fake.issue(1)!.state).toBe('opened');
 	});
 
-	it('refuses a parent before any request: the REST API has no parent of an issue', async () => {
-		await t.backend.create({ title: 'Parent', status: 'backlog' });
+	it('refuses a parent that does not exist before creating anything', async () => {
 		fake.requests.length = 0;
 
-		const error = await failure(() => t.backend.create({ title: 'Child', status: 'backlog', parentId: '1' }));
+		const error = await failure(() => t.backend.create({ title: 'Child', status: 'backlog', parentId: '7' }));
 
-		expect(error).toBeInstanceOf(UnsupportedByBackendError);
-		expect((error as UnsupportedByBackendError).capability).toBe('hierarchy');
-		expect(fake.requests).toEqual([]);
+		expect(error).toBeInstanceOf(TaskNotFoundError);
+		expect(fake.writes()).toEqual([]);
 	});
 
 	it('refuses a status the map lacks with the key to write', async () => {
@@ -154,6 +150,16 @@ describe('quick actions are never sent', () => {
 		expect(fake.quickActionsRun).toBe(0);
 		// the setup of the other two cases creates one issue; the guarded call itself sent nothing
 		expect(fake.writes().length - before).toBeLessThanOrEqual(1);
+	});
+
+	it('refuses a quick action in setDescription BEFORE ANY request, reads included', async () => {
+		await t.backend.create({ title: 'x', status: 'backlog' });
+		fake.requests.length = 0;
+
+		const error = await failure(() => t.backend.setDescription('1', 'fine\n/close'));
+
+		expect(error).toBeInstanceOf(BackendRejectedError);
+		expect(fake.requests).toEqual([]);
 	});
 
 	it('lets a path in the middle of a line, and a path with several slashes, through', async () => {
@@ -356,7 +362,7 @@ describe('type', () => {
 
 	it('maps a type to a native issue type (incident) and gives it back to issue when another type replaces it', async () => {
 		await fake.stop();
-		await start('free', { types: { incident: { issueType: 'incident' } } });
+		await start({ types: { incident: { issueType: 'incident' } } });
 		await t.backend.create({ title: 'T', status: 'backlog' });
 
 		const incident = await t.backend.setType('1', 'incident');
@@ -373,20 +379,6 @@ describe('type', () => {
 		await t.backend.clearType('1');
 		expect(fake.issue(1)!.issueType).toBe('issue');
 	});
-
-	it('on a premium project the type label is the scoped type::x and a swap stays one PUT', async () => {
-		await fake.stop();
-		await start('premium');
-		await t.backend.create({ title: 'T', status: 'backlog' });
-		await t.backend.setType('1', 'bug');
-		expect(fake.labelsOf(1)).toEqual(['type::bug']);
-
-		fake.requests.length = 0;
-		await t.backend.setType('1', 'feature');
-
-		expect(fake.labelsOf(1)).toEqual(['type::feature']);
-		expect(sent()).toEqual(['PUT /issues/1']);
-	});
 });
 
 describe('labels', () => {
@@ -395,7 +387,7 @@ describe('labels', () => {
 		fake.requests.length = 0;
 
 		await t.backend.addLabel('1', 'urgent');
-		await t.backend.addLabel('1', 'URGENT');
+		await t.backend.addLabel('1', 'urgent');
 		await t.backend.removeLabel('1', 'urgent');
 		await t.backend.removeLabel('1', 'urgent');
 
@@ -411,18 +403,6 @@ describe('labels', () => {
 			expect(await failure(() => t.backend.addLabel('1', name))).toBeInstanceOf(BackendRejectedError);
 		}
 		expect(fake.requests).toEqual([]);
-	});
-
-	it('on premium refuses a user label that shares the scope of the status labels, which would silently take the status away', async () => {
-		await fake.stop();
-		await start('premium');
-		await t.backend.create({ title: 'T', status: 'in-progress' });
-
-		const error = await failure(() => t.backend.addLabel('1', 'status::weird'));
-
-		expect(error).toBeInstanceOf(BackendRejectedError);
-		expect(error.message).toContain('reserved');
-		expect(fake.labelsOf(1)).toEqual(['status::in-progress']);
 	});
 
 	it('refuses a 101st label with the limit and the way out', async () => {
@@ -447,9 +427,9 @@ describe('meta', () => {
 		expect((error as UnsupportedByBackendError).hint).toContain('body-block');
 	});
 
-	it('free tier, labels: meta:key=value, a changed value is one PUT swapping the label', async () => {
+	it('labels: meta:key=value, a changed value is one PUT swapping the label', async () => {
 		await fake.stop();
-		await start('free', { fills: { meta: { use: 'labels', fidelity: 'strict' } } });
+		await start({ fills: { meta: { use: 'labels', fidelity: 'strict' } } });
 		await t.backend.create({ title: 'T', status: 'backlog' });
 
 		await t.backend.setMeta('1', 'owner', 'ann');
@@ -466,22 +446,9 @@ describe('meta', () => {
 		expect(fake.labelsOf(1)).toEqual([]);
 	});
 
-	it('premium, labels: the scoped meta::key::value, two keys coexist, one key has one value', async () => {
-		await fake.stop();
-		await start('premium', { fills: { meta: { use: 'labels', fidelity: 'strict' } } });
-		await t.backend.create({ title: 'T', status: 'backlog' });
-
-		await t.backend.setMeta('1', 'owner', 'ann');
-		await t.backend.setMeta('1', 'team', 'core');
-		await t.backend.setMeta('1', 'owner', 'bob');
-
-		expect([...fake.labelsOf(1)].sort()).toEqual(['meta::owner::bob', 'meta::team::core']);
-		expect((await t.backend.get('1')).meta).toEqual({ owner: 'bob', team: 'core' });
-	});
-
 	it('refuses a value a label cannot hold, and says where it can go', async () => {
 		await fake.stop();
-		await start('free', { fills: { meta: { use: 'labels', fidelity: 'strict' } } });
+		await start({ fills: { meta: { use: 'labels', fidelity: 'strict' } } });
 		await t.backend.create({ title: 'T', status: 'backlog' });
 
 		const error = await failure(() => t.backend.setMeta('1', 'note', 'a,b'));
@@ -490,18 +457,9 @@ describe('meta', () => {
 		expect((error as BackendRejectedError).hint).toContain('body-block');
 	});
 
-	it('premium refuses an empty value and a value with :: (they cannot be a scoped label)', async () => {
-		await fake.stop();
-		await start('premium', { fills: { meta: { use: 'labels', fidelity: 'strict' } } });
-		await t.backend.create({ title: 'T', status: 'backlog' });
-
-		expect(await failure(() => t.backend.setMeta('1', 'k', ''))).toBeInstanceOf(BackendRejectedError);
-		expect(await failure(() => t.backend.setMeta('1', 'k', 'a::b'))).toBeInstanceOf(BackendRejectedError);
-	});
-
 	it('body-block: keeps the meta in the description block, warns once that it is approximate', async () => {
 		await fake.stop();
-		await start('free', { fills: { meta: { use: 'body-block', fidelity: 'degrade' } } });
+		await start({ fills: { meta: { use: 'body-block', fidelity: 'degrade' } } });
 		await t.backend.create({ title: 'T', status: 'backlog', description: 'text' });
 
 		await t.backend.setMeta('1', 'a', '1');
@@ -519,29 +477,165 @@ describe('meta', () => {
 	});
 });
 
-describe('hierarchy', () => {
-	it.each(['free', 'premium'] as const)('refuses setParent and removeParent on %s before any request', async tier => {
-		await fake.stop();
-		await start(tier);
-		await t.backend.create({ title: 'A', status: 'backlog' });
-		await t.backend.create({ title: 'B', status: 'backlog' });
+describe('what gitlab.com Free was recorded to do', () => {
+	it('refuses a title of 256 characters before sending anything, on create and on rename', async () => {
+		await t.backend.create({ title: 'T', status: 'backlog' });
+		fake.requests.length = 0;
+		const long = 'x'.repeat(256);
+
+		const created = await failure(() => t.backend.create({ title: long, status: 'backlog' }));
+		const renamed = await failure(() => t.backend.setTitle('1', long));
+
+		expect(created).toBeInstanceOf(BackendLimitError);
+		expect(created.message).toContain('title length');
+		expect(renamed).toBeInstanceOf(BackendLimitError);
+		expect(fake.requests).toEqual([]);
+		// 255 is the maximum: accepted
+		await t.backend.setTitle('1', 'x'.repeat(255));
+		expect(fake.issue(1)!.title).toHaveLength(255);
+	});
+
+	it('maps a 400 that names a too long field to a BackendLimitError with the field and the text', async () => {
+		await t.backend.create({ title: 'T', status: 'backlog' });
+		fake.failNext({
+			status: 400,
+			method: 'PUT',
+			body: { message: { title: ['is too long (maximum is 255 characters)'] } },
+		});
+
+		const title = await failure(() => t.backend.setTitle('1', 'New'));
+		fake.failNext({
+			status: 400,
+			method: 'PUT',
+			body: { message: { description: ['is too long (1 MiB). The maximum size is 1 MiB.'] } },
+		});
+		const description = await failure(() => t.backend.setDescription('1', 'text'));
+
+		expect(title).toBeInstanceOf(BackendLimitError);
+		expect((title as BackendLimitError).hint).toContain('title is too long (maximum is 255 characters)');
+		expect(description).toBeInstanceOf(BackendLimitError);
+		expect((description as BackendLimitError).limit).toBe(1_048_576);
+		expect((description as BackendLimitError).hint).toContain('description is too long');
+	});
+
+	it('maps any other validation error to BackendRejectedError naming the field and the text', async () => {
+		await t.backend.create({ title: 'T', status: 'backlog' });
+		fake.failNext({ status: 400, method: 'PUT', body: { message: { title: ["can't be blank"] } } });
+
+		const error = await failure(() => t.backend.setTitle('1', 'New'));
+
+		expect(error).toBeInstanceOf(BackendRejectedError);
+		expect(error.message).toContain("title can't be blank");
+	});
+
+	it('compares label names exactly: bug and Bug are two labels, each added, removed and counted on its own', async () => {
+		await t.backend.create({ title: 'T', status: 'backlog' });
 		fake.requests.length = 0;
 
-		for (const call of [() => t.backend.setParent('2', '1'), () => t.backend.removeParent('2')]) {
-			const error = await failure(call);
-			expect(error).toBeInstanceOf(UnsupportedByBackendError);
-			expect((error as UnsupportedByBackendError).capability).toBe('hierarchy');
-			expect((error as UnsupportedByBackendError).hint).toContain('REST API has no parent');
-		}
-		expect(fake.requests).toEqual([]);
+		await t.backend.addLabel('1', 'bug');
+		await t.backend.addLabel('1', 'Bug');
+		await t.backend.removeLabel('1', 'BUG');
+		await t.backend.removeLabel('1', 'bug');
+
+		expect(bodies()).toEqual([{ add_labels: 'bug' }, { add_labels: 'Bug' }, { remove_labels: 'bug' }]);
+		expect(fake.labelsOf(1)).toEqual(['Bug']);
+		expect(await t.backend.listLabels()).toEqual([{ label: 'Bug', count: 1 }]);
+	});
+
+	it('swaps status labels written status::x in one PUT: they are plain labels on Free, with no exclusivity to rely on', async () => {
+		await fake.stop();
+		fake = await FakeGitLab.start();
+		t = makeGitLabBackend(fake, {
+			statuses: WRITE_STATUSES,
+			options: {
+				statusMap: {
+					backlog: { state: 'open' },
+					'in-progress': { state: 'open', label: 'status::in-progress' },
+					review: { state: 'open', label: 'status::review' },
+					done: { state: 'closed' },
+					cancelled: { state: 'closed', label: 'status::cancelled' },
+					duplicate: { state: 'closed', label: 'status::duplicate' },
+				},
+			},
+		});
+		await t.backend.create({ title: 'T', status: 'backlog' });
+		fake.requests.length = 0;
+
+		const started = await t.backend.updateStatus('1', 'in-progress');
+		const reviewed = await t.backend.updateStatus('1', 'review');
+		const done = await t.backend.updateStatus('1', 'done');
+
+		expect([started.status, reviewed.status, done.status]).toEqual(['in-progress', 'review', 'done']);
+		expect(bodies()).toEqual([
+			{ labels: 'status::in-progress' },
+			{ labels: 'status::review' },
+			{ labels: '', state_event: 'close' },
+		]);
+		expect(fake.labelsOf(1)).toEqual([]);
+		expect(fake.issue(1)!.state).toBe('closed');
+	});
+
+	it('never sends updated_at (GitLab would SET the stamp with it) in any request of any operation', async () => {
+		await fake.stop();
+		await start({ types: { incident: { issueType: 'incident' } } });
+		await t.backend.create({ title: 'Parent', status: 'backlog', description: 'body' });
+		const child = await t.backend.create({ title: 'Child', status: 'review', parentId: '1' });
+		await t.backend.updateStatus(child.id, 'done');
+		await t.backend.setTitle('1', 'Parent 2');
+		await t.backend.setDescription('1', 'body 2');
+		await t.backend.setType('1', 'incident');
+		await t.backend.clearType('1');
+		await t.backend.addLabel('1', 'urgent');
+		await t.backend.removeLabel('1', 'urgent');
+		await t.backend.addComment('1', 'a note');
+		await t.backend.removeParent(child.id);
+		await t.backend.setParent(child.id, '1');
+		await t.backend.list();
+		await t.backend.get(child.id);
+
+		const sentText = fake.requests
+			.map(request => JSON.stringify(request.body ?? '') + request.query + request.rawPath)
+			.join('\n');
+		expect(fake.requests.length).toBeGreaterThan(30);
+		expect(sentText).not.toContain('updated_at');
+	});
+
+	it('a new comment does not move updated_at, so it does not make the issue stale for a write with the revision read before', async () => {
+		await t.backend.create({ title: 'T', status: 'backlog' });
+		const before = await t.backend.get('1');
+
+		await t.backend.addComment('1', 'a note');
+		const after = await t.backend.get('1');
+		const renamed = await t.backend.setTitle('1', 'Renamed', { expectedRevision: before.revision });
+
+		expect(after.revision).toBe(before.revision);
+		expect(renamed.title).toBe('Renamed');
+	});
+
+	it('an issue deleted on GitLab is TaskNotFoundError on every read and write, and false for a second delete', async () => {
+		await fake.stop();
+		fake = await FakeGitLab.start();
+		t = makeGitLabBackend(fake, {
+			statuses: WRITE_STATUSES,
+			options: { statusMap: writeStatusMap() },
+			fills: { delete: { use: 'hard', fidelity: 'strict' } },
+		});
+		await t.backend.create({ title: 'T', status: 'backlog' });
+
+		expect(await t.backend.deleteTask('1')).toBe(true);
+
+		expect(await failure(() => t.backend.get('1'))).toBeInstanceOf(TaskNotFoundError);
+		expect(await failure(() => t.backend.updateStatus('1', 'done'))).toBeInstanceOf(TaskNotFoundError);
+		expect(await failure(() => t.backend.addComment('1', 'late'))).toBeInstanceOf(TaskNotFoundError);
+		expect(await t.backend.deleteTask('1')).toBe(false);
 	});
 });
 
 describe('failures', () => {
 	it('a token that can only read (read_api) is a BackendAuthError that names the scope api', async () => {
 		await fake.stop();
-		fake = await FakeGitLab.start({ tier: 'free', readOnlyToken: true });
-		t = makeGitLabBackend(fake, { statuses: WRITE_STATUSES, options: { statusMap: writeStatusMap('free') } });
+		fake = await FakeGitLab.start({ readOnlyToken: true });
+		t = makeGitLabBackend(fake, { statuses: WRITE_STATUSES, options: { statusMap: writeStatusMap() } });
 
 		const error = await failure(() => t.backend.create({ title: 'x', status: 'backlog' }));
 

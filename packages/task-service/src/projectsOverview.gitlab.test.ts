@@ -47,7 +47,6 @@ strategy:
     type: gitlab
     options:
         project: acme/shop
-        tier: free
         baseUrl: ${fake.baseUrl}
         tokenEnv: ${TOKEN_VARIABLE}
         timeoutSeconds: 2
@@ -94,11 +93,12 @@ describe('summarizeProjects with a gitlab project', () => {
 	it('an unreachable GitLab and a rate limit are reasons too', async () => {
 		fake.dropNext(1);
 		const unreachable = await summarizeProjects({ env: sandbox.env });
-		fake.forceRateLimit({ retryAfterSeconds: 60, times: 1 });
+		// Longer than the 70 s a command waits for the window to reopen: the project is reported unreadable.
+		fake.forceRateLimit({ retryAfterSeconds: 600, times: 1 });
 		const limited = await summarizeProjects({ env: sandbox.env });
 
 		expect(unreachable.projects.find(p => p.name === 'remote')!.error).toContain('Cannot reach');
-		expect(limited.projects.find(p => p.name === 'remote')!.error).toContain('rate limit is reached');
+		expect(limited.projects.find(p => p.name === 'remote')!.error).toContain('GitLab rate limit reached');
 		expect(limited.readableCount).toBe(1);
 		expect(limited.open).toBe(2);
 	});

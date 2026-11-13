@@ -8,7 +8,13 @@ import {
 } from '@wadeck-app/task-core';
 
 import type { ReadNotice } from '../kinds.js';
-import { GitLabClient, GitLabHttpError, GitLabServerFailure, redactToken } from './gitlabClient.js';
+import {
+	GitLabClient,
+	GitLabHttpError,
+	GitLabProjectNotFoundError,
+	GitLabServerFailure,
+	redactToken,
+} from './gitlabClient.js';
 import type { GitLabClientOptions } from './gitlabClient.js';
 
 const TOKEN = 'glpat-SECRET-TOKEN-123';
@@ -35,6 +41,7 @@ let queue: Handler[];
 let notices: ReadNotice[];
 let debugLines: string[];
 let waits: number[];
+let rateNotices: string[];
 let clockMs: number;
 
 beforeEach(() => {
@@ -43,6 +50,7 @@ beforeEach(() => {
 	notices = [];
 	debugLines = [];
 	waits = [];
+	rateNotices = [];
 	clockMs = Date.parse('2026-11-08T12:00:00Z');
 });
 
@@ -125,11 +133,11 @@ describe('GitLabClient: a plain read', () => {
 		expect(allowed.status).toBe(404);
 		expect(allowed.body).toBeUndefined();
 
-		queue.push({ status: 404, body: { message: '404 Project Not Found' } });
-		const error = await failure(() => client().get('/projects/1'));
+		queue.push({ status: 404, body: { message: '404 Not found' } });
+		const error = await failure(() => client().get('/projects/1/issues/9'));
 		expect(error).toBeInstanceOf(GitLabHttpError);
 		expect((error as GitLabHttpError).status).toBe(404);
-		expect(error.message).toBe('GitLab answered 404 for GET /projects/1: 404 Project Not Found');
+		expect(error.message).toBe('GitLab answered 404 for GET /projects/1/issues/9: 404 Not found');
 	});
 
 	it('refuses an answer that is not JSON', async () => {
@@ -188,39 +196,136 @@ describe('GitLabClient: failures', () => {
 		expect(error.hint).toContain('GITLAB_TOKEN');
 	});
 
-	it('429 with Retry-After is a secondary RateLimitedError with the instant', async () => {
+	it('403 insufficient_granular_scope names the denied permission and the fix, with the project and the token source', async () => {
+		queue.push({
+			status: 403,
+			body: {
+				error: 'insufficient_granular_scope',
+				error_description:
+					'Access denied: This operation requires a fine-grained personal access token with the following project permissions: [Work Item: Update].',
+			},
+		});
+		const error = (await failure(() => client().write('PUT', '/projects/1/issues/1', {}))) as BackendAuthError;
+		expect(error).toBeInstanceOf(BackendAuthError);
+		expect(error.reason).toBe('forbidden');
+		expect(error.message).toContain('the token lacks the permission Work Item: Update');
+		expect(error.hint).toContain('Add the permission Work Item: Update on acme/shop');
+		expect(error.hint).toContain('GITLAB_TOKEN');
+		expect(error.hint).toContain('docs.gitlab.com');
+	});
+
+	it('a project path answering 404 Project Not Found is "unknown or not visible", also when a 404 is allowed', async () => {
+		queue.push({ status: 404, body: { message: '404 Project Not Found' } });
+		const error = (await failure(() => client().get('/projects/acme%2Fshop/issues'))) as GitLabProjectNotFoundError;
+		expect(error).toBeInstanceOf(GitLabProjectNotFoundError);
+		expect(error).toBeInstanceOf(GitLabHttpError);
+		expect(error.status).toBe(404);
+		expect(error.message).toBe(
+			'GitLab does not know the project acme/shop, or the token cannot see it (404 Project Not Found)'
+		);
+		expect(error.hint).toContain('member of acme/shop');
+		expect(error.hint).toContain('GITLAB_TOKEN');
+
+		queue.push({ status: 404, body: { message: '404 Project Not Found' } });
+		expect(
+			await failure(() => client().get('/projects/acme%2Fshop/issues/3', { allowNotFound: true }))
+		).toBeInstanceOf(GitLabProjectNotFoundError);
+
+		// An issue that does not exist stays the plain, allowed 404.
+		queue.push({ status: 404, body: { message: '404 Not found' } });
+		const missing = await client().get('/projects/acme%2Fshop/issues/3', { allowNotFound: true });
+		expect(missing.status).toBe(404);
+	});
+
+	it('429 with only Retry-After, longer than the maximum wait, is a secondary RateLimitedError with the instant and the way to wait longer', async () => {
 		queue.push({ status: 429, text: 'Retry later', headers: { 'retry-after': '30' } });
-		const error = (await failure(() => client().get('/version'))) as RateLimitedError;
+		const error = (await failure(() => client({ maxWaitMs: 5000 }).get('/version'))) as RateLimitedError;
 		expect(error).toBeInstanceOf(RateLimitedError);
 		expect(error.scope).toBe('secondary');
 		expect(error.retryAt?.toISOString()).toBe('2026-11-08T12:00:30.000Z');
+		expect(error.hint).toContain('strategy.options.rateLimit.maxWaitSeconds');
+		expect(error.hint).toContain('2026-11-08T12:00:30.000Z');
+		expect(waits).toEqual([]);
 	});
 
-	it('429 without Retry-After has no instant', async () => {
+	it('429 without any instant fails at once, without waiting', async () => {
 		queue.push({ status: 429, text: 'Retry later' });
 		const error = (await failure(() => client().get('/version'))) as RateLimitedError;
 		expect(error.retryAt).toBeUndefined();
+		expect(waits).toEqual([]);
+		expect(calls).toHaveLength(1);
 	});
 
-	it('an empty quota fails WITHOUT sending, until the reset instant', async () => {
-		const resetAt = clockMs / 1000 + 60;
+	it('an empty quota waits for the reset instant BEFORE sending, with one notice', async () => {
+		const resetAt = clockMs / 1000 + 38;
+		queue.push(
+			{
+				body: [],
+				headers: { 'ratelimit-limit': '100', 'ratelimit-remaining': '0', 'ratelimit-reset': String(resetAt) },
+			},
+			{ body: [] }
+		);
+		const c = client({ cacheTtlMs: 0, notice: text => rateNotices.push(text) });
+		await c.get('/a');
+		expect(c.rateLimit()).toEqual({ limit: 100, remaining: 0, resetAt });
+
+		await c.get('/b');
+		expect(waits).toEqual([38_000]);
+		expect(rateNotices).toEqual([
+			'GitLab rate limit reached (100 requests per window): waiting 38 s for the window to reopen',
+		]);
+		expect(calls).toHaveLength(2);
+	});
+
+	it('an empty quota that reopens later than maxWaitMs fails WITHOUT sending, naming the instant and the option', async () => {
+		const resetAt = clockMs / 1000 + 300;
 		queue.push({
 			body: [],
-			headers: { 'ratelimit-limit': '60', 'ratelimit-remaining': '0', 'ratelimit-reset': String(resetAt) },
+			headers: { 'ratelimit-limit': '100', 'ratelimit-remaining': '0', 'ratelimit-reset': String(resetAt) },
 		});
-		const c = client({ cacheTtlMs: 0 });
+		const c = client({ cacheTtlMs: 0, maxWaitMs: 70_000 });
 		await c.get('/a');
-		expect(c.rateLimit()).toEqual({ limit: 60, remaining: 0, resetAt });
 
 		const error = (await failure(() => c.get('/b'))) as RateLimitedError;
+		expect(error).toBeInstanceOf(RateLimitedError);
 		expect(error.scope).toBe('primary');
 		expect(error.retryAt?.getTime()).toBe(resetAt * 1000);
+		expect(error.message).toContain('which is more than the 70 s task waits');
+		expect(error.hint).toContain('strategy.options.rateLimit.maxWaitSeconds (now 70)');
 		expect(calls).toHaveLength(1);
+		expect(rateNotices).toEqual([]);
 
-		clockMs += 61_000;
+		clockMs += 301_000;
 		queue.push({ body: [] });
 		await c.get('/b');
 		expect(calls).toHaveLength(2);
+	});
+
+	it('a 429 is waited out until ratelimit-reset, and Retry-After is ignored when the reset header is there', async () => {
+		const reset = String(clockMs / 1000 + 38);
+		queue.push(
+			{ status: 429, text: 'Rate limit exceeded', headers: { 'retry-after': '2', 'ratelimit-reset': reset } },
+			{ body: { ok: true } }
+		);
+		const response = await client({ notice: text => rateNotices.push(text) }).get<{ ok: boolean }>('/a');
+		expect(response.body.ok).toBe(true);
+		expect(waits).toEqual([38_000]);
+		expect(rateNotices).toEqual(['GitLab rate limit reached: waiting 38 s for the window to reopen']);
+		expect(calls).toHaveLength(2);
+	});
+
+	it('requests that meet the same closed window share one wait and one notice', async () => {
+		const resetAt = clockMs / 1000 + 20;
+		const limited = (): Handler => ({
+			status: 429,
+			text: 'Rate limit exceeded',
+			headers: { 'ratelimit-reset': String(resetAt) },
+		});
+		queue.push(limited(), limited(), { body: [] }, { body: [] });
+		const c = client({ cacheTtlMs: 0, notice: text => rateNotices.push(text) });
+		await Promise.all([c.get('/a'), c.get('/b')]);
+		expect(rateNotices).toHaveLength(1);
+		expect(waits).toEqual([20_000]);
 	});
 
 	it('5xx is a GitLabServerFailure (unreachable) with the status and message, token redacted', async () => {
@@ -454,7 +559,12 @@ describe('GitLabClient: the read cache', () => {
 		await c.get('/a');
 		for (const [index, handler] of [
 			new TypeError('fetch failed'),
-			{ status: 429, text: 'Retry later', headers: { 'retry-after': '5' } } as Handler,
+			{
+				status: 429,
+				text: 'Retry later',
+				// A window that reopens in ten minutes is longer than the wait task accepts: the old answer is shown.
+				headers: { 'ratelimit-reset': String(clockMs / 1000 + 600) },
+			} as Handler,
 		].entries()) {
 			clockMs += 61_000;
 			queue.push(handler);
@@ -534,62 +644,59 @@ describe('GitLabClient: writes', () => {
 		expect(calls).toHaveLength(2);
 	});
 
-	it('waits out a short Retry-After and sends the same request again, at most twice', async () => {
+	it('waits out a 429 on a write and sends the same request again, more than twice while within the budget', async () => {
+		const reset = (seconds: number): Record<string, string> => ({
+			'ratelimit-reset': String(clockMs / 1000 + seconds),
+		});
 		queue.push(
-			{ status: 429, text: 'Retry later', headers: { 'retry-after': '3' } },
-			{ status: 429, text: 'Retry later', headers: { 'retry-after': '4' } },
+			{ status: 429, text: 'Rate limit exceeded', headers: reset(3) },
+			{ status: 429, text: 'Rate limit exceeded', headers: reset(4) },
+			{ status: 429, text: 'Rate limit exceeded', headers: reset(5) },
 			{ body: { ok: true } }
 		);
 		const response = await client().write<{ ok: boolean }>('POST', '/projects/1/issues', { title: 'T' });
 		expect(response.body.ok).toBe(true);
-		expect(waits).toEqual([3000, 4000]);
-		expect(calls).toHaveLength(3);
-		expect(calls[2]!.body).toBe(calls[0]!.body);
+		expect(waits).toEqual([3000, 4000, 5000]);
+		expect(calls).toHaveLength(4);
+		expect(calls[3]!.body).toBe(calls[0]!.body);
 	});
 
-	it('gives up after two waits, and at once for a Retry-After above the limit or absent', async () => {
-		const throttled = (seconds?: string): Handler => ({
+	it('gives up after five waits for one request, and at once for a reset beyond the maximum', async () => {
+		const throttled = (seconds: number): Handler => ({
 			status: 429,
-			text: 'Retry later',
-			...(seconds === undefined ? {} : { headers: { 'retry-after': seconds } }),
+			text: 'Rate limit exceeded',
+			headers: { 'ratelimit-reset': String(clockMs / 1000 + seconds) },
 		});
-		queue.push(throttled('1'), throttled('1'), throttled('1'));
-		const third = (await failure(() => client().write('POST', '/a'))) as RateLimitedError;
-		expect(third).toBeInstanceOf(RateLimitedError);
-		expect(calls).toHaveLength(3);
+		queue.push(...Array.from({ length: 6 }, () => throttled(1)));
+		const sixth = (await failure(() => client().write('POST', '/a'))) as RateLimitedError;
+		expect(sixth).toBeInstanceOf(RateLimitedError);
+		expect(calls).toHaveLength(6);
+		expect(waits).toHaveLength(5);
 
 		calls = [];
 		waits = [];
-		queue.push(throttled('16'));
-		await failure(() => client().write('POST', '/a'));
+		queue.push(throttled(300));
+		const beyond = (await failure(() => client({ maxWaitMs: 70_000 }).write('POST', '/a'))) as RateLimitedError;
+		expect(beyond.hint).toContain('maxWaitSeconds');
 		expect(calls).toHaveLength(1);
 		expect(waits).toEqual([]);
-
-		calls = [];
-		queue.push(throttled());
-		await failure(() => client().write('POST', '/a'));
-		expect(calls).toHaveLength(1);
 	});
 
-	it('a 429 that also reports an empty quota is still retried after the wait', async () => {
+	it('a 429 that also reports an empty quota is retried after the wait, not refused on the stale state', async () => {
 		const reset = String(clockMs / 1000 + 3);
 		queue.push(
 			{
 				status: 429,
-				text: 'Retry later',
-				headers: {
-					'retry-after': '3',
-					'ratelimit-limit': '60',
-					'ratelimit-remaining': '0',
-					'ratelimit-reset': reset,
-				},
+				text: 'Rate limit exceeded',
+				headers: { 'ratelimit-limit': '60', 'ratelimit-remaining': '0', 'ratelimit-reset': reset },
 			},
 			{ body: { ok: true } }
 		);
-		// The injected sleep does not move the clock: without the fix the retry would be refused as an empty quota.
+		// The injected sleep does not move the clock: the retry must not be refused as an empty quota.
 		const response = await client().write<{ ok: boolean }>('POST', '/a');
 		expect(response.body.ok).toBe(true);
 		expect(calls).toHaveLength(2);
+		expect(waits).toEqual([3000]);
 	});
 
 	it('never retries a 5xx or a lost connection (the write may have been applied)', async () => {

@@ -7,10 +7,13 @@ import type { ClientResponse, GitLabClient } from './gitlabClient.js';
 import type { MapContext } from './gitlabMapping.js';
 import type { GitLabSettings } from './gitlabOptions.js';
 import type { ApiIssue, ApiLinkedIssue } from './gitlabTypes.js';
+import type { WorkItems } from './gitlabWorkItems.js';
 
 export interface WriteHost {
 	settings: GitLabSettings;
 	client: GitLabClient;
+	/** The hierarchy and native type calls (GraphQL work items). */
+	workItems: WorkItems;
 	map: MapContext;
 	/** The fills the project declared (`strategy.options.fills`): they decide what meta, delete and duplicateOf / causedBy do. */
 	fills: DeclaredFills;
@@ -30,7 +33,7 @@ export interface WriteHost {
 	) => Promise<{ issue: ApiIssue; response: ClientResponse<ApiIssue> }>;
 	/** The whole record of an issue (what `get` answers), read again after a write. */
 	readRecord: (id: string) => Promise<VersionedRecord>;
-	/** The issue links of an issue, this project's only, tombstones left out (the list exists on every tier: Free has relates_to only). */
+	/** The issue links of an issue, this project's only, tombstones left out (Free has relates_to links only). */
 	linked: (issue: Pick<ApiIssue, 'iid' | 'project_id'>) => Promise<ApiLinkedIssue[]>;
 	/** Every issue of the project (tombstones left out). */
 	issuesAll: () => Promise<{ issues: ApiIssue[] }>;

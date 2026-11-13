@@ -103,7 +103,7 @@ export interface StrategyPlugin extends Plugin<'strategy', StrategyInstance, Str
 	readonly capabilities: BackendCapabilities;
 	/**
 	 * The capabilities once the project's declared fills are taken into account (a fill enables what the backend cannot do natively),
-	 * and the validated options (a gitlab tier decides whether blocking links exist). Absent: the static ones. `strategy show` prints
+	 * and the validated options. Absent: the static ones. `strategy show` prints
 	 * the answer for NO fill (the options still apply) with the declared fills as `emulated`.
 	 */
 	capabilitiesFor?(fills: DeclaredFills, options: Record<string, unknown>): BackendCapabilities;

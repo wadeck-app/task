@@ -21,11 +21,8 @@ function hash(text: string): string {
 	return crypto.createHash('sha1').update(text).digest('hex').slice(0, 6);
 }
 
-const lowerSorted = (names: readonly string[]): string =>
-	names
-		.map(name => name.toLowerCase())
-		.sort()
-		.join('\n');
+// Label names are compared exactly: GitLab labels are case sensitive.
+const sorted = (names: readonly string[]): string => [...names].sort().join('\n');
 
 function metaPart(issue: ApiIssue, ctx: MapContext): string {
 	if (ctx.metaFromBlock) {
@@ -42,8 +39,8 @@ function metaPart(issue: ApiIssue, ctx: MapContext): string {
 		}
 	}
 	if (!ctx.metaFromLabels) return '';
-	const prefix = ctx.settings.metaPrefix.toLowerCase();
-	return lowerSorted(labelNames(issue).filter(name => name.toLowerCase().startsWith(prefix)));
+	const prefix = ctx.settings.metaPrefix;
+	return sorted(labelNames(issue).filter(name => name.startsWith(prefix)));
 }
 
 /** One short hash per part of the issue. */
@@ -54,9 +51,9 @@ export function fieldHashes(issue: ApiIssue, ctx: MapContext): FieldHashes {
 	return {
 		title: hash(issue.title),
 		body: hash((issue.description ?? '').replace(/\r\n/g, '\n')),
-		status: hash(`${issue.state}|${lowerSorted(statusLabels)}`),
-		type: hash(`${lowerSorted(typeLabels)}|${issue.issue_type ?? ''}`),
-		labels: hash(lowerSorted(userLabels(issue, ctx))),
+		status: hash(`${issue.state}|${sorted(statusLabels)}`),
+		type: hash(`${sorted(typeLabels)}|${issue.issue_type ?? ''}`),
+		labels: hash(sorted(userLabels(issue, ctx))),
 		meta: hash(metaPart(issue, ctx)),
 	};
 }

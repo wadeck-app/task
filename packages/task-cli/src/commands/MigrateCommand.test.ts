@@ -394,8 +394,8 @@ describe('task migrate over a GitHub target (the fake server)', () => {
 });
 
 describe('task migrate over a GitLab target (the fake server, free tier; not verified against a real GitLab)', () => {
-	it('prints the estimate and the losses of the tier, copies the tasks, and a second run does nothing', async () => {
-		fakeLab = await FakeGitLab.start({ project: 'acme/shop', tier: 'free' });
+	async function useGitlabTarget(): Promise<void> {
+		fakeLab = await FakeGitLab.start({ project: 'acme/shop' });
 		fs.writeFileSync(
 			ownConfigFile(target.storage),
 			`statuses:
@@ -406,7 +406,6 @@ strategy:
     type: gitlab
     options:
         project: acme/shop
-        tier: free
         baseUrl: ${fakeLab.baseUrl}
         tokenEnv: ${TOKEN_VARIABLE}
         writeSpacingSeconds: 0
@@ -417,28 +416,54 @@ strategy:
             done: { state: closed }
 `
 		);
-		vi.stubEnv(TOKEN_VARIABLE, fakeLab.token);
+		vi.stubEnv(TOKEN_VARIABLE, fakeLab!.token);
+	}
+
+	it('prints the estimate and the losses of the tier, copies the tasks, and a second run does nothing', async () => {
+		await useGitlabTarget();
 		await seed();
 
 		const blocked = await migrate('--dry-run');
 		expect(blocked.output).toContain('BLOCKING');
-		expect(blocked.output).toContain('hierarchy:unsupported');
+		// The hierarchy is native (two levels) now: it is no longer a loss for a two-level tree.
+		expect(blocked.output).not.toContain('hierarchy');
 		expect(blocked.output).toContain('links:blockedBy');
 
-		const allow = ['--allow-loss', 'history,created-at,marker,hierarchy:unsupported,links:blockedBy'];
+		const allow = ['--allow-loss', 'history,created-at,marker,links:blockedBy'];
 		const dry = await migrate('--dry-run', ...allow);
 		expect(dry.exitCode, dry.output).toBe(0);
 		expect(dry.output).toMatch(/Estimate: +about \d+ writes, \d+ requests, /);
-		expect(fakeLab.writes()).toEqual([]);
+		expect(fakeLab!.writes()).toEqual([]);
 
 		const result = await migrate(...allow);
 		expect(result.exitCode, result.output).toBe(0);
 		expect([1, 2, 3].map(iid => fakeLab!.issue(iid)!.title).sort()).toEqual(['Child', 'Epic', 'Shipped']);
-		expect(fakeLab.issue(3)!.state).toBe('closed');
+		const byTitle = (title: string) =>
+			[1, 2, 3].map(iid => fakeLab!.issue(iid)!).find(issue => issue.title === title)!;
+		expect(byTitle('Shipped').state).toBe('closed');
+		// The child is attached to its parent on GitLab (native hierarchy).
+		expect(byTitle('Child').parentIid).not.toBeNull();
 
-		const writes = fakeLab.writes().length;
+		// GraphQL queries (the hierarchy reads) are POSTs that change nothing: only real changes count.
+		const changes = (): number => fakeLab!.writes().filter(request => request.path !== '/api/graphql').length;
+		const writes = changes();
 		const again = await migrate(...allow);
 		expect(again.output).toMatch(/created 0, finished 0, skipped 3/);
-		expect(fakeLab.writes().length).toBe(writes);
+		expect(changes()).toBe(writes);
+	});
+
+	it('a tree of three levels reports the depth the target cannot hold (two levels on GitLab Free) as a blocking loss', async () => {
+		await useGitlabTarget();
+		const epic = await newTask('Epic');
+		const child = await newTask('Child', epic);
+		await newTask('Grandchild', child);
+		delivered.length = 0;
+
+		const dry = await migrate('--dry-run');
+
+		expect(dry.output).toContain('BLOCKING');
+		expect(dry.output).toMatch(/hierarchy:depth +1 +BLOCKING/);
+		expect(dry.output).toContain('level 3 of at most 2');
+		expect(fakeLab!.writes()).toEqual([]);
 	});
 });

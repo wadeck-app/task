@@ -14,15 +14,14 @@ export interface WantedLabel {
 	why: string;
 }
 
-/** In the order of the config: statuses, then types, then the tombstone. A name appears once, whatever its case. */
+/** In the order of the config: statuses, then types, then the tombstone. A name appears once (names are case sensitive on GitLab). */
 export function wantedLabels(
 	settings: GitLabSettings,
 	projectTypes: readonly string[],
 	fills: DeclaredFills
 ): WantedLabel[] {
 	const wanted = new Map<string, WantedLabel>();
-	const add = (label: WantedLabel): void =>
-		void (wanted.has(label.name.toLowerCase()) || wanted.set(label.name.toLowerCase(), label));
+	const add = (label: WantedLabel): void => void (wanted.has(label.name) || wanted.set(label.name, label));
 	for (const [status, rule] of Object.entries(settings.statusMap)) {
 		if (rule.label !== undefined) add({ name: rule.label, kind: 'status', why: `status "${status}"` });
 	}

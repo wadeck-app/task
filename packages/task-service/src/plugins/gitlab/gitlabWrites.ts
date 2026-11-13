@@ -1,6 +1,8 @@
-// The write path of the gitlab strategy: every TaskBackend write as official REST calls.
+// The write path of the gitlab strategy: every TaskBackend write as official REST calls, plus the GraphQL work item calls that
+// GitLab Free offers for the hierarchy and the native Task type (gitlabWorkItems.ts).
 //
-// NOT VERIFIED AGAINST A REAL GITLAB: built from docs.gitlab.com and a fake server modelled on it.
+// Checked against gitlab.com Free on 2026-11-09 (fixtures/live-conformance.json). Label names are compared EXACTLY (case sensitive on
+// GitLab). No request ever sends `updated_at`: GitLab accepts it as a PUT parameter and SETS the stamp with it.
 //
 // How a write goes (design 1.6):
 //  1. the issue is read again (a conditional GET) and compared with the caller's expectedRevision on the parts the write changes
@@ -9,7 +11,7 @@
 //  2. the write is a list of steps, sent one after the other; a failure after the first step is a PartialWriteError that says what
 //     GitLab holds now and how to finish; a 5xx or a lost connection is never trusted either way: the issue is read again to see;
 //  3. the record is read again and returned, so what the caller gets is what GitLab holds, not what was asked.
-// Nothing here is silent: an operation GitLab cannot do is an UnsupportedByBackendError naming the tier or the fill that gives it.
+// Nothing here is silent: an operation GitLab cannot do is an UnsupportedByBackendError naming the fill that gives it (blockedBy: the paid tier).
 import {
 	BackendAuthError,
 	BackendDataError,
@@ -56,10 +58,11 @@ import {
 } from './gitlabMapping.js';
 import type { MapContext } from './gitlabMapping.js';
 import { COMMENT_MAX, DESCRIPTION_MAX, LABELS_PER_ISSUE, labelProblem } from './gitlabOptions.js';
+import { HIERARCHY_DEPTH } from './gitlabWorkItems.js';
 import { checkRevision, revisionOf } from './gitlabRevision.js';
 import type { FieldGroup } from './gitlabRevision.js';
 import type { StatusRepresentation } from './gitlabStatusMapping.js';
-import type { ApiIssue, ApiLinkedIssue, ApiNote, ApiProjectLabel } from './gitlabTypes.js';
+import type { ApiIssue, ApiNote, ApiProjectLabel } from './gitlabTypes.js';
 import type { WriteHost } from './gitlabWriteHost.js';
 
 type LabelKind = 'status' | 'type' | 'meta' | 'user' | 'deleted';
@@ -82,7 +85,10 @@ interface Step {
 	repair?: string;
 }
 
-const eq = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
+/** GitLab refuses a title longer than this (VERIFIED-LIVE: 256 characters answer 400 `title is too long (maximum is 255 characters)`). */
+export const TITLE_MAX = 255;
+/** Label names are case sensitive on GitLab (VERIFIED-LIVE: `bug` and `Bug` are two labels). */
+const eq = (a: string, b: string): boolean => a === b;
 const has = (issue: ApiIssue, label: string): boolean => labelNames(issue).some(name => eq(name, label));
 const isUnknownOutcome = (error: unknown): boolean =>
 	error instanceof BackendUnreachableError || error instanceof BackendTimeoutError;
@@ -91,11 +97,8 @@ const stateOf = (issue: Pick<ApiIssue, 'state'>): 'open' | 'closed' => (issue.st
 /** A line that starts with a slash and a letter is a quick action for GitLab (`/close`, `/label ~x`, `/duplicate #3`...). */
 const QUICK_ACTION_LINE = /^[ \t]*\/[A-Za-z][^\s/]*(?:[ \t]|$)/m;
 
-/** The scope of a scoped label (everything before the last `::`), or undefined for a label that is not scoped. */
-function scopeOf(name: string): string | undefined {
-	const at = name.lastIndexOf('::');
-	return at <= 0 ? undefined : name.slice(0, at).toLowerCase();
-}
+/** The stable hint of the refusal of blockedBy / blocks: GitLab has them on its paid tiers only. */
+const BLOCKED_BY_HINT = 'requires a paid GitLab tier, which task does not support';
 
 export class GitLabWriter {
 	constructor(private readonly host: WriteHost) {}
@@ -123,6 +126,17 @@ export class GitLabWriter {
 		const texts = [error.detail, ...error.errors].filter(text => text !== '').join('; ');
 		const lower = texts.toLowerCase();
 		if (error.status === 404) return new TaskNotFoundError(subject);
+		// A validation error names its field: `title is too long (maximum is 255 characters)`, `description is too long (1 MiB)...`.
+		const tooLong = error.errors.map(text => /^(\w+) is too long/.exec(text)).find(match => match !== null);
+		if (tooLong !== undefined && tooLong !== null) {
+			const field = tooLong[1]!;
+			return new BackendLimitError(
+				'gitlab',
+				`${field} length`,
+				field === 'description' ? DESCRIPTION_MAX : TITLE_MAX,
+				`GitLab refused ${operation} on ${subject}: ${error.errors.join('; ')}. Shorten the ${field}.`
+			);
+		}
 		if (/label/.test(lower) && /(too many|maximum|more than)/.test(lower) && /\d/.test(lower)) {
 			return new BackendLimitError(
 				'gitlab',
@@ -270,6 +284,18 @@ export class GitLabWriter {
 		);
 	}
 
+	/** GitLab answered 200 but kept another native type than the one asked: it ignores some types silently (VERIFIED-LIVE: test_case). */
+	private typeIgnored(operation: string, iid: number, wanted: string, answer: ApiIssue): BackendRejectedError {
+		return new BackendRejectedError(
+			'gitlab',
+			operation,
+			`GitLab ignored the issue type "${wanted}" on issue #${iid} (it still answers "${answer.issue_type ?? 'unknown'}")`,
+			wanted === 'test_case'
+				? 'GitLab turns test_case into issue when creating and ignores it when updating: map the type to a label or to issueType incident / task in strategy.options.typeMap.'
+				: `Look at ${this.host.issueUrl(iid)}; the project may restrict who can change the type of an issue.`
+		);
+	}
+
 	/** The count of labels the issue would hold must stay within the instance limit. */
 	private checkLabelCount(iid: number, labels: readonly string[]): void {
 		if (labels.length > LABELS_PER_ISSUE) {
@@ -319,6 +345,10 @@ export class GitLabWriter {
 							...extra,
 						})
 					).body;
+					const wantedType = extra['issue_type'];
+					if (typeof wantedType === 'string' && answer.issue_type !== wantedType) {
+						throw this.typeIgnored(operation, iid, wantedType, answer);
+					}
 					if (!this.labelsDone(answer, remove, add) || !extraDone(answer)) {
 						throw this.notApplied(operation, iid, 'the change', answer);
 					}
@@ -335,16 +365,17 @@ export class GitLabWriter {
 	async syncLabels(options: { dryRun?: boolean }): Promise<LabelSyncReport> {
 		const dryRun = options.dryRun === true;
 		const wanted = wantedLabels(this.host.settings, this.map.projectTypes, this.host.fills);
-		// include_ancestor_groups is true by default: a label of a parent group counts as existing.
+		// include_ancestor_groups is true by default: a label of a parent group (is_project_label: false) counts as existing, and creating
+		// it in the project would answer 409 (VERIFIED-LIVE). Names are compared exactly: `bug` and `Bug` are two labels.
 		const present = await this.host.client.getAll<ApiProjectLabel>(`${this.host.projectPath}/labels`, {
 			query: { per_page: this.host.settings.pageSize },
 			revalidate: true,
 		});
-		const known = new Set(present.items.map(label => label.name.toLowerCase()));
+		const known = new Set(present.items.map(label => label.name));
 		const created: string[] = [];
 		const existing: string[] = [];
 		for (const label of wanted) {
-			if (known.has(label.name.toLowerCase())) {
+			if (known.has(label.name)) {
 				existing.push(label.name);
 				continue;
 			}
@@ -353,9 +384,9 @@ export class GitLabWriter {
 		}
 		const notes: string[] = [];
 		if (this.fill('meta') === 'labels') {
-			const { metaPrefix, scopedLabels } = this.map.settings;
+			const { metaPrefix } = this.map.settings;
 			notes.push(
-				`Labels ${metaPrefix}<key>${scopedLabels ? '::<value>' : '=<value>'} are created when a value is set: their names depend on the data.`
+				`Labels ${metaPrefix}<key>=<value> are created when a value is set: their names depend on the data.`
 			);
 		}
 		notes.push('Labels a user adds to a task are created by GitLab itself, with its default colour.');
@@ -394,7 +425,6 @@ export class GitLabWriter {
 
 	private reservedLabelError(operation: string, label: string): Error | undefined {
 		const ctx = this.map;
-		const lower = label.toLowerCase();
 		const use = (command: string, what: string): Error =>
 			new BackendRejectedError(
 				'gitlab',
@@ -404,23 +434,10 @@ export class GitLabWriter {
 			);
 		if (ctx.mapper.isStatusLabel(label)) return use('task set-status', 'it carries the status of a task');
 		if (typeOfLabel(label, ctx) !== undefined) return use('task set-type', 'it carries the type of a task');
-		if (this.fill('meta') === 'labels' && lower.startsWith(ctx.settings.metaPrefix.toLowerCase())) {
+		if (this.fill('meta') === 'labels' && label.startsWith(ctx.settings.metaPrefix)) {
 			return use('task set-meta', 'it carries the metadata of a task');
 		}
-		if (lower === TOMBSTONE_LABEL) return use('task delete', 'it marks a deleted task');
-		// On Premium and Ultimate a scoped label replaces the other labels of its scope: one sharing the scope of a status label would
-		// silently take the status away.
-		const scope = ctx.settings.scopedLabels ? scopeOf(label) : undefined;
-		if (scope !== undefined) {
-			const taken = Object.values(ctx.settings.statusMap).some(
-				rule => rule.label !== undefined && scopeOf(rule.label) === scope
-			);
-			if (taken)
-				return use(
-					'task set-status',
-					`it shares the scope "${scope}" of the status labels, which exclude each other`
-				);
-		}
+		if (label === TOMBSTONE_LABEL) return use('task delete', 'it marks a deleted task');
 		return undefined;
 	}
 
@@ -472,6 +489,19 @@ export class GitLabWriter {
 
 	// ---------------------------------------------------------------- text guards
 
+	/** A title GitLab would refuse (longer than 255 characters), refused before anything is sent. */
+	private checkTitle(operation: string, title: string): void {
+		const length = Array.from(title).length;
+		if (length > TITLE_MAX) {
+			throw new BackendLimitError(
+				'gitlab',
+				'title length',
+				TITLE_MAX,
+				`The title has ${length} characters; GitLab keeps ${TITLE_MAX} at most. Shorten it (${operation} sent nothing), the long text belongs in the description.`
+			);
+		}
+	}
+
 	/** Throws when GitLab would RUN something written in this text (a quick action), or when it is longer than GitLab keeps. */
 	private checkText(operation: string, text: string, what: 'description' | 'comment'): void {
 		const max = what === 'description' ? DESCRIPTION_MAX : COMMENT_MAX;
@@ -509,18 +539,11 @@ export class GitLabWriter {
 		return this.map.mapper.representation(status);
 	}
 
-	private hierarchyUnsupported(operation: string): UnsupportedByBackendError {
-		return new UnsupportedByBackendError(
-			'gitlab',
-			operation,
-			'hierarchy',
-			'The GitLab REST API has no parent of an issue (the issue has no such field and the API no such endpoint). The work item hierarchy exists only in GraphQL, and which issue may be the child of which on which plan is not documented, so task does not use it. Say it in the description or with a link instead (task link).'
-		);
-	}
-
 	async create(input: CreateTaskInput): Promise<VersionedRecord> {
 		const rep = this.representation('create', input.status);
-		if (input.parentId !== undefined) throw this.hierarchyUnsupported('create');
+		this.checkTitle('create', input.title);
+		// The parent is checked BEFORE anything is created: a refused parent must leave no issue behind.
+		const parent = input.parentId === undefined ? undefined : await this.parentCandidate('create', input.parentId);
 		const text = input.description?.trim() ?? '';
 		const description = text === '' || text === input.title.trim() ? undefined : input.description!;
 		if (description !== undefined) this.checkText('create', description, 'description');
@@ -529,10 +552,21 @@ export class GitLabWriter {
 				title: input.title,
 				...(description === undefined ? {} : { description }),
 				...(rep.label === undefined ? {} : { labels: rep.label }),
+				// A child must be a native Task, which only the creation can give directly (an update refuses it).
+				...(parent === undefined ? {} : { issue_type: 'task' }),
 			})
 		).body;
 		const iid = created.iid;
+		if (parent !== undefined && created.issue_type !== 'task') {
+			throw new BackendRejectedError(
+				'gitlab',
+				'create',
+				`GitLab created issue #${iid} but not as a Task (it answers "${created.issue_type ?? 'unknown'}"), so it cannot be the child of #${parent.iid}`,
+				`The issue exists: ${this.host.issueUrl(iid)}. Delete it or leave it as a root task.`
+			);
+		}
 		const steps: Step[] = [];
+		if (parent !== undefined) steps.push(this.parentStep('create', created, parent));
 		// GitLab has no state in the create call: a closed task is created, then closed.
 		if (rep.state === 'closed') {
 			steps.push({
@@ -598,6 +632,7 @@ export class GitLabWriter {
 	// ---------------------------------------------------------------- text
 
 	async setTitle(id: string, title: string, options?: WriteOptions): Promise<VersionedRecord> {
+		this.checkTitle('setTitle', title);
 		const { issue } = await this.prepare(id, options, ['title']);
 		if (issue.title !== title) {
 			await this.runSteps('setTitle', issue.iid, [
@@ -612,6 +647,8 @@ export class GitLabWriter {
 	}
 
 	async setDescription(id: string, description: string, options?: WriteOptions): Promise<VersionedRecord> {
+		// Refused before any request: a line GitLab would run as a quick action, or a text over the limit.
+		this.checkText('setDescription', description, 'description');
 		const { issue } = await this.prepare(id, options, ['body']);
 		const parts = splitBody(issue, this.map);
 		// Like the local store: a description equal to the title is no description.
@@ -634,22 +671,78 @@ export class GitLabWriter {
 	}
 
 	// ---------------------------------------------------------------- type
+	//
+	// A task type is a label, or (typeMap `issueType: incident`) the native Incident type. The native Task is NOT a task type: it is the
+	// type of a hierarchy child, given only by create-with-parent and setParent (a task type never converts an issue to a Task).
 
 	private typeLabelsHeld(issue: ApiIssue): string[] {
 		return labelNames(issue).filter(name => typeOfLabel(name, this.map) !== undefined);
 	}
 
-	/** The native issue type the issue holds when a task type is mapped to it (`incident`, `test_case`), else undefined. */
+	/** The native issue type the issue holds when a task type is mapped to it (`incident`), else undefined. */
 	private nativeTypeHeld(issue: ApiIssue): string | undefined {
 		const native = issue.issue_type;
 		if (native === undefined) return undefined;
-		return Object.values(this.map.settings.typeMap).some(rule => rule.issueType === native) ? native : undefined;
+		return Object.values(this.map.settings.typeMap).some(rule => (rule.issueType as string | undefined) === native)
+			? native
+			: undefined;
+	}
+
+	/**
+	 * The steps that give an issue the native type `target` (undefined: leave it) together with a change of labels: Issue and Incident
+	 * are exchanged by the REST update in ONE PUT with the labels. Verified: the type GitLab answers must be the one asked (it ignores
+	 * some silently). A native Task is never converted here (it is a hierarchy child).
+	 */
+	private typeSteps(args: {
+		operation: string;
+		issue: ApiIssue;
+		remove: readonly string[];
+		add: readonly string[];
+		target: 'issue' | 'incident' | undefined;
+	}): Step[] {
+		const { operation, issue, remove, add } = args;
+		const held = issue.issue_type ?? 'issue';
+		const target = args.target === undefined || args.target === held ? undefined : args.target;
+		if (target !== undefined && held === 'task') {
+			throw new BackendRejectedError(
+				'gitlab',
+				operation,
+				`issue #${issue.iid} is a native Task (the type of a hierarchy child), which cannot become ${target === 'incident' ? 'an Incident' : 'an Issue'} through a task type`,
+				'Give the task a label type instead (a type without issueType in strategy.options.typeMap).'
+			);
+		}
+		return this.labelSetStep({
+			operation,
+			issue,
+			remove,
+			add,
+			...(target === undefined
+				? {}
+				: {
+						extra: { issue_type: target },
+						extraDone: (current: ApiIssue) => current.issue_type === target,
+						extraWords: `set the issue type ${target}`,
+					}),
+		});
+	}
+
+	/** The native type a task type is mapped to, refused with the verified reason when GitLab cannot give it. */
+	private nativeOfRule(operation: string, type: string, issueType: string): 'incident' {
+		if (issueType === 'incident') return issueType;
+		throw new BackendRejectedError(
+			'gitlab',
+			operation,
+			`The type "${type}" is mapped to the native issue type "${issueType}", which a task type cannot use`,
+			issueType === 'task'
+				? 'The native Task is the type of a hierarchy child, not a task type: map the type to a label (typeMap.<type>.label) instead.'
+				: 'GitLab turns test_case into issue when creating and ignores it when updating (verified). Map the type to a label, or to issueType incident, in strategy.options.typeMap.'
+		);
 	}
 
 	async setType(id: string, type: string, options?: WriteOptions): Promise<VersionedRecord> {
 		const { typeMap, typePrefix } = this.map.settings;
 		const rule = Object.hasOwn(typeMap, type) ? typeMap[type] : undefined;
-		const wanted = rule?.issueType;
+		const wanted = rule?.issueType === undefined ? undefined : this.nativeOfRule('setType', type, rule.issueType);
 		const label = wanted !== undefined ? undefined : (rule?.label ?? `${typePrefix}${type}`);
 		if (label !== undefined) {
 			const problem = labelProblem(label);
@@ -664,20 +757,14 @@ export class GitLabWriter {
 		}
 		const { issue } = await this.prepare(id, options, ['type']);
 		if (typeOf(issue, this.map) === type) return this.read(issue.iid);
-		const oldNative = this.nativeTypeHeld(issue);
-		const nativeTarget = wanted ?? (oldNative !== undefined ? 'issue' : undefined);
-		const steps = this.labelSetStep({
+		// A type kept as a label frees the Incident another task type held (an Issue is the neutral one); a Task stays what it is.
+		const target = wanted ?? (this.nativeTypeHeld(issue) !== undefined ? 'issue' : undefined);
+		const steps = this.typeSteps({
 			operation: 'setType',
 			issue,
 			remove: this.typeLabelsHeld(issue).filter(held => label === undefined || !eq(held, label)),
 			add: label !== undefined && !has(issue, label) ? [label] : [],
-			...(nativeTarget !== undefined && issue.issue_type !== nativeTarget
-				? {
-						extra: { issue_type: nativeTarget },
-						extraDone: (current: ApiIssue) => current.issue_type === nativeTarget,
-						extraWords: `set the issue type ${nativeTarget}`,
-					}
-				: {}),
+			target,
 		});
 		await this.runSteps('setType', issue.iid, steps);
 		return this.read(issue.iid);
@@ -685,19 +772,12 @@ export class GitLabWriter {
 
 	async clearType(id: string, options?: WriteOptions): Promise<VersionedRecord> {
 		const { issue } = await this.prepare(id, options, ['type']);
-		const hasNative = this.nativeTypeHeld(issue) !== undefined;
-		const steps = this.labelSetStep({
+		const steps = this.typeSteps({
 			operation: 'clearType',
 			issue,
 			remove: this.typeLabelsHeld(issue),
 			add: [],
-			...(hasNative
-				? {
-						extra: { issue_type: 'issue' },
-						extraDone: (current: ApiIssue) => current.issue_type === 'issue',
-						extraWords: 'set the issue type issue',
-					}
-				: {}),
+			target: this.nativeTypeHeld(issue) === undefined ? undefined : 'issue',
 		});
 		await this.runSteps('clearType', issue.iid, steps);
 		return this.read(issue.iid);
@@ -710,7 +790,7 @@ export class GitLabWriter {
 			'gitlab',
 			operation,
 			'meta',
-			`A GitLab issue has no metadata. Declare where task keeps it, in strategy.options.fills of the project config: "meta: labels" (one label per key: ${this.map.settings.scopedLabels ? `${this.map.settings.metaPrefix}<key>::<value>, a scoped label` : `${this.map.settings.metaPrefix}<key>=<value>`}; exact) or "meta: { use: body-block, fidelity: degrade }" (a hidden block in the description, approximate: someone editing the description on GitLab can overwrite it).`
+			`A GitLab issue has no metadata. Declare where task keeps it, in strategy.options.fills of the project config: "meta: labels" (one label per key: ${this.map.settings.metaPrefix}<key>=<value>; exact) or "meta: { use: body-block, fidelity: degrade }" (a hidden block in the description, approximate: someone editing the description on GitLab can overwrite it).`
 		);
 	}
 
@@ -722,7 +802,7 @@ export class GitLabWriter {
 		const mode = this.fill('meta');
 		if (mode !== 'labels' && mode !== 'body-block') throw this.metaUnsupported('setMeta');
 		if (mode === 'labels') {
-			const problem = metaLabelProblem(key, value, this.map);
+			const problem = metaLabelProblem(key, value);
 			if (problem !== undefined) {
 				throw new BackendRejectedError(
 					'gitlab',
@@ -801,15 +881,132 @@ export class GitLabWriter {
 	}
 
 	// ---------------------------------------------------------------- hierarchy
+	//
+	// GitLab Free (VERIFIED-LIVE, 2026-11-09): a parent is an Issue or an Incident, a child is a native Task, so a hierarchy has two
+	// levels. Everything goes through GraphQL work items (gitlabWorkItems.ts). Rules, in the order they are checked:
+	//   - a task is not its own parent, and not the parent of one of its ancestors (TaskConflictError, "cycle");
+	//   - the parent must not be a child itself, nor a native Task (BackendLimitError "hierarchy depth" / BackendRejectedError);
+	//   - the child must not have children of its own (BackendLimitError "hierarchy depth");
+	//   - an Incident cannot become a child (BackendRejectedError: converting it would silently drop its type);
+	//   - an Issue is converted to a native Task first (workItemConvert), then attached.
 
-	async setParent(_id: string, _parentId: string, _options?: WriteOptions): Promise<VersionedRecord> {
-		await Promise.resolve();
-		throw this.hierarchyUnsupported('setParent');
+	private async loadParent(parentId: string): Promise<ApiIssue> {
+		const parent = (await this.host.loadIssue(parentId, { revalidate: false })).issue;
+		// A tombstone is a deleted task: it cannot be a parent.
+		if (isTombstone(parent)) throw new TaskNotFoundError(parentId);
+		return parent;
 	}
 
-	async removeParent(_id: string, _options?: WriteOptions): Promise<VersionedRecord> {
-		await Promise.resolve();
-		throw this.hierarchyUnsupported('removeParent');
+	private requireCanParent(operation: string, parent: ApiIssue): void {
+		if (parent.issue_type === 'task') {
+			throw new BackendRejectedError(
+				'gitlab',
+				operation,
+				`issue #${parent.iid} is a native Task, and GitLab does not let a Task have child items`,
+				'GitLab Free only lets an Issue or an Incident be a parent (and only a native Task a child): pick a parent that is not itself a child.'
+			);
+		}
+	}
+
+	/** The issue a new child goes under: it must exist and be able to parent (an Issue or an Incident). */
+	private async parentCandidate(operation: string, parentId: string): Promise<ApiIssue> {
+		const parent = await this.loadParent(parentId);
+		this.requireCanParent(operation, parent);
+		return parent;
+	}
+
+	/** The step that attaches `child` to `parent`, repairable by hand. */
+	private parentStep(operation: string, child: ApiIssue, parent: ApiIssue): Step {
+		return {
+			description: `set the parent #${parent.iid}`,
+			run: () => this.host.workItems.setParent(child, parent, operation),
+			applied: async () => (await this.host.workItems.read(child)).parentIid === parent.iid,
+			repair: `task set-parent ${child.iid} ${parent.iid}`,
+		};
+	}
+
+	async setParent(id: string, parentId: string, options?: WriteOptions): Promise<VersionedRecord> {
+		const { issue: child } = await this.prepare(id, options, ['type']);
+		const parent = await this.loadParent(parentId);
+		const childRef = String(child.iid);
+		const parentRef = String(parent.iid);
+		if (child.iid === parent.iid) throw new TaskConflictError(`Task "${childRef}" cannot be its own parent`);
+		const ofChild = await this.host.workItems.read(child);
+		const ofParent = await this.host.workItems.read(parent);
+		if (ofChild.parentIid === parent.iid) return this.read(child.iid);
+		// A cycle: the new parent is below the task (with two levels, the parent is the task's child).
+		if (ofParent.parentIid === child.iid || ofChild.childIids.includes(parent.iid)) {
+			throw new TaskConflictError(
+				`Cannot set parent of "${childRef}" to "${parentRef}": it would create a cycle (${childRef} -> ${parentRef} -> ${childRef}); "${parentRef}" is a descendant of "${childRef}"`
+			);
+		}
+		const depth = (why: string): BackendLimitError =>
+			new BackendLimitError(
+				'gitlab',
+				'hierarchy depth',
+				HIERARCHY_DEPTH,
+				`${why}. GitLab Free has two levels: an Issue (or Incident) and its native Tasks. Detach the task first: task remove-parent <id>.`
+			);
+		if (ofParent.parentIid !== undefined) {
+			throw depth(`#${parentRef} is already a child of #${ofParent.parentIid}, so it cannot have children`);
+		}
+		this.requireCanParent('setParent', parent);
+		if (ofChild.childIids.length > 0) {
+			throw depth(
+				`#${childRef} has child items (${ofChild.childIids.map(iid => `#${iid}`).join(', ')}), so it cannot become a child`
+			);
+		}
+		if (child.issue_type === 'incident') {
+			throw new BackendRejectedError(
+				'gitlab',
+				'setParent',
+				`issue #${childRef} is an Incident, and GitLab only lets a native Task be a child (converting it would drop its type)`,
+				`Give it another type first (task set-type ${childRef} <type>), or create a new task under #${parentRef}.`
+			);
+		}
+		if (child.issue_type !== undefined && child.issue_type !== 'issue' && child.issue_type !== 'task') {
+			throw new BackendRejectedError(
+				'gitlab',
+				'setParent',
+				`issue #${childRef} has the native type "${child.issue_type}", which cannot be a child item`,
+				'Only a native Task can be the child of an Issue or an Incident.'
+			);
+		}
+		const steps: Step[] = [];
+		// An Issue becomes a native Task first (first step: a refusal leaves everything as it was). It stays a Task if detached later.
+		if (child.issue_type !== 'task') {
+			steps.push({
+				description: 'converted the issue to a native Task (GitLab only lets a Task be a child)',
+				run: async () => {
+					await this.host.workItems.convert(child, 'task', 'setParent');
+					const after = (await this.host.loadIssue(childRef, { revalidate: true })).issue;
+					if (after.issue_type !== 'task') throw this.typeIgnored('setParent', child.iid, 'task', after);
+				},
+				applied: current => current.issue_type === 'task',
+				repair: `task set-parent ${childRef} ${parentRef}`,
+			});
+		}
+		steps.push(this.parentStep('setParent', child, parent));
+		await this.runSteps('setParent', child.iid, steps);
+		return this.read(child.iid);
+	}
+
+	/**
+	 * Detaches the task from its parent. The task keeps the native type Task it needed to be a child (GitLab refuses to convert it back
+	 * through the REST API, and a Task works as a root): the type is not touched.
+	 */
+	async removeParent(id: string, options?: WriteOptions): Promise<VersionedRecord> {
+		const { issue } = await this.prepare(id, options, []);
+		const { parentIid } = await this.host.workItems.read(issue);
+		if (parentIid === undefined) throw new TaskConflictError(`Task "${issue.iid}" has no parent`);
+		await this.runSteps('removeParent', issue.iid, [
+			{
+				description: `detached the issue from #${parentIid}`,
+				run: () => this.host.workItems.setParent(issue, null, 'removeParent'),
+				applied: async () => (await this.host.workItems.read(issue)).parentIid === undefined,
+			},
+		]);
+		return this.read(issue.iid);
 	}
 
 	// ---------------------------------------------------------------- links
@@ -822,12 +1019,7 @@ export class GitLabWriter {
 	}
 
 	private blockedByUnsupported(operation: string): UnsupportedByBackendError {
-		return new UnsupportedByBackendError(
-			'gitlab',
-			operation,
-			'linkTypes',
-			'The links "blocks" / "is blocked by" of GitLab exist on the Premium and Ultimate plans only (docs.gitlab.com/user/project/issues/related_issues). If this instance has one of those plans, set strategy.options.tier to premium or ultimate in the project config; otherwise say it in a comment (task comment).'
-		);
+		return new UnsupportedByBackendError('gitlab', operation, 'linkTypes', BLOCKED_BY_HINT);
 	}
 
 	private blockLinkUnsupported(type: 'duplicateOf' | 'causedBy', operation: string): UnsupportedByBackendError {
@@ -842,82 +1034,9 @@ export class GitLabWriter {
 	async addLink(id: string, type: LinkType, targetId: string, options?: WriteOptions): Promise<VersionedRecord> {
 		this.requireLinkType(type);
 		if (type === 'duplicateOf' || type === 'causedBy') return this.addBlockLink(type, id, targetId, options);
-		if (this.map.settings.tier === 'free') throw this.blockedByUnsupported('addLink');
-		const { issue } = await this.prepare(id, options, []);
-		const source = String(issue.iid);
-		const target = (await this.targetOf(issue, targetId, source)).issue;
-		const linked = await this.host.linked(issue);
-		const existing = linked.find(item => item.iid === target.iid);
-		if (existing !== undefined) {
-			if (existing.link_type === 'is_blocked_by') {
-				throw new TaskConflictError(`Task "${source}" is already blockedBy "${target.iid}"`);
-			}
-			if (existing.link_type === 'blocks') {
-				// The source already blocks the target: making it wait for the target too is the shortest cycle.
-				throw new TaskConflictError(
-					`Cannot link "${source}" blockedBy "${target.iid}": it would create a cycle (${source} -> ${target.iid} -> ${source})`
-				);
-			}
-			throw new TaskConflictError(
-				`Task "${source}" is already linked to "${target.iid}" (${existing.link_type.replace(/_/g, ' ')}); GitLab keeps one link between two issues (UNVERIFIED, the fake models it). Remove it first (task unlink)`
-			);
-		}
-		await this.checkBlockerCycle(issue, target, source);
-		await this.runSteps('addLink', issue.iid, [
-			{
-				description: `added the link "is blocked by" #${target.iid}`,
-				run: async () => {
-					try {
-						await this.send('addLink', source, 'POST', this.path(issue.iid, '/links'), {
-							target_project_id: issue.project_id,
-							target_issue_iid: target.iid,
-							link_type: 'is_blocked_by',
-						});
-					} catch (error) {
-						if (error instanceof BackendAuthError && error.reason === 'forbidden') {
-							throw new BackendAuthError(
-								'gitlab',
-								'forbidden',
-								`${error.message}; the "blocks" / "is blocked by" links need GitLab Premium or Ultimate (strategy.options.tier is ${this.map.settings.tier})`,
-								`If this instance is on the Free plan set strategy.options.tier: free (blockedBy is then refused); otherwise the user of the token must be allowed to update both issues. ${error.hint}`
-							);
-						}
-						throw error;
-					}
-				},
-				applied: async current =>
-					(await this.host.linked(current)).some(
-						item => item.iid === target.iid && item.link_type === 'is_blocked_by'
-					),
-			},
-		]);
-		return this.read(issue.iid);
-	}
-
-	/** The blockers of `target` (and theirs) must not reach `source`: that would make the two wait for each other. */
-	private async checkBlockerCycle(source: ApiIssue, target: ApiIssue, sourceId: string): Promise<void> {
-		const seen = new Set<number>([target.iid]);
-		const queue: ApiLinkedIssue[] = [{ ...target } as ApiLinkedIssue];
-		const parentOf = new Map<number, number>();
-		while (queue.length > 0 && seen.size <= 200) {
-			const current = queue.shift()!;
-			for (const blocker of (await this.host.linked(current)).filter(
-				item => item.link_type === 'is_blocked_by'
-			)) {
-				if (blocker.iid === source.iid) {
-					const path = [sourceId, String(target.iid)];
-					for (let at = current.iid; at !== target.iid; at = parentOf.get(at)!) path.push(String(at));
-					path.push(sourceId);
-					throw new TaskConflictError(
-						`Cannot link "${sourceId}" blockedBy "${target.iid}": it would create a cycle (${path.join(' -> ')})`
-					);
-				}
-				if (seen.has(blocker.iid)) continue;
-				seen.add(blocker.iid);
-				parentOf.set(blocker.iid, current.iid);
-				queue.push(blocker);
-			}
-		}
+		// blockedBy needs the blocks / is_blocked_by links of a paid tier: refused before any request.
+		await Promise.resolve();
+		throw this.blockedByUnsupported('addLink');
 	}
 
 	private async targetOf(issue: ApiIssue, targetId: string, source: string): Promise<{ issue: ApiIssue }> {
@@ -929,30 +1048,8 @@ export class GitLabWriter {
 	async removeLink(id: string, type: LinkType, targetId: string, options?: WriteOptions): Promise<VersionedRecord> {
 		this.requireLinkType(type);
 		if (type === 'duplicateOf' || type === 'causedBy') return this.removeBlockLink(type, id, targetId, options);
-		if (this.map.settings.tier === 'free') throw this.blockedByUnsupported('removeLink');
-		const { issue } = await this.prepare(id, options, []);
-		const source = String(issue.iid);
-		const wanted = Number(targetId.replace('#', ''));
-		const linked = await this.host.linked(issue);
-		const item = linked.find(candidate => candidate.iid === wanted && candidate.link_type === 'is_blocked_by');
-		if (item === undefined) throw new TaskConflictError(`Task "${source}" is not blockedBy "${targetId}"`);
-		await this.runSteps('removeLink', issue.iid, [
-			{
-				description: `removed the link "is blocked by" #${item.iid}`,
-				run: () =>
-					this.sendTolerant(
-						'removeLink',
-						source,
-						'DELETE',
-						this.path(issue.iid, `/links/${item.issue_link_id}`)
-					),
-				applied: async current =>
-					!(await this.host.linked(current)).some(
-						candidate => candidate.iid === item.iid && candidate.link_type === 'is_blocked_by'
-					),
-			},
-		]);
-		return this.read(issue.iid);
+		await Promise.resolve();
+		throw this.blockedByUnsupported('removeLink');
 	}
 
 	// ---- duplicateOf and causedBy (fill: relate-block)
@@ -1291,7 +1388,20 @@ export class GitLabWriter {
 		const closing = stateOf(issue) !== 'closed';
 		// ONE PUT closes and hides the issue: until it lands the issue is a task like any other, and the command can be run again.
 		this.checkLabelCount(iid, [...labelNames(issue), TOMBSTONE_LABEL]);
+		// Like a real deletion, the children of a hidden task become roots: they would point at a task nobody can see. A native Task has none.
+		const orphans = issue.issue_type === 'task' ? [] : (await this.host.workItems.read(issue)).childIids;
+		const detach: Step[] = [];
+		for (const childIid of orphans) {
+			const child = (await this.host.loadIssue(String(childIid), { revalidate: false })).issue;
+			detach.push({
+				description: `detached #${childIid} from the task`,
+				run: () => this.host.workItems.setParent(child, null, 'deleteTask'),
+				applied: async () => (await this.host.workItems.read(child)).parentIid === undefined,
+				repair: `task delete ${iid}`,
+			});
+		}
 		await this.runSteps('deleteTask', iid, [
+			...detach,
 			{
 				description: `${closing ? 'closed the issue and ' : ''}labelled it ${TOMBSTONE_LABEL}`,
 				run: async () => {

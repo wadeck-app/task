@@ -6,7 +6,6 @@ import {
 	commentsOf,
 	composeBody,
 	isTombstone,
-	linksOf,
 	metaLabelName,
 	metaLabelProblem,
 	metaOf,
@@ -32,15 +31,12 @@ const STATUSES: ProjectStatus[] = [
 ];
 
 function contextOf(
-	options: { tier?: string; meta?: 'labels' | 'block' | 'none'; typeMap?: Record<string, unknown> } = {}
+	options: { meta?: 'labels' | 'block' | 'none'; typeMap?: Record<string, unknown> } = {}
 ): MapContext {
-	const tier = options.tier ?? 'free';
-	const scoped = tier !== 'free';
-	const status = (name: string): string => `status${scoped ? '::' : ':'}${name}`;
+	const status = (name: string): string => `status:${name}`;
 	const parsed = parseGitLabOptions({
 		project: 'acme/shop',
 		tokenEnv: 'T',
-		tier,
 		statusMap: {
 			backlog: { state: 'open' },
 			wip: { state: 'open', label: status('wip') },
@@ -96,13 +92,18 @@ describe('summaries and status', () => {
 			status: 'wip',
 			createdAt: '2026-11-08T10:00:00.000Z',
 		});
-		expect(statusOfIssue(issue({ state: 'closed', labels: [{ name: 'STATUS:CANCELLED' }] }), contextOf())).toBe(
+		expect(statusOfIssue(issue({ state: 'closed', labels: [{ name: 'status:cancelled' }] }), contextOf())).toBe(
 			'cancelled'
+		);
+		// Label names are case sensitive on GitLab: another case is another label, so it does not tell the status.
+		expect(statusOfIssue(issue({ state: 'closed', labels: [{ name: 'STATUS:CANCELLED' }] }), contextOf())).toBe(
+			'done'
 		);
 	});
 
-	it('knows a tombstone whatever the case', () => {
-		expect(isTombstone(issue({ labels: ['Task:Deleted'] }))).toBe(true);
+	it('knows a tombstone by its exact name only', () => {
+		expect(isTombstone(issue({ labels: ['task:deleted'] }))).toBe(true);
+		expect(isTombstone(issue({ labels: ['Task:Deleted'] }))).toBe(false);
 		expect(isTombstone(issue({ labels: ['task'] }))).toBe(false);
 	});
 });
@@ -168,23 +169,29 @@ describe('labels and type', () => {
 		expect(userLabels(issue({ labels }), contextOf({ meta: 'labels' }))).toEqual(['urgent']);
 	});
 
-	it('reads the type from a label, case-insensitively, keeping the case of the rest', () => {
-		expect(typeOf(issue({ labels: ['TYPE:Bug'] }), contextOf())).toBe('Bug');
+	it('reads the type from a label (exact prefix), keeping the case of the rest', () => {
+		expect(typeOf(issue({ labels: ['type:Bug'] }), contextOf())).toBe('Bug');
+		expect(typeOf(issue({ labels: ['TYPE:Bug'] }), contextOf())).toBeUndefined();
 		expect(typeOf(issue(), contextOf())).toBeUndefined();
 	});
 
 	it('prefers typeMap labels and refuses two type labels', () => {
 		const ctx = contextOf({ typeMap: { feature: { label: 'kind:feat' } } });
-		expect(typeOf(issue({ labels: ['kind:FEAT'] }), ctx)).toBe('feature');
+		expect(typeOf(issue({ labels: ['kind:feat'] }), ctx)).toBe('feature');
+		expect(typeOf(issue({ labels: ['kind:FEAT'] }), ctx)).toBeUndefined();
 		const error = failure(() => typeOf(issue({ labels: ['type:bug', 'kind:feat'] }), ctx));
 		expect(error.message).toBe('issue #5 carries two type labels (type:bug, kind:feat)');
 	});
 
-	it('reads a native incident / test_case through typeMap, ignores issue and task and unmapped ones', () => {
+	it('reads a native incident through typeMap, never a type from a native task, ignores issue and unmapped ones', () => {
 		const ctx = contextOf({ typeMap: { bug: { issueType: 'incident' } } });
 		expect(typeOf(issue({ issue_type: 'incident' }), ctx)).toBe('bug');
 		expect(typeOf(issue({ issue_type: 'issue' }), ctx)).toBeUndefined();
+		// A native Task is the hierarchy child type: it never gives a task type, even if a rule claims `task` (the config refuses it).
 		expect(typeOf(issue({ issue_type: 'task' }), ctx)).toBeUndefined();
+		const mapsTask = contextOf();
+		(mapsTask.settings.typeMap as Record<string, { issueType?: string }>)['chore'] = { issueType: 'task' };
+		expect(typeOf(issue({ issue_type: 'task' }), mapsTask)).toBeUndefined();
 		expect(typeOf(issue({ issue_type: 'test_case' }), ctx)).toBeUndefined();
 		// A type label wins over a native type.
 		expect(typeOf(issue({ issue_type: 'incident', labels: ['type:other'] }), ctx)).toBe('other');
@@ -192,27 +199,18 @@ describe('labels and type', () => {
 });
 
 describe('meta labels', () => {
-	it('writes the plain style meta:key=value on free and the scoped meta::key::value on premium', () => {
+	it('writes the plain style meta:key=value', () => {
 		expect(metaLabelName('owner', 'ann', contextOf())).toBe('meta:owner=ann');
-		expect(metaLabelName('owner', 'ann', contextOf({ tier: 'premium' }))).toBe('meta::owner::ann');
 	});
 
 	it('reads the plain style; no "=" is an empty value, the first "=" splits, the rest is the value', () => {
 		const ctx = contextOf({ meta: 'labels' });
 		expect(parseMetaLabel('meta:a=b=c', ctx, 5)).toEqual({ key: 'a', value: 'b=c' });
 		expect(parseMetaLabel('meta:flag', ctx, 5)).toEqual({ key: 'flag', value: '' });
-		expect(parseMetaLabel('META:a=1', ctx, 5)).toEqual({ key: 'a', value: '1' });
+		expect(parseMetaLabel('meta:a=1', ctx, 5)).toEqual({ key: 'a', value: '1' });
+		expect(parseMetaLabel('META:a=1', ctx, 5)).toBeUndefined();
 		expect(parseMetaLabel('bug', ctx, 5)).toBeUndefined();
 		expect(failure(() => parseMetaLabel('meta:=x', ctx, 5)).message).toMatch(/without a key/);
-	});
-
-	it('reads the scoped style splitting at the LAST "::"', () => {
-		const ctx = contextOf({ tier: 'ultimate', meta: 'labels' });
-		expect(parseMetaLabel('meta::owner::ann', ctx, 5)).toEqual({ key: 'owner', value: 'ann' });
-		expect(parseMetaLabel('meta::a::b::c', ctx, 5)).toEqual({ key: 'a::b', value: 'c' });
-		for (const bad of ['meta::owner', 'meta::owner::', 'meta::::x']) {
-			expect(failure(() => parseMetaLabel(bad, ctx, 5)).message).toMatch(/not of the form meta::<key>::<value>/);
-		}
 	});
 
 	it('does not read meta labels without the fill', () => {
@@ -238,22 +236,14 @@ describe('meta labels', () => {
 	});
 
 	it('says what a label cannot hold', () => {
-		const free = contextOf();
-		const scoped = contextOf({ tier: 'premium' });
-		expect(metaLabelProblem('a', 'b', free)).toBeUndefined();
-		expect(metaLabelProblem('a', '', free)).toBeUndefined();
-		expect(metaLabelProblem('', 'b', free)).toMatch(/key cannot be empty/);
-		expect(metaLabelProblem('a,b', 'x', free)).toMatch(/comma/);
-		expect(metaLabelProblem('a', 'x,y', free)).toMatch(/comma/);
-		expect(metaLabelProblem('a', ' x', free)).toMatch(/space/);
-		expect(metaLabelProblem('a=b', 'x', free)).toMatch(/contains "="/);
-		expect(metaLabelProblem('a', 'x=y', free)).toBeUndefined();
-		expect(metaLabelProblem('a', 'b', scoped)).toBeUndefined();
-		expect(metaLabelProblem('a::b', 'c', scoped)).toMatch(/"::"/);
-		expect(metaLabelProblem('a', 'b::c', scoped)).toMatch(/"::"/);
-		expect(metaLabelProblem('a', '', scoped)).toMatch(/empty/);
-		// "=" is only special in the plain style.
-		expect(metaLabelProblem('a=b', 'c', scoped)).toBeUndefined();
+		expect(metaLabelProblem('a', 'b')).toBeUndefined();
+		expect(metaLabelProblem('a', '')).toBeUndefined();
+		expect(metaLabelProblem('', 'b')).toMatch(/key cannot be empty/);
+		expect(metaLabelProblem('a,b', 'x')).toMatch(/comma/);
+		expect(metaLabelProblem('a', 'x,y')).toMatch(/comma/);
+		expect(metaLabelProblem('a', ' x')).toMatch(/space/);
+		expect(metaLabelProblem('a=b', 'x')).toMatch(/contains "="/);
+		expect(metaLabelProblem('a', 'x=y')).toBeUndefined();
 	});
 });
 
@@ -368,6 +358,58 @@ describe('history', () => {
 		expect(history.map(entry => entry.status)).toEqual(['backlog', 'done', 'backlog']);
 	});
 
+	// VERIFIED-LIVE (gitlab.com, 2026-11-09): the state event of a PUT is about 0.5 s EARLIER than its label events, which all carry
+	// the same instant (add before remove).
+	it('one PUT that swaps the status label and closes is ONE history entry: no intermediate status, stamped with the first event', () => {
+		const history = replayHistory(
+			issue({ state: 'closed', labels: ['status:cancelled'], updated_at: at(100) }),
+			[
+				label(1, 100, 'status:cancelled', 'add'),
+				label(2, 100, 'status:wip', 'remove'),
+				label(0, 50, 'status:wip', 'add'),
+			],
+			[state(1, 99.5, 'closed')],
+			contextOf(),
+			'cancelled'
+		);
+		// judged one event at a time, the close alone (the label events come after it) would give a state no status maps
+		expect(history).toEqual([
+			{ status: 'backlog', timestamp: at(0) },
+			{ status: 'wip', timestamp: at(50) },
+			{ status: 'cancelled', timestamp: at(99.5) },
+		]);
+	});
+
+	it('two PUTs 0.8 s apart stay two entries: the state event goes with the label events that FOLLOW it', () => {
+		const history = replayHistory(
+			issue({ state: 'closed', labels: ['status:cancelled'], updated_at: at(101) }),
+			[
+				label(1, 100, 'status:wip', 'add'),
+				label(2, 100.8, 'status:cancelled', 'add'),
+				label(3, 100.8, 'status:wip', 'remove'),
+			],
+			[state(1, 100.3, 'closed')],
+			contextOf(),
+			'cancelled'
+		);
+		expect(history.map(entry => entry.status)).toEqual(['backlog', 'wip', 'cancelled']);
+		expect(history[2]!.timestamp).toBe(at(100.3));
+	});
+
+	it('a state event alone (a close with no label change) is a group of its own', () => {
+		const history = replayHistory(
+			issue({ state: 'closed', updated_at: at(70) }),
+			[],
+			[state(1, 60, 'closed')],
+			contextOf(),
+			'done'
+		);
+		expect(history).toEqual([
+			{ status: 'backlog', timestamp: at(0) },
+			{ status: 'done', timestamp: at(60) },
+		]);
+	});
+
 	it('merges both lists by time, labels before states at one instant', () => {
 		const events = timelineOf([label(1, 10, 'a', 'add'), label(2, 5, 'b', 'add')], [state(1, 10, 'closed')]);
 		expect(events.map(event => event.kind + String(event.id))).toEqual(['label2', 'label1', 'state1']);
@@ -408,20 +450,62 @@ describe('activity', () => {
 		]);
 	});
 
-	it('leaves a malformed scoped meta label out instead of failing the whole read', () => {
-		const ctx = contextOf({ tier: 'premium', meta: 'labels' });
-		expect(activityOf([event('meta::broken', 'add')], ctx, 5)).toEqual([]);
-		expect(activityOf([{ id: 1, created_at: at, label: null, action: 'add' }], ctx, 5)).toEqual([]);
+	// The wording is the one recorded on gitlab.com Free (fixtures/live-conformance.json).
+	const system = (id: number, body: string, seconds = 0): ApiNote => ({
+		id,
+		body,
+		author: { username: 'ann' },
+		created_at: new Date(Date.parse(at) + seconds * 1000).toISOString(),
+		updated_at: at,
+		system: true,
 	});
-});
 
-describe('linksOf', () => {
-	it('lists the blockers then the block links, as strings', () => {
-		expect(linksOf([3, 4], [{ type: 'duplicateOf', target: '9' }])).toEqual([
-			{ type: 'blockedBy', target: '3' },
-			{ type: 'blockedBy', target: '4' },
-			{ type: 'duplicateOf', target: '9' },
+	it('reads the system notes of title, description, type and hierarchy; nobody is named as the author', () => {
+		const ctx = contextOf({ typeMap: { bug: { issueType: 'incident' } } });
+		const rows = activityOf([], ctx, 5, [
+			system(
+				1,
+				'<p>changed title from <code class="idiff">Fix &amp; go</code> to <code class="idiff">Fix &amp; go<span class="idiff left right addition"> now</span></code></p>',
+				1
+			),
+			system(2, 'changed the description', 2),
+			system(3, 'changed type to **Incident**', 3),
+			system(4, 'added #7 as parent item', 4),
+			system(5, 'added #8 as child item', 5),
+			{ ...system(6, 'a real comment'), system: false },
 		]);
-		expect(linksOf([], [])).toEqual([]);
+
+		expect(rows.map(row => row.kind)).toEqual(['title', 'description', 'type', 'parent', 'child-added']);
+		expect(rows[0]).toMatchObject({ oldValue: 'Fix & go', newValue: 'Fix & go now' });
+		expect(rows[1]!.newValue).toContain('keeps no diff');
+		expect(rows[2]).toMatchObject({ newValue: 'bug' });
+		expect(rows[3]).toMatchObject({ newValue: '7' });
+		expect(rows[4]).toMatchObject({ target: '8', inverse: true });
+		expect(rows.some(row => 'author' in row)).toBe(false);
+	});
+
+	it('does not parse a wording that was never recorded: a removed parent, a due date, a type with no task type are plain "other" rows', () => {
+		const rows = activityOf([], contextOf(), 5, [
+			system(1, 'removed parent item #7', 1),
+			system(2, 'changed due date to January 02, 2030', 2),
+			system(3, 'changed type to **Task**', 3),
+			system(4, 'made the item confidential', 4),
+		]);
+
+		expect(rows.map(row => row.kind)).toEqual(['other', 'other', 'other', 'other']);
+		expect(rows[0]).toMatchObject({ field: 'note', newValue: 'removed parent item #7' });
+		expect(rows[2]).toMatchObject({ field: 'type', newValue: 'changed type to Task' });
+	});
+
+	it('puts label events and notes in one list, oldest first', () => {
+		const rows = activityOf([event('urgent', 'add')], contextOf(), 5, [system(1, 'changed the description', -5)]);
+
+		expect(rows.map(row => row.kind)).toEqual(['description', 'label-added']);
+	});
+
+	it('leaves a malformed meta label out instead of failing the whole read', () => {
+		const ctx = contextOf({ meta: 'labels' });
+		expect(activityOf([event('meta:=x', 'add')], ctx, 5)).toEqual([]);
+		expect(activityOf([{ id: 1, created_at: at, label: null, action: 'add' }], ctx, 5)).toEqual([]);
 	});
 });

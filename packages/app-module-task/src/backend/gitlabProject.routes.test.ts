@@ -4,7 +4,7 @@ import { setup } from './routeHarness.js';
 import type { Harness } from './routeHarness.js';
 
 // A project on the gitlab strategy through the module routes: the same use cases as the CLI, the errors of the remote system
-// mapped to HTTP statuses with their hints, the reads of every request released with it. NOT verified against a real GitLab (fake).
+// mapped to HTTP statuses with their hints, the reads of every request released with it. Over the fake server, a copy of gitlab.com Free.
 const TOKEN_VARIABLE = 'TASK_MODULE_TEST_GITLAB_TOKEN';
 
 let h: Harness;
@@ -21,7 +21,6 @@ strategy:
     type: gitlab
     options:
         project: acme/shop
-        tier: premium
         baseUrl: ${baseUrl}
         tokenEnv: ${TOKEN_VARIABLE}
         cache: { ttlSeconds: 0 }
@@ -29,18 +28,18 @@ strategy:
         writeSpacingSeconds: 0
         statusMap:
             backlog: { state: open }
-            in-progress: { state: open, label: 'status::in-progress' }
+            in-progress: { state: open, label: 'status:in-progress' }
             done: { state: closed }
-            cancelled: { state: closed, label: 'status::cancelled' }
+            cancelled: { state: closed, label: 'status:cancelled' }
 `;
 }
 
 beforeEach(async () => {
-	fake = await FakeGitLab.start({ project: 'acme/shop', tier: 'premium' });
+	fake = await FakeGitLab.start({ project: 'acme/shop' });
 	vi.stubEnv(TOKEN_VARIABLE, fake.token);
 	h = setup();
 	project = await h.world.createProject('shop', { configYml: configFor(fake.baseUrl) });
-	fake.seedIssue({ title: 'Alpha', labels: ['status::in-progress', 'billing'] });
+	fake.seedIssue({ title: 'Alpha', labels: ['status:in-progress', 'billing'] });
 	fake.seedIssue({ title: 'Beta' });
 	fake.seedIssue({ title: 'Gamma', state: 'closed' });
 });
@@ -106,11 +105,11 @@ describe('writes reach GitLab', () => {
 
 		expect(answer.status).toBe(200);
 		expect(answer.body['task']).toMatchObject({ id: '2', status: 'in-progress' });
-		expect(fake.labelsOf(2)).toEqual(['status::in-progress']);
+		expect(fake.labelsOf(2)).toEqual(['status:in-progress']);
 		expect(answer.body['undelivered']).toBeDefined();
 	});
 
-	it('labels, comments and a blocking link (premium) are written too, and a read right after shows them', async () => {
+	it('labels and comments are written too, and a read right after shows them; a blocking link is 422 naming the paid tier', async () => {
 		const labelled = await h.call('POST /tasks/:id/labels', {
 			params: { id: '2' },
 			query: { project },
@@ -129,36 +128,59 @@ describe('writes reach GitLab', () => {
 
 		expect(labelled.status).toBe(200);
 		expect(commented.status).toBe(201);
-		expect(linked.status, JSON.stringify(linked.body)).toBe(200);
+		expect(linked.status, JSON.stringify(linked.body)).toBe(422);
+		expect(linked.body['hint']).toBe('requires a paid GitLab tier, which task does not support');
 		const read = await h.call('GET /tasks/:id', { params: { id: '2' }, query: { project } });
 		expect(read.body['task']).toMatchObject({ id: '2', labels: ['urgent'] });
-		expect(fake.links(2)).toEqual([{ iid: 1, type: 'is_blocked_by' }]);
+		expect(fake.links(2)).toEqual([]);
 	});
 
-	it('a parent is 422 with the capability and the reason, as data with ?inlineErrors=true, and nothing is written', async () => {
+	it('a parent is set through GraphQL (the child becomes a native Task), created under, read back and removed', async () => {
 		const parent = await h.call('POST /tasks/:id/parent', {
 			params: { id: '2' },
 			query: { project },
-			body: { parent: '1' },
-		});
-		const inline = await h.call('POST /tasks/:id/parent', {
-			params: { id: '2' },
-			query: { project, inlineErrors: 'true' },
 			body: { parent: '1' },
 		});
 		const created = await h.call('POST /tasks', {
 			query: { project },
 			body: { title: 'Under alpha', parent: '1' },
 		});
+		const children = await h.call('GET /tasks/:id/children', { params: { id: '1' }, query: { project } });
+		const removed = await h.call('DELETE /tasks/:id/parent', { params: { id: '2' }, query: { project } });
 
-		expect(parent.status).toBe(422);
-		expect(parent.body['capability']).toBe('hierarchy');
-		expect(parent.body['hint']).toMatch(/parent/i);
+		expect(parent.status).toBe(200);
+		expect(parent.body['task']['parentId']).toBe('1');
+		expect(fake.issue(2)!.issueType).toBe('task');
+		expect(created.status).toBe(201);
+		expect(created.body['task']['parentId']).toBe('1');
+		expect(children.body['children'].map((c: { id: string }) => c.id)).toEqual(['2', '4']);
+		expect(removed.status).toBe(200);
+		expect(fake.issue(2)!.parentIid).toBeNull();
+	});
+
+	it('a third level is refused with the reason and the way out, as data with ?inlineErrors=true, and nothing changes', async () => {
+		await h.call('POST /tasks/:id/parent', { params: { id: '2' }, query: { project }, body: { parent: '1' } });
+		const restWrites = (): number => fake.writes().filter(request => request.path !== '/api/graphql').length;
+		const before = restWrites();
+
+		const refused = await h.call('POST /tasks/:id/parent', {
+			params: { id: '3' },
+			query: { project },
+			body: { parent: '2' },
+		});
+		const inline = await h.call('POST /tasks/:id/parent', {
+			params: { id: '3' },
+			query: { project, inlineErrors: 'true' },
+			body: { parent: '2' },
+		});
+
+		expect(refused.status).toBeGreaterThanOrEqual(400);
+		expect(refused.body['hint']).toContain('two levels');
 		expect(inline.status).toBe(200);
 		expect(inline.body['failed']).toBe(true);
-		expect(inline.body['httpStatus']).toBe(422);
-		expect(created.status).toBe(422);
-		expect(fake.writes()).toEqual([]);
+		expect(inline.body['errorText']).toContain('hierarchy depth');
+		expect(restWrites()).toBe(before);
+		expect(fake.issue(3)!.issueType).toBe('issue');
 	});
 
 	it('what needs a fill is 422 with the key to write', async () => {

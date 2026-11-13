@@ -1,19 +1,21 @@
 // GitLab issue JSON -> task shapes, pure: summaries for lists, the record for a read, the status history replayed from the label and
 // state events, the activity rows, the comments. Nothing here talks to the network; the backend feeds it what it fetched.
 //
-// NOT VERIFIED AGAINST A REAL GITLAB. Mapping (design 2.1; each row is documented in CLAUDE.md "Storage strategy: gitlab"):
+// Verified against gitlab.com Free on 2026-11-09 (fixtures/live-conformance.json). Label names are compared EXACTLY (GitLab labels are
+// case sensitive: `bug` and `Bug` are two labels). Mapping (design 2.1; each row is documented in CLAUDE.md "Storage strategy: gitlab"):
 //   id            the issue iid as a string (`ids: assigned`)
 //   title         the issue title
 //   description   the description without the managed task block; absent when empty or equal to the title (CRLF read as LF)
 //   status        state (opened/closed) + the status labels, through the statusMap (gitlabStatusMapping.ts)
 //   labels        the issue labels without the status labels, the type labels and (with fills.meta: labels) the meta labels
-//   type          a type label (typePrefix / typeMap.label), else a native issue_type that typeMap names (incident, test_case)
-//   meta          only with fills.meta: labels (`meta:key=value`, or the scoped `meta::key::value` on Premium and Ultimate) or body-block
-//   parentId      none: the REST API has no parent of an issue (capability hierarchy: none)
-//   links         blockedBy from the issue links (premium and ultimate); duplicateOf / causedBy from the managed block when declared
+//   type          a type label (typePrefix / typeMap.label), else a native issue_type that typeMap names (incident, task)
+//   meta          only with fills.meta: labels (`meta:key=value`) or body-block
+//   parentId      the parent of a native Task (GraphQL hierarchy widget, read by the backend; capability hierarchy: limited)
+//   links         duplicateOf / causedBy from the managed block when declared
 //   history       replayed from resource_label_events + resource_state_events through the same status mapping
-//   activity      the label events that are not status labels (type, meta, labels); system notes are text and are not read
-import { BackendDataError } from '@wadeck-app/task-core';
+//   activity      the label events that are not status labels (type, meta, labels) and the system notes of title, description, type
+//                 and hierarchy (activityOf); a system note nobody documented is kept as an 'other' entry with its text
+import { BackendDataError, activityPreview } from '@wadeck-app/task-core';
 import type { ActivityEntry, TaskComment, TaskLink, TaskRecord, TaskSummary } from '@wadeck-app/task-core';
 
 import type { ReadNotice } from '../kinds.js';
@@ -46,19 +48,21 @@ export function labelNames(issue: ApiIssue): string[] {
 export const TOMBSTONE_LABEL = 'task:deleted';
 
 export function isTombstone(issue: ApiIssue): boolean {
-	return labelNames(issue).some(name => name.toLowerCase() === TOMBSTONE_LABEL);
+	return labelNames(issue).some(name => name === TOMBSTONE_LABEL);
 }
 
 export function statusOfIssue(issue: ApiIssue, ctx: MapContext): string {
 	return ctx.mapper.statusOf({ iid: issue.iid, state: issue.state, labels: labelNames(issue) });
 }
 
-export function toSummary(issue: ApiIssue, ctx: MapContext): TaskSummary {
+/** `parentIid`: the parent of the issue when the caller knows it (the REST issue does not carry it). */
+export function toSummary(issue: ApiIssue, ctx: MapContext, parentIid?: number): TaskSummary {
 	return {
 		id: String(issue.iid),
 		title: issue.title,
 		status: statusOfIssue(issue, ctx),
 		createdAt: iso(issue.created_at),
+		...(parentIid === undefined ? {} : { parentId: String(parentIid) }),
 	};
 }
 
@@ -188,18 +192,16 @@ ${blockOf(data)}`;
 
 // ---- labels, type, meta ----
 
-const lower = (text: string): string => text.toLowerCase();
-
 export function isTypeLabel(name: string, ctx: MapContext): boolean {
 	const { typePrefix, typeMap } = ctx.settings;
 	return (
-		lower(name).startsWith(lower(typePrefix)) ||
-		Object.values(typeMap).some(rule => rule.label !== undefined && lower(rule.label) === lower(name))
+		name.startsWith(typePrefix) ||
+		Object.values(typeMap).some(rule => rule.label !== undefined && rule.label === name)
 	);
 }
 
 export function isMetaLabel(name: string, ctx: MapContext): boolean {
-	return ctx.metaFromLabels && lower(name).startsWith(lower(ctx.settings.metaPrefix));
+	return ctx.metaFromLabels && name.startsWith(ctx.settings.metaPrefix);
 }
 
 /** Labels that are neither a status, a type nor (with the fill) a meta entry. */
@@ -213,9 +215,9 @@ export function userLabels(issue: ApiIssue, ctx: MapContext): string[] {
 export function typeOfLabel(name: string, ctx: MapContext): string | undefined {
 	const { typePrefix, typeMap } = ctx.settings;
 	for (const [type, rule] of Object.entries(typeMap)) {
-		if (rule.label !== undefined && lower(rule.label) === lower(name)) return type;
+		if (rule.label !== undefined && rule.label === name) return type;
 	}
-	return lower(name).startsWith(lower(typePrefix)) ? name.slice(typePrefix.length) : undefined;
+	return name.startsWith(typePrefix) ? name.slice(typePrefix.length) : undefined;
 }
 
 export function typeOf(issue: ApiIssue, ctx: MapContext): string | undefined {
@@ -232,19 +234,19 @@ export function typeOf(issue: ApiIssue, ctx: MapContext): string | undefined {
 	}
 	if (fromLabels.length === 1) return fromLabels[0]!.type;
 	const native = issue.issue_type;
+	// An Issue is the default; a native Task is the type of a hierarchy child, never a task type (it has none unless a type label says so).
 	if (native === undefined || native === 'issue' || native === 'task') return undefined;
 	const mapped = Object.entries(ctx.settings.typeMap).find(([, rule]) => rule.issueType === native);
 	return mapped?.[0];
 }
 
-/** The label that holds one meta entry. Scoped (Premium, Ultimate): `meta::key::value`; plain: `meta:key=value`. */
+/** The label that holds one meta entry: `meta:key=value`. */
 export function metaLabelName(key: string, value: string, ctx: MapContext): string {
-	const { metaPrefix, scopedLabels } = ctx.settings;
-	return scopedLabels ? `${metaPrefix}${key}::${value}` : `${metaPrefix}${key}=${value}`;
+	return `${ctx.settings.metaPrefix}${key}=${value}`;
 }
 
 /** Why this meta key or value cannot be a label, as a sentence; undefined when it can. */
-export function metaLabelProblem(key: string, value: string, ctx: MapContext): string | undefined {
+export function metaLabelProblem(key: string, value: string): string | undefined {
 	if (key === '') return 'a metadata key cannot be empty';
 	if (key.includes(',') || value.includes(',')) {
 		return `the metadata "${key}" holds a comma, which cannot be part of a GitLab label name`;
@@ -252,33 +254,14 @@ export function metaLabelProblem(key: string, value: string, ctx: MapContext): s
 	if (key !== key.trim() || value !== value.trim()) {
 		return `the metadata "${key}" starts or ends with a space, which GitLab trims from a label name`;
 	}
-	if (ctx.settings.scopedLabels) {
-		if (key.includes('::') || value.includes('::')) {
-			return `the metadata "${key}" contains "::", which delimits the scope of a GitLab scoped label`;
-		}
-		if (value === '') return `the metadata "${key}" is empty, which a scoped label meta::key::value cannot hold`;
-		return undefined;
-	}
 	if (key.includes('=')) return `the metadata key "${key}" contains "=", which separates key and value in the label`;
 	return undefined;
 }
 
-/** key and value of a meta label name; undefined when the name is not a meta label. Throws BackendDataError for a malformed scoped one. */
+/** key and value of a meta label name; undefined when the name is not a meta label. Throws BackendDataError for a malformed one. */
 export function parseMetaLabel(name: string, ctx: MapContext, iid: number): { key: string; value: string } | undefined {
 	if (!isMetaLabel(name, ctx)) return undefined;
 	const rest = name.slice(ctx.settings.metaPrefix.length);
-	if (ctx.settings.scopedLabels) {
-		const at = rest.lastIndexOf('::');
-		if (at <= 0 || at + 2 >= rest.length) {
-			throw new BackendDataError(
-				'gitlab',
-				`issue #${iid}`,
-				`issue #${iid} has the meta label "${name}", which is not of the form ${ctx.settings.metaPrefix}<key>::<value>`,
-				`Rename or remove it on ${ctx.issueUrl(iid)}`
-			);
-		}
-		return { key: rest.slice(0, at), value: rest.slice(at + 2) };
-	}
 	const at = rest.indexOf('=');
 	const key = at < 0 ? rest : rest.slice(0, at);
 	if (key === '') {
@@ -339,8 +322,15 @@ interface Replay {
 
 /** Label events of an issue created with labels may come a moment after its creation (measured on GitHub; UNVERIFIED on GitLab). */
 const CREATION_WINDOW_MS = 2000;
-/** Events of one request (a label swapped and the issue closed by one PUT) are at most a second apart (measured on GitHub; UNVERIFIED on GitLab). */
+/**
+ * VERIFIED-LIVE (gitlab.com, 2026-11-09): for one PUT that swaps labels and closes, the state event is about 0.5 s EARLIER than the
+ * label events, and all the label events of that PUT carry the SAME `created_at` (`add` before `remove`); the events of two PUTs 0.8 s
+ * apart are distinct. So the state event of a change is looked for within a second of the label events, preferring the label events
+ * that come AFTER it.
+ */
 const GROUP_WINDOW_MS = 1000;
+/** Label events closer than this are the events of one PUT. */
+const SAME_PUT_MS = 100;
 
 type TimelineEvent =
 	| { kind: 'label'; at: string; id: number; name: string; added: boolean }
@@ -371,6 +361,51 @@ export function timelineOf(
 }
 
 /**
+ * The events grouped by the request that produced them: label events with the same instant are one PUT, and the state event of that
+ * PUT (a little earlier) joins them; a state event with no label events near it is a group of its own. Oldest group first.
+ */
+function groupEvents(events: readonly TimelineEvent[]): TimelineEvent[][] {
+	const clusters: Array<{ events: TimelineEvent[]; hasState: boolean }> = [];
+	for (const event of events) {
+		if (event.kind !== 'label') continue;
+		const last = clusters.at(-1);
+		if (last !== undefined && Date.parse(event.at) - Date.parse(last.events.at(-1)!.at) <= SAME_PUT_MS) {
+			last.events.push(event);
+		} else clusters.push({ events: [event], hasState: false });
+	}
+	const alone: TimelineEvent[][] = [];
+	for (const event of events) {
+		if (event.kind !== 'state') continue;
+		const at = Date.parse(event.at);
+		// The label events of the same PUT come after it (up to a second), else they came just before.
+		const target =
+			clusters.find(
+				cluster =>
+					!cluster.hasState &&
+					Date.parse(cluster.events[0]!.at) - at >= -SAME_PUT_MS &&
+					Date.parse(cluster.events[0]!.at) - at <= GROUP_WINDOW_MS
+			) ??
+			[...clusters]
+				.reverse()
+				.find(
+					cluster =>
+						!cluster.hasState &&
+						at - Date.parse(cluster.events.at(-1)!.at) >= 0 &&
+						at - Date.parse(cluster.events.at(-1)!.at) <= GROUP_WINDOW_MS
+				);
+		if (target === undefined) alone.push([event]);
+		else {
+			target.events.push(event);
+			target.hasState = true;
+		}
+	}
+	const order = (group: readonly TimelineEvent[]): number => Math.min(...group.map(event => Date.parse(event.at)));
+	return [...clusters.map(cluster => cluster.events), ...alone]
+		.map(group => [...group].sort((a, b) => events.indexOf(a) - events.indexOf(b)))
+		.sort((a, b) => order(a) - order(b));
+}
+
+/**
  * The status history, rebuilt by replaying label and state events over the issue's life through the same status mapping as a read.
  * The first entry is the creation. States a replay passes through that no status maps (two status labels for a moment, while one is
  * swapped for another) are skipped. The last entry is always the status the issue has now.
@@ -393,19 +428,13 @@ export function replayHistory(
 	const first = ctx.mapper.tryStatusOf(view());
 	if (first !== undefined) history.push({ status: first, timestamp: createdAt });
 	// The events one request produces are one change, judged after the last of them, so the status in between never shows in the
-	// history: events within GROUP_WINDOW_MS of the first one of a group are its members.
-	const groups: TimelineEvent[][] = [];
-	for (const event of timelineOf(labelEvents, stateEvents)) {
-		const last = groups.at(-1);
-		if (last !== undefined && Date.parse(event.at) - Date.parse(last[0]!.at) <= GROUP_WINDOW_MS) last.push(event);
-		else groups.push([event]);
-	}
-	for (const group of groups) {
+	// history.
+	for (const group of groupEvents(timelineOf(labelEvents, stateEvents))) {
 		for (const event of group) {
 			if (event.kind === 'label') {
 				state.labels = event.added
 					? [...state.labels, event.name]
-					: state.labels.filter(held => lower(held) !== lower(event.name));
+					: state.labels.filter(held => held !== event.name);
 			} else state.state = event.closed ? 'closed' : 'opened';
 		}
 		const status = ctx.mapper.tryStatusOf(view());
@@ -421,12 +450,66 @@ export function replayHistory(
 	return history;
 }
 
+const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", '#39': "'", '#x27': "'" };
+
+/** The text of a (system note) HTML fragment: tags dropped, the entities GitLab writes decoded. */
+function plainText(html: string): string {
+	return html
+		.replace(/<[^>]*>/g, '')
+		.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (whole, name: string) => ENTITIES[name.toLowerCase()] ?? whole);
+}
+
+/** What GitLab calls a native type -> the native issue_type value of the REST API. */
+const NATIVE_OF_TYPE_NAME: Record<string, string> = { issue: 'issue', incident: 'incident', task: 'task' };
+
 /**
- * The activity rows of an issue (everything but status changes and comments), oldest first, in the vocabulary of the local log. Only
- * the label events are read: GitLab writes a title or description change as a system NOTE (free text whose wording is not documented),
- * which is not parsed.
+ * The activity row of one SYSTEM note, or undefined for a note task does not report. Wording VERIFIED-LIVE (gitlab.com Free,
+ * 2026-11-09): title (HTML with the two titles in <code class="idiff">), "changed the description" (no diff exists), "changed type to
+ * **Incident**", "added #N as parent item" (on the child), "added #N as child item" (on the parent). The wording of a REMOVED parent or
+ * child is NOT in the recording, so it is not parsed: like any other system note it becomes an 'other' row with its plain text.
  */
-export function activityOf(labelEvents: readonly ApiLabelEvent[], ctx: MapContext, iid: number): ActivityEntry[] {
+function noteActivity(note: ApiNote, ctx: MapContext): ActivityEntry {
+	const at = iso(note.created_at);
+	const body = note.body;
+	const codes = [...body.matchAll(/<code[^>]*>([\s\S]*?)<\/code>/g)].map(match => plainText(match[1]!));
+	if (/^<p>changed title from /.test(body) && codes.length === 2) {
+		return { at, kind: 'title', oldValue: activityPreview(codes[0]!), newValue: activityPreview(codes[1]!) };
+	}
+	if (body === 'changed the description') {
+		// GitLab keeps no previous text and sends no diff: the entry says that something changed, never what.
+		return { at, kind: 'description', newValue: '(the description was changed on GitLab; GitLab keeps no diff)' };
+	}
+	const typed = /^changed type to \*\*(.+)\*\*$/.exec(body);
+	if (typed !== null) {
+		const native = NATIVE_OF_TYPE_NAME[typed[1]!.toLowerCase()];
+		const mapped =
+			native === undefined
+				? undefined
+				: Object.entries(ctx.settings.typeMap).find(
+						([, rule]) => (rule.issueType as string | undefined) === native
+					)?.[0];
+		if (mapped !== undefined) return { at, kind: 'type', newValue: mapped };
+		return { at, kind: 'other', field: 'type', newValue: `changed type to ${typed[1]!}` };
+	}
+	const parent = /^added #(\d+) as parent item$/.exec(body);
+	if (parent !== null) return { at, kind: 'parent', newValue: parent[1]! };
+	const child = /^added #(\d+) as child item$/.exec(body);
+	if (child !== null) return { at, kind: 'child-added', target: child[1]!, inverse: true };
+	return { at, kind: 'other', field: 'note', newValue: activityPreview(plainText(body)) };
+}
+
+/**
+ * The activity rows of an issue (everything but status changes and comments), oldest first, in the vocabulary of the local log: the
+ * label events that are not status labels, and the system notes (`notes`: title, description, type, hierarchy and the rest, see
+ * noteActivity). A label event whose label was deleted since (`label: null`) is skipped, never guessed. Nobody is named as the author:
+ * the log has no author.
+ */
+export function activityOf(
+	labelEvents: readonly ApiLabelEvent[],
+	ctx: MapContext,
+	iid: number,
+	notes: readonly ApiNote[] = []
+): ActivityEntry[] {
 	const rows: ActivityEntry[] = [];
 	for (const event of labelEvents) {
 		if (event.label === null) continue;
@@ -459,13 +542,7 @@ export function activityOf(labelEvents: readonly ApiLabelEvent[], ctx: MapContex
 			});
 		}
 	}
-	return rows;
-}
-
-/** The links of a record: blockers from the issue links, duplicateOf / causedBy from the managed block. */
-export function linksOf(blockers: readonly number[], blockLinks: readonly TaskLink[]): TaskLink[] {
-	return [
-		...blockers.map((target): TaskLink => ({ type: 'blockedBy', target: String(target) })),
-		...blockLinks.map(link => ({ type: link.type, target: link.target })),
-	];
+	for (const note of notes) if (note.system) rows.push(noteActivity(note, ctx));
+	// Stable: rows with the same instant keep their order (labels first, then notes).
+	return rows.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 }

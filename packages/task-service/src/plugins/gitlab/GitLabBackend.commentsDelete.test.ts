@@ -18,11 +18,10 @@ let t: TestBackend;
 const P = '/projects/42';
 
 async function start(fills: DeclaredFills = {}, canDelete = true) {
-	fake = await FakeGitLab.start({ tier: 'free', canDelete });
+	fake = await FakeGitLab.start({ canDelete });
 	t = makeGitLabBackend(fake, {
-		tier: 'free',
 		statuses: WRITE_STATUSES,
-		options: { statusMap: writeStatusMap('free') },
+		options: { statusMap: writeStatusMap() },
 		fills,
 	});
 }
@@ -33,7 +32,12 @@ afterEach(async () => {
 	await fake.stop();
 });
 
-const sent = (): string[] => fake.writes().map(request => `${request.method} ${request.path.replace(P, '')}`);
+// (a GraphQL read is a POST too: it is not a change)
+const sent = (): string[] =>
+	fake
+		.writes()
+		.filter(request => request.path !== '/api/graphql')
+		.map(request => `${request.method} ${request.path.replace(P, '')}`);
 
 const failure = async (call: () => Promise<unknown>): Promise<Error> => {
 	try {
@@ -70,14 +74,23 @@ describe('comments', () => {
 		expect(fake.requests).toEqual([]);
 	});
 
-	it('never shows the system notes GitLab writes for label and state changes as comments', async () => {
+	it('never shows the system notes (title, description, type) as comments; label and state changes write none on GitLab', async () => {
 		await t.backend.create({ title: 'T', status: 'backlog' });
 		await t.backend.updateStatus('1', 'in-progress');
 		await t.backend.updateStatus('1', 'done');
+		// VERIFIED-LIVE: label and state changes are events, not notes.
+		expect(fake.systemNotes(1)).toEqual([]);
+		await t.backend.setTitle('1', 'T renamed');
+		await t.backend.setDescription('1', 'a body');
 		await t.backend.addComment('1', 'only me');
 
-		expect(fake.systemNotes(1).length).toBeGreaterThan(0);
-		expect((await t.backend.get('1')).comments?.map(entry => entry.text)).toEqual(['only me']);
+		const notes = fake.systemNotes(1).map(note => note.body);
+		expect(notes).toHaveLength(2);
+		expect(notes[0]).toContain('changed title from');
+		expect(notes[1]).toBe('changed the description');
+		const record = await t.backend.get('1');
+		expect(record.comments?.map(entry => entry.text)).toEqual(['only me']);
+		expect(record.comments?.map(entry => entry.text).join(' ')).not.toContain('changed');
 	});
 
 	it('edits with a PUT on the note, reports the old text, and sends nothing for the same text', async () => {
@@ -169,7 +182,10 @@ describe('delete', () => {
 		expect(await t.backend.deleteTask('1')).toBe(true);
 
 		expect(sent()).toEqual(['PUT /issues/1']);
-		expect(fake.writes()[0]!.body).toEqual({ state_event: 'close', add_labels: 'task:deleted' });
+		expect(fake.writes().find(request => request.method === 'PUT')!.body).toEqual({
+			state_event: 'close',
+			add_labels: 'task:deleted',
+		});
 		expect((await t.backend.list()).map(task => task.id)).toEqual(['2']);
 		expect((await t.backend.listPage()).items.map(task => task.id)).toEqual(['2']);
 		expect(await t.backend.listLabels()).toEqual([]);

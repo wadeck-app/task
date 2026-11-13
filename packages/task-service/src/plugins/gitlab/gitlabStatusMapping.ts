@@ -50,7 +50,7 @@ export class StatusMapper {
 			return {
 				status: status.name,
 				state: rule.state,
-				label: rule.label?.toLowerCase(),
+				label: rule.label,
 				labelName: rule.label,
 			};
 		});
@@ -74,7 +74,7 @@ export class StatusMapper {
 	}
 
 	isStatusLabel(name: string): boolean {
-		return this.statusLabels.has(name.toLowerCase());
+		return this.statusLabels.has(name);
 	}
 
 	/** The status of an issue; throws BackendDataError when GitLab holds a combination that no status (or several) maps. */
@@ -91,7 +91,7 @@ export class StatusMapper {
 	}
 
 	private resolve(issue: IssueState): { status: string } | { error: BackendDataError } {
-		const held = new Set(issue.labels.map(label => label.toLowerCase()));
+		const held = new Set(issue.labels);
 		const subject = `issue #${issue.iid}`;
 		const fail = (message: string, hint: string): { error: BackendDataError } => ({
 			error: new BackendDataError('gitlab', subject, message, hint),
@@ -100,7 +100,7 @@ export class StatusMapper {
 		const candidates = this.entries.filter(entry => entry.state === state);
 		const labelled = candidates.filter(entry => entry.label !== undefined && held.has(entry.label));
 		if (labelled.length > 1) {
-			const names = issue.labels.filter(label => labelled.some(entry => entry.label === label.toLowerCase()));
+			const names = issue.labels.filter(label => labelled.some(entry => entry.label === label));
 			return fail(
 				`${subject} carries two status labels (${names.join(', ')})`,
 				`Remove one of them on ${this.issueUrl(issue.iid)}; the task status is the one that stays`

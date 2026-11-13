@@ -11,8 +11,8 @@
 // real queue, the real registry, the real app-core and the global task install are never touched. The fake token is only in the
 // environment of the processes started here and is checked to appear in no output. The world is removed at the end.
 //
-// For each tier (free, premium): strategy show/check, labels sync, new, set-status, add-label, comment, link (premium works, free is
-// refused), set-parent (refused on both), show/list/history read back, delete (refused without a fill, then a tombstone with one),
+// Free tier only: strategy show/check, labels sync, new, set-status, add-label, comment, link blockedBy (refused: paid tier),
+// set-parent / remove-parent (a native Task under an issue), show/list/history read back, delete (refused without a fill, then a tombstone with one),
 // then `task migrate` local -> gitlab and gitlab -> local.
 //
 // Exit codes: 0 all assertions passed, 1 an assertion failed, 2 the environment is wrong (a clear message).
@@ -79,13 +79,11 @@ async function register(name) {
 	return { name, folder, configFile, dataDir: sdk.projectToolDir(registryDir, added.id, 'task', 'data') };
 }
 
-function gitlabConfig(fake, tier, fills = '') {
-	const sep = tier === 'free' ? ':' : '::';
+function gitlabConfig(fake, fills = '') {
 	return `${STATUSES}strategy:
 ${fills === '' ? '' : '    fidelity: degrade\n'}    type: gitlab
     options:
         project: ${fake.project}
-        tier: ${tier}
         baseUrl: ${fake.baseUrl}
         tokenEnv: TASK_SMOKE_GITLAB_TOKEN
         cache: { ttlSeconds: 0 }
@@ -93,9 +91,9 @@ ${fills === '' ? '' : '    fidelity: degrade\n'}    type: gitlab
         writeSpacingSeconds: 0
         statusMap:
             backlog: { state: open }
-            in-progress: { state: open, label: 'status${sep}in-progress' }
+            in-progress: { state: open, label: 'status:in-progress' }
             done: { state: closed }
-            cancelled: { state: closed, label: 'status${sep}cancelled' }
+            cancelled: { state: closed, label: 'status:cancelled' }
 ${fills}`;
 }
 
@@ -119,16 +117,14 @@ function task(project, args, token) {
 	});
 }
 
-async function tier(name) {
-	console.log(`\n=== tier ${name} ===`);
-	const fake = await FakeGitLab.start({ project: 'acme/shop', tier: name });
+async function smoke() {
+	const fake = await FakeGitLab.start({ project: 'acme/shop' });
 	const token = fake.token;
-	const gl = await register(`gl-${name}`);
-	const src = await register(`src-${name}`);
-	const back = await register(`back-${name}`);
-	fs.writeFileSync(gl.configFile, gitlabConfig(fake, name));
+	const gl = await register('gl');
+	const src = await register('src');
+	const back = await register('back');
+	fs.writeFileSync(gl.configFile, gitlabConfig(fake));
 	const run = (project, ...args) => task(project, args, token);
-	const labelSep = name === 'free' ? ':' : '::';
 	const leaked = results => results.some(r => r.out.includes(token) || r.err.includes(token));
 	const all = [];
 	const t = async (...args) => {
@@ -140,8 +136,8 @@ async function tier(name) {
 		console.log('strategy');
 		const show = await t('strategy', 'show');
 		check(
-			'strategy show names the plugin and the declared tier',
-			show.code === 0 && /gitlab/.test(show.out) && new RegExp(`Tier:\\s+${name} \\(declared\\)`).test(show.out),
+			'strategy show names the plugin and prints no tier',
+			show.code === 0 && /gitlab/.test(show.out) && !/Tier:/.test(show.out),
 			show.out + show.err
 		);
 		const checked = await t('strategy', 'check');
@@ -151,15 +147,12 @@ async function tier(name) {
 			checked.out + checked.err
 		);
 		check(
-			'strategy check says it is not verified against a real GitLab',
-			/not been verified against a real GitLab instance/.test(checked.out),
+			'strategy check ends with the verification line (what was verified live, what was not)',
+			/verification\s+verified live on gitlab\.com Free/.test(checked.out) &&
+				!/not been verified/.test(checked.out),
 			checked.out
 		);
-		check(
-			'strategy check shows the tier line',
-			new RegExp(`\\n\\s+tier\\s+ok\\s+.*${name}`).test(checked.out),
-			checked.out
-		);
+		check('strategy check has no tier line', !/\n\s+tier\s/.test(checked.out), checked.out);
 
 		console.log('labels sync');
 		const dry = await t('labels', 'sync', '--dry-run');
@@ -172,9 +165,7 @@ async function tier(name) {
 		check(
 			'labels sync creates the status labels with a colour',
 			sync.code === 0 &&
-				fake
-					.projectLabels()
-					.some(l => l.name === `status${labelSep}in-progress` && /^#[0-9A-Fa-f]{6}$/.test(l.color)),
+				fake.projectLabels().some(l => l.name === `status:in-progress` && /^#[0-9A-Fa-f]{6}$/.test(l.color)),
 			sync.out + sync.err
 		);
 
@@ -188,8 +179,7 @@ async function tier(name) {
 		);
 		check(
 			'set-status moves the issue and its status label',
-			(await t('set-status', first, 'in-progress')).code === 0 &&
-				fake.labelsOf(1).includes(`status${labelSep}in-progress`)
+			(await t('set-status', first, 'in-progress')).code === 0 && fake.labelsOf(1).includes(`status:in-progress`)
 		);
 		check(
 			'add-label reaches GitLab',
@@ -201,25 +191,24 @@ async function tier(name) {
 				fake.notes(1).some(n => n.body === 'hello from the smoke')
 		);
 		const link = await t('link', second, 'blockedBy', first);
-		if (name === 'free') {
-			check(
-				'link blockedBy is refused on free with the tier in the hint',
-				link.code === 1 && /Premium/.test(link.out + link.err) && fake.links(2).length === 0,
-				link.out + link.err
-			);
-		} else {
-			check(
-				'link blockedBy works on premium (is_blocked_by)',
-				link.code === 0 &&
-					JSON.stringify(fake.links(2)) === JSON.stringify([{ iid: 1, type: 'is_blocked_by' }]),
-				link.out + link.err
-			);
-		}
+		check(
+			'link blockedBy is refused with the paid tier in the hint',
+			link.code === 1 &&
+				(link.out + link.err).includes('requires a paid GitLab tier, which task does not support') &&
+				fake.links(2).length === 0,
+			link.out + link.err
+		);
 		const parent = await t('set-parent', second, first);
 		check(
-			'set-parent is refused (hierarchy), nothing written for it',
-			parent.code === 1 && /hierarchy/.test(parent.out + parent.err),
+			'set-parent converts the issue to a native Task and puts it under the other (GraphQL work items)',
+			parent.code === 0 && fake.issue(2)?.issueType === 'task' && fake.issue(2)?.parentIid === 1,
 			parent.out + parent.err
+		);
+		const detach = await t('remove-parent', second);
+		check(
+			'remove-parent detaches it (the native type stays Task)',
+			detach.code === 0 && fake.issue(2)?.parentIid === null && fake.issue(2)?.issueType === 'task',
+			detach.out + detach.err
 		);
 
 		console.log('reads back');
@@ -248,7 +237,7 @@ async function tier(name) {
 			refused.code === 1 && /tombstone/.test(refused.out + refused.err) && fake.issue(2)?.state === 'opened',
 			refused.out + refused.err
 		);
-		fs.writeFileSync(gl.configFile, gitlabConfig(fake, name, '        fills:\n            delete: tombstone\n'));
+		fs.writeFileSync(gl.configFile, gitlabConfig(fake, '        fills:\n            delete: tombstone\n'));
 		const removed = await t('delete', second);
 		check(
 			'delete with the tombstone fill closes and labels the issue',
@@ -257,7 +246,7 @@ async function tier(name) {
 		);
 		const after = JSON.parse((await t('list', '--all', '--json')).out);
 		check('the tombstone is hidden from list', after.length === 1, JSON.stringify(after));
-		fs.writeFileSync(gl.configFile, gitlabConfig(fake, name));
+		fs.writeFileSync(gl.configFile, gitlabConfig(fake));
 
 		console.log('migrate');
 		const a = JSON.parse((await run(src, 'new', 'Migrated one', '--json')).out).id;
@@ -307,8 +296,7 @@ async function tier(name) {
 }
 
 try {
-	await tier('free');
-	await tier('premium');
+	await smoke();
 } finally {
 	fs.rmSync(world, { recursive: true, force: true });
 }
