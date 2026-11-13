@@ -41,15 +41,15 @@ describe('publish workflow', () => {
 		expect(smoke['runs-on']).toContain('matrix.os');
 	});
 
-	// Two consecutive runs ended `cancelled` on the macOS job (cause unknown: runner, billing or label) and nothing was
-	// published, leaving users on the broken package. Informative until the macOS runner is confirmed to start.
-	it('publish does not wait for macos-smoke (informative until the macOS runner is confirmed to start)', () => {
-		expect([workflow.jobs.publish.needs].flat()).toEqual(['build-and-test']);
+	// The `macos-14` label never got a runner (two runs cancelled, nothing published); `macos-latest` does (run 43511114515,
+	// smoke green), so the job gates publish again: a packed CLI failing on Apple silicon must not ship.
+	it('publish waits for macos-smoke', () => {
+		expect([workflow.jobs.publish.needs].flat()).toEqual(['build-and-test', 'macos-smoke']);
 	});
 
-	it('macos-smoke is informative: continue-on-error, needs only build-and-test, still runs on the packed artifact', () => {
+	it('macos-smoke blocks (no continue-on-error), needs only build-and-test, runs on the packed artifact', () => {
 		const smoke = workflow.jobs['macos-smoke'];
-		expect(smoke['continue-on-error']).toBe(true);
+		expect(smoke['continue-on-error']).toBeUndefined();
 		expect([smoke.needs].flat()).toEqual(['build-and-test']);
 		const steps = smoke.steps ?? [];
 		expect(steps.some(st => st.uses?.startsWith('actions/download-artifact'))).toBe(true);
