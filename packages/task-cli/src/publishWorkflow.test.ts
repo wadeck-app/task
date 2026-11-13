@@ -36,8 +36,8 @@ describe('publish workflow', () => {
 		const smoke = workflow.jobs['macos-smoke'];
 		expect(smoke, 'job macos-smoke').toBeDefined();
 		const os = smoke.strategy?.matrix?.os ?? [];
-		expect(os).toContain('macos-14');
-		expect(os).toEqual(['macos-14']);
+		expect(os).toContain('macos-latest');
+		expect(os).toEqual(['macos-latest']);
 		expect(smoke['runs-on']).toContain('matrix.os');
 	});
 

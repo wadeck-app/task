@@ -96,7 +96,7 @@ jobs:
     # Informative until the macOS runner is confirmed to start; then gate publish on it again. Two consecutive runs
     # ended `cancelled` on this job (cause unknown: runner availability, billing or label) and, because publish waited
     # for it, nothing was published. It runs in parallel with publish and never blocks it.
-    # Apple silicon only (the owner does not support Intel Macs): macos-14 is arm64 (label unverified from here, check
+    # Apple silicon only (the owner does not support Intel Macs): macos-latest is arm64 and gets a runner in the project repo (macos-14 was cancelled twice here; check
     # against the GitHub docs if the job never starts).
     macos-smoke:
         needs: build-and-test
@@ -104,7 +104,7 @@ jobs:
         strategy:
             fail-fast: false
             matrix:
-                os: [macos-14]
+                os: [macos-latest]
         runs-on: ${{ matrix.os }}
         steps:
             - uses: actions/checkout@v5
