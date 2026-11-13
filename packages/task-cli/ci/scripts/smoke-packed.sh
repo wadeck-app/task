@@ -68,6 +68,16 @@ npm install -g --prefix "$PREFIX" --omit=optional --no-audit --no-fund "$TGZ"/wa
 
 BIN="$PREFIX/bin/$CLI"
 [ -e "$BIN" ] || { echo "smoke-packed: $BIN was not created by the install" >&2; exit 1; }
+# task-specific (not in the ci-templates copy): --omit=optional above hides a dependency problem a real install has. A
+# prerelease version (edge builds YYYY.MM.DD-NNN-sha8) does not satisfy a range such as ">=0.0.0-0", so npm would install
+# NO platform package: every optionalDependency of the dist package must be pinned to the exact build version.
+DIST_JSON="$PREFIX/lib/node_modules/@wadeck-app/${CLI}-cli/package.json"
+[ -f "$DIST_JSON" ] || { echo "smoke-packed: $DIST_JSON not found" >&2; exit 1; }
+if ! grep -q "\"@wadeck-app/${CLI}-cli-$PLATFORM\": \"$VERSION\"" "$DIST_JSON"; then
+  echo "smoke-packed: optionalDependencies of $DIST_JSON do not pin @wadeck-app/${CLI}-cli-$PLATFORM to $VERSION (a range a prerelease does not satisfy makes npm install no platform package):" >&2
+  grep -n "optionalDependencies" -A5 "$DIST_JSON" >&2 || true
+  exit 1
+fi
 PLATFORM_DIR="$PREFIX/lib/node_modules/@wadeck-app/${CLI}-cli-$PLATFORM"
 [ -d "$PLATFORM_DIR" ] || { echo "smoke-packed: platform package $PLATFORM_DIR not installed" >&2; exit 1; }
 echo "--- installed launcher"

@@ -73,6 +73,9 @@ jobs:
               run: bash packages/task-cli/ci/scripts/generate-platform-packages.sh task:app-module/
               env:
                   PLATFORMS: win32-x64,darwin-arm64,linux-x64
+                  # Pins each platform package in the dist package to the build version: a prerelease version (edge builds
+                  # YYYY.MM.DD-NNN-sha8) does not satisfy a ">=0.0.0-0" range, so npm installed no platform package at all.
+                  PKG_VERSION: ${{ steps.version.outputs.version }}
 
             - name: Copy artifacts to platform packages
               run: bash packages/task-cli/ci/scripts/copy-binaries.sh

@@ -21,6 +21,10 @@
 #   PLATFORMS       Comma list of platforms to generate and support, among win32-x64, darwin-arm64, darwin-x64, linux-x64
 #                   (default: all three). The same list is baked into the shim as {{PLATFORMS}}: any other host
 #                   is refused by the shim with "unsupported platform". Set it explicitly in every consumer.
+#   PKG_VERSION     Exact version of the build (the one `npm pkg set version` will stamp). The dist package pins each
+#                   platform package to it. Without it the range is ">=0.0.0-0", which a PRERELEASE version (every
+#                   edge build, YYYY.MM.DD-NNN-sha8) does NOT satisfy: npm then installs no platform package and
+#                   only a lazy install by the shim (`start`) brings the launcher. Set it in every consumer.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,6 +32,13 @@ TEMPLATES_DIR="${TEMPLATES_DIR:-${SCRIPT_DIR}/../templates}"
 REGISTRY="${REGISTRY:-https://npm.pkg.github.com/}"
 PKG_SCOPE="${PKG_SCOPE:-wadeck-app}"
 PLATFORMS="${PLATFORMS:-win32-x64,darwin-arm64,darwin-x64}"
+PKG_VERSION="${PKG_VERSION:-}"
+if [[ -z "$PKG_VERSION" ]]; then
+  OPTIONAL_RANGE=">=0.0.0-0"
+  echo "WARNING: PKG_VERSION is not set: the platform packages are required as '${OPTIONAL_RANGE}', a range that prerelease versions (edge builds YYYY.MM.DD-NNN-sha8) do NOT satisfy, so npm will not install them. Set PKG_VERSION to the version of the build." >&2
+else
+  OPTIONAL_RANGE="$PKG_VERSION"
+fi
 
 # platform_os_cpu <key>: prints "<os> <cpu>" for a supported platform key, fails loudly otherwise.
 platform_os_cpu() {
@@ -97,7 +108,7 @@ generate_dist() {
   done
   local optional_json="" sep=""
   for p in "${PLATFORM_LIST[@]}"; do
-    optional_json+="${sep}"$'\n'"		\"@${PKG_SCOPE}/${cli}-cli-${p}\": \">=0.0.0-0\""
+    optional_json+="${sep}"$'\n'"		\"@${PKG_SCOPE}/${cli}-cli-${p}\": \"${OPTIONAL_RANGE}\""
     sep=","
   done
   local dir="packages/${cli}-cli-dist"

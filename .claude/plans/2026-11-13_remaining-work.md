@@ -29,8 +29,8 @@ Report in French, from files read, not from memory: what was verified live (614 
 
 - Task page: pick a winner per A/B row (description-style, subtask-add, subtask-list, link-add, link-group, activity-filter, activity-composer). Then bake, delete losing options/fragments/tests, delete `.claude/screenshots/`.
 - Go to take `shared-updater` (swap-window MODULE_NOT_FOUND during self-update; recommendation: task-owner, staging prefix + rename).
-- macos-smoke: task used `macos-14` (cancelled, no runner). project uses `macos-latest` and gets one. Next: try `macos-latest` in `publish.yml` + `publishWorkflow.test.ts` (it pins `macos-14`), keep informative until one run passes, then gate `publish` on it.
-- Linux support for the task CLI (project-owner proposal, ci-templates c3bec19 pushed, project 0759319 published linux-x64): CONTRADICTS the recorded owner decision in CLAUDE.md "Updater" (win32-x64 and darwin-arm64 ONLY, no partial support). Not applied: needs the user's explicit go. If yes, the patch list is: bump `@wadeck-app/singleton-daemon-kit` (>= 2026.10.31-103), `copy-binaries.sh` linux-x64, `publish.yml` PLATFORMS/loops/calls, re-sync `generate-platform-packages.sh` + `smoke-packed.sh` from c3bec19 (keep the extra `cli version` check with COMBINE=1), `binShim.unit.test.ts` + `publishWorkflow.test.ts` + CLAUDE.md. Heads-up: the first Linux publish makes the update check fail once (previous version refuses Linux).
+- DONE: macos-latest + Linux (user go 2026-11-13): task 2026.11.13-150 published with linux-x64, `packed-smoke` green on macos-latest and ubuntu-latest, publish stopped only by a real smoke failure (macos-latest sometimes gets no runner: 15 min then cancelled). Section 1 (GitLab commit b775cc3) also DONE; section 2 (GitLab bilan) delivered to the user in chat.
+- Open: shared-cli `cli version` prints nothing offline (other repo; tell claude-owner/owner of shared-cli).
 - DONE by project-owner: `ci-templates` 0099d00 is pushed to origin/main; project 272a2d9 published 2026.11.13-028 with the hardened shim on a real macOS runner (`macos-latest`, registry install OK, darwin binary 0755).
 
 ## 5. Peers
