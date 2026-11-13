@@ -285,6 +285,9 @@ describe('GitHubClient: failures are typed and tell what to do', () => {
 		expect(auth.reason).toBe('forbidden');
 		expect(auth.message).toContain('Resource not accessible by personal access token');
 		expect(auth.hint).toContain('issues=read');
+		// The same header, in the words of the token page, with the path to that page.
+		expect(auth.hint).toContain('Issues: Read (GitHub says: issues=read)');
+		expect(auth.hint).toContain('Personal access tokens > Fine-grained tokens');
 	});
 
 	it('an exhausted quota is a RateLimitedError with the reset instant, and nothing more is sent', async () => {

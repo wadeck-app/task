@@ -471,17 +471,37 @@ describe('strategy check', () => {
 			['token', 'ok'],
 			['reachable', 'ok'],
 			['auth', 'ok'],
+			['metadata', 'ok'],
 			['repo', 'ok'],
 			['expiry', 'ok'],
-			['issues', 'ok'],
+			['read', 'ok'],
 			['limits', 'ok'],
 			['statuses', 'ok'],
 			['labels', 'ok'],
+			['labels-write', 'ok'],
 			['hierarchy', 'ok'],
 			['dependencies', 'ok'],
 			['search', 'ok'],
+			['write', 'ok'],
+			['delete', 'ok'],
 			['writes', 'ok'],
 		]);
+		expect(line(result.lines, 'metadata')!.text).toBe(
+			'enabled: find the repository (needs Metadata: Read) [GET /repos/:owner/:repo]'
+		);
+		expect(line(result.lines, 'read')!.text).toBe(
+			'enabled: read tasks, comments, history, sub-issues and dependencies (needs Issues: Read) [GET /repos/:owner/:repo/issues?per_page=5&state=all]'
+		);
+		expect(line(result.lines, 'labels-write')!.text).toMatch(
+			/^not tested \(cannot be probed without changing data\); needs Issues: Read and write: /
+		);
+		// A push flag is the role of the user, not the permission of the token: only a real write proves it.
+		expect(line(result.lines, 'write')!.text).toMatch(
+			/^not tested \(the check never changes data; the repository reports push: true for this user\); needs Issues: Read and write: /
+		);
+		expect(line(result.lines, 'delete')!.text).toMatch(
+			/^not used: fills.delete: hard is not declared; it would need Issues: Read and write and the repository administrator role/
+		);
 		const writes = line(result.lines, 'writes')!;
 		expect(writes.text).toContain('one at a time');
 		expect(writes.text).toContain('not atomic');
@@ -527,10 +547,15 @@ describe('strategy check', () => {
 
 		const result = await checkStrategy(target(config(), { GH_TOKEN_FOR_TESTS: fake.token }));
 
-		const writes = line(result.lines, 'writes')!;
-		expect(writes.status).toBe('warn');
-		expect(writes.text).toContain('cannot write');
-		expect(writes.fix).toContain('Issues: Read and write');
+		const write = line(result.lines, 'write')!;
+		expect(write.status).toBe('warn');
+		expect(write.text).toMatch(
+			/^disabled \(missing Issues: Read and write; the repository reports push: false\): /
+		);
+		expect(write.fix).toContain('Issues: Read and write');
+		expect(write.fix).toContain('Fine-grained tokens');
+		// The pace and the risk of a write stay in their own line, with no second warning.
+		expect(line(result.lines, 'writes')!.status).toBe('ok');
 		expect(result.ok).toBe(true);
 	});
 
@@ -543,10 +568,24 @@ describe('strategy check', () => {
 			target(config('        fills:\n            delete: hard\n'), { GH_TOKEN_FOR_TESTS: fake.token })
 		);
 
-		const writes = line(result.lines, 'writes')!;
-		expect(writes.status).toBe('warn');
-		expect(writes.text).toContain('delete: hard');
-		expect(writes.fix).toContain('use: tombstone');
+		const del = line(result.lines, 'delete')!;
+		expect(del.status).toBe('warn');
+		expect(del.text).toMatch(
+			/^disabled \(missing the repository administrator role; the repository reports admin: false\): /
+		);
+		expect(del.fix).toContain('use: tombstone');
+		expect(line(result.lines, 'writes')!.status).toBe('ok');
+	});
+
+	it('fills.delete: hard on an administrator is enabled, on a project without the fill the row says it is not used', async () => {
+		fake.addIssue({ title: 'x' });
+
+		const hard = await checkStrategy(target(config('        fills:\n            delete: hard\n')));
+
+		expect(line(hard.lines, 'delete')).toMatchObject({ status: 'ok' });
+		expect(line(hard.lines, 'delete')!.text).toMatch(
+			/^enabled: delete tasks for good .*\(needs Issues: Read and write and the repository administrator role\)/
+		);
 	});
 
 	it('the labels a tombstone delete needs are counted with the others', async () => {
@@ -608,9 +647,12 @@ describe('strategy check', () => {
 
 		const result = await checkStrategy(target(config()));
 
-		const issues = line(result.lines, 'issues')!;
-		expect(issues.status).toBe('error');
-		expect(issues.fix).toContain('issues=read');
+		const read = line(result.lines, 'read')!;
+		expect(read.status).toBe('error');
+		expect(read.text).toMatch(/^disabled \(missing Issues: Read\): read tasks, /);
+		expect(read.fix).toContain('issues=read');
+		expect(read.fix).toContain('Fine-grained tokens');
+		expect(result.ok).toBe(false);
 	});
 
 	it('an expiring token is a warning with the date, an expired one an error', async () => {

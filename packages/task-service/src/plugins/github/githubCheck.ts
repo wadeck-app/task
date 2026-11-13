@@ -9,6 +9,8 @@ import {
 } from '@wadeck-app/task-core';
 
 import type { CheckLine, DeclaredFills, ProjectFacts } from '../kinds.js';
+import { FINE_GRAINED_PERMISSIONS_DOC, requirementFor } from './credentialRequirements.js';
+import type { GitHubCredentialRequirement } from './credentialRequirements.js';
 import { wantedLabels } from './githubLabels.js';
 import { GitHubHttpError } from './githubClient.js';
 import type { GitHubClient } from './githubClient.js';
@@ -58,8 +60,36 @@ export function sendsTokenInClear(baseUrl: string): boolean {
 	return url.protocol === 'http:' && !isLoopback(url.hostname);
 }
 
-/** The line a failed probe becomes. */
-function failureLine(name: string, error: unknown, input: CheckInput): CheckLine {
+/** What a row needs, in the words of the token page (and the role of the user, when it is a role). */
+function needs(row: GitHubCredentialRequirement): string {
+	const role = row.role === undefined ? [] : [`the ${row.role} role`];
+	return [...row.fineGrained, ...role].join(' and ');
+}
+
+function enabled(row: GitHubCredentialRequirement): CheckLine {
+	return { name: row.key, status: 'ok', text: `enabled: ${row.title} (needs ${needs(row)}) [${row.probe.request}]` };
+}
+
+/** A row that only a real change could prove: never a warning, the first real use reports it. */
+function notTested(row: GitHubCredentialRequirement, why: string): CheckLine {
+	return { name: row.key, status: 'ok', text: `not tested (${why}); needs ${needs(row)}: ${row.title}` };
+}
+
+/** A capability the token (or its user) cannot use: a warning, an error for a row without which nothing works. */
+function disabled(row: GitHubCredentialRequirement, missing: string, fix: string): CheckLine {
+	return {
+		name: row.key,
+		status: row.required ? 'error' : 'warn',
+		text: `disabled (missing ${missing}): ${row.title}`,
+		fix,
+	};
+}
+
+/** The line a failed probe becomes. With a `row`, a refused permission is that row disabled. */
+function failureLine(name: string, error: unknown, input: CheckInput, row?: GitHubCredentialRequirement): CheckLine {
+	if (row !== undefined && error instanceof BackendAuthError && error.reason === 'forbidden') {
+		return disabled(row, row.fineGrained.join(', '), error.hint);
+	}
 	if (error instanceof BackendUnreachableError || error instanceof BackendTimeoutError) {
 		return { name: 'reachable', status: 'error', text: error.message, fix: error.hint };
 	}
@@ -142,30 +172,59 @@ function describeMap(settings: GitHubSettings): string {
 }
 
 /**
- * What a write costs and risks, and whether this token can make one. Writes go one at a time, at least writeSpacingSeconds apart;
- * GitHub has no conditional write, so a change made by someone else in the second between our read and our write can be overwritten.
+ * The `write` row. No write is sent to find out: the flag `permissions.push` of the repository answer is the role of the USER, so
+ * `false` proves the writes fail, `true` proves nothing about a fine-grained token weaker than its user (not tested).
  */
-function writesLine(repo: RepoInfo, input: CheckInput): CheckLine {
-	const { settings, fills } = input;
+function writeLine(repo: RepoInfo, input: CheckInput): CheckLine {
+	const row = requirementFor('write');
+	const push = repo.permissions?.push;
+	if (push === false) {
+		return disabled(
+			row,
+			`${row.fineGrained.join(', ')}; the repository reports push: false`,
+			`Give the token Issues: Read and write on ${input.settings.repo.full} (Settings > Developer settings > Personal access tokens > Fine-grained tokens > the token > Repository permissions), or use the token of a user who can write there, then run this check again. Reads work, every write will fail. It is read from ${input.tokenHint}. Details: ${FINE_GRAINED_PERMISSIONS_DOC}`
+		);
+	}
+	return notTested(
+		row,
+		push === true
+			? 'the check never changes data; the repository reports push: true for this user'
+			: 'the check never changes data; the repository answer has no permissions flag for this token'
+	);
+}
+
+/** The `delete` row, relevant only with `fills.delete: hard`: the user of the token must administer the repository. */
+function deleteLine(repo: RepoInfo, input: CheckInput): CheckLine {
+	const row = requirementFor('delete');
+	if (input.fills['delete']?.use !== 'hard') {
+		return {
+			name: row.key,
+			status: 'ok',
+			text: `not used: fills.delete: hard is not declared; it would need ${needs(row)}: ${row.title}`,
+		};
+	}
+	const admin = repo.permissions?.admin;
+	if (admin === false) {
+		return disabled(
+			row,
+			`the ${row.role} role; the repository reports admin: false`,
+			'Use the token of an administrator, or declare "delete: { use: tombstone, fidelity: degrade }" in strategy.options.fills (the issue is closed and hidden instead of deleted)'
+		);
+	}
+	return admin === true
+		? enabled(row)
+		: notTested(row, 'the repository answer has no permissions flag for this token');
+}
+
+/**
+ * What a write costs and risks. Writes go one at a time, at least writeSpacingSeconds apart; GitHub has no conditional write, so a
+ * change made by someone else in the second between our read and our write can be overwritten.
+ */
+function writesLine(input: CheckInput): CheckLine {
+	const { settings } = input;
 	const quota = input.client.rateLimit('core');
 	const left = quota === undefined ? '' : ` (${quota.remaining} of ${quota.limit} requests left this hour)`;
 	const budget = `a write is sent one at a time, ${settings.writeSpacingSeconds} s apart, and costs one request of the hourly quota${left}; optimistic, not atomic: GitHub has no conditional write, so a change made on GitHub in the second between the read and the write can be overwritten`;
-	if (repo.permissions?.push === false) {
-		return {
-			name: 'writes',
-			status: 'warn',
-			text: `this token cannot write issues on ${settings.repo.full} (the repository reports push: false); reads work, every write will fail`,
-			fix: `Give the token Issues: Read and write on ${settings.repo.full} (Settings > Developer settings > Fine-grained tokens), then run this check again. It is read from ${input.tokenHint}.`,
-		};
-	}
-	if (fills['delete']?.use === 'hard' && repo.permissions?.admin === false) {
-		return {
-			name: 'writes',
-			status: 'warn',
-			text: `fills.delete: hard needs a repository administrator, and the user of this token is not one: deleting a task will fail; ${budget}`,
-			fix: 'Use the token of an administrator, or declare "delete: { use: tombstone, fidelity: degrade }" in strategy.options.fills (the issue is closed and hidden instead of deleted)',
-		};
-	}
 	return { name: 'writes', status: 'ok', text: budget };
 }
 
@@ -185,6 +244,7 @@ export async function checkGitHub(input: CheckInput): Promise<CheckLine[]> {
 	lines.push(
 		{ name: 'reachable', status: 'ok', text: `${host} answered` },
 		{ name: 'auth', status: 'ok', text: 'the token is accepted' },
+		enabled(requirementFor('metadata')),
 		{
 			name: 'repo',
 			status: repo.archived === true ? 'warn' : 'ok',
@@ -215,9 +275,9 @@ export async function checkGitHub(input: CheckInput): Promise<CheckLine[]> {
 			cache: false,
 		});
 		first = answer.body.find(issue => issue.pull_request === undefined || issue.pull_request === null)?.number;
-		lines.push({ name: 'issues', status: 'ok', text: 'Issues are readable with this token' });
+		lines.push(enabled(requirementFor('read')));
 	} catch (error) {
-		lines.push(failureLine('issues', error, input));
+		lines.push(failureLine('issues', error, input, requirementFor('read')));
 		return lines;
 	}
 
@@ -275,9 +335,10 @@ export async function checkGitHub(input: CheckInput): Promise<CheckLine[]> {
 						}
 			);
 		} catch (error) {
-			lines.push(failureLine('labels', error, input));
+			lines.push(failureLine('labels', error, input, requirementFor('labels')));
 		}
 	}
+	lines.push(notTested(requirementFor('labels-write'), 'cannot be probed without changing data'));
 
 	if (first === undefined) {
 		lines.push({
@@ -322,7 +383,9 @@ export async function checkGitHub(input: CheckInput): Promise<CheckLine[]> {
 			status: 'ok',
 			text: 'native Search API: 30 requests a minute, a new issue is searchable after a few seconds (not read-your-writes); find and tree read the full list, which is exact',
 		},
-		writesLine(repo, input)
+		writeLine(repo, input),
+		deleteLine(repo, input),
+		writesLine(input)
 	);
 	return lines;
 }

@@ -13,6 +13,7 @@ import {
 } from '@wadeck-app/task-core';
 
 import type { ReadNotice } from '../kinds.js';
+import { deniedPermissionHint } from './credentialRequirements.js';
 import type { CacheEntry, RecentKind, ResponseCache } from './responseCache.js';
 
 export interface GitHubClientOptions {
@@ -640,7 +641,7 @@ export class GitHubClient {
 				'github',
 				'forbidden',
 				`GitHub refused the request (403${detail === '' ? '' : ` ${detail}`})`,
-				`The token needs ${needed === null ? access : `these permissions (${needed})`} on ${this.options.repo}; edit the token in GitHub (Settings > Developer settings > Fine-grained tokens), or use one that has them. It is read from ${this.options.tokenHint}.`
+				deniedPermissionHint(needed ?? undefined, this.options.repo, this.options.tokenHint, writing)
 			);
 		}
 		if (status >= 500) {

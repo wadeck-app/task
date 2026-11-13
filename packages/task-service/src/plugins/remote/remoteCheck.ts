@@ -12,6 +12,8 @@ import type { BackendCapabilities, ServerInfo } from '@wadeck-app/task-core';
 
 import type { CheckLine, ProjectFacts } from '../kinds.js';
 import { serverServes } from './RemoteBackend.js';
+import { remoteRequirementFor } from './remoteRequirements.js';
+import type { RemoteRequirement } from './remoteRequirements.js';
 
 export interface RemoteCheckInput {
 	/** `GET /v1/info`. */
@@ -27,13 +29,29 @@ export interface RemoteCheckInput {
 
 const SLOW_MS = 500;
 
-function failureLine(name: string, error: unknown): CheckLine {
+function rangeText(range: { min: number; max: number }): string {
+	return range.min === range.max ? String(range.max) : `${range.min}..${range.max}`;
+}
+
+/** A row that is enabled: the title, then what was seen. */
+function enabled(row: RemoteRequirement, seen = ''): CheckLine {
+	return { name: row.key, status: 'ok', text: `enabled: ${row.title}${seen}` };
+}
+
+/** A row the client cannot test: only the other machine knows. */
+function notTested(row: RemoteRequirement): CheckLine {
+	return { name: row.key, status: 'ok', text: `not tested (${row.probe.request}); needs ${row.needs}: ${row.title}` };
+}
+
+/** A row that failed: `disabled (<why>): <title>: <what the error said>`, with the fix of the error, else the one of the row. */
+function disabled(row: RemoteRequirement, why: string, error: unknown): CheckLine {
 	const hint = (error as { hint?: unknown }).hint;
+	const message = error instanceof Error ? error.message : String(error);
 	return {
-		name,
-		status: 'error',
-		text: error instanceof Error ? error.message : String(error),
-		...(typeof hint === 'string' ? { fix: hint } : {}),
+		name: row.key,
+		status: row.required ? 'error' : 'warn',
+		text: `disabled (${why}): ${row.title}: ${message}`,
+		fix: typeof hint === 'string' ? hint : row.fix,
 	};
 }
 
@@ -62,56 +80,72 @@ export async function checkRemote(input: RemoteCheckInput): Promise<CheckLine[]>
 	try {
 		info = await input.info();
 	} catch (error) {
-		if (error instanceof RemoteUnauthorizedError) return [failureLine('auth', error)];
-		if (error instanceof RemoteIncompatibleError) return [failureLine('protocol', error)];
-		if (error instanceof RemoteUnreachableError || error instanceof RemoteTimeoutError) {
-			return [failureLine('reachable', error)];
+		if (error instanceof RemoteUnauthorizedError) {
+			return [disabled(remoteRequirementFor('auth'), 'refused by the server', error)];
 		}
-		return [failureLine('reachable', error)];
+		if (error instanceof RemoteIncompatibleError) {
+			return [
+				disabled(
+					remoteRequirementFor('protocol'),
+					error.serverProtocol === undefined
+						? 'the server does not know this request'
+						: `server speaks ${rangeText(error.serverProtocol)}, this task speaks ${PROTOCOL_VERSION}`,
+					error
+				),
+			];
+		}
+		const why = error instanceof RemoteTimeoutError ? 'no answer in time' : 'no answer';
+		if (error instanceof RemoteUnreachableError || error instanceof RemoteTimeoutError) {
+			return [disabled(remoteRequirementFor('reachable'), why, error)];
+		}
+		return [disabled(remoteRequirementFor('reachable'), 'unexpected failure', error)];
 	}
 	const elapsed = input.now() - startedAt;
 	const slow = input.slowMs ?? SLOW_MS;
+	const reachable = remoteRequirementFor('reachable');
 	const lines: CheckLine[] = [
 		elapsed > slow
 			? {
 					name: 'reachable',
 					status: 'warn',
-					text: `GET /v1/info took ${elapsed} ms`,
+					text: `${reachable.title}, but slowly: GET /v1/info took ${elapsed} ms`,
 					fix: 'Every command makes several requests: a slow link makes each of them slow. Prefer a wired or closer network',
 				}
-			: { name: 'reachable', status: 'ok', text: `GET /v1/info answered in ${elapsed} ms (${input.url})` },
-		{ name: 'auth', status: 'ok', text: 'the server accepted the token' },
+			: enabled(reachable, ` (GET /v1/info, ${elapsed} ms, ${input.url})`),
+		enabled(remoteRequirementFor('auth')),
 	];
 
 	const { min, max } = info.protocol;
+	const protocol = remoteRequirementFor('protocol');
 	lines.push(
 		min <= PROTOCOL_VERSION && PROTOCOL_VERSION <= max
-			? {
-					name: 'protocol',
-					status: 'ok',
-					text: `server speaks ${min === max ? String(max) : `${min}..${max}`}, this task speaks ${PROTOCOL_VERSION} (task-serve ${info.server.version})`,
-				}
-			: failureLine('protocol', new RemoteIncompatibleError(input.url, PROTOCOL_VERSION, { min, max }))
+			? enabled(
+					protocol,
+					` (server speaks ${rangeText(info.protocol)}, this task speaks ${PROTOCOL_VERSION}; task-serve ${info.server.version})`
+				)
+			: disabled(
+					protocol,
+					`server speaks ${rangeText(info.protocol)}, this task speaks ${PROTOCOL_VERSION}`,
+					new RemoteIncompatibleError(input.url, PROTOCOL_VERSION, { min, max })
+				)
 	);
 
 	const served = `"${info.project.name}"${info.project.id === undefined ? '' : ` (${info.project.id})`}`;
+	const project = remoteRequirementFor('project');
 	if (input.expectedProject === undefined) {
-		lines.push({
-			name: 'project',
-			status: 'ok',
-			text: `the server serves ${served} (strategy.options.project is not set: whatever the server serves is used)`,
-		});
+		lines.push(
+			enabled(
+				project,
+				`: the server serves ${served} (strategy.options.project is not set: whatever the server serves is used)`
+			)
+		);
 	} else if (serverServes(input.expectedProject, info.project)) {
-		lines.push({
-			name: 'project',
-			status: 'ok',
-			text: `the server serves ${served}, as strategy.options.project says`,
-		});
+		lines.push(enabled(project, `: the server serves ${served}, as strategy.options.project says`));
 	} else {
 		lines.push({
 			name: 'project',
 			status: 'error',
-			text: `the server serves ${served}, not "${input.expectedProject}" (strategy.options.project)`,
+			text: `disabled (the server serves ${served}, not "${input.expectedProject}"): ${project.title}`,
 			fix: `Point transport.options.url at the server of "${input.expectedProject}", or change strategy.options.project to "${info.project.name}", or remove it`,
 		});
 	}
@@ -181,5 +215,6 @@ export async function checkRemote(input: RemoteCheckInput): Promise<CheckLine[]>
 					fix: 'Restart task serve on a machine where the queue CLI is installed if flows or subscribers depend on task events',
 				}
 	);
+	lines.push(notTested(remoteRequirementFor('server-token')));
 	return lines;
 }

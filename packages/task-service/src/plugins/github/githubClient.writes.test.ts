@@ -297,6 +297,7 @@ describe('GitHubClient: writes', () => {
 			expect(error).toBeInstanceOf(BackendAuthError);
 			expect((error as BackendAuthError).reason).toBe('forbidden');
 			expect((error as BackendAuthError).hint).toContain('issues=write');
+			expect((error as BackendAuthError).hint).toContain('Issues: Read and write (GitHub says: issues=write)');
 		} finally {
 			await readOnly.stop();
 		}

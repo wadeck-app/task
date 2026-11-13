@@ -30,6 +30,7 @@ Report in French, from files read, not from memory: what was verified live (614 
 - Task page: pick a winner per A/B row (description-style, subtask-add, subtask-list, link-add, link-group, activity-filter, activity-composer). Then bake, delete losing options/fragments/tests, delete `.claude/screenshots/`.
 - Go to take `shared-updater` (swap-window MODULE_NOT_FOUND during self-update; recommendation: task-owner, staging prefix + rename).
 - DONE: macos-latest + Linux (user go 2026-11-13): task 2026.11.13-150 published with linux-x64, `packed-smoke` green on macos-latest and ubuntu-latest, publish stopped only by a real smoke failure (macos-latest sometimes gets no runner: 15 min then cancelled). Section 1 (GitLab commit b775cc3) also DONE; section 2 (GitLab bilan) delivered to the user in chat.
+- Ask the user: a standalone threat model for `task serve` (machine-owner noticed only a CLAUDE.md paragraph exists; cleartext policy differs from flow/machine, which fail closed; task only warns).
 - Open: shared-cli `cli version` prints nothing offline (other repo; tell claude-owner/owner of shared-cli).
 - DONE by project-owner: `ci-templates` 0099d00 is pushed to origin/main; project 272a2d9 published 2026.11.13-028 with the hardened shim on a real macOS runner (`macos-latest`, registry install OK, darwin binary 0755).
 

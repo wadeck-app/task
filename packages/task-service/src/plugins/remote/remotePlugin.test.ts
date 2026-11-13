@@ -253,7 +253,15 @@ describe('strategy check on a remote project', () => {
 			['capabilities', 'ok'],
 			['statuses', 'ok'],
 			['events', 'ok'],
+			['server-token', 'ok'],
 		]);
+		expect(line(result.lines, 'reachable')!.text).toMatch(
+			/^enabled: the server answers \(GET \/v1\/info, \d+ ms, http:\/\/127\.0\.0\.1:\d+\)$/
+		);
+		expect(line(result.lines, 'auth')!.text).toBe('enabled: the server accepts the token');
+		expect(line(result.lines, 'server-token')!.text).toBe(
+			'not tested (not asked: only task serve knows its token; it refuses to start with a short one); needs server: at least 16 characters, no spaces; a token file is absolute and mode 600 on POSIX: the token of the server is strong enough'
+		);
 		expect(line(result.lines, 'project')!.text).toContain('"served" (ab12cd34)');
 		expect(result.warnings).toBe(0);
 	});
@@ -291,6 +299,10 @@ describe('strategy check on a remote project', () => {
 
 		expect(line(wrong.lines, 'auth')).toMatchObject({ status: 'error' });
 		expect(line(wrong.lines, 'auth')!.fix).toContain('task serve was started with');
+		expect(line(wrong.lines, 'auth')!.text).toMatch(
+			/^disabled \(refused by the server\): the server accepts the token: /
+		);
+		expect(line(gone.lines, 'reachable')!.text).toMatch(/^disabled \(no answer\): the server answers: /);
 		expect(line(missing.lines, 'token')).toMatchObject({ status: 'error' });
 		expect(line(missing.lines, 'backend')!.fix).toContain('export TASK_REMOTE_TOKEN');
 		expect(line(gone.lines, 'reachable')).toMatchObject({ status: 'error' });
@@ -376,6 +388,7 @@ describe('checkRemote: the lines that need a scripted server', () => {
 
 		expect(line(lines, 'protocol')).toMatchObject({ status: 'error' });
 		expect(line(lines, 'protocol')!.text).toContain('2..3');
+		expect(line(lines, 'protocol')!.text).toMatch(/^disabled \(server speaks 2..3, this task speaks 1\): /);
 		expect(line(lines, 'protocol')!.fix).toContain('Update task on this machine');
 	});
 });
