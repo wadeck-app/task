@@ -93,10 +93,10 @@ jobs:
     # Real macOS and Linux verification of the PACKED packages (nothing published, throwaway npm prefix): `task --version`,
     # `task cli version`, `task --help` must print the version / something and exit 0, with and without the platform
     # package.
-    # Gates publish: a packed CLI that fails on a real Apple silicon or Linux runner must not ship (the 0644 binary incident). The
-    # runner label matters: macos-14 never got a runner (two runs cancelled, nothing published), macos-latest does.
-    # Apple silicon only (the owner does not support Intel Macs): macos-latest is arm64 (check
-    # against the GitHub docs if the job never starts).
+    # Gates publish on a REAL failure only: a packed CLI that fails on an Apple silicon or Linux runner must not ship (the
+    # 0644 binary incident). A smoke job that never got a runner ends `cancelled` after 15 minutes (seen on macos-latest, run
+    # 43511865443, after one green run): that must not block the publish, so publish runs unless the smoke result is `failure`.
+    # Apple silicon only (the owner does not support Intel Macs): macos-latest is arm64.
     packed-smoke:
         needs: build-and-test
         strategy:
@@ -125,7 +125,7 @@ jobs:
 
     publish:
         needs: [build-and-test, packed-smoke]
-        if: github.event_name == 'push'
+        if: ${{ !cancelled() && github.event_name == 'push' && needs.build-and-test.result == 'success' && needs.packed-smoke.result != 'failure' }}
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v5

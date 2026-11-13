@@ -94,11 +94,15 @@ it.skipIf(!SUPPORTED.includes(HOST_KEY))(
 		iso = createIsolatedCliEnv();
 		const shim = installWrapper(iso, MARKER_BUNDLE);
 		const key = HOST_KEY;
-		// A text file as launcher: win32 -> not a valid executable; darwin -> exec bit set by the shim then ENOEXEC / exit.
+		// A file the OS cannot run: win32 -> text file, not a valid executable; darwin and linux -> a script whose interpreter
+		// does not exist (a plain text file would be run by /bin/sh through execvp's ENOEXEC fallback on Linux), exec bit set by the shim.
 		const file = process.platform === 'win32' ? 'task.exe' : 'task';
 		const dir = path.join(iso.npmPrefix, 'node_modules', '@wadeck-app', `task-cli-${key}`);
 		fs.mkdirSync(dir, { recursive: true });
-		fs.writeFileSync(path.join(dir, file), 'this is not a binary');
+		fs.writeFileSync(
+			path.join(dir, file),
+			process.platform === 'win32' ? 'this is not a binary' : '#!/nonexistent/interpreter\n'
+		);
 		fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"x","version":"0.0.0"}');
 
 		const result = await runIsolated(shim, ['start'], iso);

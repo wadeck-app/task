@@ -20,6 +20,7 @@ interface Step {
 }
 interface Job {
 	needs?: string | string[];
+	if?: string;
 	'continue-on-error'?: boolean;
 	'runs-on'?: string;
 	strategy?: { matrix?: { os?: string[] } };
@@ -41,10 +42,15 @@ describe('publish workflow', () => {
 		expect(smoke['runs-on']).toContain('matrix.os');
 	});
 
-	// The `macos-14` label never got a runner (two runs cancelled, nothing published); `macos-latest` does (run 43511114515,
-	// smoke green), so the job gates publish again: a packed CLI failing on Apple silicon must not ship.
-	it('publish waits for packed-smoke', () => {
-		expect([workflow.jobs.publish.needs].flat()).toEqual(['build-and-test', 'packed-smoke']);
+	// A smoke job that never got a runner ends `cancelled` after 15 minutes (macos-14 twice, macos-latest once in run
+	// 43511865443) and blocked the publish; only a real `failure` of the packed CLI must stop it.
+	it('publish waits for packed-smoke and is stopped only by its failure, not by a smoke job that got no runner', () => {
+		const publish = workflow.jobs.publish;
+		expect([publish.needs].flat()).toEqual(['build-and-test', 'packed-smoke']);
+		expect(publish.if).toContain('!cancelled()');
+		expect(publish.if).toContain("needs.build-and-test.result == 'success'");
+		expect(publish.if).toContain("needs.packed-smoke.result != 'failure'");
+		expect(publish.if).toContain("github.event_name == 'push'");
 	});
 
 	it('packed-smoke blocks (no continue-on-error), needs only build-and-test, runs on the packed artifact', () => {
