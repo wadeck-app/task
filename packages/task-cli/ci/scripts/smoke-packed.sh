@@ -28,7 +28,16 @@ case ",$PLATFORMS," in
 esac
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+# task-specific (not in the ci-templates copy): the CLI schedules a detached background updater that may still be writing
+# into the npm cache when the checks end, so `rm -rf` can fail with "Directory not empty" (run 43522571279: every check
+# passed, the script exited 1 on that alone). A failed cleanup of a throwaway directory is a warning, never a failure of
+# the smoke, and never changes the exit code of the checks.
+cleanup() {
+  local code=$?
+  rm -rf "$WORK" 2>/dev/null || { sleep 2; rm -rf "$WORK" 2>/dev/null; } || echo "smoke-packed: warning: could not remove $WORK (a background process of the CLI is still writing there)" >&2
+  exit "$code"
+}
+trap cleanup EXIT
 TGZ="$WORK/tgz"
 PREFIX="$WORK/prefix"
 HOME_DIR="$WORK/home"
