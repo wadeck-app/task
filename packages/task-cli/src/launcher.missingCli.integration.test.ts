@@ -16,7 +16,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEMPLATE = path.join(__dirname, '..', 'ci', 'templates', 'bin-launcher.js.tmpl');
 // The shim refuses unsupported hosts (Intel Macs, linux...) before it looks at the bundle; those hosts are covered in
 // binShim.platformPackage.integration.test.ts and binShim.unit.test.ts.
-const HOST_SUPPORTED = ['win32-x64', 'darwin-arm64'].includes(`${process.platform}-${process.arch}`);
+const HOST_SUPPORTED = ['win32-x64', 'darwin-arm64', 'linux-x64'].includes(`${process.platform}-${process.arch}`);
 
 let iso: IsolatedCliEnv | undefined;
 afterEach(() => {
@@ -35,7 +35,7 @@ function installWrapper(e: IsolatedCliEnv, opts: { bundle: string | undefined })
 			.readFileSync(TEMPLATE, 'utf8')
 			.replaceAll('{{CLI_NAME}}', 'task')
 			.replaceAll('{{PKG_PREFIX}}', 'task-cli')
-			.replaceAll('{{PLATFORMS}}', 'win32-x64,darwin-arm64')
+			.replaceAll('{{PLATFORMS}}', 'win32-x64,darwin-arm64,linux-x64')
 	);
 	const bundle = path.join(wrapper, 'task.cjs');
 	if (opts.bundle !== undefined) fs.writeFileSync(bundle, opts.bundle);

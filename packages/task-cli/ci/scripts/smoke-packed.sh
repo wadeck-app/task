@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke test of the PACKED CLI on the machine it runs on (CI: macOS runners). Nothing is published and the real
+# Smoke test of the PACKED CLI on the machine it runs on (CI: macOS and Linux runners). Nothing is published and the real
 # global npm is never touched: the packages are `npm pack`ed, installed into a throwaway prefix, and run from there.
 # Fails loudly (full output) when a tarball loses the exec bit, or a command exits non-zero, prints nothing on stdout,
 # or does not show the version. Registry errors on stderr are expected (the registry is a dead loopback port) and
@@ -19,7 +19,8 @@ PLATFORMS="${4:?$USAGE}"
 case "$(uname -s)-$(uname -m)" in
   Darwin-arm64)  PLATFORM="darwin-arm64" ;;
   Darwin-x86_64) PLATFORM="darwin-x64" ;;
-  *) echo "smoke-packed: unsupported host $(uname -s)-$(uname -m): this script runs on macOS (darwin-arm64 or darwin-x64)" >&2; exit 1 ;;
+  Linux-x86_64)  PLATFORM="linux-x64" ;;
+  *) echo "smoke-packed: unsupported host $(uname -s)-$(uname -m): this script runs on macOS (darwin-arm64, darwin-x64) or Linux (linux-x64)" >&2; exit 1 ;;
 esac
 case ",$PLATFORMS," in
   *",$PLATFORM,"*) ;;

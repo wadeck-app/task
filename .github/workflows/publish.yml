@@ -72,14 +72,14 @@ jobs:
             - name: Generate platform package directories
               run: bash packages/task-cli/ci/scripts/generate-platform-packages.sh task:app-module/
               env:
-                  PLATFORMS: win32-x64,darwin-arm64
+                  PLATFORMS: win32-x64,darwin-arm64,linux-x64
 
             - name: Copy artifacts to platform packages
               run: bash packages/task-cli/ci/scripts/copy-binaries.sh
 
             - name: Set version in all packages
               run: |
-                  for pkg in task-cli-dist task-cli-win32-x64 task-cli-darwin-arm64; do
+                  for pkg in task-cli-dist task-cli-win32-x64 task-cli-darwin-arm64 task-cli-linux-x64; do
                     (cd "packages/$pkg" && npm pkg set version="${{ steps.version.outputs.version }}")
                   done
 
@@ -90,19 +90,19 @@ jobs:
                   path: packages/task-cli-*
                   retention-days: 1
 
-    # Real macOS verification of the PACKED packages (nothing published, throwaway npm prefix): `task --version`,
+    # Real macOS and Linux verification of the PACKED packages (nothing published, throwaway npm prefix): `task --version`,
     # `task cli version`, `task --help` must print the version / something and exit 0, with and without the platform
     # package.
-    # Gates publish: a packed CLI that fails on a real Apple silicon runner must not ship (the 0644 binary incident). The
+    # Gates publish: a packed CLI that fails on a real Apple silicon or Linux runner must not ship (the 0644 binary incident). The
     # runner label matters: macos-14 never got a runner (two runs cancelled, nothing published), macos-latest does.
     # Apple silicon only (the owner does not support Intel Macs): macos-latest is arm64 (check
     # against the GitHub docs if the job never starts).
-    macos-smoke:
+    packed-smoke:
         needs: build-and-test
         strategy:
             fail-fast: false
             matrix:
-                os: [macos-latest]
+                os: [macos-latest, ubuntu-latest]
         runs-on: ${{ matrix.os }}
         steps:
             - uses: actions/checkout@v5
@@ -118,13 +118,13 @@ jobs:
                   path: packages
 
             - name: Restore exec bits lost by the artifact transfer
-              run: bash packages/task-cli/ci/scripts/restore-exec-bits.sh packages task win32-x64,darwin-arm64
+              run: bash packages/task-cli/ci/scripts/restore-exec-bits.sh packages task win32-x64,darwin-arm64,linux-x64
 
             - name: Smoke test the packed CLI
-              run: bash packages/task-cli/ci/scripts/smoke-packed.sh packages task "${{ needs.build-and-test.outputs.version }}" win32-x64,darwin-arm64
+              run: bash packages/task-cli/ci/scripts/smoke-packed.sh packages task "${{ needs.build-and-test.outputs.version }}" win32-x64,darwin-arm64,linux-x64
 
     publish:
-        needs: [build-and-test, macos-smoke]
+        needs: [build-and-test, packed-smoke]
         if: github.event_name == 'push'
         runs-on: ubuntu-latest
         steps:
@@ -144,11 +144,11 @@ jobs:
 
             # upload/download-artifact drop file modes: without this the published launcher is 0644 (EACCES on macOS).
             - name: Restore exec bits lost by the artifact transfer
-              run: bash packages/task-cli/ci/scripts/restore-exec-bits.sh packages task win32-x64,darwin-arm64
+              run: bash packages/task-cli/ci/scripts/restore-exec-bits.sh packages task win32-x64,darwin-arm64,linux-x64
 
             - name: Publish platform packages
               run: |
-                  for pkg in task-cli-win32-x64 task-cli-darwin-arm64; do
+                  for pkg in task-cli-win32-x64 task-cli-darwin-arm64 task-cli-linux-x64; do
                     (cd "packages/$pkg" && npm publish --tag ${{ needs.build-and-test.outputs.dist_tag }})
                   done
               env:

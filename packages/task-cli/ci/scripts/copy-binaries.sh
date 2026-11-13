@@ -8,7 +8,8 @@ TASK_DIST_BUNDLE="packages/task-cli/dist-bundle"
 
 cp "$TASK_LAUNCHER_DIST/task_windows_release.exe"  packages/task-cli-win32-x64/task.exe
 cp "$TASK_LAUNCHER_DIST/task_darwin_arm64_release"  packages/task-cli-darwin-arm64/task
-chmod +x packages/task-cli-darwin-arm64/task
+cp "$TASK_LAUNCHER_DIST/task_linux_amd64_release"  packages/task-cli-linux-x64/task
+chmod +x packages/task-cli-darwin-arm64/task packages/task-cli-linux-x64/task
 cp "$TASK_DIST_BUNDLE/task.cjs"           packages/task-cli-dist/task.cjs
 cp "$TASK_DIST_BUNDLE/task-updater.cjs"   packages/task-cli-dist/task-updater.cjs
 cp -r "$TASK_DIST_BUNDLE/app-module"      packages/task-cli-dist/app-module

@@ -40,7 +40,7 @@ function loadRun(): (deps: Deps) => number {
 	const source = readFileSync(TEMPLATE, 'utf8')
 		.replaceAll('{{CLI_NAME}}', 'task')
 		.replaceAll('{{PKG_PREFIX}}', 'task-cli')
-		.replaceAll('{{PLATFORMS}}', 'win32-x64,darwin-arm64')
+		.replaceAll('{{PLATFORMS}}', 'win32-x64,darwin-arm64,linux-x64')
 		.replace(/^#!.*\n/, '');
 	const mod: { exports: { run?: (deps: Deps) => number } } = { exports: {} };
 	// require.main is undefined here, so `require.main === module` is false: the shim does not run itself.
@@ -96,6 +96,7 @@ describe('bin shim: common path (every command but start)', () => {
 	it.each([
 		['darwin', 'arm64'],
 		['win32', 'x64'],
+		['linux', 'x64'],
 	])(
 		'%s-%s: runs `node <bundle> <args>` directly, never resolves nor installs a platform package',
 		(platform, arch) => {
@@ -180,12 +181,11 @@ describe('bin shim: common path (every command but start)', () => {
 	});
 });
 
-// Owner decision: Intel Macs (and linux, and every other platform) are not supported at all, so no command runs there,
+// Owner decision: Intel Macs, linux-arm64 and every other platform are not supported at all, so no command runs there,
 // not even the ones that only need node.
 describe('bin shim: unsupported platforms fail early and loudly', () => {
 	const platforms: [string, string][] = [
 		['darwin', 'x64'],
-		['linux', 'x64'],
 		['linux', 'arm64'],
 		['win32', 'arm64'],
 		['win32', 'ia32'],
@@ -213,7 +213,7 @@ describe('bin shim: unsupported platforms fail early and loudly', () => {
 			expect(run(t.deps)).toBe(1);
 
 			expect(t.err()).toBe(
-				`task: unsupported platform ${platform}-${arch}. Supported: win32-x64, darwin-arm64.\n`
+				`task: unsupported platform ${platform}-${arch}. Supported: win32-x64, darwin-arm64, linux-x64.\n`
 			);
 			expect(t.out()).toBe('');
 			expect(t.calls).toHaveLength(0);
@@ -241,9 +241,9 @@ describe('bin shim: unsupported platforms fail early and loudly', () => {
 		const rendered = readFileSync(TEMPLATE, 'utf8')
 			.replaceAll('{{CLI_NAME}}', 'task')
 			.replaceAll('{{PKG_PREFIX}}', 'task-cli')
-			.replaceAll('{{PLATFORMS}}', 'win32-x64,darwin-arm64');
+			.replaceAll('{{PLATFORMS}}', 'win32-x64,darwin-arm64,linux-x64');
 		expect(rendered).not.toContain('{{');
-		expect(rendered).toContain("'win32-x64,darwin-arm64'.split(',')");
+		expect(rendered).toContain("'win32-x64,darwin-arm64,linux-x64'.split(',')");
 	});
 });
 
@@ -264,6 +264,7 @@ describe('bin shim: start (the only command that needs the Go launcher)', () => 
 	it.each([
 		['darwin', 'arm64', '@wadeck-app/task-cli-darwin-arm64/task'],
 		['win32', 'x64', '@wadeck-app/task-cli-win32-x64/task.exe'],
+		['linux', 'x64', '@wadeck-app/task-cli-linux-x64/task'],
 	])('%s-%s: runs the launcher with LAUNCHER_BUNDLE_OVERRIDE and the args', (platform, arch, spec) => {
 		const run = loadRun();
 		const t = setup({ platform, arch, args: ['start', '--x'] });

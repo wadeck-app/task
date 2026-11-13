@@ -13,7 +13,7 @@ import { createIsolatedCliEnv, type IsolatedCliEnv, runIsolated } from './isolat
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEMPLATE = path.join(__dirname, '..', 'ci', 'templates', 'bin-launcher.js.tmpl');
-const SUPPORTED = ['win32-x64', 'darwin-arm64'];
+const SUPPORTED = ['win32-x64', 'darwin-arm64', 'linux-x64'];
 const HOST_KEY = `${process.platform}-${process.arch}`;
 const HOST_SUPPORTED = SUPPORTED.includes(HOST_KEY);
 
@@ -35,7 +35,7 @@ function installWrapper(e: IsolatedCliEnv, bundle: string): string {
 			.readFileSync(TEMPLATE, 'utf8')
 			.replaceAll('{{CLI_NAME}}', 'task')
 			.replaceAll('{{PKG_PREFIX}}', 'task-cli')
-			.replaceAll('{{PLATFORMS}}', 'win32-x64,darwin-arm64')
+			.replaceAll('{{PLATFORMS}}', 'win32-x64,darwin-arm64,linux-x64')
 	);
 	return shim;
 }
@@ -109,7 +109,7 @@ it.skipIf(!SUPPORTED.includes(HOST_KEY))(
 	}
 );
 
-// Intel Macs, linux and every other host are unsupported (owner decision): the real shim says so before running
+// Intel Macs, linux-arm64 and every other host are unsupported (owner decision): the real shim says so before running
 // anything. Only runs on such a host (the supported ones are covered above and by binShim.unit.test.ts, which injects
 // the platform).
 it.skipIf(HOST_SUPPORTED).each([['--version'], ['cli', 'version'], ['start']])(
@@ -122,7 +122,9 @@ it.skipIf(HOST_SUPPORTED).each([['--version'], ['cli', 'version'], ['start']])(
 
 		expect(result.status, result.stderr).toBe(1);
 		expect(result.stdout).toBe('');
-		expect(result.stderr).toBe(`task: unsupported platform ${HOST_KEY}. Supported: win32-x64, darwin-arm64.\n`);
+		expect(result.stderr).toBe(
+			`task: unsupported platform ${HOST_KEY}. Supported: win32-x64, darwin-arm64, linux-x64.\n`
+		);
 		expect(fs.readdirSync(path.join(iso.npmPrefix, 'node_modules', '@wadeck-app'))).toEqual(['task-cli']);
 	}
 );
