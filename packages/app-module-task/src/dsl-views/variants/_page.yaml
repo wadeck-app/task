@@ -7,7 +7,7 @@
 #                  `$type: PageContent` is copied verbatim (comments included).
 #   _shared.yaml   named fragments (the facts and their editors), used anywhere as `{ $use: prop.labels }` (one node, a list or
 #                  an object each; no other key next to $use).
-#   _options.yaml  the same kind of fragments, for the LOCALIZED options (one dsl-ui AbTest per element, see its header).
+#   _sections.yaml the same kind of fragments, for the four blocks of the main column (see its header).
 # A test fails when task-page.yaml is stale, so run the script after every edit here.
 #
 # ONE BASE DESIGN, merged from the GitHub, Jira and GitLab layouts (user feedback): title, then a header line (Open / Closed state,
@@ -21,13 +21,12 @@
 # No "Project" link at the top: the breadcrumb carries it (the slot task:project-header is NOT drawn on this page, only on the
 # list and the tree pages).
 #
-# Seven LOCALIZED A/B rows (dsl-ui AbTest, production renders the first option of each): see _options.yaml.
+# The former A/B rows are baked (2026-11-14): see _sections.yaml.
 #
 # Conventions for the components that run actions (dsl-ui >= 318: `onAction(name, params, { body })` sends a JSON body):
 #   params: { id: $route.id, projectParam: $sources.detail.projectParam }   (fragment params.task), plus what the component adds
 #   the value of a control travels in the body (status, type, label, parent, link, text, metadata, sub-task).
 # ============================================================================================================
-
 
 # Detail of one task (/modules/task/tasks/p/:project/:id). ":id" of the manifest path is $route.id, ":project" is
 # $route.project (the id of the project, resolved by GET /projects). The breadcrumb and the tab strip lead elsewhere: no link here.
@@ -167,7 +166,7 @@ $actions:
         reloadSources: true
 
 $type: PageContent
-# Shown above the view, so whatever the options chosen the page has the same error and empty states by construction.
+# Shown above the view, so the page has the same error and empty states by construction.
 # NO task:project-header slot here (a "Project" link at the top is forbidden: the breadcrumb is for that).
 $notices:
     # task:Notice for every message (same radius, padding and text size as the controls; wraps, unlike a Badge).
@@ -250,10 +249,10 @@ $view:
                       items:
                           # In the main column: a message that appears after a change in the sidebar must not push the sidebar down.
                           - $use: feedback.all
-                          - $use: opt.description
-                          - $use: opt.subtasks
-                          - $use: opt.links
-                          - $use: opt.activity
+                          - $use: section.description
+                          - $use: section.subtasks
+                          - $use: section.links
+                          - $use: section.activity
                 # The sidebar has no card and no background (GitHub), its properties are rows with the label on the left and the
                 # value on the right on ONE line (Jira). The pills of the top line carry no label.
                 side:

@@ -81,8 +81,8 @@ describe('TaskChecklist detach', () => {
 	});
 });
 
-describe('TaskChecklist add styles', () => {
-	it('row (default): the add field is the LAST row of the list, with a plus icon, same row height as the others', async () => {
+describe('TaskChecklist add row', () => {
+	it('the add field is the LAST row of the list, with a plus icon, same row height as the others', async () => {
 		const onAction = setup();
 
 		const rows = screen.getAllByTestId('checklist-row');
@@ -103,79 +103,10 @@ describe('TaskChecklist add styles', () => {
 		);
 	});
 
-	it('row with no sub-task: the add row alone', () => {
+	it('with no sub-task: the add row alone', () => {
 		setup({ rows: [] });
 
 		expect(screen.getByTestId('checklist-add-row')).toBeInTheDocument();
 		expect(screen.queryAllByTestId('checklist-row')).toHaveLength(0);
-	});
-
-	it('form: a heading, a field and a button, each with an icon; the button is disabled until there is a title', async () => {
-		const onAction = setup({ rows: [], addStyle: 'form' });
-		const form = screen.getByTestId('checklist-add-form');
-
-		expect(form.querySelectorAll('svg').length).toBeGreaterThanOrEqual(3);
-		expect(within(form).getByText('New sub-task')).toBeInTheDocument();
-		const button = within(form).getByRole('button', { name: 'Create sub-task' });
-		expect(button).toBeDisabled();
-		expect(screen.queryByTestId('checklist-add-row')).toBeNull();
-
-		await userEvent.setup().type(within(form).getByRole('textbox', { name: 'Add sub-task' }), 'Via form');
-		expect(button).toBeEnabled();
-		await userEvent.setup().click(button);
-
-		await waitFor(() =>
-			expect(onAction).toHaveBeenCalledWith(
-				'createSubtask',
-				{ id: 'p1', projectParam: 'proj' },
-				{ body: { description: 'Via form', parent: 'p1' } }
-			)
-		);
-	});
-
-	it('form: Enter in the field submits once', async () => {
-		const onAction = setup({ rows: [], addStyle: 'form' });
-
-		await userEvent.setup().type(screen.getByRole('textbox', { name: 'Add sub-task' }), 'Once{Enter}');
-
-		await waitFor(() => expect(onAction).toHaveBeenCalledTimes(1));
-	});
-});
-
-describe('TaskChecklist table appearance', () => {
-	it('is a table with a header row, a box, the id and title, the status and the detach button per row', async () => {
-		const onAction = setup({ appearance: 'table' });
-
-		expect(screen.getByRole('table')).toBeInTheDocument();
-		expect(screen.getAllByRole('columnheader').map(h => h.textContent)).toEqual([
-			'Done',
-			'Sub-task',
-			'Status',
-			'Actions',
-		]);
-		expect(screen.getAllByTestId('checklist-row')).toHaveLength(2);
-		expect(screen.getByRole('link', { name: 'bbb22222' })).toHaveAttribute('href', '/t/bbb');
-		expect(screen.getAllByTestId('checklist-detach')).toHaveLength(2);
-		await userEvent.setup().click(screen.getByRole('checkbox', { name: /bbb22222/ }));
-		await waitFor(() =>
-			expect(onAction).toHaveBeenCalledWith(
-				'setChildStatus',
-				{ id: 'bbb22222', projectParam: 'proj', status: 'done' },
-				{ body: { status: 'done' } }
-			)
-		);
-	});
-
-	it('the add row is the last row of the table', () => {
-		setup({ appearance: 'table' });
-
-		const body = screen.getByRole('table').querySelector('tbody')!;
-		expect(body.lastElementChild).toBe(screen.getByTestId('checklist-add-row'));
-	});
-
-	it('the table has no Actions column without detachAction', () => {
-		setup({ appearance: 'table', detachAction: undefined });
-
-		expect(screen.getAllByRole('columnheader').map(h => h.textContent)).toEqual(['Done', 'Sub-task', 'Status']);
 	});
 });

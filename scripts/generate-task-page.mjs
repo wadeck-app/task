@@ -7,11 +7,9 @@
 //   _page.yaml     text before the line `$type: PageContent` is copied verbatim (comments, $sources, $actions); after it:
 //                  `$notices` (nodes shown above the view), `$view` (the ONE base view) and `$page` (props of the PageContent).
 //   _*.yaml        { name: node }, used as `{ $use: name }` anywhere (nested uses allowed, cycles refused, a name defined twice
-//                  refused). `_shared.yaml` holds the facts and their editors, `_options.yaml` the localized A/B options.
+//                  refused). `_shared.yaml` holds the facts and their editors, `_sections.yaml` the blocks of the main column.
 //
-// The page has no experiment of its own: the options are dsl-ui `AbTest` nodes written in the fragments. An AbTest that appears
-// at several places must be declared identically each time (id, label, initial, option labels and hints), else the dock of the
-// shell reports a conflict: this script refuses it.
+// The page has no experiment any more (the A/B rows were baked on 2026-11-14).
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -65,40 +63,6 @@ function expand(value, shared, where, chain = []) {
 	return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, expand(item, shared, where, chain)]));
 }
 
-/** What the dock compares for an AbTest: label, initial, and the label and hint of each option. */
-function declarationOf(node) {
-	const variants = node.variants && typeof node.variants === 'object' ? node.variants : {};
-	return JSON.stringify([
-		node.label,
-		node.initial,
-		Object.entries(variants).map(([id, variant]) => [id, variant?.label, variant?.hint]),
-	]);
-}
-
-/** Every AbTest of the expanded tree: the ones sharing an id must be declared identically. */
-function checkAbDeclarations(tree) {
-	const seen = new Map();
-	const visit = value => {
-		if (Array.isArray(value)) {
-			value.forEach(visit);
-		} else if (value !== null && typeof value === 'object') {
-			if (value.$type === 'AbTest') {
-				const declaration = declarationOf(value);
-				const earlier = seen.get(value.id);
-				if (earlier !== undefined && earlier !== declaration) {
-					fail(
-						`AbTest "${String(value.id)}" is declared twice with different labels, initial or options: the dock would report a conflict. Make the declarations identical (only the views may differ).`
-					);
-				}
-				seen.set(value.id, declaration);
-			}
-			Object.values(value).forEach(visit);
-		}
-	};
-	visit(tree);
-	return [...seen.keys()];
-}
-
 /** The content of task-page.yaml for the fragments in `viewsDir`, nothing written. */
 export function generateTaskPage(viewsDir = DEFAULT_VIEWS_DIR) {
 	const dir = path.join(viewsDir, 'variants');
@@ -144,7 +108,6 @@ export function generateTaskPage(viewsDir = DEFAULT_VIEWS_DIR) {
 	// The page draws nothing until the task is loaded: with an unknown, unreadable or virtual project the notices above say why,
 	// and the empty frames ("Created: undefined") would only add noise.
 	const guarded = { $type: 'VerticalStack', $if: '$sources.detail.task', gap: 'gap-0', items: [expandedView] };
-	checkAbDeclarations(guarded);
 
 	// `$page`: extra props of the PageContent (maxWidth: full, so the view decides its own width).
 	const body = {

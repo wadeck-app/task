@@ -21,7 +21,6 @@ import { TONE_DOT, TONE_TEXT, toneOf } from '../tones.js';
 import type { Tone } from '../tones.js';
 import {
 	CONTROL_H,
-	FIELD_CLASS,
 	CONTROL_RADIUS,
 	CONTROL_TEXT,
 	FOCUS_RING,
@@ -73,8 +72,6 @@ export interface ActivityFeedProps {
 	emptyText?: string;
 	/** The instant "now" for the relative times (ISO 8601). Defaults to the clock. */
 	now?: string;
-	/** `tabs` (default): a tab strip. `select`: ONE native select, for a narrow column. */
-	filterAppearance?: 'tabs' | 'select';
 	/** The filter selected first; the first filter when it is not one of the filters. */
 	defaultFilter?: string;
 	/**
@@ -83,12 +80,10 @@ export interface ActivityFeedProps {
 	 */
 	commentsContent?: React.ReactNode;
 	/**
-	 * Always shown, whatever the filter (a comment composer).
+	 * Always shown above the filter, whatever the filter (a comment composer).
 	 * @slot tag:layout, tag:display, tag:composite, tag:atomic, tag:form
 	 */
 	composer?: React.ReactNode;
-	/** `bottom` (default): after the list. `top`: above the filter. */
-	composerPosition?: 'top' | 'bottom';
 }
 
 /**
@@ -200,17 +195,6 @@ const KIND_ALIAS: Record<string, string> = {
 
 function normalKind(kind: string): string {
 	return KIND_ALIAS[kind] ?? kind;
-}
-
-/** The text of the select option of a filter. */
-function selectLabel(id: string, count: number): string {
-	if (id === 'all') {
-		return `All activity (${count})`;
-	}
-	if (id === 'comments' || id === 'history') {
-		return `${filterLabel(id)} only (${count})`;
-	}
-	return `${filterLabel(id)} (${count})`;
 }
 
 function filterLabel(id: string): string {
@@ -363,11 +347,9 @@ export function ActivityFeed({
 	pageSize = 15,
 	emptyText = 'No activity yet',
 	now,
-	filterAppearance = 'tabs',
 	defaultFilter,
 	commentsContent,
 	composer,
-	composerPosition = 'bottom',
 }: ActivityFeedProps): React.ReactElement {
 	const baseId = useId();
 	const list = (Array.isArray(rows) ? rows : []).filter(
@@ -407,7 +389,6 @@ export function ActivityFeed({
 	};
 	const tabId = (id: string): string => `${baseId}-tab-${id}`;
 	const showTabs = tabs.length > 1;
-	const asSelect = filterAppearance === 'select';
 	const countOf = (id: string): number => counts?.[id] ?? list.filter(row => matches(id, row)).length;
 	const slotted = filter === 'comments' && commentsContent !== undefined && commentsContent !== null;
 	const composerNode = composer === undefined || composer === null ? null : composer;
@@ -433,22 +414,8 @@ export function ActivityFeed({
 
 	return (
 		<div data-testid="activity-feed" className={`flex flex-col ${GAP_BLOCKS}`}>
-			{composerPosition === 'top' ? composerNode : null}
-			{showTabs && asSelect ? (
-				<select
-					aria-label="Activity filter"
-					value={filter}
-					onChange={event => choose(event.target.value)}
-					className={FIELD_CLASS}
-				>
-					{tabs.map(id => (
-						<option key={id} value={id}>
-							{selectLabel(id, countOf(id))}
-						</option>
-					))}
-				</select>
-			) : null}
-			{showTabs && !asSelect ? (
+			{composerNode}
+			{showTabs ? (
 				<div role="tablist" aria-label="Activity filter" className={`flex flex-wrap ${GAP_CONTROLS}`}>
 					{tabs.map((id, index) => {
 						const active = id === filter;
@@ -475,8 +442,8 @@ export function ActivityFeed({
 			) : null}
 			<div
 				id={`${baseId}-panel`}
-				role={showTabs && !asSelect ? 'tabpanel' : undefined}
-				aria-labelledby={showTabs && !asSelect ? tabId(filter) : undefined}
+				role={showTabs ? 'tabpanel' : undefined}
+				aria-labelledby={showTabs ? tabId(filter) : undefined}
 				className={`flex flex-col ${GAP_BLOCKS}`}
 			>
 				{slotted ? (
@@ -507,7 +474,6 @@ export function ActivityFeed({
 					</button>
 				) : null}
 			</div>
-			{composerPosition === 'top' ? null : composerNode}
 		</div>
 	);
 }

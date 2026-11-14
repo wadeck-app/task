@@ -362,13 +362,3 @@ links.none:
     $type: task:Caption
     $if: $sources.links.noLinks
     text: No links yet
-# The same links as ONE list: the relation is a pill on the right of each row, the x removes the link.
-links.flat:
-    $type: task:TaskRowList
-    $if: $sources.links.hasLinks
-    rows: $sources.links.rows
-    appearance: table
-    density: compact
-    removeAction: removeLinkRow
-    removeLabel: Remove link
-

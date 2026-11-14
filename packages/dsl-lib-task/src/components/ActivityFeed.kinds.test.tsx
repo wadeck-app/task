@@ -105,24 +105,7 @@ describe('ActivityFeed real kinds', () => {
 	});
 });
 
-describe('ActivityFeed filterAppearance, defaultFilter, slots', () => {
-	it('select appearance: one native select with the counts, same behaviour', async () => {
-		const user = userEvent.setup();
-		render(
-			<ActivityFeed rows={REAL} filters={['all', 'comments', 'history']} filterAppearance="select" now={NOW} />
-		);
-
-		expect(screen.queryByRole('tablist')).toBeNull();
-		const select = screen.getByRole('combobox', { name: 'Activity filter' });
-		expect(
-			within(select)
-				.getAllByRole('option')
-				.map(o => o.textContent)
-		).toEqual(['All activity (10)', 'Comments only (1)', 'History only (7)']);
-		await user.selectOptions(select, 'comments');
-		expect(screen.getAllByTestId('activity-row')).toHaveLength(1);
-	});
-
+describe('ActivityFeed defaultFilter, slots', () => {
 	it('defaultFilter selects that filter first; an unknown one falls back to the first', () => {
 		const { unmount } = render(
 			<ActivityFeed rows={REAL} filters={['all', 'comments']} defaultFilter="comments" now={NOW} />
@@ -154,9 +137,9 @@ describe('ActivityFeed filterAppearance, defaultFilter, slots', () => {
 		expect(screen.getByRole('tab', { name: /Comments/ })).toHaveTextContent('1');
 	});
 
-	it('composer is always rendered, after the panel by default and above the tabs at top', async () => {
+	it('composer is always rendered, above the tabs, whatever the filter', async () => {
 		const user = userEvent.setup();
-		const { rerender } = render(
+		render(
 			<ActivityFeed
 				rows={REAL}
 				filters={['all', 'comments']}
@@ -165,18 +148,8 @@ describe('ActivityFeed filterAppearance, defaultFilter, slots', () => {
 			/>
 		);
 		const root = screen.getByTestId('activity-feed');
+		expect(root.firstElementChild).toBe(screen.getByTestId('composer'));
 		await user.click(screen.getByRole('tab', { name: /Comments/ }));
-		expect(root.lastElementChild).toBe(screen.getByTestId('composer'));
-
-		rerender(
-			<ActivityFeed
-				rows={REAL}
-				filters={['all', 'comments']}
-				composer={<div data-testid="composer" />}
-				composerPosition="top"
-				now={NOW}
-			/>
-		);
 		expect(root.firstElementChild).toBe(screen.getByTestId('composer'));
 	});
 });

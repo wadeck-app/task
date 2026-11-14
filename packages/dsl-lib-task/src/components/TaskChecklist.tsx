@@ -1,4 +1,4 @@
-import { CornerDownRight, ListPlus, Plus, Unlink } from 'lucide-react';
+import { Plus, Unlink } from 'lucide-react';
 import React, { useRef, useState } from 'react';
 import { ProgressSummary } from './ProgressSummary.js';
 import { StatusBadge } from './StatusBadge.js';
@@ -7,7 +7,6 @@ import { addProblemText } from '../actionProblem.js';
 import { useAction } from '../useAction.js';
 import { useRefocus } from '../useRefocus.js';
 import {
-	BUTTON_PRIMARY_CLASS,
 	CONTROL_H,
 	CONTROL_RADIUS,
 	CONTROL_SQUARE,
@@ -76,17 +75,6 @@ export interface TaskChecklistProps {
 	placeholder?: string;
 	/** `ring` (default): a circle with the percentage. `bar`: a bar with "done of total". `none`: nothing. */
 	progress?: 'ring' | 'bar' | 'none';
-	/** `checklist` (default): a box, the id, the headline and the status on a line. `table`: a bordered table with a header row. */
-	appearance?: 'checklist' | 'table';
-	/**
-	 * `row` (default): the add field is the LAST ROW of the list, a plus in the box column. `form`: a small form with
-	 * icons (heading, field, button), for a popover.
-	 */
-	addStyle?: 'row' | 'form';
-	/** `form` only: the heading of the form. */
-	addHeading?: string;
-	/** `form` only: the text of the button. */
-	addButton?: string;
 	/** Shown when there is no row. */
 	emptyText?: string;
 	/**
@@ -107,12 +95,12 @@ const BOX_CLASS = 'h-4 w-4 shrink-0 cursor-pointer accent-primary disabled:curso
 // @formatter:on
 
 /**
- * The sub-tasks of a task as a checklist or a compact table: a box per task (checked = terminal status), the id, the
- * headline, the status, an optional button that detaches the task from its parent, a progress summary and a way to add a
- * sub-task (the last row of the list, or a small form with icons).
+ * The sub-tasks of a task as a checklist: a box per task (checked = terminal status), the id, the headline, the status, an
+ * optional button that detaches the task from its parent, a progress summary and a way to add a sub-task (the last row of
+ * the list, a plus in the box column).
  *
  * @registryCategory composite
- * @registryTags checklist subtasks children progress steps table detach
+ * @registryTags checklist subtasks children progress steps detach
  */
 export function TaskChecklist({
 	rows,
@@ -132,10 +120,6 @@ export function TaskChecklist({
 	params,
 	placeholder = 'Add sub-task',
 	progress = 'ring',
-	appearance = 'checklist',
-	addStyle = 'row',
-	addHeading = 'New sub-task',
-	addButton = 'Create sub-task',
 	emptyText,
 	onAction,
 	actionPending,
@@ -212,7 +196,6 @@ export function TaskChecklist({
 	const doneCount = list.filter(r => r.terminal).length;
 	const showAdd = addAction !== undefined && addAction !== '';
 	const showDetach = detachAction !== undefined && detachAction !== '';
-	const asTable = appearance === 'table';
 
 	const addField = (extraClass: string): React.ReactElement => (
 		<input
@@ -295,7 +278,7 @@ export function TaskChecklist({
 	);
 
 	return (
-		<div ref={root} data-testid="task-checklist" data-appearance={appearance} className="flex flex-col gap-2">
+		<div ref={root} data-testid="task-checklist" className="flex flex-col gap-2">
 			{list.length > 0 ? (
 				progress === 'none' ? null : (
 					<ProgressSummary
@@ -307,7 +290,7 @@ export function TaskChecklist({
 			) : emptyText ? (
 				<p className="text-sm text-muted">{emptyText}</p>
 			) : null}
-			{list.length > 0 && !asTable ? (
+			{list.length > 0 ? (
 				<ul className="m-0 flex list-none flex-col divide-y divide-border p-0">
 					{list.map(row => (
 						<li key={row.id} data-testid="checklist-row" className="py-1">
@@ -320,7 +303,7 @@ export function TaskChecklist({
 							</div>
 						</li>
 					))}
-					{showAdd && addStyle === 'row' ? (
+					{showAdd ? (
 						<li data-testid="checklist-add-row" className="py-1">
 							<div className={`flex ${CONTROL_H} items-center ${GAP_CONTROLS} text-sm`}>
 								<Plus size={ICON_SIZE} aria-hidden="true" className="w-4 shrink-0 text-muted" />
@@ -330,58 +313,7 @@ export function TaskChecklist({
 					) : null}
 				</ul>
 			) : null}
-			{list.length > 0 && asTable ? (
-				<div className={`overflow-x-auto ${CONTROL_RADIUS} border border-border bg-surface`}>
-					<table className="w-full border-collapse text-sm">
-						<thead>
-							<tr className="border-b border-border bg-muted-bg text-left text-xs font-medium text-muted">
-								<th scope="col" className="w-10 py-1 pl-3 pr-2">
-									<span className="sr-only">Done</span>
-								</th>
-								<th scope="col" className="py-1 pr-2">
-									Sub-task
-								</th>
-								<th scope="col" className="py-1 pr-2">
-									Status
-								</th>
-								{showDetach ? (
-									<th scope="col" className="w-10 py-1 pr-2">
-										<span className="sr-only">Actions</span>
-									</th>
-								) : null}
-							</tr>
-						</thead>
-						<tbody className="divide-y divide-border">
-							{list.map(row => (
-								<tr key={row.id} data-testid="checklist-row">
-									<td className="py-1 pl-3 pr-2 align-middle">{box(row)}</td>
-									<td className="max-w-0 py-1 pr-2 align-middle">
-										<div className={`flex ${CONTROL_H} items-center ${GAP_CONTROLS}`}>
-											{idCell(row)}
-											{headlineCell(row)}
-										</div>
-									</td>
-									<td className="py-1 pr-2 align-middle">{statusCell(row)}</td>
-									{showDetach ? (
-										<td className="py-1 pr-2 align-middle">{detachButton(row)}</td>
-									) : null}
-								</tr>
-							))}
-							{showAdd && addStyle === 'row' ? (
-								<tr data-testid="checklist-add-row">
-									<td className="py-1 pl-3 pr-2 align-middle">
-										<Plus size={ICON_SIZE} aria-hidden="true" className="text-muted" />
-									</td>
-									<td colSpan={showDetach ? 3 : 2} className="py-1 pr-2 align-middle">
-										{addField('w-full')}
-									</td>
-								</tr>
-							) : null}
-						</tbody>
-					</table>
-				</div>
-			) : null}
-			{showAdd && addStyle === 'row' && list.length === 0 ? (
+			{showAdd && list.length === 0 ? (
 				<div
 					data-testid="checklist-add-row"
 					className={`flex ${CONTROL_H} items-center ${GAP_CONTROLS} text-sm`}
@@ -389,39 +321,6 @@ export function TaskChecklist({
 					<Plus size={ICON_SIZE} aria-hidden="true" className="w-4 shrink-0 text-muted" />
 					{addField('min-w-0 flex-1')}
 				</div>
-			) : null}
-			{showAdd && addStyle === 'form' ? (
-				<form
-					data-testid="checklist-add-form"
-					className={`flex flex-col ${GAP_CONTROLS}`}
-					onSubmit={event => {
-						event.preventDefault();
-						void add();
-					}}
-				>
-					<div className={`flex items-center ${GAP_CONTROLS} text-sm font-semibold text-content`}>
-						<ListPlus size={ICON_SIZE} aria-hidden="true" className="text-muted" />
-						<span>{addHeading}</span>
-					</div>
-					<div className="relative flex items-center">
-						<CornerDownRight
-							size={ICON_SIZE}
-							aria-hidden="true"
-							className="pointer-events-none absolute left-2 text-muted"
-						/>
-						{addField('w-full pl-7')}
-					</div>
-					<div className="flex justify-end">
-						<button
-							type="submit"
-							disabled={draft.trim() === '' || adder.busy || !adder.available}
-							className={`${BUTTON_PRIMARY_CLASS} ${GAP_CONTROLS}`}
-						>
-							<Plus size={ICON_SIZE} aria-hidden="true" />
-							<span>{addButton}</span>
-						</button>
-					</div>
-				</form>
 			) : null}
 			{problem ? (
 				<p role="alert" className="text-xs text-warning-text">

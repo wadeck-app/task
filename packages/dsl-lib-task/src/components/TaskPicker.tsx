@@ -1,4 +1,4 @@
-import { Link2, Search, X } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { ApiProblem, getJson, isAbort, problemText } from '../apiFetch.js';
 import { toneOf } from '../tones.js';
@@ -8,17 +8,7 @@ import { useDismiss } from '../useDismiss.js';
 import { useRefocus } from '../useRefocus.js';
 import { StatusBadge } from './StatusBadge.js';
 import { relationIcon } from '../ui/icons.js';
-import {
-	CONTROL_H,
-	CONTROL_RADIUS,
-	CONTROL_TEXT,
-	FIELD_CLASS,
-	FOCUS_RING,
-	GAP_CONTROLS,
-	ICON_SIZE,
-	RESULTS_CLASS,
-	SEARCH_STICKY_CLASS,
-} from '../ui/tokens.js';
+import { FIELD_CLASS, GAP_CONTROLS, ICON_SIZE, RESULTS_CLASS, SEARCH_STICKY_CLASS } from '../ui/tokens.js';
 
 export interface TaskPickerProps {
 	/** Name of the `$actions` entry run when a task is picked. */
@@ -36,15 +26,8 @@ export interface TaskPickerProps {
 	choiceKey?: string;
 	/** The accessible name of the `choices` select. */
 	choiceLabel?: string;
-	/**
-	 * `select` (default): a native select. `icons`: one button per choice with the icon of the relation (a radio group), so
-	 * the choice reads without its words.
-	 */
-	choiceStyle?: 'select' | 'icons';
 	/** `stack` (default): the choices above the search. `row`: choices and search on ONE line (the last row of a list). */
 	layout?: 'stack' | 'row';
-	/** A heading above the choices (with a link icon), for a picker alone in a popover. */
-	heading?: string;
 	/** The project to search in (the `project` query of the search route): an id, a name or an alias. */
 	projectParam?: string;
 	placeholder?: string;
@@ -125,9 +108,7 @@ export function TaskPicker({
 	choices,
 	choiceKey = 'choice',
 	choiceLabel = 'Choice',
-	choiceStyle = 'select',
 	layout = 'stack',
-	heading,
 	projectParam,
 	placeholder = 'Search a task',
 	ariaLabel,
@@ -280,40 +261,8 @@ export function TaskPicker({
 	const ChosenIcon = relationIcon(chosen ?? '');
 	return (
 		<div ref={rootRef} data-testid="task-picker" className={`flex w-full min-w-0 flex-col ${GAP_CONTROLS}`}>
-			{heading ? (
-				<div className={`flex items-center ${GAP_CONTROLS} text-sm font-semibold text-content`}>
-					<Link2 size={ICON_SIZE} aria-hidden="true" className="text-muted" />
-					<span>{heading}</span>
-				</div>
-			) : null}
 			<div className={inRow ? `flex flex-wrap items-center ${GAP_CONTROLS}` : 'contents'}>
-				{choiceList.length > 0 && choiceStyle === 'icons' ? (
-					<div role="radiogroup" aria-label={choiceLabel} className={`grid grid-cols-2 ${GAP_CONTROLS}`}>
-						{choiceList.map(entry => {
-							const Icon = relationIcon(entry.value);
-							const on = entry.value === chosen;
-							return (
-								<button
-									key={entry.value}
-									type="button"
-									role="radio"
-									aria-checked={on}
-									disabled={unavailable}
-									onClick={() => setChoice(entry.value)}
-									className={`inline-flex ${CONTROL_H} min-w-0 items-center ${GAP_CONTROLS} ${CONTROL_RADIUS} border px-2 ${CONTROL_TEXT} ${FOCUS_RING} disabled:cursor-not-allowed disabled:opacity-60 ${
-										on
-											? 'border-primary bg-primary-light font-medium text-primary'
-											: 'border-border bg-surface text-content hover:bg-muted-bg'
-									}`}
-								>
-									<Icon size={ICON_SIZE} aria-hidden="true" className="shrink-0" />
-									<span className="truncate">{entry.label}</span>
-								</button>
-							);
-						})}
-					</div>
-				) : null}
-				{choiceList.length > 0 && choiceStyle !== 'icons' ? (
+				{choiceList.length > 0 ? (
 					<div className={`relative flex items-center ${inRow ? 'w-44 shrink-0' : 'w-full'}`}>
 						{inRow ? (
 							<ChosenIcon

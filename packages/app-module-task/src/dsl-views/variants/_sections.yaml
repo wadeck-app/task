@@ -1,0 +1,84 @@
+# The four blocks of the main column of the task page. They were A/B options (dsl-ui AbTest rows) until 2026-11-14: nobody picked
+# another option, so the first one of each row is baked in and the others are deleted.
+#
+#   section.description   card with a header strip
+#   section.subtasks      checklist, the add field is the last row of the list
+#   section.links         groups by relation, the add row (relation select + task search) is the last row of the panel
+#   section.activity      tabs All / Comments / History, the composer on top
+
+section.description:
+    $type: task:Panel
+    title: Description
+    appearance: strip
+    items:
+        - $use: body.edit
+        - $use: body.add
+
+section.subtasks:
+    $type: task:Panel
+    title: Sub-tasks
+    appearance: card
+    count: $sources.detail.childrenSummary.total
+    items:
+        - $type: task:TaskChecklist
+          rows: $sources.detail.checklistRows
+          doneAction: setChildStatus
+          reopenAction: setChildStatus
+          detachAction: detachChild
+          detachIdParam: childId
+          terminalStatus: $sources.detail.terminalStatus
+          reopenStatus: $sources.detail.reopenStatus
+          addAction: createSubtask
+          parentId: $route.id
+          titleKey: title
+          placeholder: Add a sub-task
+          progress: bar
+          emptyText: No sub-tasks yet
+          params:
+              projectParam: $sources.detail.projectParam
+
+section.links:
+    $type: task:Panel
+    title: Relations
+    appearance: card
+    items:
+        - $type: VerticalStack
+          gap: gap-2
+          items:
+              - $type: VerticalStack
+                gap: gap-2
+                items:
+                    - $use: links.groups
+                    - $use: links.none
+              - $type: task:TaskPicker
+                ariaLabel: Task to link
+                placeholder: Link a task (id or words)
+                layout: row
+                action: addLink
+                bodyKey: target
+                choices: $sources.detail.linkTypeOptions
+                choiceKey: type
+                choiceLabel: Relation
+                projectParam: $sources.detail.projectParam
+                excludeIds:
+                    - $route.id
+                params:
+                    $use: params.task
+
+# The shell renders a slot prop (commentsContent, composer) from a LIST of nodes.
+section.activity:
+    $type: task:Panel
+    title: Activity
+    appearance: plain
+    items:
+        - $type: task:ActivityFeed
+          rows: $sources.activity.rows
+          filters:
+              - all
+              - comments
+              - history
+          emptyText: No activity yet
+          commentsContent:
+              - $use: comments.thread
+          composer:
+              - $use: comments.composer

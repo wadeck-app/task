@@ -41,42 +41,6 @@ function setup(props: Partial<React.ComponentProps<typeof TaskPicker>> = {}) {
 	return onAction;
 }
 
-describe('TaskPicker relation choices with icons', () => {
-	it('draws one radio button per relation, each with an icon; the first is checked', () => {
-		setup({ choiceStyle: 'icons', heading: 'Link to another task' });
-
-		const group = screen.getByRole('radiogroup', { name: 'Relation' });
-		const radios = screen.getAllByRole('radio');
-		expect(radios.map(r => r.textContent)).toEqual(['Blocked by', 'Blocks', 'Duplicate of']);
-		for (const radio of radios) {
-			expect(radio.querySelector('svg')).not.toBeNull();
-			expect(radio.className).toContain(CONTROL_H);
-		}
-		expect(radios[0]).toHaveAttribute('aria-checked', 'true');
-		expect(group.querySelector('select')).toBeNull();
-		expect(screen.getByText('Link to another task')).toBeInTheDocument();
-	});
-
-	it('the chosen relation travels with the picked task', async () => {
-		const user = userEvent.setup();
-		const onAction = setup({ choiceStyle: 'icons' });
-
-		await user.click(screen.getByRole('radio', { name: 'Duplicate of' }));
-		expect(screen.getByRole('radio', { name: 'Duplicate of' })).toHaveAttribute('aria-checked', 'true');
-		expect(screen.getByRole('radio', { name: 'Blocked by' })).toHaveAttribute('aria-checked', 'false');
-		await user.click(screen.getByRole('combobox', { name: 'Task to link' }));
-		await user.click(await screen.findByRole('option', { name: /Fix login loop/ }));
-
-		await waitFor(() =>
-			expect(onAction).toHaveBeenCalledWith(
-				'addLink',
-				{ id: 't1' },
-				{ body: { target: 'aaaa1111', type: 'duplicateOf' } }
-			)
-		);
-	});
-});
-
 describe('TaskPicker row layout', () => {
 	it('puts the relation select (with the icon of the chosen relation) and the search on ONE flex row', async () => {
 		const user = userEvent.setup();

@@ -6,10 +6,10 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { DEFAULT_VIEWS_DIR, generateTaskPage, taskPageFile } from '../../../../scripts/generate-task-page.mjs';
 
 /*
- * The task page is ONE base design (merged from the GitHub, Jira and GitLab layouts) with seven LOCALIZED A/B rows (dsl-ui AbTest,
- * see variants/_options.yaml). task-page.yaml is GENERATED from src/dsl-views/variants/_*.yaml. These tests are the contract the
- * base keeps and every option keeps: no option silently drops a control or shows a fact twice. Option views are tested one
- * dimension at a time (every option with the others at their default) plus two full combinations.
+ * The task page is ONE design (merged from the GitHub, Jira and GitLab layouts). Its seven A/B rows were baked on 2026-11-14 (the
+ * first option of each is the only one left, see variants/_sections.yaml). task-page.yaml is GENERATED from
+ * src/dsl-views/variants/_*.yaml. These tests are the contract the page keeps: no control is silently dropped and no fact is
+ * shown twice.
  */
 
 type Node = Record<string, unknown>;
@@ -24,12 +24,6 @@ const sections = page.sections as Node[];
 // The base view is the last section of the PageContent (guarded by "the task is loaded"); the nodes before it are the notices.
 const base = sections[sections.length - 1] as Node;
 const notices = sections.slice(0, -1);
-
-interface Fragment {
-	label: string;
-	hint: string;
-	view: unknown;
-}
 
 function walk(value: unknown, visit: (node: Node, ancestors: Node[]) => void, ancestors: Node[] = []): void {
 	if (Array.isArray(value)) {
@@ -56,57 +50,8 @@ const stringsOf = (tree: unknown): string[] => {
 	return found;
 };
 
-// ---- the AbTest dimensions -------------------------------------------------------------------------------------------------
-interface Dimension {
-	id: string;
-	label: string;
-	initial: string;
-	options: string[];
-}
-const dimensions: Dimension[] = [];
-walk(base, node => {
-	if (node.$type !== 'AbTest') return;
-	const id = String(node.id);
-	if (dimensions.some(d => d.id === id)) return;
-	dimensions.push({
-		id,
-		label: String(node.label),
-		initial: String(node.initial),
-		options: Object.keys(node.variants as Record<string, Fragment>),
-	});
-});
-
-/** The tree with every AbTest replaced by the view of the chosen option (the initial one when `choice` says nothing). */
-function resolve(tree: unknown, choice: Record<string, string> = {}): unknown {
-	if (Array.isArray(tree)) return tree.map(item => resolve(item, choice));
-	if (!isNode(tree)) return tree;
-	if (tree.$type === 'AbTest') {
-		const variants = tree.variants as Record<string, Fragment>;
-		const picked = choice[String(tree.id)] ?? String(tree.initial);
-		return resolve(variants[picked]!.view, choice);
-	}
-	return Object.fromEntries(Object.entries(tree).map(([key, value]) => [key, resolve(value, choice)]));
-}
-
-const alternate = (d: Dimension): string => d.options.find(o => o !== d.initial)!;
-const withOption = (id: string, option: string): Record<string, string> => ({ [id]: option });
-
-// The default page, every option once with the others at their default, and two full combinations.
-const choices: Array<[string, Record<string, string>]> = [
-	['default', {}],
-	...dimensions.flatMap(d =>
-		d.options
-			.filter(o => o !== d.initial)
-			.map(o => [`${d.id}=${o}`, withOption(d.id, o)] as [string, Record<string, string>])
-	),
-	['all alternates', Object.fromEntries(dimensions.map(d => [d.id, alternate(d)]))],
-	[
-		'every other alternate',
-		Object.fromEntries(dimensions.filter((_, i) => i % 2 === 0).map(d => [d.id, alternate(d)])),
-	],
-];
-const designs = choices.map(([name, choice]) => [name, resolve(base, choice)] as const);
-const viewFor = (choice: Record<string, string>): unknown => resolve(base, choice);
+// The one page, named so the per-design invariants below (written for several designs) keep their shape.
+const designs = [['page', base]] as const;
 
 describe('the generated task-page.yaml', () => {
 	it('is what the generator produces now (run "npm run views --workspace=packages/app-module-task" if not)', () => {
@@ -117,65 +62,20 @@ describe('the generated task-page.yaml', () => {
 		expect(readFileSync(taskPageFile(), 'utf8')).not.toMatch(/(^|\s)[&*][A-Za-z0-9_-]+(\s|$)/m);
 	});
 
-	it('stays small: seven localized rows do not multiply the page (the eleven designs were 1 MB)', () => {
+	it('stays small: one design, not several (the eleven designs were 1 MB)', () => {
 		expect(readFileSync(taskPageFile(), 'utf8').length).toBeLessThan(120_000);
 	});
 });
 
-describe('the localized A/B rows', () => {
-	const EXPECTED: Array<[string, string, string[]]> = [
-		['description-style', 'card', ['card', 'plain']],
-		['subtask-add', 'row', ['row', 'popup']],
-		['subtask-list', 'checklist', ['checklist', 'table']],
-		['link-add', 'row', ['row', 'popup']],
-		['link-group', 'grouped', ['grouped', 'flat']],
-		['activity-filter', 'tabs', ['tabs', 'select']],
-		['activity-composer', 'top', ['top', 'bottom']],
-	];
-
-	it('are exactly seven, each with 2 options and the best as the initial one', () => {
-		expect(dimensions.map(d => [d.id, d.initial, d.options])).toEqual(EXPECTED);
-		expect(dimensions.length).toBeLessThanOrEqual(7);
-	});
-
-	it('there is NO page-level "Task page" row: the three product designs are gone, production renders the base', () => {
-		expect(sections.filter(s => s.$type === 'AbTest')).toEqual([]);
-		expect(dimensions.map(d => d.id)).not.toContain('task-design');
+describe('the page frame', () => {
+	it('has no A/B test and no design switcher left: the options were baked, the product designs are gone', () => {
+		expect(nodesOf(page).filter(n => n.$type === 'AbTest')).toEqual([]);
 		const text = readFileSync(taskPageFile(), 'utf8');
-		for (const gone of ['task-design', 'VariantSwitcher', 'github-a', 'jira-b', 'gitlab-a']) {
+		for (const gone of ['AbTest', 'task-design', 'VariantSwitcher', 'github-a', 'jira-b', 'gitlab-a']) {
 			expect(text, gone).not.toContain(gone);
 		}
 		const files = readdirSync(join(viewsDir, 'variants')).sort();
-		expect(files).toEqual(['_options.yaml', '_page.yaml', '_shared.yaml']);
-		// The page only reads the initial options in production: a view resolved with no choice has no AbTest left.
-		expect(nodesOf(viewFor({})).filter(n => n.$type === 'AbTest')).toEqual([]);
-	});
-
-	it('every option has a label and a hint', () => {
-		walk(base, node => {
-			if (node.$type !== 'AbTest') return;
-			expect(String(node.label), String(node.id)).toMatch(/\S/);
-			for (const [id, variant] of Object.entries(node.variants as Record<string, Fragment>)) {
-				expect(variant.label, `${String(node.id)}.${id} label`).toMatch(/\S/);
-				expect(variant.hint, `${String(node.id)}.${id} hint`).toMatch(/\S/);
-			}
-		});
-	});
-
-	it('an AbTest repeated at several places is declared identically each time (the dock keeps one row)', () => {
-		const declarations = new Map<string, string>();
-		walk(base, node => {
-			if (node.$type !== 'AbTest') return;
-			const variants = node.variants as Record<string, Fragment>;
-			const declaration = JSON.stringify([
-				node.label,
-				node.initial,
-				Object.entries(variants).map(([id, v]) => [id, v.label, v.hint]),
-			]);
-			const earlier = declarations.get(String(node.id));
-			if (earlier !== undefined) expect(declaration, String(node.id)).toBe(earlier);
-			declarations.set(String(node.id), declaration);
-		});
+		expect(files).toEqual(['_page.yaml', '_sections.yaml', '_shared.yaml']);
 	});
 
 	it('draws nothing until the task is loaded (the notices say why when there is no task), and sets its own width', () => {
@@ -189,7 +89,7 @@ describe('the localized A/B rows', () => {
 
 	// task:Notice everywhere (same radius, padding and text as the controls; a dsl-ui Badge is a one-line 22px pill). The answer of the
 	// delete comes BEFORE "task not found": once the task is gone the page cannot draw it, and the reader meets what happened first.
-	it('keeps the notices OUTSIDE the options, so the page has the same error and empty states (and the delete answer survives the task)', () => {
+	it('keeps the notices OUTSIDE the view, so the page has its error and empty states (and the delete answer survives the task)', () => {
 		const expected: [string, string, string][] = [
 			['$sources.projects.noProjects', '$sources.projects.noProjectsText', 'info'],
 			['$sources.projects.selectedProblem', '$sources.projects.selectedProblem', 'danger'],
@@ -555,15 +455,19 @@ describe.each(designs)('page %s keeps every control of the task page', (name, vi
 		expect(composers[0]).toMatchObject({ action: 'addComment' });
 		const feed = nodes.find(n => n.$type === 'task:ActivityFeed')!;
 		expect(nodesOf(feed.composer), `${name}: the composer is the feed's slot`).toContain(composers[0]);
-		expect(['top', 'bottom'], name).toContain(feed.composerPosition);
+		expect(feed.composerPosition, name).toBeUndefined();
 	});
 
-	it('the relations: either the groups of the links route or one flat list, an x per row, never a second remove form', () => {
-		const grouped = strings.has('$sources.links.groupSections');
-		const flat = nodes.filter(n => n.$type === 'task:TaskRowList' && n.rows === '$sources.links.rows');
-		expect(grouped !== (flat.length === 1), `${name}: exactly one of grouped / flat`).toBe(true);
-		for (const list of flat)
-			expect(list).toMatchObject({ removeAction: 'removeLinkRow', removeLabel: 'Remove link' });
+	it('the relations: the groups of the links route (an x per row), the empty text, never a second remove form', () => {
+		expect(strings.has('$sources.links.groupSections'), name).toBe(true);
+		expect(
+			nodes.filter(n => n.$type === 'task:TaskRowList' && n.rows === '$sources.links.rows'),
+			name
+		).toEqual([]);
+		expect(
+			nodes.filter(n => n.$type === 'task:Caption' && n.$if === '$sources.links.noLinks'),
+			name
+		).toHaveLength(1);
 		expect(nodes.filter(n => n.$type === 'Form' && n.onSubmit === '$ctx.removeLink')).toEqual([]);
 	});
 
@@ -621,7 +525,7 @@ describe('the delete: a direct button with the existing confirmation dialog', ()
 	);
 
 	it('the button sits at the right of the header line, the state and the id at its left', () => {
-		const header = nodesOf(viewFor({})).find(
+		const header = nodesOf(base).find(
 			n =>
 				n.$type === 'task:ChipRow' &&
 				n.justify === 'between' &&
@@ -640,12 +544,12 @@ describe('the delete: a direct button with the existing confirmation dialog', ()
 });
 
 describe('the sidebar: GitHub look without card, Jira rows (label left, value right on ONE line)', () => {
-	const split = nodesOf(viewFor({})).find(n => n.$type === 'task:SplitLayout')!;
+	const split = nodesOf(base).find(n => n.$type === 'task:SplitLayout')!;
 	const side = nodesOf(split.side);
 
 	it('is a sticky right column that stacks ABOVE the main column on small screens', () => {
 		expect(split).toMatchObject({ sidePosition: 'right', sticky: true, sideFirstWhenStacked: true });
-		expect(nodesOf(viewFor({})).filter(n => n.$type === 'task:SplitLayout')).toHaveLength(1);
+		expect(nodesOf(base).filter(n => n.$type === 'task:SplitLayout')).toHaveLength(1);
 	});
 
 	it('has no card, no background and no collapsible section: no task:Panel at all', () => {
@@ -670,138 +574,47 @@ describe('the sidebar: GitHub look without card, Jira rows (label left, value ri
 	});
 });
 
-describe('the options, one dimension at a time', () => {
-	const only = (id: string, option: string): Node[] => nodesOf(viewFor(withOption(id, option)));
-	const panel = (nodes: Node[], title: string): Node =>
-		nodes.find(n => n.$type === 'task:Panel' && n.title === title)!;
+// The blocks that were A/B rows until 2026-11-14: only the first option of each is left.
+describe('the blocks of the main column (the former A/B rows, baked)', () => {
+	const nodes = nodesOf(base);
+	const panel = (title: string): Node => nodes.find(n => n.$type === 'task:Panel' && n.title === title)!;
 
-	it('description-style: a bordered card with a header strip | a plain heading', () => {
-		expect(panel(only('description-style', 'card'), 'Description')).toMatchObject({ appearance: 'strip' });
-		expect(panel(only('description-style', 'plain'), 'Description')).toMatchObject({ appearance: 'plain' });
+	it('the description is a bordered card with a header strip', () => {
+		expect(panel('Description')).toMatchObject({ appearance: 'strip' });
 	});
 
-	it('subtask-add: the last row of the list (plus icon, no header button) | a header button with an icon opening a form', () => {
-		const row = only('subtask-add', 'row');
-		const rowPanel = panel(row, 'Sub-tasks');
-		expect(rowPanel.actions).toBeUndefined();
-		expect(rowPanel.count).toBe('$sources.detail.childrenSummary.total');
-		expect(
-			nodesOf(rowPanel).find(n => n.$type === 'task:TaskChecklist' && n.addAction === 'createSubtask')!.addStyle
-		).toBeUndefined();
-		const popup = only('subtask-add', 'popup');
-		const popupPanel = panel(popup, 'Sub-tasks');
-		const trigger = nodesOf(popupPanel.actions).find(n => n.$type === 'task:PropertyPopover')!;
-		expect(trigger).toMatchObject({
-			icon: 'add-sub-task',
-			valueText: 'Add sub-task',
-			align: 'end',
-			closeOnActions: ['createSubtask'],
-		});
-		const form = nodesOf(trigger.items).find(n => n.$type === 'task:TaskChecklist')!;
-		expect(form).toMatchObject({
-			addStyle: 'form',
-			rows: [],
+	it('the sub-tasks are a checklist whose add field is the last row, with a detach button and a progress bar', () => {
+		const sub = panel('Sub-tasks');
+		expect(sub.actions).toBeUndefined();
+		expect(sub.count).toBe('$sources.detail.childrenSummary.total');
+		const list = nodesOf(sub).find(n => n.$type === 'task:TaskChecklist')!;
+		expect(list.appearance).toBeUndefined();
+		expect(list.addStyle).toBeUndefined();
+		expect(list).toMatchObject({
+			rows: '$sources.detail.checklistRows',
 			addAction: 'createSubtask',
-			addHeading: 'New sub-task',
-			addButton: 'Create sub-task',
+			detachAction: 'detachChild',
+			detachIdParam: 'childId',
+			progress: 'bar',
 		});
-		// The listing checklist of the popup variant has no add row of its own.
-		const listing = nodesOf(popupPanel.items).find(n => n.rows === '$sources.detail.checklistRows')!;
-		expect(listing.addAction).toBeUndefined();
+		expect(JSON.stringify(list.params)).toContain('projectParam');
 	});
 
-	it('subtask-list: a checklist | a compact table, with the detach button in both and in both add variants', () => {
-		for (const add of ['row', 'popup']) {
-			const checklist = nodesOf(viewFor({ 'subtask-add': add, 'subtask-list': 'checklist' })).find(
-				n => n.rows === '$sources.detail.checklistRows'
-			)!;
-			const table = nodesOf(viewFor({ 'subtask-add': add, 'subtask-list': 'table' })).find(
-				n => n.rows === '$sources.detail.checklistRows'
-			)!;
-			expect(checklist.appearance, add).toBeUndefined();
-			expect(table.appearance, add).toBe('table');
-			for (const list of [checklist, table]) {
-				expect(list, add).toMatchObject({
-					detachAction: 'detachChild',
-					detachIdParam: 'childId',
-					progress: 'bar',
-				});
-				expect(JSON.stringify(list.params), add).toContain('projectParam');
-			}
-		}
-	});
-
-	it('link-add: the last row of the panel (relation select and search on one line) | a header button with an icon and icon relations', () => {
-		const row = only('link-add', 'row');
-		const rowPanel = panel(row, 'Relations');
-		expect(rowPanel.actions).toBeUndefined();
-		const picker = nodesOf(rowPanel).find(n => n.$type === 'task:TaskPicker')!;
+	it('the relations: groups by relation, then the add row (relation select and search on one line) as the LAST thing of the panel', () => {
+		const rel = panel('Relations');
+		expect(rel.actions).toBeUndefined();
+		const picker = nodesOf(rel).find(n => n.$type === 'task:TaskPicker')!;
 		expect(picker).toMatchObject({ layout: 'row', action: 'addLink' });
 		expect(picker.choiceStyle).toBeUndefined();
-		// The add row is the LAST thing of the panel.
-		const stack = (rowPanel.items as Node[])[0]!;
+		const stack = (rel.items as Node[])[0]!;
 		expect((stack.items as Node[]).at(-1)).toBe(picker);
-		const popup = panel(only('link-add', 'popup'), 'Relations');
-		const trigger = nodesOf(popup.actions).find(n => n.$type === 'task:PropertyPopover')!;
-		expect(trigger).toMatchObject({
-			icon: 'link',
-			valueText: 'Add link',
-			align: 'end',
-			closeOnActions: ['addLink'],
-		});
-		const iconPicker = nodesOf(trigger.items).find(n => n.$type === 'task:TaskPicker')!;
-		expect(iconPicker).toMatchObject({ choiceStyle: 'icons', heading: 'Link to another task', action: 'addLink' });
-		expect(iconPicker.layout).toBeUndefined();
 	});
 
-	it('link-group: titled blocks per relation | one flat list with the relation as a pill, both with an x per row and the empty text', () => {
-		for (const add of ['row', 'popup']) {
-			const grouped = nodesOf(viewFor({ 'link-add': add, 'link-group': 'grouped' }));
-			const flat = nodesOf(viewFor({ 'link-add': add, 'link-group': 'flat' }));
-			expect(
-				grouped.some(n => n.items === '$sources.links.groupSections'),
-				add
-			).toBe(true);
-			expect(
-				grouped.some(n => n.rows === '$sources.links.rows'),
-				add
-			).toBe(false);
-			expect(
-				flat.some(n => n.items === '$sources.links.groupSections'),
-				add
-			).toBe(false);
-			expect(
-				flat.find(n => n.rows === '$sources.links.rows'),
-				add
-			).toMatchObject({ $if: '$sources.links.hasLinks', removeAction: 'removeLinkRow' });
-			for (const nodes of [grouped, flat]) {
-				expect(
-					nodes.filter(n => n.$type === 'task:Caption' && n.$if === '$sources.links.noLinks'),
-					add
-				).toHaveLength(1);
-			}
-		}
-	});
-
-	it.each([
-		['tabs', 'top', undefined, 'top'],
-		['tabs', 'bottom', undefined, 'bottom'],
-		['select', 'top', 'select', 'top'],
-		['select', 'bottom', 'select', 'bottom'],
-	])('activity: filter %s and composer %s', (filter, composer, filterAppearance, position) => {
-		const feed = only('activity-filter', filter).length
-			? nodesOf(viewFor({ 'activity-filter': filter, 'activity-composer': composer })).find(
-					n => n.$type === 'task:ActivityFeed'
-				)!
-			: undefined;
-		expect(feed!.filterAppearance).toBe(filterAppearance);
-		expect(feed!.composerPosition).toBe(position);
-	});
-
-	it('every option keeps the activity panel titled Activity', () => {
-		for (const filter of ['tabs', 'select']) {
-			expect(panel(only('activity-filter', filter), 'Activity')).toMatchObject({ appearance: 'plain' });
-		}
+	it('the activity is a plain panel with tabs (no filter dropdown); the composer is on top (the only place)', () => {
+		expect(panel('Activity')).toMatchObject({ appearance: 'plain' });
+		const feed = nodes.find(n => n.$type === 'task:ActivityFeed')!;
+		expect(feed.filterAppearance).toBeUndefined();
+		expect(feed.composerPosition).toBeUndefined();
 	});
 });
 
@@ -1139,7 +952,6 @@ describe('constructs of the shell', () => {
 // Built-in node types the installed shell is known to render: the ones the pages already use plus those checked in the shell
 // (dsl-ui >= 318). Adding a type here is a decision: check it in the shell first.
 const BUILTIN = new Set([
-	'AbTest',
 	'PageContent',
 	'Section',
 	'Card',
@@ -1278,24 +1090,6 @@ describe('the generator reports what is wrong, with the fix', () => {
 		expect(JSON.stringify(out.sections)).toContain('"label":"y"');
 	});
 
-	const abTest = (label: string, hint: string): string =>
-		`ab: { $type: AbTest, id: t, label: T, initial: a, variants: { a: { label: ${label}, hint: ${hint}, view: { $type: Badge } }, b: { label: B, hint: hb, view: { $type: Badge } } } }\n`;
-
-	it('accepts an AbTest repeated with the same declaration and refuses one declared differently', () => {
-		const same = scratch({
-			'_shared.yaml': `${abTest('A', 'ha')}ab2: { $type: AbTest, id: t, label: T, initial: a, variants: { a: { label: A, hint: ha, view: { $type: Tag } }, b: { label: B, hint: hb, view: { $type: Tag } } } }\n`,
-			'_page.yaml':
-				'$type: PageContent\n$notices: []\n$view: { $type: VerticalStack, items: [{ $use: ab }, { $use: ab2 }] }\n',
-		});
-		expect(() => generateTaskPage(same)).not.toThrow();
-		const different = scratch({
-			'_shared.yaml': `${abTest('A', 'ha')}ab2: { $type: AbTest, id: t, label: T, initial: a, variants: { a: { label: A, hint: OTHER, view: { $type: Tag } }, b: { label: B, hint: hb, view: { $type: Tag } } } }\n`,
-			'_page.yaml':
-				'$type: PageContent\n$notices: []\n$view: { $type: VerticalStack, items: [{ $use: ab }, { $use: ab2 }] }\n',
-		});
-		expect(() => generateTaskPage(different)).toThrow(/AbTest "t" is declared twice.*identical/s);
-	});
-
 	it.each([
 		[
 			'an unknown $use',
@@ -1322,7 +1116,7 @@ describe('the generator reports what is wrong, with the fix', () => {
 
 	it('the real folder lists exactly the fragment files it contains', () => {
 		const files = readdirSync(join(DEFAULT_VIEWS_DIR, 'variants')).filter(f => f.endsWith('.yaml'));
-		expect(files.sort()).toEqual(['_options.yaml', '_page.yaml', '_shared.yaml']);
+		expect(files.sort()).toEqual(['_page.yaml', '_sections.yaml', '_shared.yaml']);
 		expect(viewsDir).toContain('dsl-views');
 	});
 });

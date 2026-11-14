@@ -140,28 +140,6 @@ describe('TaskChecklist: focus after an add', () => {
 
 		await waitFor(() => expect(screen.getByRole('textbox', FIELD)).toHaveFocus());
 	});
-
-	it('in the form style, the focus returns to the field after the button was clicked', async () => {
-		const user = userEvent.setup();
-		const onAction = vi.fn().mockResolvedValue(undefined);
-		render(
-			<TaskChecklist
-				rows={[]}
-				addStyle="form"
-				addAction="createSubtask"
-				titleKey="title"
-				parentId="t1"
-				onAction={onAction}
-			/>
-		);
-
-		await user.type(screen.getByRole('textbox', FIELD), 'by button');
-		await user.click(screen.getByRole('button', { name: 'Create sub-task' }));
-
-		await waitFor(() => expect(onAction).toHaveBeenCalledTimes(1));
-		await waitFor(() => expect(screen.getByRole('textbox', FIELD)).toHaveFocus());
-		expect(screen.getByRole('textbox', FIELD)).toHaveValue('');
-	});
 });
 
 describe('TaskChecklist: a failed add says so in words', () => {

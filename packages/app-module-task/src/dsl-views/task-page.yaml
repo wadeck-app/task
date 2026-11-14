@@ -9,7 +9,7 @@
 #                  `$type: PageContent` is copied verbatim (comments included).
 #   _shared.yaml   named fragments (the facts and their editors), used anywhere as `{ $use: prop.labels }` (one node, a list or
 #                  an object each; no other key next to $use).
-#   _options.yaml  the same kind of fragments, for the LOCALIZED options (one dsl-ui AbTest per element, see its header).
+#   _sections.yaml the same kind of fragments, for the four blocks of the main column (see its header).
 # A test fails when task-page.yaml is stale, so run the script after every edit here.
 #
 # ONE BASE DESIGN, merged from the GitHub, Jira and GitLab layouts (user feedback): title, then a header line (Open / Closed state,
@@ -23,13 +23,12 @@
 # No "Project" link at the top: the breadcrumb carries it (the slot task:project-header is NOT drawn on this page, only on the
 # list and the tree pages).
 #
-# Seven LOCALIZED A/B rows (dsl-ui AbTest, production renders the first option of each): see _options.yaml.
+# The former A/B rows are baked (2026-11-14): see _sections.yaml.
 #
 # Conventions for the components that run actions (dsl-ui >= 318: `onAction(name, params, { body })` sends a JSON body):
 #   params: { id: $route.id, projectParam: $sources.detail.projectParam }   (fragment params.task), plus what the component adds
 #   the value of a control travels in the body (status, type, label, parent, link, text, metadata, sub-task).
 # ============================================================================================================
-
 
 # Detail of one task (/modules/task/tasks/p/:project/:id). ":id" of the manifest path is $route.id, ":project" is
 # $route.project (the id of the project, resolved by GET /projects). The breadcrumb and the tab strip lead elsewhere: no link here.
@@ -395,492 +394,113 @@ sections:
                             $if: $ctx.commentResult.undeliveredText
                             label: $ctx.commentResult.undeliveredText
                             variant: warning
-                      - $type: AbTest
-                        id: description-style
-                        label: Description
-                        initial: card
-                        variants:
-                          card:
-                            label: Card with header strip
-                            hint: The description in a bordered card whose header strip carries the title (GitHub comment box).
-                            view:
-                              $type: task:Panel
-                              title: Description
-                              appearance: strip
-                              items:
-                                - $type: task:InlineText
-                                  $if: $sources.detail.bodyAddsInfo
-                                  multiline: true
-                                  ariaLabel: Description
-                                  value: $sources.detail.body
-                                  action: setText
-                                  valueParam: description
-                                  textClass: text-sm leading-relaxed
-                                  params:
-                                    id: $route.id
-                                    projectParam: $sources.detail.projectParam
-                                - $type: task:InlineText
-                                  $if: $sources.detail.noBodyInfo
-                                  multiline: true
-                                  ariaLabel: Description
-                                  value: ''
-                                  placeholder: Add a description
-                                  action: setText
-                                  valueParam: description
-                                  textClass: text-sm
-                                  params:
-                                    id: $route.id
-                                    projectParam: $sources.detail.projectParam
-                          plain:
-                            label: Plain
-                            hint: A heading and the text, no border and no strip.
-                            view:
-                              $type: task:Panel
-                              title: Description
-                              appearance: plain
-                              items:
-                                - $type: task:InlineText
-                                  $if: $sources.detail.bodyAddsInfo
-                                  multiline: true
-                                  ariaLabel: Description
-                                  value: $sources.detail.body
-                                  action: setText
-                                  valueParam: description
-                                  textClass: text-sm leading-relaxed
-                                  params:
-                                    id: $route.id
-                                    projectParam: $sources.detail.projectParam
-                                - $type: task:InlineText
-                                  $if: $sources.detail.noBodyInfo
-                                  multiline: true
-                                  ariaLabel: Description
-                                  value: ''
-                                  placeholder: Add a description
-                                  action: setText
-                                  valueParam: description
-                                  textClass: text-sm
-                                  params:
-                                    id: $route.id
-                                    projectParam: $sources.detail.projectParam
-                      - $type: AbTest
-                        id: subtask-add
-                        label: Sub-task add
-                        initial: row
-                        variants:
-                          row:
-                            label: Last row
-                            hint: The field to add a sub-task is the last row of the list (Jira).
-                            view:
-                              $type: task:Panel
-                              title: Sub-tasks
-                              appearance: card
-                              count: $sources.detail.childrenSummary.total
-                              items:
-                                - $type: AbTest
-                                  id: subtask-list
-                                  label: Sub-task list
-                                  initial: checklist
-                                  variants:
-                                    checklist:
-                                      label: Checklist
-                                      hint: A box, the id, the title and the status on one line per sub-task.
-                                      view:
-                                        $type: task:TaskChecklist
-                                        rows: $sources.detail.checklistRows
-                                        doneAction: setChildStatus
-                                        reopenAction: setChildStatus
-                                        detachAction: detachChild
-                                        detachIdParam: childId
-                                        terminalStatus: $sources.detail.terminalStatus
-                                        reopenStatus: $sources.detail.reopenStatus
-                                        addAction: createSubtask
-                                        parentId: $route.id
-                                        titleKey: title
-                                        placeholder: Add a sub-task
-                                        progress: bar
-                                        emptyText: No sub-tasks yet
-                                        params:
-                                          projectParam: $sources.detail.projectParam
-                                    table:
-                                      label: Compact table
-                                      hint: A bordered table with a header row (Done, Sub-task, Status).
-                                      view:
-                                        $type: task:TaskChecklist
-                                        rows: $sources.detail.checklistRows
-                                        appearance: table
-                                        doneAction: setChildStatus
-                                        reopenAction: setChildStatus
-                                        detachAction: detachChild
-                                        detachIdParam: childId
-                                        terminalStatus: $sources.detail.terminalStatus
-                                        reopenStatus: $sources.detail.reopenStatus
-                                        addAction: createSubtask
-                                        parentId: $route.id
-                                        titleKey: title
-                                        placeholder: Add a sub-task
-                                        progress: bar
-                                        emptyText: No sub-tasks yet
-                                        params:
-                                          projectParam: $sources.detail.projectParam
-                          popup:
-                            label: Popup with icons
-                            hint: An "Add sub-task" button in the panel header opens a small form with icons (GitLab).
-                            view:
-                              $type: task:Panel
-                              title: Sub-tasks
-                              appearance: card
-                              count: $sources.detail.childrenSummary.total
-                              actions:
-                                - $type: task:PropertyPopover
-                                  label: Sub-task
-                                  appearance: pill
-                                  icon: add-sub-task
-                                  valueText: Add sub-task
-                                  align: end
-                                  closeOnActions:
-                                    - createSubtask
-                                  params:
-                                    id: $route.id
-                                    projectParam: $sources.detail.projectParam
-                                  items:
-                                    - $type: task:TaskChecklist
-                                      rows: []
-                                      progress: none
-                                      addStyle: form
-                                      addAction: createSubtask
-                                      parentId: $route.id
-                                      titleKey: title
-                                      placeholder: Title of the sub-task
-                                      addHeading: New sub-task
-                                      addButton: Create sub-task
-                                      params:
-                                        projectParam: $sources.detail.projectParam
-                              items:
-                                - $type: AbTest
-                                  id: subtask-list
-                                  label: Sub-task list
-                                  initial: checklist
-                                  variants:
-                                    checklist:
-                                      label: Checklist
-                                      hint: A box, the id, the title and the status on one line per sub-task.
-                                      view:
-                                        $type: task:TaskChecklist
-                                        rows: $sources.detail.checklistRows
-                                        doneAction: setChildStatus
-                                        reopenAction: setChildStatus
-                                        detachAction: detachChild
-                                        detachIdParam: childId
-                                        terminalStatus: $sources.detail.terminalStatus
-                                        reopenStatus: $sources.detail.reopenStatus
-                                        progress: bar
-                                        emptyText: No sub-tasks yet
-                                        params:
-                                          projectParam: $sources.detail.projectParam
-                                    table:
-                                      label: Compact table
-                                      hint: A bordered table with a header row (Done, Sub-task, Status).
-                                      view:
-                                        $type: task:TaskChecklist
-                                        rows: $sources.detail.checklistRows
-                                        appearance: table
-                                        doneAction: setChildStatus
-                                        reopenAction: setChildStatus
-                                        detachAction: detachChild
-                                        detachIdParam: childId
-                                        terminalStatus: $sources.detail.terminalStatus
-                                        reopenStatus: $sources.detail.reopenStatus
-                                        progress: bar
-                                        emptyText: No sub-tasks yet
-                                        params:
-                                          projectParam: $sources.detail.projectParam
-                      - $type: AbTest
-                        id: link-add
-                        label: Link add
-                        initial: row
-                        variants:
-                          row:
-                            label: Last row
-                            hint: The relation and the task search are the last row of the panel (Jira).
-                            view:
-                              $type: task:Panel
-                              title: Relations
-                              appearance: card
-                              items:
-                                - $type: VerticalStack
-                                  gap: gap-2
-                                  items:
-                                    - $type: AbTest
-                                      id: link-group
-                                      label: Relations
-                                      initial: grouped
-                                      variants:
-                                        grouped:
-                                          label: Grouped by relation
-                                          hint: One titled block per relation (Blocked by, Blocks...), each with its rows.
-                                          view:
-                                            $type: VerticalStack
-                                            gap: gap-2
-                                            items:
-                                              - $type: ExtensionSlot
-                                                $if: $sources.links.hasLinks
-                                                items: $sources.links.groupSections
-                                              - $type: task:Caption
-                                                $if: $sources.links.noLinks
-                                                text: No links yet
-                                        flat:
-                                          label: Flat list
-                                          hint: One list of every linked task, the relation as a pill on each row.
-                                          view:
-                                            $type: VerticalStack
-                                            gap: gap-2
-                                            items:
-                                              - $type: task:TaskRowList
-                                                $if: $sources.links.hasLinks
-                                                rows: $sources.links.rows
-                                                appearance: table
-                                                density: compact
-                                                removeAction: removeLinkRow
-                                                removeLabel: Remove link
-                                              - $type: task:Caption
-                                                $if: $sources.links.noLinks
-                                                text: No links yet
-                                    - $type: task:TaskPicker
-                                      ariaLabel: Task to link
-                                      placeholder: Link a task (id or words)
-                                      layout: row
-                                      action: addLink
-                                      bodyKey: target
-                                      choices: $sources.detail.linkTypeOptions
-                                      choiceKey: type
-                                      choiceLabel: Relation
-                                      projectParam: $sources.detail.projectParam
-                                      excludeIds:
-                                        - $route.id
-                                      params:
-                                        id: $route.id
-                                        projectParam: $sources.detail.projectParam
-                          popup:
-                            label: Popup with icons
-                            hint: An "Add link" button in the panel header opens a form whose relations are icon buttons (GitLab).
-                            view:
-                              $type: task:Panel
-                              title: Relations
-                              appearance: card
-                              actions:
-                                - $type: task:PropertyPopover
-                                  label: Link
-                                  appearance: pill
-                                  icon: link
-                                  valueText: Add link
-                                  align: end
-                                  closeOnActions:
-                                    - addLink
-                                  params:
-                                    id: $route.id
-                                    projectParam: $sources.detail.projectParam
-                                  items:
-                                    - $type: task:TaskPicker
-                                      ariaLabel: Task to link
-                                      placeholder: Search a task to link
-                                      heading: Link to another task
-                                      choiceStyle: icons
-                                      action: addLink
-                                      bodyKey: target
-                                      choices: $sources.detail.linkTypeOptions
-                                      choiceKey: type
-                                      choiceLabel: Relation
-                                      projectParam: $sources.detail.projectParam
-                                      excludeIds:
-                                        - $route.id
-                                      params:
-                                        id: $route.id
-                                        projectParam: $sources.detail.projectParam
-                              items:
-                                - $type: AbTest
-                                  id: link-group
-                                  label: Relations
-                                  initial: grouped
-                                  variants:
-                                    grouped:
-                                      label: Grouped by relation
-                                      hint: One titled block per relation (Blocked by, Blocks...), each with its rows.
-                                      view:
-                                        $type: VerticalStack
-                                        gap: gap-2
-                                        items:
-                                          - $type: ExtensionSlot
-                                            $if: $sources.links.hasLinks
-                                            items: $sources.links.groupSections
-                                          - $type: task:Caption
-                                            $if: $sources.links.noLinks
-                                            text: No links yet
-                                    flat:
-                                      label: Flat list
-                                      hint: One list of every linked task, the relation as a pill on each row.
-                                      view:
-                                        $type: VerticalStack
-                                        gap: gap-2
-                                        items:
-                                          - $type: task:TaskRowList
-                                            $if: $sources.links.hasLinks
-                                            rows: $sources.links.rows
-                                            appearance: table
-                                            density: compact
-                                            removeAction: removeLinkRow
-                                            removeLabel: Remove link
-                                          - $type: task:Caption
-                                            $if: $sources.links.noLinks
-                                            text: No links yet
-                      - $type: AbTest
-                        id: activity-filter
-                        label: Activity filter
-                        initial: tabs
-                        variants:
-                          tabs:
-                            label: Tabs
-                            hint: All, Comments and History as tabs with their counts.
-                            view:
-                              $type: task:Panel
-                              title: Activity
-                              appearance: plain
-                              items:
-                                - $type: AbTest
-                                  id: activity-composer
-                                  label: Comment composer
-                                  initial: top
-                                  variants:
-                                    top:
-                                      label: On top
-                                      hint: The new comment field above the feed, which is newest first (GitHub, Jira).
-                                      view:
-                                        $type: task:ActivityFeed
-                                        rows: $sources.activity.rows
-                                        filters:
-                                          - all
-                                          - comments
-                                          - history
-                                        composerPosition: top
-                                        emptyText: No activity yet
-                                        commentsContent:
-                                          - $type: task:CommentThread
-                                            comments: $sources.comments.comments
-                                            newestFirst: true
-                                            editAction: editComment
-                                            removeAction: removeComment
-                                            emptyText: No comments yet
-                                            params:
-                                              id: $route.id
-                                              projectParam: $sources.detail.projectParam
-                                        composer:
-                                          - $type: task:CommentComposer
-                                            action: addComment
-                                            placeholder: Add a comment...
-                                            params:
-                                              id: $route.id
-                                              projectParam: $sources.detail.projectParam
-                                    bottom:
-                                      label: At the bottom
-                                      hint: The new comment field after the feed (chat order).
-                                      view:
-                                        $type: task:ActivityFeed
-                                        rows: $sources.activity.rows
-                                        filters:
-                                          - all
-                                          - comments
-                                          - history
-                                        composerPosition: bottom
-                                        emptyText: No activity yet
-                                        commentsContent:
-                                          - $type: task:CommentThread
-                                            comments: $sources.comments.comments
-                                            newestFirst: true
-                                            editAction: editComment
-                                            removeAction: removeComment
-                                            emptyText: No comments yet
-                                            params:
-                                              id: $route.id
-                                              projectParam: $sources.detail.projectParam
-                                        composer:
-                                          - $type: task:CommentComposer
-                                            action: addComment
-                                            placeholder: Add a comment...
-                                            params:
-                                              id: $route.id
-                                              projectParam: $sources.detail.projectParam
-                          select:
-                            label: Dropdown
-                            hint: One filter dropdown (All activity, Comments only, History only) (GitLab).
-                            view:
-                              $type: task:Panel
-                              title: Activity
-                              appearance: plain
-                              items:
-                                - $type: AbTest
-                                  id: activity-composer
-                                  label: Comment composer
-                                  initial: top
-                                  variants:
-                                    top:
-                                      label: On top
-                                      hint: The new comment field above the feed, which is newest first (GitHub, Jira).
-                                      view:
-                                        $type: task:ActivityFeed
-                                        rows: $sources.activity.rows
-                                        filters:
-                                          - all
-                                          - comments
-                                          - history
-                                        filterAppearance: select
-                                        composerPosition: top
-                                        emptyText: No activity yet
-                                        commentsContent:
-                                          - $type: task:CommentThread
-                                            comments: $sources.comments.comments
-                                            newestFirst: true
-                                            editAction: editComment
-                                            removeAction: removeComment
-                                            emptyText: No comments yet
-                                            params:
-                                              id: $route.id
-                                              projectParam: $sources.detail.projectParam
-                                        composer:
-                                          - $type: task:CommentComposer
-                                            action: addComment
-                                            placeholder: Add a comment...
-                                            params:
-                                              id: $route.id
-                                              projectParam: $sources.detail.projectParam
-                                    bottom:
-                                      label: At the bottom
-                                      hint: The new comment field after the feed (chat order).
-                                      view:
-                                        $type: task:ActivityFeed
-                                        rows: $sources.activity.rows
-                                        filters:
-                                          - all
-                                          - comments
-                                          - history
-                                        filterAppearance: select
-                                        composerPosition: bottom
-                                        emptyText: No activity yet
-                                        commentsContent:
-                                          - $type: task:CommentThread
-                                            comments: $sources.comments.comments
-                                            newestFirst: true
-                                            editAction: editComment
-                                            removeAction: removeComment
-                                            emptyText: No comments yet
-                                            params:
-                                              id: $route.id
-                                              projectParam: $sources.detail.projectParam
-                                        composer:
-                                          - $type: task:CommentComposer
-                                            action: addComment
-                                            placeholder: Add a comment...
-                                            params:
-                                              id: $route.id
-                                              projectParam: $sources.detail.projectParam
+                      - $type: task:Panel
+                        title: Description
+                        appearance: strip
+                        items:
+                          - $type: task:InlineText
+                            $if: $sources.detail.bodyAddsInfo
+                            multiline: true
+                            ariaLabel: Description
+                            value: $sources.detail.body
+                            action: setText
+                            valueParam: description
+                            textClass: text-sm leading-relaxed
+                            params:
+                              id: $route.id
+                              projectParam: $sources.detail.projectParam
+                          - $type: task:InlineText
+                            $if: $sources.detail.noBodyInfo
+                            multiline: true
+                            ariaLabel: Description
+                            value: ''
+                            placeholder: Add a description
+                            action: setText
+                            valueParam: description
+                            textClass: text-sm
+                            params:
+                              id: $route.id
+                              projectParam: $sources.detail.projectParam
+                      - $type: task:Panel
+                        title: Sub-tasks
+                        appearance: card
+                        count: $sources.detail.childrenSummary.total
+                        items:
+                          - $type: task:TaskChecklist
+                            rows: $sources.detail.checklistRows
+                            doneAction: setChildStatus
+                            reopenAction: setChildStatus
+                            detachAction: detachChild
+                            detachIdParam: childId
+                            terminalStatus: $sources.detail.terminalStatus
+                            reopenStatus: $sources.detail.reopenStatus
+                            addAction: createSubtask
+                            parentId: $route.id
+                            titleKey: title
+                            placeholder: Add a sub-task
+                            progress: bar
+                            emptyText: No sub-tasks yet
+                            params:
+                              projectParam: $sources.detail.projectParam
+                      - $type: task:Panel
+                        title: Relations
+                        appearance: card
+                        items:
+                          - $type: VerticalStack
+                            gap: gap-2
+                            items:
+                              - $type: VerticalStack
+                                gap: gap-2
+                                items:
+                                  - $type: ExtensionSlot
+                                    $if: $sources.links.hasLinks
+                                    items: $sources.links.groupSections
+                                  - $type: task:Caption
+                                    $if: $sources.links.noLinks
+                                    text: No links yet
+                              - $type: task:TaskPicker
+                                ariaLabel: Task to link
+                                placeholder: Link a task (id or words)
+                                layout: row
+                                action: addLink
+                                bodyKey: target
+                                choices: $sources.detail.linkTypeOptions
+                                choiceKey: type
+                                choiceLabel: Relation
+                                projectParam: $sources.detail.projectParam
+                                excludeIds:
+                                  - $route.id
+                                params:
+                                  id: $route.id
+                                  projectParam: $sources.detail.projectParam
+                      - $type: task:Panel
+                        title: Activity
+                        appearance: plain
+                        items:
+                          - $type: task:ActivityFeed
+                            rows: $sources.activity.rows
+                            filters:
+                              - all
+                              - comments
+                              - history
+                            emptyText: No activity yet
+                            commentsContent:
+                              - $type: task:CommentThread
+                                comments: $sources.comments.comments
+                                newestFirst: true
+                                editAction: editComment
+                                removeAction: removeComment
+                                emptyText: No comments yet
+                                params:
+                                  id: $route.id
+                                  projectParam: $sources.detail.projectParam
+                            composer:
+                              - $type: task:CommentComposer
+                                action: addComment
+                                placeholder: Add a comment...
+                                params:
+                                  id: $route.id
+                                  projectParam: $sources.detail.projectParam
                 side:
                   - $type: VerticalStack
                     gap: gap-4
