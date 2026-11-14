@@ -6,8 +6,7 @@
 // task whose title is being edited, is not a conflict, while a rename made behind our back is, even when both fall in the same
 // second. The hashes hide the text (the revision is shown in JSON and logs). The issue links are not part of the revision: the
 // issue JSON does not carry them, and a link write reads the link list right before it writes.
-import * as crypto from 'node:crypto';
-
+import { blockMetaPart, checkRevisionParts, partsFromHashes, shortHash } from '../forge-common/revisionParts.js';
 import { labelNames, splitBody, typeOfLabel, userLabels } from './gitlabMapping.js';
 import type { MapContext } from './gitlabMapping.js';
 import type { ApiIssue } from './gitlabTypes.js';
@@ -17,27 +16,13 @@ export const FIELD_GROUPS = ['title', 'body', 'status', 'type', 'labels', 'meta'
 export type FieldGroup = (typeof FIELD_GROUPS)[number];
 export type FieldHashes = Record<FieldGroup, string>;
 
-function hash(text: string): string {
-	return crypto.createHash('sha1').update(text).digest('hex').slice(0, 6);
-}
+const hash = shortHash;
 
 // Label names are compared exactly: GitLab labels are case sensitive.
 const sorted = (names: readonly string[]): string => [...names].sort().join('\n');
 
 function metaPart(issue: ApiIssue, ctx: MapContext): string {
-	if (ctx.metaFromBlock) {
-		try {
-			const meta = splitBody(issue, ctx).blockMeta ?? {};
-			return JSON.stringify(
-				Object.keys(meta)
-					.sort()
-					.map(key => [key, meta[key]])
-			);
-		} catch {
-			// An unreadable block still has a stable hash: the write that reads it reports the problem.
-			return 'unreadable';
-		}
-	}
+	if (ctx.metaFromBlock) return blockMetaPart(() => splitBody(issue, ctx).blockMeta);
 	if (!ctx.metaFromLabels) return '';
 	const prefix = ctx.settings.metaPrefix;
 	return sorted(labelNames(issue).filter(name => name.startsWith(prefix)));
@@ -66,10 +51,7 @@ export function revisionOf(issue: ApiIssue, ctx: MapContext): string {
 
 function partsOf(revision: string): FieldHashes | undefined {
 	const at = revision.lastIndexOf('#');
-	if (at < 0) return undefined;
-	const values = revision.slice(at + 1).split('.');
-	if (values.length !== FIELD_GROUPS.length || values.some(value => !/^[0-9a-f]{6}$/.test(value))) return undefined;
-	return Object.fromEntries(FIELD_GROUPS.map((group, index) => [group, values[index]!])) as FieldHashes;
+	return at < 0 ? undefined : partsFromHashes(revision.slice(at + 1), FIELD_GROUPS);
 }
 
 /**
@@ -77,9 +59,5 @@ function partsOf(revision: string): FieldHashes | undefined {
  * same revision is never stale. A revision this backend did not issue is `['revision']` (stale for any write).
  */
 export function checkRevision(expected: string, actual: string, groups: readonly FieldGroup[]): string[] {
-	if (expected === actual) return [];
-	const wanted = partsOf(expected);
-	const current = partsOf(actual);
-	if (wanted === undefined || current === undefined) return ['revision'];
-	return groups.filter(group => wanted[group] !== current[group]);
+	return checkRevisionParts(expected, actual, groups, partsOf);
 }

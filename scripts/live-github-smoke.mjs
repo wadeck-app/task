@@ -185,7 +185,7 @@ try {
 	await api('PATCH', `/repos/${repo}/issues/${G.number}`, {
 		body: `Real text\n\n<!-- task:begin v1 -->{"links":[{"type":"duplicateOf","target":"${E.number}"}]}<!-- task:end -->`,
 	});
-	await api('PATCH', `/repos/${repo}/issues/${A.number}`, { title: title('smoke parent renamed') });
+	await api('PATCH', `/repos/${repo}/issues/${A.number}`, { title: title(`smoke parent renamed ${word}`) });
 	await api('POST', `/repos/${repo}/issues/${B.number}/labels`, { labels: ['status:in-progress'] });
 	// The history groups the events of a second: two changes a person makes must be further apart than that to read as two.
 	await new Promise(resolve => setTimeout(resolve, 2500));
@@ -356,7 +356,7 @@ ${options}`;
 		activity.rows.length >= 3 && activity.rows.every(row => row.text !== ''),
 		JSON.stringify(activity.rows.map(r => r.text))
 	);
-	const found = await timed('find', () => service.searchTasks(c1, { q: 'smoke parent' }));
+	const found = await timed('find', () => service.searchTasks(c1, { q: `smoke parent renamed ${word}` }));
 	check(
 		'find locates the parent from the list',
 		found.some(hit => hit.id === id(A.number)),
@@ -476,7 +476,7 @@ ${options}`;
 		cliHistory.exitCode === 0 && cliHistory.output.includes('Title edited'),
 		cliHistory.output.slice(0, 300)
 	);
-	const cliFind = await cliRun('find', 'searchable');
+	const cliFind = await cliRun('find', word);
 	check('task find', cliFind.exitCode === 0 && cliFind.output.includes(id(H.number)), cliFind.output.slice(0, 200));
 	const cliStatus = await cliRun('status', 'list');
 	check('task status list', cliStatus.exitCode === 0 && cliStatus.output.includes('cancelled'), cliStatus.output);

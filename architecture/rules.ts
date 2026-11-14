@@ -157,12 +157,10 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 			files: {
 				'packages/task-service/src/plugins/local/localPlugin.ts':
 					'the local strategy checks its data folder (exists, writable) for strategy check; tasks go through the backend',
-				'packages/task-service/src/plugins/github/githubToken.ts':
-					'the github strategy reads its token from the file the config names (the value goes to the HTTP client only, never into a result)',
+				'packages/task-service/src/plugins/forge-common/forgeToken.ts':
+					'the github and gitlab strategies read their token from the file the config names (the value goes to the HTTP client only, never into a result)',
 				'packages/task-service/src/plugins/github/responseCache.ts':
 					'the read-through cache of the github strategy: answers of GitHub as files in the project data folder',
-				'packages/task-service/src/plugins/gitlab/gitlabToken.ts':
-					'the gitlab strategy reads its token from the file the config names (the value goes to the HTTP client only, never into a result)',
 				'packages/task-service/src/migrate/migrateJournal.ts':
 					'the journal and the lock of a migration: files in the data folder of the target project (task data goes through the backends)',
 				'packages/task-service/src/migrate/migrate.testkit.ts':
@@ -379,6 +377,9 @@ export function checkManifest(
 const SEAM_DIR = 'packages/task-service/src/plugin-host/';
 const PLUGINS_DIR = 'packages/task-service/src/plugins/';
 const BUILTIN_LIST = 'packages/task-service/src/plugins/builtinPlugins.ts';
+// Code the github and gitlab plugins share. It is no plugin (nothing registers there): only those two plugin folders may import it.
+const FORGE_COMMON_DIR = 'packages/task-service/src/plugins/forge-common/';
+const FORGE_PLUGIN_DIRS = ['packages/task-service/src/plugins/github/', 'packages/task-service/src/plugins/gitlab/'];
 const NODE_BUILTIN = /^node:/;
 
 /** Where a relative specifier lands, extension and all, as a repository-relative path; non-relative ones are returned as they are. */
@@ -390,6 +391,8 @@ function landing(specifier: string, resolveRelative: (specifier: string) => stri
  * Folder rules of the plugin mechanism, by the folder of the file checked:
  * - `plugin-host/` (the seam, extractable): imports only its own files and Node built-ins (its tests may add vitest). It knows nothing of task.
  * - `plugins/<id>/` (a built-in plugin): the seam, `plugins/kinds`, its own files, task-core and Node built-ins. Tests are free.
+ * - `plugins/forge-common/` (code shared by the github and gitlab plugins, no plugin): the same list as a plugin, so it imports
+ *   nothing of either plugin; and only `plugins/github/` and `plugins/gitlab/` may import it (`forge-common-import`).
  * - `plugins/` itself (`kinds.ts`, the built-in list): the seam, `plugins/**`, task-core and Node built-ins.
  * - everywhere else in task-service: only the built-in list imports a `plugins/<id>/` folder.
  */
@@ -421,12 +424,28 @@ export function checkPluginFolders(
 		for (const specifier of specifiers) {
 			const target = landing(specifier, options.resolveRelative);
 			let allowed: boolean;
+			if (
+				specifier.startsWith('.') &&
+				target.startsWith(FORGE_COMMON_DIR) &&
+				own !== FORGE_COMMON_DIR &&
+				!FORGE_PLUGIN_DIRS.includes(own ?? '')
+			) {
+				report(
+					'forge-common-import',
+					specifier,
+					'plugins/forge-common is shared by the github and gitlab plugins only; another plugin keeps its own code'
+				);
+				continue;
+			}
 			if (specifier.startsWith('.')) {
 				allowed =
 					target.startsWith(SEAM_DIR) ||
 					(own === undefined
 						? target.startsWith(PLUGINS_DIR)
-						: target.startsWith(own) || /^packages\/task-service\/src\/plugins\/kinds(\.|$)/.test(target));
+						: target.startsWith(own) ||
+							/^packages\/task-service\/src\/plugins\/kinds(\.|$)/.test(target) ||
+							// Refused above (forge-common-import) to every folder but the two forge plugins.
+							target.startsWith(FORGE_COMMON_DIR));
 			} else {
 				allowed = NODE_BUILTIN.test(target) || target === '@wadeck-app/task-core';
 			}

@@ -4,6 +4,9 @@
 // Only the Free tier is supported (verified live on gitlab.com Free, 2026-11-09): the `blocks` / `is_blocked_by` links are a paid
 // feature that task does not offer. A label written with the scoped syntax (`status::todo`) is a PLAIN label on Free (no exclusivity,
 // accepted by the API and the UI): it is allowed everywhere, and the wrapper itself keeps a task to one status label.
+import type { TokenSource } from '../forge-common/forgeToken.js';
+import { found, isMapping, parseNumber, parseTtlCache } from '../forge-common/optionParsing.js';
+import type { Parsed } from '../forge-common/optionParsing.js';
 import type { ProjectFacts } from '../kinds.js';
 
 /** How GitLab represents a task status: opened or closed, and an optional label (GitLab has no close reason). */
@@ -33,7 +36,7 @@ const TASK_RESERVED_REASON =
 const TEST_CASE_REASON =
 	'test_case cannot be used: on gitlab.com Free a POST with issue_type test_case silently creates a plain issue and a PUT silently ignores it, so the type would never be stored';
 
-export type TokenSource = { kind: 'env'; name: string } | { kind: 'file'; path: string };
+export type { TokenSource };
 
 export interface GitLabProject {
 	/** As written in the config: `group/sub/project` or `1234`. */
@@ -96,11 +99,6 @@ const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const PROJECT_PATH = /^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+$/;
 const PROJECT_ID = /^\d+$/;
 
-const found = (value: unknown): string => (Array.isArray(value) ? 'a list' : (JSON.stringify(value) ?? String(value)));
-
-const isMapping = (value: unknown): value is Record<string, unknown> =>
-	typeof value === 'object' && value !== null && !Array.isArray(value);
-
 /**
  * What GitLab (or the way task sends labels) cannot take in a label name, as a sentence about the name as written; undefined when it
  * is fine. Only what is certain is refused: the API takes a comma separated list, so a comma cannot be part of a name, and a name
@@ -113,8 +111,6 @@ export function labelProblem(name: string): string | undefined {
 	if (name !== name.trim()) return `"${name}" starts or ends with a space, which GitLab trims`;
 	return undefined;
 }
-
-type Parsed<T> = { value: T } | { problem: string };
 
 function parseProject(value: unknown): Parsed<GitLabProject> {
 	if (value === undefined || value === '') {
@@ -260,20 +256,6 @@ function parseStatusMap(value: unknown): Parsed<Record<string, StatusRule>> {
 	return { value: map };
 }
 
-function parseNumber(
-	options: Record<string, unknown>,
-	key: string,
-	fallback: number,
-	rule: (n: number) => boolean,
-	expected: string
-): Parsed<number> {
-	const value = options[key];
-	if (value === undefined) return { value: fallback };
-	if (typeof value !== 'number' || !rule(value))
-		return { problem: `${key}: must be ${expected}, found ${found(value)}` };
-	return { value };
-}
-
 function parsePrefixes(options: Record<string, unknown>): Parsed<{ typePrefix: string; metaPrefix: string }> {
 	const read = (key: 'typePrefix' | 'metaPrefix', fallback: string): Parsed<string> => {
 		const value = options[key] ?? fallback;
@@ -362,20 +344,7 @@ function parseTypeMap(value: unknown): Parsed<Record<string, TypeRule>> {
 	return { value: map };
 }
 
-function parseCache(value: unknown): Parsed<number> {
-	if (value === undefined) return { value: 30 };
-	if (!isMapping(value))
-		return { problem: `cache: must be a mapping like { ttlSeconds: 30 }, found ${found(value)}` };
-	for (const key of Object.keys(value)) {
-		if (key !== 'ttlSeconds') return { problem: `cache.${key}: unknown key (valid: ttlSeconds)` };
-	}
-	const ttl = value['ttlSeconds'];
-	if (ttl === undefined) return { value: 30 };
-	if (typeof ttl !== 'number' || !(ttl >= 0)) {
-		return { problem: `cache.ttlSeconds: must be zero or a positive number of seconds, found ${found(ttl)}` };
-	}
-	return { value: ttl };
-}
+const parseCache = (value: unknown): Parsed<number> => parseTtlCache(value, 30);
 
 function parseRateLimit(value: unknown): Parsed<number> {
 	if (value === undefined) return { value: DEFAULT_MAX_WAIT_SECONDS };

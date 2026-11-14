@@ -513,6 +513,57 @@ describe('the plugin host seam and the built-in plugins', () => {
 		});
 	});
 
+	describe('plugins/forge-common is shared by the github and gitlab plugins only', () => {
+		const COMMON = `${PLUGINS}/forge-common/managedBlock.js`;
+		const statement = "import { x } from '../forge-common/managedBlock.js';";
+
+		it.each([`${PLUGINS}/github/githubToken.ts`, `${PLUGINS}/gitlab/gitlabToken.ts`])('%s may import it', file => {
+			expect(check(file, statement, COMMON)).toEqual([]);
+		});
+
+		it.each([
+			`${PLUGINS}/local/localPlugin.ts`,
+			`${PLUGINS}/remote/remotePlugin.ts`,
+			`${PLUGINS}/plain-http/plainHttpPlugin.ts`,
+			`${PLUGINS}/builtinPlugins.ts`,
+		])('%s may not', file => {
+			expect(check(file, statement, COMMON)).toContain('forge-common-import');
+		});
+
+		it('a file outside the plugins may not (it is a plugin folder for plugin-folder-import)', () => {
+			expect(
+				check(
+					'packages/task-service/src/openContext.ts',
+					"import { x } from './plugins/forge-common/managedBlock.js';",
+					COMMON
+				)
+			).toContain('plugin-folder-import');
+		});
+
+		it('its tests are free', () => {
+			expect(check(`${PLUGINS}/local/localPlugin.test.ts`, statement, COMMON, true)).toEqual([]);
+		});
+
+		it('it imports the seam, plugins/kinds, its own files, task-core and node: only', () => {
+			const file = `${PLUGINS}/forge-common/forgeToken.ts`;
+			expect(check(file, "import type { x } from '../kinds.js';", `${PLUGINS}/kinds.js`)).toEqual([]);
+			expect(check(file, "import { x } from './managedBlock.js';", COMMON)).toEqual([]);
+			expect(check(file, "import { x } from '@wadeck-app/task-core';", '@wadeck-app/task-core')).toEqual([]);
+			expect(check(file, "import * as fs from 'node:fs';", 'node:fs')).toEqual([]);
+		});
+
+		it.each([
+			["import { x } from '../github/githubClient.js';", `${PLUGINS}/github/githubClient.js`],
+			["import { x } from '../gitlab/gitlabClient.js';", `${PLUGINS}/gitlab/gitlabClient.js`],
+			["import { x } from '../../storage.js';", 'packages/task-service/src/storage.js'],
+			["import { x } from '@wadeck-app/project-sdk';", '@wadeck-app/project-sdk'],
+		])('it may not import %s', (source, resolved) => {
+			expect(check(`${PLUGINS}/forge-common/forgeToken.ts`, source, resolved)).toContain(
+				'plugin-imports-outside-seam'
+			);
+		});
+	});
+
 	describe('only the built-in list imports a plugin folder', () => {
 		it('the list may', () => {
 			expect(

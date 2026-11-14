@@ -1,5 +1,8 @@
 // The options of the `github` strategy (`strategy.options` of a project's config.yml): parsed once, every problem a sentence that
 // starts with the dotted key (the host turns it into `<file>: strategy.options.<key>: <problem>`). Pure: no I/O, no environment.
+import type { TokenSource } from '../forge-common/forgeToken.js';
+import { found, isMapping, parseNumber, parseTtlCache } from '../forge-common/optionParsing.js';
+import type { Parsed } from '../forge-common/optionParsing.js';
 import type { ProjectFacts } from '../kinds.js';
 
 /** How GitHub represents a task status: open or closed, a close reason, an optional label. */
@@ -19,7 +22,7 @@ export interface TypeRule {
 	label?: string;
 }
 
-export type TokenSource = { kind: 'env'; name: string } | { kind: 'file'; path: string };
+export type { TokenSource };
 
 export interface GitHubSettings {
 	repo: { owner: string; name: string; full: string };
@@ -64,11 +67,6 @@ const CLOSE_REASONS: readonly CloseReason[] = ['completed', 'not_planned', 'dupl
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
-const found = (value: unknown): string => (Array.isArray(value) ? 'a list' : (JSON.stringify(value) ?? String(value)));
-
-const isMapping = (value: unknown): value is Record<string, unknown> =>
-	typeof value === 'object' && value !== null && !Array.isArray(value);
-
 /** What GitHub would refuse in a label name, as a sentence about `quoted` (the name as written); undefined when it is fine. */
 export function labelProblem(name: string): string | undefined {
 	if (name.includes(',')) return `"${name}" contains a comma, which GitHub refuses in a label name`;
@@ -78,8 +76,6 @@ export function labelProblem(name: string): string | undefined {
 	}
 	return undefined;
 }
-
-type Parsed<T> = { value: T } | { problem: string };
 
 function parseRepo(value: unknown): Parsed<GitHubSettings['repo']> {
 	if (value === undefined || value === '') {
@@ -228,20 +224,6 @@ function parseStatusMap(value: unknown): Parsed<Record<string, StatusRule>> {
 	return { value: map };
 }
 
-function parseNumber(
-	options: Record<string, unknown>,
-	key: string,
-	fallback: number,
-	rule: (n: number) => boolean,
-	expected: string
-): Parsed<number> {
-	const value = options[key];
-	if (value === undefined) return { value: fallback };
-	if (typeof value !== 'number' || !rule(value))
-		return { problem: `${key}: must be ${expected}, found ${found(value)}` };
-	return { value };
-}
-
 function parsePrefixes(options: Record<string, unknown>): Parsed<{ typePrefix: string; metaPrefix: string }> {
 	const read = (key: 'typePrefix' | 'metaPrefix', fallback: string): Parsed<string> => {
 		const value = options[key] ?? fallback;
@@ -305,20 +287,7 @@ function parseTypeMap(value: unknown): Parsed<Record<string, TypeRule>> {
 	return { value: map };
 }
 
-function parseCache(value: unknown): Parsed<number> {
-	if (value === undefined) return { value: 60 };
-	if (!isMapping(value))
-		return { problem: `cache: must be a mapping like { ttlSeconds: 60 }, found ${found(value)}` };
-	for (const key of Object.keys(value)) {
-		if (key !== 'ttlSeconds') return { problem: `cache.${key}: unknown key (valid: ttlSeconds)` };
-	}
-	const ttl = value['ttlSeconds'];
-	if (ttl === undefined) return { value: 60 };
-	if (typeof ttl !== 'number' || !(ttl >= 0)) {
-		return { problem: `cache.ttlSeconds: must be zero or a positive number of seconds, found ${found(ttl)}` };
-	}
-	return { value: ttl };
-}
+const parseCache = (value: unknown): Parsed<number> => parseTtlCache(value, 60);
 
 /** Parses `strategy.options` (without `fills`, which the host reads). Returns the settings, or the first problem as a sentence starting with its key. */
 export function parseGitHubOptions(

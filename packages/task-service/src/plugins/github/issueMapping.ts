@@ -16,6 +16,7 @@
 import { activityPreview, BackendDataError } from '@wadeck-app/task-core';
 import type { ActivityEntry, TaskComment, TaskLink, TaskRecord, TaskSummary } from '@wadeck-app/task-core';
 
+import { readManagedBlock } from '../forge-common/managedBlock.js';
 import type { ReadNotice } from '../kinds.js';
 import type { GitHubSettings } from './githubOptions.js';
 import type { StatusMapper } from './statusMapping.js';
@@ -139,10 +140,7 @@ export function toSummary(issue: ApiIssue, ctx: MapContext): TaskSummary {
 	};
 }
 
-// ---- body: description and the managed block ----
-
-const BLOCK = /<!--\s*task:begin\s+v(\d+)\s*-->([\s\S]*?)<!--\s*task:end\s*-->/;
-const BLOCK_BEGIN = /<!--\s*task:begin\b/;
+/// ---- body: description and the managed block ----
 
 export interface BodyParts {
 	description: string | undefined;
@@ -162,90 +160,22 @@ export interface BodyParts {
  */
 export function splitBody(issue: ApiIssue, ctx: MapContext): BodyParts {
 	const raw = (issue.body ?? '').replace(/\r\n/g, '\n');
-	let text = raw;
-	let duplicateOf: string | undefined;
-	let blockMeta: Record<string, string> | undefined;
-	let blockData: Record<string, unknown> | undefined;
-	const subject = `issue #${issue.number}`;
-	const fix = `Repair or remove the block between <!-- task:begin v1 --> and <!-- task:end --> on ${ctx.issueUrl(issue.number)}`;
-	const match = BLOCK.exec(raw);
-	if (match === null && BLOCK_BEGIN.test(raw)) {
-		throw new BackendDataError('github', subject, `the task block of ${subject} has no end marker`, fix);
-	}
-	if (match !== null) {
-		if (match[1] !== '1') {
-			throw new BackendDataError(
-				'github',
-				subject,
-				`the task block of ${subject} has format v${match[1]}, which this version of task does not read`,
-				'Update task (task cli update), or remove the block on GitHub'
-			);
-		}
-		let data: unknown;
-		try {
-			data = JSON.parse(match[2]!);
-		} catch (error) {
-			throw new BackendDataError(
-				'github',
-				subject,
-				`the task block of ${subject} is not valid JSON (${error instanceof Error ? error.message : String(error)})`,
-				fix
-			);
-		}
-		if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-			throw new BackendDataError('github', subject, `the task block of ${subject} is not a JSON object`, fix);
-		}
-		blockData = data as Record<string, unknown>;
-		const meta = (data as { meta?: unknown }).meta;
-		if (meta !== undefined) {
-			if (typeof meta !== 'object' || meta === null || Array.isArray(meta)) {
-				throw new BackendDataError(
-					'github',
-					subject,
-					`the task block of ${subject} has a "meta" that is not an object`,
-					fix
-				);
-			}
-			blockMeta = {};
-			for (const [key, value] of Object.entries(meta)) {
-				if (typeof value !== 'string') {
-					throw new BackendDataError(
-						'github',
-						subject,
-						`the task block of ${subject} has a meta value that is not a text (${key})`,
-						fix
-					);
-				}
-				blockMeta[key] = value;
-			}
-		}
-		const links = (data as { links?: unknown }).links;
-		if (links !== undefined) {
-			if (!Array.isArray(links)) {
-				throw new BackendDataError(
-					'github',
-					subject,
-					`the task block of ${subject} has a "links" that is not a list`,
-					fix
-				);
-			}
-			for (const link of links as Array<{ type?: unknown; target?: unknown }>) {
-				if (
-					link?.type === 'duplicateOf' &&
-					(typeof link.target === 'string' || typeof link.target === 'number')
-				) {
-					duplicateOf = String(link.target);
-				}
-			}
-		}
-		text = raw.replace(BLOCK, '');
-	}
-	const trimmed = text.trim();
+	const block = readManagedBlock({
+		raw,
+		backendKind: 'github',
+		forgeName: 'GitHub',
+		subject: `issue #${issue.number}`,
+		issueUrl: ctx.issueUrl(issue.number),
+		linkTypes: ['duplicateOf'],
+	});
+	// The last `duplicateOf` of the block wins.
+	const duplicateOf = block.links.at(-1)?.target;
+	const trimmed = block.text.trim();
 	return {
 		description: trimmed === '' || trimmed === issue.title ? undefined : trimmed,
 		duplicateOf,
-		blockMeta,
-		blockData,
+		blockMeta: block.blockMeta,
+		blockData: block.blockData,
 		visibleText: trimmed,
 	};
 }
@@ -586,15 +516,4 @@ export function linksOf(blockers: readonly number[], duplicateOf: string | undef
 	];
 }
 
-const blockOf = (data: Record<string, unknown>): string =>
-	`<!-- task:begin v1 -->${JSON.stringify(data)}<!-- task:end -->`;
-
-/** The body to write: the visible text, then the managed block when it holds anything (the block is last, an empty one is dropped). */
-export function composeBody(visibleText: string, data: Record<string, unknown> | undefined): string {
-	if (data === undefined || Object.keys(data).length === 0) return visibleText;
-	return visibleText === ''
-		? blockOf(data)
-		: `${visibleText}
-
-${blockOf(data)}`;
-}
+export { composeBody } from '../forge-common/managedBlock.js';

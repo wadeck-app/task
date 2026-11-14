@@ -12,6 +12,15 @@ import {
 	RateLimitedError,
 } from '@wadeck-app/task-core';
 
+import {
+	redactToken,
+	realSleep,
+	requireOwnAddress,
+	shortPathOf,
+	SlotLimiter,
+	urlWithQuery,
+	WriteSerializer,
+} from '../forge-common/httpHelpers.js';
 import type { ReadNotice } from '../kinds.js';
 import { deniedPermissionHint } from './credentialRequirements.js';
 import type { CacheEntry, RecentKind, ResponseCache } from './responseCache.js';
@@ -114,9 +123,7 @@ export interface GraphQlAnswer<T> {
 }
 
 /** Hides the token, and any `Bearer` credential, in a text. */
-export function redactToken(text: string, token: string): string {
-	return token === '' ? text : text.split(token).join('***');
-}
+export { redactToken };
 
 const API_VERSION = '2022-11-28';
 const REDIRECT_STATUSES = new Set([301, 302, 307, 308]);
@@ -134,17 +141,16 @@ export class GitHubClient {
 	private readonly origin: string;
 	private readonly rates = new Map<string, RateLimitState>();
 	private tokenExpiration: string | undefined;
-	private inFlight = 0;
-	private readonly waiting: Array<() => void> = [];
+	private readonly limiter: SlotLimiter;
 	private readonly sleep: (ms: number) => Promise<void>;
-	/** The writes wait for each other: this is the end of the last one queued. */
-	private writeChain: Promise<unknown> = Promise.resolve();
-	private lastWriteStartedAt: number | undefined;
+	private readonly writes: WriteSerializer;
 
 	constructor(private readonly options: GitHubClientOptions) {
-		this.sleep = options.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
+		this.sleep = options.sleep ?? realSleep;
 		this.now = options.now ?? Date.now;
 		this.doFetch = options.fetch ?? fetch;
+		this.limiter = new SlotLimiter(options.maxConcurrent ?? 6);
+		this.writes = new WriteSerializer(options.writeSpacingMs ?? 1000, this.now, this.sleep);
 		const base = new URL(options.baseUrl);
 		this.host = base.host;
 		this.origin = base.origin;
@@ -176,15 +182,12 @@ export class GitHubClient {
 	}
 
 	private urlOf(path: string, query?: Record<string, string | number>): string {
-		const url = new URL(`${this.options.baseUrl}${path}`);
-		if (query !== undefined) {
-			for (const key of Object.keys(query).sort()) url.searchParams.set(key, String(query[key]));
-		}
-		return url.toString();
+		return urlWithQuery(this.options.baseUrl, path, query);
 	}
 
 	/** The path of an absolute URL relative to the base address, for messages and logs. */
 	private shortPath(url: string): string {
+		return shortPathOf(url, this.options.baseUrl);
 		const parsed = new URL(url);
 		const base = new URL(this.options.baseUrl).pathname.replace(/\/$/, '');
 		return `${parsed.pathname.startsWith(base) ? parsed.pathname.slice(base.length) : parsed.pathname}${parsed.search}`;
@@ -260,18 +263,7 @@ export class GitHubClient {
 	}
 
 	private serialized<T>(task: () => Promise<T>): Promise<T> {
-		const run = this.writeChain.then(async () => {
-			const spacing = this.options.writeSpacingMs ?? 1000;
-			if (this.lastWriteStartedAt !== undefined && spacing > 0) {
-				const wait = spacing - (this.now() - this.lastWriteStartedAt);
-				if (wait > 0) await this.sleep(wait);
-			}
-			this.lastWriteStartedAt = this.now();
-			return task();
-		});
-		// The next write waits for this one whatever its outcome.
-		this.writeChain = run.catch(() => undefined);
-		return run;
+		return this.writes.run(task);
 	}
 
 	private async writeNow<T>(method: string, url: string, body: unknown): Promise<ClientResponse<T>> {
@@ -307,26 +299,13 @@ export class GitHubClient {
 	}
 
 	private requireOwnAddress(url: string): void {
-		let parsed: URL;
-		try {
-			parsed = new URL(url);
-		} catch {
-			throw new BackendDataError(
-				'github',
-				'pagination',
-				`GitHub sent a link that is not an address: ${this.redact(url)}`,
-				'Retry; if it persists the service is misbehaving'
-			);
-		}
-		const basePath = new URL(this.options.baseUrl).pathname.replace(/\/$/, '');
-		if (parsed.origin !== this.origin || !parsed.pathname.startsWith(`${basePath}/`)) {
-			throw new BackendDataError(
-				'github',
-				'pagination',
-				`GitHub sent a link to ${parsed.host}, which is not the configured address ${this.options.baseUrl}; it was not followed`,
-				'Check strategy.options.baseUrl in the project config (the token is only ever sent there)'
-			);
-		}
+		requireOwnAddress(url, {
+			baseUrl: this.options.baseUrl,
+			origin: this.origin,
+			backendKind: 'github',
+			forgeName: 'GitHub',
+			redact: text => this.redact(text),
+		});
 	}
 
 	private async request<T>(url: string, options: GetOptions): Promise<ClientResponse<T>> {
@@ -448,19 +427,12 @@ export class GitHubClient {
 		this.tokenExpiration = headers.get('github-authentication-token-expiration') ?? this.tokenExpiration;
 	}
 
-	private async acquire(): Promise<void> {
-		const max = this.options.maxConcurrent ?? 6;
-		if (this.inFlight < max) {
-			this.inFlight += 1;
-			return;
-		}
-		await new Promise<void>(resolve => this.waiting.push(resolve));
+	private acquire(): Promise<void> {
+		return this.limiter.acquire();
 	}
 
 	private release(): void {
-		const next = this.waiting.shift();
-		if (next === undefined) this.inFlight -= 1;
-		else next();
+		this.limiter.release();
 	}
 
 	private expiredByWrite(entry: CacheEntry): boolean {
