@@ -21,7 +21,7 @@ export async function setType(ctx: TaskServiceContext, input: { id: string; type
 	if (!validation.valid) {
 		throw new InvalidTaskTypeError(input.type, validation.error);
 	}
-	const before = await ctx.store.findByPrefix(input.id);
+	const before = await ctx.store.resolve(input.id);
 	const oldType = before.type;
 	const task = plain(await ctx.store.setType(before.id, input.type));
 	const events: TaskEvent[] =
@@ -41,7 +41,7 @@ export async function addLabel(
 	ctx: TaskServiceContext,
 	input: { id: string; label: string }
 ): Promise<TaskChangeResult> {
-	const before = await ctx.store.findByPrefix(input.id);
+	const before = await ctx.store.resolve(input.id);
 	const had = (before.labels ?? []).includes(input.label);
 	const task = plain(await ctx.store.addLabel(before.id, input.label));
 	const events: TaskEvent[] = had
@@ -55,7 +55,7 @@ export async function removeLabel(
 	ctx: TaskServiceContext,
 	input: { id: string; label: string }
 ): Promise<TaskChangeResult> {
-	const before = await ctx.store.findByPrefix(input.id);
+	const before = await ctx.store.resolve(input.id);
 	const had = (before.labels ?? []).includes(input.label);
 	const task = plain(await ctx.store.removeLabel(before.id, input.label));
 	const events: TaskEvent[] = had
@@ -72,7 +72,7 @@ export async function setMeta(
 	ctx: TaskServiceContext,
 	input: { id: string; key: string; value: string }
 ): Promise<TaskChangeResult> {
-	const before = await ctx.store.findByPrefix(input.id);
+	const before = await ctx.store.resolve(input.id);
 	// Own property only: a key such as "constructor" must not read as already set.
 	const oldValue = Object.hasOwn(before.meta ?? {}, input.key) ? before.meta![input.key] : undefined;
 	const task = plain(await ctx.store.setMeta(before.id, input.key, input.value));
@@ -99,9 +99,10 @@ export async function unsetMeta(
 	ctx: TaskServiceContext,
 	input: { id: string; key: string }
 ): Promise<TaskChangeResult> {
-	const before = await ctx.store.findByPrefix(input.id);
+	const before = await ctx.store.resolve(input.id);
 	if (!Object.hasOwn(before.meta ?? {}, input.key)) {
-		return { task: plain(before), events: [] };
+		// Nothing changes: the answer is the whole record (`resolve` has no history, comments or links).
+		return { task: plain(await ctx.store.get(before.id)), events: [] };
 	}
 	const oldValue = before.meta![input.key];
 	const task = plain(await ctx.store.removeMeta(before.id, input.key));
@@ -118,9 +119,10 @@ export async function unsetMeta(
 
 /** Clears the type of a task. `onTaskTypeChanged` (`newType` absent) only when the task had one. */
 export async function unsetType(ctx: TaskServiceContext, input: { id: string }): Promise<TaskChangeResult> {
-	const before = await ctx.store.findByPrefix(input.id);
+	const before = await ctx.store.resolve(input.id);
 	if (before.type === undefined) {
-		return { task: plain(before), events: [] };
+		// Nothing changes: the answer is the whole record (`resolve` has no history, comments or links).
+		return { task: plain(await ctx.store.get(before.id)), events: [] };
 	}
 	const task = plain(await ctx.store.clearType(before.id));
 	return {

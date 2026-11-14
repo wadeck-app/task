@@ -17,7 +17,7 @@ export function createStatusFilter(config: TaskResolvedConfig, showAll: boolean)
 /** Flat task list, optionally limited to the direct children of a parent. */
 export async function listTasks(ctx: TaskServiceContext, input: ListTasksInput): Promise<TaskSummary[]> {
 	const passesFilter = createStatusFilter(ctx.config, input.showAll ?? false);
-	const parentId = input.parent === undefined ? undefined : (await ctx.store.findByPrefix(input.parent)).id;
+	const parentId = input.parent === undefined ? undefined : (await ctx.store.resolve(input.parent)).id;
 	return (parentId === undefined ? await ctx.store.list() : await ctx.store.getChildren(parentId)).filter(
 		passesFilter
 	);
@@ -25,6 +25,6 @@ export async function listTasks(ctx: TaskServiceContext, input: ListTasksInput):
 
 /** Nested forest of the matching tasks plus the ancestors leading to them. */
 export async function listForest(ctx: TaskServiceContext, input: ListTasksInput): Promise<TaskTreeNode[]> {
-	const parentId = input.parent === undefined ? undefined : (await ctx.store.findByPrefix(input.parent)).id;
+	const parentId = input.parent === undefined ? undefined : (await ctx.store.resolve(input.parent)).id;
 	return ctx.store.getForest({ parentId, predicate: createStatusFilter(ctx.config, input.showAll ?? false) });
 }

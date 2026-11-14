@@ -48,7 +48,7 @@ function textsToStore(input: CreateTaskInput): { title: string; description?: st
  */
 export async function createTask(ctx: TaskServiceContext, input: CreateTaskInput): Promise<CreateTaskResult> {
 	const { title, description } = textsToStore(input);
-	const parentId = input.parent === undefined ? undefined : (await ctx.store.findByPrefix(input.parent)).id;
+	const parentId = input.parent === undefined ? undefined : (await ctx.store.resolve(input.parent)).id;
 	const task = plain(await ctx.store.create({ title, status: ctx.config.defaultStatus, parentId, description }));
 	return {
 		task,

@@ -11,6 +11,7 @@ import type {
 	LabelSyncReport,
 	ListQuery,
 	Page,
+	ResolvedTask,
 	TaskBackend,
 	TaskLink,
 	TaskLinks,
@@ -393,6 +394,33 @@ export class GitHubBackend implements TaskBackend {
 
 	async findByPrefix(prefix: string): Promise<VersionedRecord> {
 		return this.get(prefix);
+	}
+
+	/**
+	 * The fields of the task from the issue alone: ONE read (conditional, free inside the cache TTL), where `findByPrefix` is the
+	 * issue, its timeline, its comments and its blockers. GitHub ids are assigned numbers, so there is nothing to resolve but the
+	 * number: a text that is not one is "not found" exactly as for `get`. The same mapping as `recordOf` (a test compares them).
+	 */
+	async resolve(prefix: string): Promise<ResolvedTask> {
+		const { issue, response } = await this.issue(prefix);
+		const { description } = splitBody(issue, this.map);
+		const parent = parentNumber(issue, this.map);
+		const type = typeOf(issue, this.map);
+		const labels = userLabels(issue, this.map);
+		const meta = metaOf(issue, this.map);
+		return {
+			id: String(issue.number),
+			title: issue.title,
+			...(description === undefined ? {} : { description }),
+			status: statusOfIssue(issue, this.map),
+			...(parent === undefined ? {} : { parentId: String(parent) }),
+			...(type === undefined ? {} : { type }),
+			...(labels.length === 0 ? {} : { labels }),
+			...(meta === undefined ? {} : { meta }),
+			createdAt: iso(issue.created_at),
+			updatedAt: iso(issue.updated_at),
+			revision: revisionOf(issue, response.etag, this.map),
+		};
 	}
 
 	async listLabels(): Promise<LabelCount[]> {

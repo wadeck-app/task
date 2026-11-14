@@ -207,6 +207,11 @@ export class RemoteBackend implements TaskBackend {
 		return this.call('findByPrefix', { params: { prefix } });
 	}
 
+	resolve(prefix: string): Promise<VersionedRecord> {
+		// One request either way (the server answers the whole record of its own backend): no route of its own in protocol v1.
+		return this.findByPrefix(prefix);
+	}
+
 	async listLabels(): Promise<LabelCount[]> {
 		return (await this.call<{ items: LabelCount[] }>('listLabels')).items;
 	}

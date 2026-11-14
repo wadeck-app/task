@@ -61,6 +61,7 @@ export type {
 	LabelCount,
 	ListQuery,
 	Page,
+	ResolvedTask,
 	SearchSupport,
 	StatusSupport,
 	TaskBackend,

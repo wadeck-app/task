@@ -226,7 +226,7 @@ Not verified: GitHub Enterprise Server, a personal-account repository, `delete: 
 
 What stage 3 and later need:
 
-- A cheaper id resolution: `findByPrefix` returns the full record (issue + timeline + comments) before every write, so a status change costs 6 to 7 requests; a port method that resolves an id and returns the light record (title, status, labels, type, meta, parent) would halve it, and `planDelete` / `executeDelete` should not list the project several times.
+- DONE (fake server, not live): `TaskBackend.resolve` and one list read in `planDelete`/`executeDelete`, see CLAUDE.md. Was: a cheaper id resolution: `findByPrefix` returns the full record (issue + timeline + comments) before every write, so a status change costs 6 to 7 requests; a port method that resolves an id and returns the light record (title, status, labels, type, meta, parent) would halve it, and `planDelete` / `executeDelete` should not list the project several times.
 - `task import --from github` / `task migrate` (1.8): needs the write side of the local port with an id map; the github side reads and writes now.
 - `serve` / remote (stage 4): the revision and `PartialWriteError` already travel as typed errors; the use cases and the module pass no `expectedRevision` yet (last write wins, like local), a page could pass the revision of the record it shows.
 - GitLab (stage 3): reuse the client shape (serialized writes, spacing, expire-on-write, `recent` memory), the label codec, the revision-by-parts idea and the contract options; its lags are unknown, probe them before trusting any count.

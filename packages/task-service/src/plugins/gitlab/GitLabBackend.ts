@@ -363,6 +363,11 @@ export class GitLabBackend implements TaskBackend {
 		return this.get(prefix);
 	}
 
+	async resolve(prefix: string): Promise<VersionedRecord> {
+		// Not made cheaper for gitlab (outside this change): same read as findByPrefix.
+		return this.findByPrefix(prefix);
+	}
+
 	async listLabels(): Promise<LabelCount[]> {
 		const { issues } = await this.issuesAll();
 		const counts = new Map<string, { label: string; count: number }>();

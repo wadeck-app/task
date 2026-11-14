@@ -40,6 +40,7 @@ export type {
 	LabelCount,
 	ListQuery,
 	Page,
+	ResolvedTask,
 	TaskBackend,
 	VersionedRecord,
 	WriteOptions,

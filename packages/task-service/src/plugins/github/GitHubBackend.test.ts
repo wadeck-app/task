@@ -77,6 +77,30 @@ describe('reads: status, title and description', () => {
 		}
 	});
 
+	it('resolve reads the issue only (no timeline, comments or blockers), answers the fields of get, and refuses what get refuses', async () => {
+		const first = fake.addIssue({ title: 'First', labels: ['urgent'] });
+		fake.addComment(first, 'a comment');
+		fake.addIssue({ title: 'Blocker' });
+		fake.addBlockedBy(first, 2);
+		fake.requests.splice(0);
+
+		const resolved = await t.backend.resolve('#1');
+
+		expect(fake.requests.map(request => `${request.method} ${request.path}`)).toEqual([
+			'GET /repos/acme/shop/issues/1',
+		]);
+		const full = await t.backend.get('1');
+		const { links: _links, history: _history, activity: _activity, comments: _comments, ...fields } = full;
+		expect(resolved).toEqual(fields);
+		expect(resolved.labels).toEqual(['urgent']);
+		for (const bad of ['abc', '1a', '', '1/2', '99']) {
+			const asked = await failure(() => t.backend.resolve(bad));
+			const expected = await failure(() => t.backend.findByPrefix(bad));
+			expect(asked).toBeInstanceOf(TaskNotFoundError);
+			expect(asked.message).toBe(expected.message);
+		}
+	});
+
 	it('pull requests are not tasks: left out of the list, not found by number', async () => {
 		fake.addIssue({ title: 'Issue' });
 		fake.addIssue({ title: 'A pull request', pull: true });

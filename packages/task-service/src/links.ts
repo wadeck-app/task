@@ -45,7 +45,7 @@ async function resolveTarget(
 	holderId: string
 ): Promise<string> {
 	try {
-		return (await ctx.store.findByPrefix(input.target)).id;
+		return (await ctx.store.resolve(input.target)).id;
 	} catch (error) {
 		const stored = action === 'unlink' && !spec.inverse && (await ctx.store.get(holderId)).links;
 		if (
@@ -69,7 +69,7 @@ async function changeLink(
 		const hint = suggest(input.type, ALL_LINK_NAMES);
 		throw new InvalidLinkTypeError(input.type, ALL_LINK_NAMES, hint === undefined ? [] : [hint]);
 	}
-	const first = (await ctx.store.findByPrefix(input.id)).id;
+	const first = (await ctx.store.resolve(input.id)).id;
 	const second = await resolveTarget(ctx, input, spec, action, first);
 	// "A blocks B" is stored on B as "B blockedBy A": the holder is the task that owns the stored link.
 	const [holder, target] = spec.inverse ? [second, first] : [first, second];
@@ -101,7 +101,7 @@ export async function unlinkTasks(ctx: TaskServiceContext, input: LinkTasksInput
 
 /** A task's outgoing links and their derived inverses. */
 export async function getTaskLinks(ctx: TaskServiceContext, input: { id: string }): Promise<TaskLinks> {
-	const id = (await ctx.store.findByPrefix(input.id)).id;
+	const id = (await ctx.store.resolve(input.id)).id;
 	// A link to a task that is gone is reported with its fix (the store would only say the index is corrupted).
 	const existing = new Set((await ctx.store.list()).map(t => t.id));
 	const dangling = ((await ctx.store.get(id)).links ?? []).find(l => !existing.has(l.target));
@@ -133,7 +133,7 @@ export interface TaskLinksReport {
  * stay readable to be repaired, as for a dangling parent. Callers that need the failure keep `getTaskLinks`.
  */
 export async function readTaskLinks(ctx: TaskServiceContext, input: { id: string }): Promise<TaskLinksReport> {
-	const id = (await ctx.store.findByPrefix(input.id)).id;
+	const id = (await ctx.store.resolve(input.id)).id;
 	const { links, dangling } = await ctx.store.getLinksLenient(id);
 	const errors = dangling.map(link => new DanglingLinkError(id, link.type, link.target));
 	return {

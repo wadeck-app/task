@@ -113,6 +113,11 @@ export class LocalFileBackend implements TaskBackend {
 		return versioned(this.store.findByPrefix(prefix));
 	}
 
+	async resolve(prefix: string): Promise<VersionedRecord> {
+		// A local file holds the whole record: reading it is the same one read.
+		return this.findByPrefix(prefix);
+	}
+
 	async listLabels(): Promise<LabelCount[]> {
 		const counts = new Map<string, number>();
 		for (const summary of this.store.list()) {

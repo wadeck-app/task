@@ -1,3 +1,5 @@
+import type { TaskRecord } from '@wadeck-app/task-core';
+
 import { projectEnv, type TaskServiceContext } from './context.js';
 import { InvalidTaskTextError } from './errors.js';
 import type { TaskEvent } from './events.js';
@@ -33,10 +35,12 @@ export async function setTaskText(ctx: TaskServiceContext, input: SetTaskTextInp
 		);
 	}
 	const events: TaskEvent[] = [];
-	let task = plain(await ctx.store.findByPrefix(input.id));
-	if (input.title !== undefined && input.title !== task.title) {
-		const oldValue = task.title;
-		task = plain(await ctx.store.setTitle(task.id, input.title));
+	// The fields are enough to decide what changes; the whole record is read only when nothing is written (it is then the answer).
+	const before = await ctx.store.resolve(input.id);
+	let task: TaskRecord | undefined;
+	if (input.title !== undefined && input.title !== before.title) {
+		const oldValue = before.title;
+		task = plain(await ctx.store.setTitle(before.id, input.title));
 		events.push({
 			name: 'onTaskTextChanged',
 			payload: { taskId: task.id, field: 'title', oldValue, newValue: input.title, ...projectEnv(ctx) },
@@ -44,10 +48,12 @@ export async function setTaskText(ctx: TaskServiceContext, input: SetTaskTextInp
 	}
 	if (input.description !== undefined) {
 		const newDescription = input.description.trim() === '' ? '' : input.description;
-		const newBody = newDescription === '' ? task.title : newDescription;
-		if (newBody !== taskDescription(task)) {
-			const oldValue = task.description;
-			task = plain(await ctx.store.setDescription(task.id, newDescription));
+		// The title as it is now: the written one when the title changed above.
+		const current = task ?? before;
+		const newBody = newDescription === '' ? current.title : newDescription;
+		if (newBody !== taskDescription(current)) {
+			const oldValue = current.description;
+			task = plain(await ctx.store.setDescription(before.id, newDescription));
 			events.push({
 				name: 'onTaskTextChanged',
 				payload: {
@@ -60,5 +66,5 @@ export async function setTaskText(ctx: TaskServiceContext, input: SetTaskTextInp
 			});
 		}
 	}
-	return { task, events };
+	return { task: task ?? plain(await ctx.store.get(before.id)), events };
 }

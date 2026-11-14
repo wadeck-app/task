@@ -219,6 +219,34 @@ export const BACKEND_CONTRACT_CASES: readonly ContractCase[] = [
 	},
 	{
 		group: 'crud',
+		name: 'resolve answers the fields of the task findByPrefix finds, and fails the same way',
+		async run({ backend, task, caps }) {
+			const a = await task('A');
+			if (caps.labels) await backend.addLabel(a.id, 'urgent');
+
+			const found = await backend.findByPrefix(a.id);
+			const resolved = await backend.resolve(a.id);
+			expect(resolved.revision).toBeTypeOf('string');
+			for (const key of [
+				'id',
+				'title',
+				'description',
+				'status',
+				'parentId',
+				'type',
+				'labels',
+				'meta',
+				'createdAt',
+				'updatedAt',
+			] as const) {
+				expect(resolved[key], key).toEqual(found[key]);
+			}
+			const error = await rejectsWith(backend.resolve('zzzzzzzz'), TaskNotFoundError);
+			expect(error.taskId).toBe('zzzzzzzz');
+		},
+	},
+	{
+		group: 'crud',
 		name: 'a prefix resolves, whatever its case (generated ids); with assigned ids the exact id does',
 		async run({ backend, task, caps }) {
 			const a = await task('A');

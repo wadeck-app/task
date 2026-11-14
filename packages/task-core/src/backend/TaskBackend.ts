@@ -22,6 +22,26 @@ export type VersionedRecord = TaskRecord & {
 	readonly cachedAt?: string;
 };
 
+/**
+ * What {@link TaskBackend.resolve} answers: the fields of a task a use case reads to name it and to know the value a write is about
+ * to replace. Not its links, history, activity or comments (a backend that holds them elsewhere than in the task itself does not
+ * fetch them for this). Every {@link VersionedRecord} is a ResolvedTask.
+ */
+export type ResolvedTask = Pick<
+	VersionedRecord,
+	| 'id'
+	| 'title'
+	| 'description'
+	| 'status'
+	| 'parentId'
+	| 'type'
+	| 'labels'
+	| 'meta'
+	| 'createdAt'
+	| 'updatedAt'
+	| 'revision'
+>;
+
 /** Options of every write that changes an existing task. */
 export interface WriteOptions {
 	/**
@@ -111,6 +131,13 @@ export interface TaskBackend {
 	getMany(ids: readonly string[]): Promise<VersionedRecord[]>;
 	/** Throws TaskNotFoundError or AmbiguousTaskPrefixError. A backend with `capabilities.ids` = `assigned` accepts exact ids only. */
 	findByPrefix(prefix: string): Promise<VersionedRecord>;
+	/**
+	 * Same resolution and same errors as {@link findByPrefix}, answering only the {@link ResolvedTask} fields. For the use cases that
+	 * need an id, or the current status / type / labels / meta / parent / title / description of a task before they write it; a use
+	 * case that shows the record, its history, activity, comments or links calls `findByPrefix` or `get`. A backend whose full record
+	 * costs more than its fields (github: the timeline, the comments, the dependencies are separate requests) answers this with less.
+	 */
+	resolve(prefix: string): Promise<ResolvedTask>;
 	/** Every label in use, most used first, then by name. Needs `capabilities.labels`. */
 	listLabels(): Promise<LabelCount[]>;
 

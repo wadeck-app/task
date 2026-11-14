@@ -19,7 +19,7 @@ export async function addComment(
 	ctx: TaskServiceContext,
 	input: { id: string; text: string; author?: string }
 ): Promise<TaskCommentResult> {
-	const before = await ctx.store.findByPrefix(input.id);
+	const before = await ctx.store.resolve(input.id);
 	const { task, comment } = await ctx.store.addComment(before.id, input.text, { author: input.author });
 	return {
 		task: plain(task),
@@ -44,7 +44,7 @@ export async function editComment(
 	ctx: TaskServiceContext,
 	input: { id: string; commentId: string; text: string }
 ): Promise<TaskCommentResult> {
-	const before = await ctx.store.findByPrefix(input.id);
+	const before = await ctx.store.resolve(input.id);
 	const { task, comment, oldText, changed } = await ctx.store.editComment(before.id, input.commentId, input.text);
 	const events: TaskEvent[] = changed
 		? [
@@ -68,7 +68,7 @@ export async function removeComment(
 	ctx: TaskServiceContext,
 	input: { id: string; commentId: string }
 ): Promise<TaskCommentResult> {
-	const before = await ctx.store.findByPrefix(input.id);
+	const before = await ctx.store.resolve(input.id);
 	const { task, comment } = await ctx.store.removeComment(before.id, input.commentId);
 	return {
 		task: plain(task),

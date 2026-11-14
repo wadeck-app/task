@@ -14,7 +14,7 @@ export interface ChildrenSummary {
  * `terminalStatuses`), so the CLI and the module never disagree on "done".
  */
 export async function summarizeChildren(ctx: TaskServiceContext, input: { id: string }): Promise<ChildrenSummary> {
-	const children = await ctx.store.getChildren((await ctx.store.findByPrefix(input.id)).id);
+	const children = await ctx.store.getChildren((await ctx.store.resolve(input.id)).id);
 	const terminal = children.filter(child => ctx.config.terminalStatuses.includes(child.status)).length;
 	return { total: children.length, terminal, open: children.length - terminal };
 }
@@ -37,7 +37,7 @@ export interface BlockerSummary {
  */
 export async function describeBlockers(ctx: TaskServiceContext, input: { id: string }): Promise<BlockerSummary> {
 	// A dangling link blocks nothing and has no task to show: it is left out (the task page reports it).
-	const { links } = await ctx.store.getLinksLenient((await ctx.store.findByPrefix(input.id)).id);
+	const { links } = await ctx.store.getLinksLenient((await ctx.store.resolve(input.id)).id);
 	const blockers = links.blockedBy
 		.filter(task => !ctx.config.terminalStatuses.includes(task.status))
 		.map(task => ({ id: task.id, title: task.title, status: task.status }));

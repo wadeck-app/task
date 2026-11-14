@@ -33,7 +33,7 @@ export async function setStatus(ctx: TaskServiceContext, input: SetStatusInput):
 		const hint = suggest(input.status, config.statuses);
 		throw new InvalidStatusError(input.status, config.statuses, hint === undefined ? [] : [hint]);
 	}
-	const before = await store.findByPrefix(input.id);
+	const before = await store.resolve(input.id);
 	// The previous status is read before the write; the backend re-reads the record it updates.
 	const oldStatus = before.status;
 	// Events are built only after the write is awaited: a failed or refused write never yields one.
