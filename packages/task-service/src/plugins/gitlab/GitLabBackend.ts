@@ -10,7 +10,9 @@ import type {
 	BackendClaimResult,
 	BackendCommentChange,
 	BackendReleaseResult,
+	ReleaseOptions,
 	BackendCommentEdit,
+	BackendClaimInput,
 	CreateTaskInput,
 	LabelCount,
 	LabelSyncReport,
@@ -28,7 +30,6 @@ import type {
 	WriteOptions,
 } from '@wadeck-app/task-core';
 
-import { refuseTaskField } from '../kinds.js';
 import type { DeclaredFills } from '../kinds.js';
 import type { ClientResponse, GitLabClient } from './gitlabClient.js';
 import {
@@ -37,6 +38,7 @@ import {
 	isTombstone,
 	iso,
 	metaOf,
+	priorityOf,
 	replayHistory,
 	splitBody,
 	statusOfIssue,
@@ -73,10 +75,10 @@ export const GITLAB_CAPABILITIES: BackendCapabilities = Object.freeze({
 	// With fills.meta: labels the labels `meta:key=value` are read as meta; the plugin reports it as emulated.
 	meta: false,
 	comments: true,
-	// Not carried yet (stage 3): the operations answer UnsupportedByBackendError.
-	priority: false,
-	assignee: false,
-	claim: false,
+	// Priority: always a label (GitLab Free has no priority field); assignee and claim: the managed block of the description.
+	priority: true,
+	assignee: true,
+	claim: true,
 	writes: 'full',
 	// The list carries the parent (one batched GraphQL read per page) but not the links of an issue.
 	indexedGraph: false,
@@ -406,11 +408,12 @@ export class GitLabBackend implements TaskBackend {
 			this.parentMap([issue]),
 		]);
 		const parentIid = parents.get(issue.iid);
-		const { description, blockLinks } = splitBody(issue, this.map);
+		const { description, blockLinks, claim } = splitBody(issue, this.map);
 		const status = statusOfIssue(issue, this.map);
 		const type = typeOf(issue, this.map);
 		const labels = userLabels(issue, this.map);
 		const meta = metaOf(issue, this.map);
+		const priority = priorityOf(issue, this.map);
 		// blockedBy needs a paid tier: only duplicateOf / causedBy from the managed block are links of a record.
 		const links = blockLinks.map((link): TaskLink => ({ type: link.type, target: link.target }));
 		const activity = activityOf(labelEvents.items, this.map, issue.iid, notes.items);
@@ -430,6 +433,10 @@ export class GitLabBackend implements TaskBackend {
 			...(type === undefined ? {} : { type }),
 			...(labels.length === 0 ? {} : { labels }),
 			...(meta === undefined ? {} : { meta }),
+			...(priority === undefined ? {} : { priority }),
+			...(claim === undefined ? {} : { assignee: claim.assignee }),
+			...(claim?.claimedAt === undefined ? {} : { claimedAt: claim.claimedAt }),
+			...(claim?.leaseUntil === undefined ? {} : { leaseUntil: claim.leaseUntil }),
 			createdAt: iso(issue.created_at),
 			updatedAt: iso(issue.updated_at),
 			history: replayHistory(issue, labelEvents.items, stateEvents.items, this.map, status),
@@ -725,31 +732,30 @@ export class GitLabBackend implements TaskBackend {
 		return this.writer.removeComment(id, commentId, options);
 	}
 
-	// Priority, assignee and claim: not available on this storage strategy yet (stage 3 / 4 of the priority plan); each answers UnsupportedByBackendError.
-	setPriority(): Promise<VersionedRecord> {
-		return refuseTaskField('gitlab', 'setPriority');
+	// Priority (a label), assignee and claim (the managed block of the description): see gitlabWrites.ts.
+	setPriority(id: string, priority: string, options?: WriteOptions): Promise<VersionedRecord> {
+		return this.writer.setPriority(id, priority, options);
 	}
 
-	clearPriority(): Promise<VersionedRecord> {
-		return refuseTaskField('gitlab', 'clearPriority');
+	clearPriority(id: string, options?: WriteOptions): Promise<VersionedRecord> {
+		return this.writer.clearPriority(id, options);
 	}
 
-	setAssignee(): Promise<VersionedRecord> {
-		return refuseTaskField('gitlab', 'setAssignee');
+	setAssignee(id: string, assignee: string, options?: WriteOptions): Promise<VersionedRecord> {
+		return this.writer.setAssignee(id, assignee, options);
 	}
 
-	clearAssignee(): Promise<VersionedRecord> {
-		return refuseTaskField('gitlab', 'clearAssignee');
+	clearAssignee(id: string, options?: WriteOptions): Promise<VersionedRecord> {
+		return this.writer.clearAssignee(id, options);
 	}
 
-	claim(): Promise<BackendClaimResult> {
-		return refuseTaskField('gitlab', 'claim');
+	claim(id: string, input: BackendClaimInput): Promise<BackendClaimResult> {
+		return this.writer.claim(id, input);
 	}
 
-	release(): Promise<BackendReleaseResult> {
-		return refuseTaskField('gitlab', 'release');
+	release(id: string, options?: ReleaseOptions): Promise<BackendReleaseResult> {
+		return this.writer.release(id, options);
 	}
-
 	deleteTask(id: string, options?: WriteOptions): Promise<boolean> {
 		return this.writer.deleteTask(id, options);
 	}

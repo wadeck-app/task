@@ -8,6 +8,7 @@ import { checkGitLab } from './gitlabCheck.js';
 import { GitLabClient } from './gitlabClient.js';
 import { StatusMapper } from './gitlabStatusMapping.js';
 import { checkOptionsAgainstProject, parseGitLabOptions, webBaseOf } from './gitlabOptions.js';
+import { createPriorityContext } from './gitlabPriority.js';
 import type { GitLabSettings } from './gitlabOptions.js';
 import { resolveToken } from './gitlabToken.js';
 import { gitlabTraits } from './gitlabTraits.js';
@@ -42,6 +43,11 @@ export const gitlabPlugin: StrategyPlugin = {
 	},
 	// What is only partly true, said once and printed by `task strategy show` as `partial`.
 	capabilityNotes: {
+		priority:
+			'always a label (priorityPrefix + the priority, default priority:<name>): GitLab Free has no priority field; a change shows in the activity as a label event',
+		assignee:
+			'stored in a hidden block of the issue description (not a GitLab user); optimistic, not atomic: the last write wins and the first writer is not told: a dispatcher needing a hard guarantee keeps its own lock or uses task serve',
+		claim: 'stored in the same hidden block of the description; optimistic (check, then write), not atomic: the last write wins and the first writer is not told: a dispatcher needing a hard guarantee keeps its own lock or uses task serve',
 		history: 'derived from the label and state events (the initial state is not recorded by GitLab)',
 		activity:
 			'the label events, plus the title, description, type and parent edits, which GitLab records only as system notes (free text) and task reads from them',
@@ -94,6 +100,10 @@ export const gitlabPlugin: StrategyPlugin = {
 				typeMap:
 					'task type -> { issueType: incident } or { label: <name> }; default: the label typePrefix + type',
 				metaPrefix: 'label prefix of metadata with fills.meta: labels; default "meta:" (labels meta:key=value)',
+				priorityPrefix:
+					'label prefix of the priority; default "priority:" ("priority::" is a plain label on Free too). GitLab Free has no priority field: a priority is always a label',
+				priorityMap:
+					'task priority -> the whole label name GitLab holds; default: priorityPrefix + the priority',
 				pageSize: 'items per request, 1 to 100; default 100',
 				maxPages: 'pages one read may walk before failing loudly, 1 to 1000; default 50',
 				cache: '{ ttlSeconds }: seconds a read is served from memory without asking GitLab; default 30, 0 = never',
@@ -162,6 +172,7 @@ export const gitlabPlugin: StrategyPlugin = {
 			},
 			...(debug ? { debug: (line: string) => context.log('info', `gitlab: ${line}`) } : {}),
 		});
+		const priorityContext = createPriorityContext(settings, context.priorities);
 		const backend = new GitLabBackend({
 			settings,
 			client,
@@ -174,6 +185,7 @@ export const gitlabPlugin: StrategyPlugin = {
 				metaFromLabels: context.fills['meta']?.use === 'labels',
 				metaFromBlock: context.fills['meta']?.use === 'body-block',
 				projectTypes: context.types,
+				priority: priorityContext,
 				notice,
 				issueUrl,
 			},
@@ -199,6 +211,7 @@ export const gitlabPlugin: StrategyPlugin = {
 					tokenHint: tokenSentence(settings),
 					fills: context.fills,
 					projectName: context.project.name,
+					priority: priorityContext,
 				}),
 			takeNotices: () => notices.splice(0, notices.length),
 			dispose: () => Promise.resolve(),

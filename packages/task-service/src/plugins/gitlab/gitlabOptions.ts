@@ -56,6 +56,10 @@ export interface GitLabSettings {
 	typePrefix: string;
 	typeMap: Record<string, TypeRule>;
 	metaPrefix: string;
+	/** Prefix of the label that carries a priority (`priority:high`, or `priority::high`): GitLab Free has no native priority field. */
+	priorityPrefix: string;
+	/** Task priority -> the WHOLE label name that carries it (default: the prefix + the priority). */
+	priorityMap: Record<string, string>;
 	pageSize: number;
 	maxPages: number;
 	cacheTtlSeconds: number;
@@ -76,6 +80,8 @@ export const GITLAB_OPTION_NAMES: readonly string[] = [
 	'typePrefix',
 	'typeMap',
 	'metaPrefix',
+	'priorityPrefix',
+	'priorityMap',
 	'pageSize',
 	'maxPages',
 	'cache',
@@ -284,6 +290,102 @@ function parsePrefixes(options: Record<string, unknown>): Parsed<{ typePrefix: s
 	return { value: { typePrefix: type.value, metaPrefix: meta.value } };
 }
 
+/** Label names that are never a priority whatever the options say: the tombstone of a deleted task. */
+const RESERVED_LABELS: readonly string[] = ['task:deleted'];
+
+function parsePriority(
+	options: Record<string, unknown>,
+	prefixes: { typePrefix: string; metaPrefix: string },
+	statusMap: Record<string, StatusRule>,
+	typeMap: Record<string, TypeRule>
+): Parsed<{ priorityPrefix: string; priorityMap: Record<string, string> }> {
+	const prefix = options['priorityPrefix'] ?? 'priority:';
+	if (typeof prefix !== 'string' || prefix === '') {
+		return { problem: `priorityPrefix: must be a non-empty label prefix, found ${found(prefix)}` };
+	}
+	const bad = labelProblem(prefix);
+	if (bad !== undefined) return { problem: `priorityPrefix: ${bad}` };
+	// Names are compared exactly: GitLab labels are case sensitive.
+	for (const [key, other] of [
+		['typePrefix', prefixes.typePrefix],
+		['metaPrefix', prefixes.metaPrefix],
+	] as const) {
+		if (prefix === other) return { problem: `priorityPrefix: must differ from ${key} ("${other}")` };
+		if (prefix.startsWith(other)) {
+			return {
+				problem: `priorityPrefix: "${prefix}" starts with ${key} "${other}", so a priority label would read as another kind of label`,
+			};
+		}
+		if (other.startsWith(prefix)) {
+			return {
+				problem: `${key}: "${other}" starts with priorityPrefix "${prefix}", so a label of that kind would read as a priority label`,
+			};
+		}
+	}
+	const statusLabels = Object.entries(statusMap).flatMap(([status, rule]) =>
+		rule.label === undefined ? [] : [{ at: `statusMap.${status}.label`, label: rule.label }]
+	);
+	const typeLabels = Object.entries(typeMap).flatMap(([type, rule]) =>
+		rule.label === undefined ? [] : [{ at: `typeMap.${type}.label`, label: rule.label }]
+	);
+	for (const { at, label } of [...statusLabels, ...typeLabels]) {
+		if (label.startsWith(prefix)) {
+			return {
+				problem: `${at}: "${label}" starts with priorityPrefix "${prefix}", so it would read as a priority label; change the label or priorityPrefix`,
+			};
+		}
+	}
+	for (const reserved of RESERVED_LABELS) {
+		if (reserved.startsWith(prefix)) {
+			return {
+				problem: `priorityPrefix: "${prefix}" is a prefix of the reserved label "${reserved}", so it would read as a priority label`,
+			};
+		}
+	}
+	const mapValue = options['priorityMap'] ?? {};
+	if (!isMapping(mapValue)) {
+		return {
+			problem: `priorityMap: must be a mapping of task priority to the label name GitLab holds, found ${found(mapValue)}`,
+		};
+	}
+	const map: Record<string, string> = {};
+	const owners = new Map<string, string>();
+	for (const [priority, name] of Object.entries(mapValue)) {
+		const at = `priorityMap.${priority}`;
+		if (typeof name !== 'string' || name === '') {
+			return { problem: `${at}: must be a label name, found ${found(name)}` };
+		}
+		const refused = labelProblem(name);
+		if (refused !== undefined) return { problem: `${at}: ${refused}` };
+		const owner = owners.get(name);
+		if (owner !== undefined) {
+			return { problem: `${at}: the same label as "${owner}" ("${name}"): two priorities cannot share a label` };
+		}
+		const taken = [...statusLabels, ...typeLabels].find(entry => entry.label === name);
+		if (taken !== undefined) {
+			return {
+				problem: `${at}: "${name}" is already the label of ${taken.at}; a label cannot carry two meanings`,
+			};
+		}
+		if (RESERVED_LABELS.includes(name)) {
+			return { problem: `${at}: "${name}" is reserved (it marks a deleted task)` };
+		}
+		for (const [key, other] of [
+			['typePrefix', prefixes.typePrefix],
+			['metaPrefix', prefixes.metaPrefix],
+		] as const) {
+			if (name.startsWith(other)) {
+				return {
+					problem: `${at}: "${name}" starts with ${key} "${other}", so it would read as another kind of label`,
+				};
+			}
+		}
+		owners.set(name, priority);
+		map[priority] = name;
+	}
+	return { value: { priorityPrefix: prefix, priorityMap: map } };
+}
+
 function parseTypeMap(value: unknown): Parsed<Record<string, TypeRule>> {
 	if (value === undefined) return { value: {} };
 	if (!isMapping(value)) {
@@ -375,6 +477,13 @@ export function parseGitLabOptions(
 				'tier: the gitlab strategy supports the Free tier only; remove `tier` (the blocking links of the paid tiers are not supported)',
 		};
 	}
+	// GitHub's option: said apart, so a config copied from a github project gets the reason, not only "unknown".
+	if (Object.prototype.hasOwnProperty.call(options, 'priorityStorage')) {
+		return {
+			problem:
+				'priorityStorage: GitLab Free has no native priority field, so the priority is always stored in a label (priorityPrefix, priorityMap); remove priorityStorage',
+		};
+	}
 	for (const key of Object.keys(options)) {
 		if (!GITLAB_OPTION_NAMES.includes(key)) {
 			return {
@@ -394,6 +503,8 @@ export function parseGitLabOptions(
 	if ('problem' in prefixes) return prefixes;
 	const typeMap = parseTypeMap(options['typeMap']);
 	if ('problem' in typeMap) return typeMap;
+	const priority = parsePriority(options, prefixes.value, statusMap.value, typeMap.value);
+	if ('problem' in priority) return priority;
 	const pageSize = parseNumber(
 		options,
 		'pageSize',
@@ -427,6 +538,8 @@ export function parseGitLabOptions(
 			typePrefix: prefixes.value.typePrefix,
 			typeMap: typeMap.value,
 			metaPrefix: prefixes.value.metaPrefix,
+			priorityPrefix: priority.value.priorityPrefix,
+			priorityMap: priority.value.priorityMap,
 			pageSize: pageSize.value,
 			maxPages: maxPages.value,
 			cacheTtlSeconds: cache.value,
@@ -499,6 +612,44 @@ export function checkOptionsAgainstProject(settings: GitLabSettings, project: Pr
 		const label = `${settings.typePrefix}${type}`;
 		const bad = labelProblem(label);
 		if (bad !== undefined) return `typePrefix: the label of the type "${type}" is not usable: ${bad}`;
+	}
+	return checkPriorities(settings, project);
+}
+
+/** The label that carries a task priority: the mapped name, else the prefix + the priority. */
+export function priorityLabelName(
+	settings: Pick<GitLabSettings, 'priorityPrefix' | 'priorityMap'>,
+	priority: string
+): string {
+	return Object.hasOwn(settings.priorityMap, priority)
+		? settings.priorityMap[priority]!
+		: `${settings.priorityPrefix}${priority}`;
+}
+
+/** The priority options against the priorities of the project (a hand-built fact list without them checks nothing). */
+function checkPriorities(settings: GitLabSettings, project: ProjectFacts): string | undefined {
+	const { priorities } = project;
+	if (priorities === undefined) return undefined;
+	for (const key of Object.keys(settings.priorityMap)) {
+		if (!priorities.includes(key)) {
+			return `priorityMap.${key}: the project has no priority "${key}" (priorities: ${priorities.join(', ')})`;
+		}
+	}
+	const owners = new Map<string, string>();
+	for (const name of priorities) {
+		const label = priorityLabelName(settings, name);
+		const mapped = Object.hasOwn(settings.priorityMap, name);
+		const bad = labelProblem(label);
+		if (bad !== undefined) {
+			return mapped
+				? `priorityMap.${name}: the label is not usable: ${bad}`
+				: `priorityPrefix: the label of the priority "${name}" is not usable: ${bad}`;
+		}
+		const owner = owners.get(label);
+		if (owner !== undefined) {
+			return `priorityMap.${mapped ? name : owner}: the label "${label}" would carry both "${owner}" and "${name}"; give each priority its own label`;
+		}
+		owners.set(label, name);
 	}
 	return undefined;
 }

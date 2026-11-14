@@ -6,7 +6,12 @@ import { GitLabClient } from './gitlabClient.js';
 import type { GitLabClientOptions } from './gitlabClient.js';
 import { parseGitLabOptions } from './gitlabOptions.js';
 import type { GitLabSettings } from './gitlabOptions.js';
+import { createPriorityContext } from './gitlabPriority.js';
+import type { PriorityContext } from './gitlabPriority.js';
 import { StatusMapper } from './gitlabStatusMapping.js';
+
+/** The priorities the tests give the project unless they say otherwise. */
+export const PRIORITIES = ['urgent', 'high', 'medium', 'low'];
 
 /** The statuses of the read tests: one open without label, one open with, one terminal. */
 export const TEST_STATUSES: ProjectStatus[] = [
@@ -48,6 +53,8 @@ export interface TestBackend {
 	backend: GitLabBackend;
 	client: GitLabClient;
 	settings: GitLabSettings;
+	/** What the mapping reads and writes a priority with. */
+	priority: PriorityContext;
 	notices: ReadNotice[];
 	clock: { ms: number };
 	/** The waits the client asked for (spacing between writes, Retry-After), instead of really waiting. */
@@ -60,6 +67,8 @@ export function makeGitLabBackend(
 		options?: Record<string, unknown>;
 		statuses?: ProjectStatus[];
 		projectTypes?: string[];
+		/** The priorities of the project, highest first. Default: urgent, high, medium, low. */
+		priorities?: string[];
 		fills?: DeclaredFills;
 		client?: Partial<GitLabClientOptions>;
 	} = {}
@@ -106,6 +115,7 @@ export function makeGitLabBackend(
 		seen.add(next.text);
 		notices.push(next);
 	};
+	const priority = createPriorityContext(settings, options.priorities ?? PRIORITIES);
 	const backend = new GitLabBackend({
 		settings,
 		client,
@@ -118,9 +128,10 @@ export function makeGitLabBackend(
 			metaFromLabels: fills['meta']?.use === 'labels',
 			metaFromBlock: fills['meta']?.use === 'body-block',
 			projectTypes: options.projectTypes ?? [],
+			priority,
 			notice,
 			issueUrl,
 		},
 	});
-	return { backend, client, settings, notices, clock, waits };
+	return { backend, client, settings, priority, notices, clock, waits };
 }

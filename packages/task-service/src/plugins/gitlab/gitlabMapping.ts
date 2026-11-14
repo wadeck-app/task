@@ -7,7 +7,9 @@
 //   title         the issue title
 //   description   the description without the managed task block; absent when empty or equal to the title (CRLF read as LF)
 //   status        state (opened/closed) + the status labels, through the statusMap (gitlabStatusMapping.ts)
-//   labels        the issue labels without the status labels, the type labels and (with fills.meta: labels) the meta labels
+//   labels        the issue labels without the status labels, the type labels, the priority labels and (with fills.meta: labels) the meta labels
+//   priority      a priority label (priorityPrefix + name, or a name of priorityMap): GitLab Free has no native priority field
+//   assignee      the `claim` of the managed block of the description (assignee, claimedAt, leaseUntil): never a GitLab user
 //   type          a type label (typePrefix / typeMap.label), else a native issue_type that typeMap names (incident, task)
 //   meta          only with fills.meta: labels (`meta:key=value`) or body-block
 //   parentId      the parent of a native Task (GraphQL hierarchy widget, read by the backend; capability hierarchy: limited)
@@ -18,8 +20,11 @@
 import { BackendDataError, activityPreview } from '@wadeck-app/task-core';
 import type { ActivityEntry, TaskComment, TaskLink, TaskRecord, TaskSummary } from '@wadeck-app/task-core';
 
-import { readManagedBlock } from '../forge-common/managedBlock.js';
+import { readManagedBlock, tryReadBlock } from '../forge-common/managedBlock.js';
+import type { BlockClaim } from '../forge-common/managedBlock.js';
 import type { ReadNotice } from '../kinds.js';
+import { isPriorityLabel, priorityOfLabel, readPriority } from './gitlabPriority.js';
+import type { PriorityContext } from './gitlabPriority.js';
 import type { GitLabSettings } from './gitlabOptions.js';
 import type { StatusMapper } from './gitlabStatusMapping.js';
 import type { ApiIssue, ApiLabelEvent, ApiNote, ApiStateEvent } from './gitlabTypes.js';
@@ -33,6 +38,8 @@ export interface MapContext {
 	metaFromBlock: boolean;
 	/** The valid task types of the project (empty = any). */
 	projectTypes: readonly string[];
+	/** How a priority is read from an issue (its priority label) and written. */
+	priority: PriorityContext;
 	/** Called for something left out of a read that the user should know. */
 	notice: (notice: ReadNotice) => void;
 	/** The page of an issue on GitLab, for the fix a message gives. */
@@ -56,14 +63,55 @@ export function statusOfIssue(issue: ApiIssue, ctx: MapContext): string {
 	return ctx.mapper.statusOf({ iid: issue.iid, state: issue.state, labels: labelNames(issue) });
 }
 
+/** The task priority an issue has (its priority label); undefined without one. */
+export function priorityOf(issue: ApiIssue, ctx: MapContext): string | undefined {
+	return readPriority(issue, labelNames(issue), ctx.priority, ctx.issueUrl, text => {
+		if (ctx.priority.reported.has(text)) return;
+		ctx.priority.reported.add(text);
+		ctx.notice({ kind: 'ignored', text });
+	});
+}
+
+/**
+ * Who holds the issue (the claim of its managed block), for a LIST: a block that cannot be read must not fail the whole list, so
+ * the issue reads as held by nobody and the read says so (the write that touches the issue reports the block as an error).
+ */
+function claimForSummary(issue: ApiIssue, ctx: MapContext): BlockClaim | undefined {
+	if (!(issue.description ?? '').includes('task:begin')) return undefined;
+	const read = readBody(issue, ctx);
+	if (!(read instanceof BackendDataError)) return read.claim;
+	// One notice per issue and context, however many times the issue is summarised (list, forest, children...).
+	let told = unreadableBlocksTold.get(ctx);
+	if (told === undefined) {
+		told = new Set<number>();
+		unreadableBlocksTold.set(ctx, told);
+	}
+	if (!told.has(issue.iid)) {
+		told.add(issue.iid);
+		ctx.notice({
+			kind: 'ignored',
+			text: `${read.message}; its assignee and lease read as none until it is repaired (${read.hint})`,
+		});
+	}
+	return undefined;
+}
+
+// The issues whose unreadable block a context already reported (a WeakMap: the set lives and dies with the context).
+const unreadableBlocksTold = new WeakMap<MapContext, Set<number>>();
+
 /** `parentIid`: the parent of the issue when the caller knows it (the REST issue does not carry it). */
 export function toSummary(issue: ApiIssue, ctx: MapContext, parentIid?: number): TaskSummary {
+	const priority = priorityOf(issue, ctx);
+	const claim = claimForSummary(issue, ctx);
 	return {
 		id: String(issue.iid),
 		title: issue.title,
 		status: statusOfIssue(issue, ctx),
 		createdAt: iso(issue.created_at),
 		...(parentIid === undefined ? {} : { parentId: String(parentIid) }),
+		...(priority === undefined ? {} : { priority }),
+		...(claim === undefined ? {} : { assignee: claim.assignee }),
+		...(claim?.leaseUntil === undefined ? {} : { leaseUntil: claim.leaseUntil }),
 	};
 }
 
@@ -75,6 +123,8 @@ export interface BodyParts {
 	blockLinks: TaskLink[];
 	/** The meta the managed block holds (always read; only used with `fills.meta: body-block`). */
 	blockMeta: Record<string, string> | undefined;
+	/** Who holds the issue (the `claim` of the block); absent without one. */
+	claim: BlockClaim | undefined;
 	/** The whole content of the managed block, to be written back with a change; absent when the description has no block. */
 	blockData: Record<string, unknown> | undefined;
 	/** The description without the block, trimmed (CRLF as LF): what a write puts back in front of the block. */
@@ -100,9 +150,15 @@ export function splitBody(issue: ApiIssue, ctx: MapContext): BodyParts {
 		description: trimmed === '' || trimmed === issue.title ? undefined : trimmed,
 		blockLinks: block.links.map((link): TaskLink => ({ type: link.type as TaskLink['type'], target: link.target })),
 		blockMeta: block.blockMeta,
+		claim: block.claim,
 		blockData: block.blockData,
 		visibleText: trimmed,
 	};
+}
+
+/** The description of the issue split, or the data error of its block: for the callers that need the answer more than once. */
+export function readBody(issue: ApiIssue, ctx: MapContext): BodyParts | BackendDataError {
+	return tryReadBlock(() => splitBody(issue, ctx));
 }
 
 export { composeBody } from '../forge-common/managedBlock.js';
@@ -121,10 +177,14 @@ export function isMetaLabel(name: string, ctx: MapContext): boolean {
 	return ctx.metaFromLabels && name.startsWith(ctx.settings.metaPrefix);
 }
 
-/** Labels that are neither a status, a type nor (with the fill) a meta entry. */
+/** Labels that are neither a status, a type, a priority nor (with the fill) a meta entry. */
 export function userLabels(issue: ApiIssue, ctx: MapContext): string[] {
 	return labelNames(issue).filter(
-		name => !ctx.mapper.isStatusLabel(name) && !isTypeLabel(name, ctx) && !isMetaLabel(name, ctx)
+		name =>
+			!ctx.mapper.isStatusLabel(name) &&
+			!isTypeLabel(name, ctx) &&
+			!isPriorityLabel(name, ctx.priority) &&
+			!isMetaLabel(name, ctx)
 	);
 }
 
@@ -437,14 +497,14 @@ export function activityOf(
 		if (isTypeLabel(name, ctx)) {
 			const type = typeOfLabel(name, ctx);
 			rows.push({ at, kind: 'type', ...(added ? { newValue: type } : { oldValue: type }) });
+		} else if (isPriorityLabel(name, ctx.priority)) {
+			// A label of a priority the project does not have is shown as written: the activity says what happened on GitLab.
+			const priority = priorityOfLabel(name, ctx.priority) ?? name;
+			rows.push({ at, kind: 'priority', ...(added ? { newValue: priority } : { oldValue: priority }) });
 		} else if (isMetaLabel(name, ctx)) {
-			let entry: { key: string; value: string } | undefined;
-			try {
-				entry = parseMetaLabel(name, ctx, iid);
-			} catch {
-				// A meta label that cannot be read is reported when the issue itself is read; the activity just leaves it out.
-				entry = undefined;
-			}
+			// A meta label that cannot be read is reported when the issue itself is read; the activity just leaves it out.
+			const parsed = tryReadBlock(() => parseMetaLabel(name, ctx, iid));
+			const entry = parsed instanceof BackendDataError ? undefined : parsed;
 			if (entry === undefined) continue;
 			rows.push(
 				added

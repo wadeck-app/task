@@ -15,7 +15,7 @@
 //   ASSUMED              a guess nobody checked, allowed only while a live probe is pending (`probe`). There is none left: the test
 //                        `no ledger entry is ASSUMED` keeps it that way.
 //
-// Count (fixture of 597 steps, 2026-11-09): 298 lines: 258 LIVE-VERIFIED, 13 DOCUMENTED-NOT-LIVE, 27 UNVERIFIABLE, 0 ASSUMED. The last
+// Count (fixture of 597 steps, 2026-11-09): 299 lines: 258 LIVE-VERIFIED, 13 DOCUMENTED-NOT-LIVE, 28 UNVERIFIABLE, 0 ASSUMED. Stage 3b (priority, assignee, claim) added ONE line, a test hook (tooling): nothing else of the mock changed, priority is a plain label and the claim a plain description, both covered by the existing label and update lines. The last
 // LIVE-VERIFIED line (area "tail") names the steps of "TAIL 2" of the scenario (create W ...), not recorded yet: it fails the drift
 // guard until the lead records them (GL_SCENARIO_FROM="create W").
 //
@@ -1637,6 +1637,11 @@ export const MOCK_LEDGER: readonly LedgerEntry[] = [
 		'tooling',
 		'seedIssue / seedNote / seedLabel / seedGroupLabel / seedLink / seedParent / seedDemo create state without the API rules (no license check, no type rule)',
 		'test tooling: a person using the UI, not an API behaviour'
+	),
+	unverifiable(
+		'tooling',
+		'beforeNextWrite / afterNextWrite run a callback around the next write (another client writing between a check and a write), and editDescription stores a description as a person edited it (no quick action run)',
+		'test tooling: a second client with no HTTP form of its own; what the API does with the description is covered by the LIVE-VERIFIED lines of the update area'
 	),
 	unverifiable(
 		'tooling',

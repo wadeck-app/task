@@ -8,6 +8,7 @@ import { checkGitLab, VERIFICATION_TEXT } from './gitlabCheck.js';
 import { GitLabClient } from './gitlabClient.js';
 import type { GitLabClientOptions } from './gitlabClient.js';
 import { parseGitLabOptions } from './gitlabOptions.js';
+import { createPriorityContext } from './gitlabPriority.js';
 
 const STATUSES: ProjectStatus[] = [
 	{ name: 'backlog', terminal: false, default: true, outcome: undefined },
@@ -75,6 +76,7 @@ async function run(setup: Run = {}): Promise<{ lines: CheckLine[]; fake: FakeGit
 		tokenHint: 'the environment variable GITLAB_TOKEN (strategy.options.tokenEnv)',
 		fills: setup.fills ?? {},
 		projectName: 'shop',
+		priority: createPriorityContext(settings, ['urgent', 'high', 'medium', 'low']),
 	});
 	return { lines, fake };
 }
@@ -103,6 +105,7 @@ const ROW_ORDER = [
 	'statuses',
 	'labels',
 	'links',
+	'fields',
 	'writes',
 	'verification',
 ];
@@ -128,6 +131,7 @@ describe('checkGitLab with the permissions of the live test token', () => {
 			['statuses', 'ok'],
 			['labels', 'warn'],
 			['links', 'ok'],
+			['fields', 'ok'],
 			['writes', 'ok'],
 			['verification', 'ok'],
 		]);
@@ -191,7 +195,7 @@ describe('checkGitLab with the permissions of the live test token', () => {
 			'3 statuses mapped: backlog = open; in-progress = open + status:in-progress; done = closed'
 		);
 		expect(line(lines, 'labels').text).toBe(
-			'1 of the 1 labels the mapping uses do not exist yet: status:in-progress'
+			'5 of the 5 labels the mapping uses do not exist yet: status:in-progress, priority:urgent, priority:high, priority:medium, priority:low'
 		);
 		expect(line(lines, 'labels').fix).toContain('task labels sync -p shop');
 	});
@@ -202,8 +206,64 @@ describe('checkGitLab with the permissions of the live test token', () => {
 		expect(line(wrongCase.lines, 'labels').fix).toContain('case sensitive');
 		await fake?.stop();
 
-		const group = await run({ prepare: server => void server.seedGroupLabel('status:in-progress') });
+		const group = await run({
+			prepare: server => {
+				for (const name of [
+					'status:in-progress',
+					'priority:urgent',
+					'priority:high',
+					'priority:medium',
+					'priority:low',
+				]) {
+					server.seedGroupLabel(name);
+				}
+			},
+		});
 		expect(line(group.lines, 'labels')).toMatchObject({ status: 'ok' });
+	});
+
+	it('warns about the existing labels that start with the priority prefix but are no priority of the project (at most 10 named)', async () => {
+		const clean = await run();
+		expect(names(clean.lines)).not.toContain('priority-labels');
+		await fake?.stop();
+
+		const { lines } = await run({
+			prepare: server => {
+				for (const name of ['priority:p0', 'priority:p1', 'priority:high', 'bug']) server.seedLabel(name);
+			},
+		});
+
+		expect(line(lines, 'priority-labels')).toMatchObject({ status: 'warn' });
+		expect(line(lines, 'priority-labels').text).toContain(
+			'2 existing label(s) start with the priority prefix "priority:"'
+		);
+		expect(line(lines, 'priority-labels').text).toContain('priority:p0, priority:p1');
+		expect(line(lines, 'priority-labels').text).not.toContain('priority:high,');
+		expect(line(lines, 'priority-labels').text).toContain(
+			'an issue that holds one together with a priority label fails its read'
+		);
+		expect(line(lines, 'priority-labels').fix).toContain('strategy.options.priorityPrefix');
+		expect(line(lines, 'priority-labels').fix).toContain('rename those labels');
+		await fake?.stop();
+
+		const many = await run({
+			prepare: server => {
+				for (let index = 0; index < 13; index++) server.seedLabel(`priority:x${index}`);
+			},
+		});
+		expect(line(many.lines, 'priority-labels').text).toContain('13 existing label(s)');
+		const listed = /\): (.*)\. They become/.exec(line(many.lines, 'priority-labels').text)![1]!;
+		expect(listed).toMatch(/ and 3 more$/);
+		expect(listed.split(', ')).toHaveLength(10);
+	});
+
+	it('says where the priority, the assignee and the claim live and that no permission is needed beyond Work Item and Label', async () => {
+		const { lines } = await run({ options: { priorityPrefix: 'priority::' } });
+
+		expect(line(lines, 'fields')).toMatchObject({ status: 'ok' });
+		expect(line(lines, 'fields').text).toContain('priority is the label priority::<name>');
+		expect(line(lines, 'fields').text).toContain('hidden block of the description');
+		expect(line(lines, 'fields').text).toContain('no permission beyond Work Item and Label');
 	});
 
 	it('blockedBy is refused (paid tier), relates_to exists, and there is no separate hierarchy line', async () => {
@@ -214,6 +274,9 @@ describe('checkGitLab with the permissions of the live test token', () => {
 		expect(line(lines, 'links').text).toContain('relates_to');
 		expect(lines.filter(l => l.name === 'hierarchy')).toHaveLength(1);
 		expect(line(lines, 'writes').text).toContain('not atomic');
+		expect(line(lines, 'writes').text).toContain(
+			"the last write wins; a worker that reads back after the winner's write is told, the first writer is not: a dispatcher needing a hard guarantee keeps its own lock or uses task serve"
+		);
 	});
 
 	it('a project without any issue says so for write and hierarchy, and creates nothing', async () => {

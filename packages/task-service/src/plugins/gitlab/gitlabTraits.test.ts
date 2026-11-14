@@ -62,6 +62,18 @@ describe('gitlabTraits (what task migrate needs to know about GitLab as a target
 		expect(labelProblem?.('task:deleted')).toMatch(/reserved/);
 	});
 
+	it('the priority labels are reserved: the prefix (scoped or not) and the names priorityMap gives', () => {
+		expect(gitlabTraits(settingsWith(), {}).labelProblem?.('priority:high')).toMatch(/reserved.*priority/);
+		expect(
+			gitlabTraits(settingsWith({ priorityPrefix: 'priority::' }), {}).labelProblem?.('priority::low')
+		).toMatch(/reserved.*priority/);
+		expect(gitlabTraits(settingsWith({ priorityMap: { urgent: 'P0' } }), {}).labelProblem?.('P0')).toMatch(
+			/reserved.*priority/
+		);
+		// another case is another label on GitLab
+		expect(gitlabTraits(settingsWith(), {}).labelProblem?.('Priority:high')).toBeUndefined();
+	});
+
 	it('a label written with the scoped syntax is a plain label on Free: not refused', () => {
 		expect(gitlabTraits(settingsWith(), {}).labelProblem?.('team::red')).toBeUndefined();
 	});

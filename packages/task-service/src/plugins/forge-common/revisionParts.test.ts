@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { BackendDataError } from '@wadeck-app/task-core';
 import { blockClaimPart, blockMetaPart, checkRevisionParts, partsFromHashes, shortHash } from './revisionParts.js';
 
 const GROUPS = ['title', 'body'] as const;
@@ -19,7 +20,7 @@ describe('blockMetaPart', () => {
 		expect(blockMetaPart(() => undefined)).toBe('[]');
 		expect(
 			blockMetaPart(() => {
-				throw new Error('broken');
+				throw new BackendDataError('gitlab', 'issue #1', 'broken', 'repair it');
 			})
 		).toBe('unreadable');
 	});
@@ -58,8 +59,21 @@ describe('blockClaimPart', () => {
 		expect(blockClaimPart(() => ({ assignee: 'w2' }))).not.toBe(bare);
 		expect(blockClaimPart(() => ({ assignee: 'w1', claimedAt: 'a', leaseUntil: 'b' }))).not.toBe(bare);
 		const broken = (): never => {
-			throw new Error('bad block');
+			throw new BackendDataError(
+				'github',
+				'issue #1',
+				'the task block of issue #1 is not valid JSON',
+				'repair it'
+			);
 		};
 		expect(blockClaimPart(broken)).toBe('unreadable');
+	});
+
+	it('only a data error of the block is "unreadable": any other failure is a bug and is thrown', () => {
+		const bug = (): never => {
+			throw new TypeError('not a block problem');
+		};
+		expect(() => blockClaimPart(bug)).toThrow(TypeError);
+		expect(() => blockMetaPart(bug)).toThrow(TypeError);
 	});
 });

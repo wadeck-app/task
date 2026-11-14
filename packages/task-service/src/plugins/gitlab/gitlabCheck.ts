@@ -20,6 +20,8 @@ import type { CredentialKey, CredentialRequirement } from './credentialRequireme
 import { GitLabPermissionError, GitLabProjectNotFoundError } from './gitlabClient.js';
 import type { GitLabClient } from './gitlabClient.js';
 import { wantedLabels } from './gitlabLabels.js';
+import { isPriorityLabel, listPriorities, priorityOfLabel } from './gitlabPriority.js';
+import type { PriorityContext } from './gitlabPriority.js';
 import { GQL_READ } from './gitlabWorkItems.js';
 import type { GitLabSettings } from './gitlabOptions.js';
 import type { ApiProject, ApiProjectLabel } from './gitlabTypes.js';
@@ -37,6 +39,8 @@ export interface GitLabCheckInput {
 	fills: DeclaredFills;
 	/** The task project as `-p` takes it, for the commands the fixes name. */
 	projectName: string;
+	/** Where the priority labels are named, for the labels the mapping needs. */
+	priority: PriorityContext;
 }
 
 interface TokenInfo {
@@ -294,6 +298,24 @@ function limitsLine(client: GitLabClient): CheckLine {
 	};
 }
 
+/**
+ * Where the priority, the assignee and the claim live, and that they need no permission of their own: said, not left to be
+ * guessed. The priority is a label (Label permissions, already required by the status and type labels); the assignee and the
+ * claim are a key of the hidden block of the description (Work Item: Update, which every write needs).
+ */
+function fieldsLine(input: GitLabCheckInput): CheckLine {
+	const { settings } = input;
+	const mapped =
+		Object.keys(settings.priorityMap).length === 0
+			? ''
+			: ` (priorityMap names ${Object.keys(settings.priorityMap).join(', ')})`;
+	return {
+		name: 'fields',
+		status: 'ok',
+		text: `priority is the label ${settings.priorityPrefix}<name>${mapped} (GitLab Free has no priority field); assignee and claim are a hidden block of the description, never a GitLab user; no permission beyond Work Item and Label is needed. A claim is optimistic, not atomic: the last write wins; a worker that reads back after the winner's write is told, the first writer is not: a dispatcher needing a hard guarantee keeps its own lock or uses task serve`,
+	};
+}
+
 function writesLine(input: GitLabCheckInput): CheckLine {
 	const { settings } = input;
 	const rate = input.client.rateLimit();
@@ -301,13 +323,15 @@ function writesLine(input: GitLabCheckInput): CheckLine {
 	return {
 		name: 'writes',
 		status: 'ok',
-		text: `a write is sent one at a time, ${settings.writeSpacingSeconds} s apart${left}; optimistic, not atomic: GitLab has no conditional write, so a change made on GitLab in the second between the read and the write can be overwritten`,
+		text: `a write is sent one at a time, ${settings.writeSpacingSeconds} s apart${left}; optimistic, not atomic: GitLab has no conditional write, so a change made on GitLab in the second between the read and the write can be overwritten; for a claim, the last write wins; a worker that reads back after the winner's write is told, the first writer is not: a dispatcher needing a hard guarantee keeps its own lock or uses task serve`,
 	};
 }
 
 /** `GET /projects/:id/labels` (the project's labels and its groups'), exact case: `bug` and `Bug` are two labels. */
 function labelsLine(present: readonly ApiProjectLabel[], input: GitLabCheckInput): CheckLine | undefined {
-	const wanted = wantedLabels(input.settings, input.project.types, input.fills).map(label => label.name);
+	const wanted = wantedLabels(input.settings, input.project.types, input.fills, input.priority).map(
+		label => label.name
+	);
 	if (wanted.length === 0) return undefined;
 	const known = new Set(present.map(label => label.name));
 	const missing = wanted.filter(label => !known.has(label));
@@ -323,6 +347,26 @@ function labelsLine(present: readonly ApiProjectLabel[], input: GitLabCheckInput
 		status: 'warn',
 		text: `${missing.length} of the ${wanted.length} labels the mapping uses do not exist yet: ${missing.join(', ')}`,
 		fix: `Reading works without them, and GitLab creates a label the first time a write names it (with a default colour). Create them all now, with a colour and a description, with: task labels sync -p ${input.projectName} (add --dry-run to see first). Names are case sensitive. Missing: ${missing.join(', ')}`,
+	};
+}
+
+/**
+ * Labels the project already has that start with the priority prefix but are not a priority of the project: they become reserved
+ * (a task cannot add them, an issue holding two of them fails its read), so the project must know before the first write.
+ */
+function foreignPriorityLine(present: readonly ApiProjectLabel[], input: GitLabCheckInput): CheckLine | undefined {
+	const foreign = present
+		.map(label => label.name)
+		.filter(name => isPriorityLabel(name, input.priority) && priorityOfLabel(name, input.priority) === undefined);
+	if (foreign.length === 0) return undefined;
+	const shown = foreign.slice(0, 10).join(', ');
+	const more = foreign.length > 10 ? ` and ${foreign.length - 10} more` : '';
+	const prefix = input.settings.priorityPrefix;
+	return {
+		name: 'priority-labels',
+		status: 'warn',
+		text: `${foreign.length} existing label(s) start with the priority prefix "${prefix}" but are not a priority of this project (${listPriorities(input.priority)}): ${shown}${more}. They become reserved: task cannot add them, and an issue that holds one together with a priority label fails its read`,
+		fix: `Choose another prefix with strategy.options.priorityPrefix, or rename those labels on GitLab (Labels page of the project), or add them to strategy.options.priorityMap. Labels: ${shown}${more}`,
 	};
 }
 
@@ -487,6 +531,8 @@ async function probeLines(input: GitLabCheckInput, lines: CheckLine[]): Promise<
 	if (present !== undefined) {
 		const labels = labelsLine(present, input);
 		if (labels !== undefined) lines.push(labels);
+		const foreign = foreignPriorityLine(present, input);
+		if (foreign !== undefined) lines.push(foreign);
 	}
 	// Blocking links cannot exist on the Free tier: nothing to probe, the refusal is stated.
 	lines.push({
@@ -494,6 +540,7 @@ async function probeLines(input: GitLabCheckInput, lines: CheckLine[]): Promise<
 		status: 'ok',
 		text: 'blockedBy links are refused (the blocks / is_blocked_by issue links need a paid GitLab tier, which task does not support); relates_to exists on the Free tier and backs the relate-block fills',
 	});
+	lines.push(fieldsLine(input));
 	lines.push(writesLine(input));
 }
 

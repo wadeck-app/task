@@ -128,6 +128,56 @@ describe('the plugin is registered', () => {
 		});
 	});
 
+	it('carries priority, assignee and claim (a label, and a block of the description), says so, and no fill is needed', () => {
+		expect(gitlabPlugin.capabilities).toMatchObject({ priority: true, assignee: true, claim: true });
+		expect(gitlabPlugin.capabilitiesFor?.({}, {}).claim).toBe(true);
+		expect(gitlabPlugin.capabilityNotes?.['priority']).toMatch(/always a label/);
+		expect(gitlabPlugin.capabilityNotes?.['assignee']).toMatch(/hidden block of the issue description/);
+		expect(gitlabPlugin.capabilityNotes?.['claim']).toMatch(/optimistic/);
+	});
+
+	it('priorityStorage is a load error saying GitLab Free has no native priority field; the two priority options are documented', () => {
+		const options = {
+			project: 'acme/shop',
+			tokenEnv: 'T',
+			statusMap: { backlog: { state: 'open' }, done: { state: 'closed' } },
+		};
+		expect(gitlabPlugin.validate({ ...options, priorityStorage: 'auto' }, { slot: 'strategy' })).toMatch(
+			/GitLab Free has no native priority field/
+		);
+		expect(
+			gitlabPlugin.validate(
+				{ ...options, priorityPrefix: 'priority::', priorityMap: { urgent: 'P0' } },
+				{ slot: 'strategy' }
+			)
+		).toBeUndefined();
+		expect(Object.keys(gitlabPlugin.describe().options)).toEqual(
+			expect.arrayContaining(['priorityPrefix', 'priorityMap'])
+		);
+		expect(Object.keys(gitlabPlugin.describe().options)).not.toContain('priorityStorage');
+	});
+
+	it('checks the priority options against the priorities of the project at load (validateForProject)', () => {
+		const options = {
+			project: 'acme/shop',
+			tokenEnv: 'T',
+			statusMap: { backlog: { state: 'open' }, done: { state: 'closed' } },
+			priorityMap: { critical: 'P0' },
+		};
+		const facts = {
+			statuses: [
+				{ name: 'backlog', terminal: false, default: true, outcome: undefined },
+				{ name: 'done', terminal: true, default: false, outcome: 'positive' as const },
+			],
+			types: [],
+			priorities: ['urgent', 'high'],
+		};
+
+		expect(gitlabPlugin.validateForProject?.(options, facts)).toMatch(
+			/^priorityMap\.critical: the project has no priority "critical"/
+		);
+	});
+
 	it('documents itself: every option, what was verified, and a snippet that is a working config', () => {
 		const { summary, options, snippet } = gitlabPlugin.describe();
 
@@ -359,6 +409,18 @@ describe('task strategy show and check through the host', () => {
 		});
 		expect(report.capabilities.find(row => row.capability === 'hierarchy')).toMatchObject({ state: 'partial' });
 		expect(report.options['tier']).toBeUndefined();
+	});
+
+	it('show lists priority, assignee and claim as carried, each with its note (a label; a block of the description)', () => {
+		const report = showStrategy(target(config()));
+
+		for (const capability of ['priority', 'assignee', 'claim']) {
+			const row = report.capabilities.find(candidate => candidate.capability === capability);
+			expect(row, capability).toBeDefined();
+			expect(row!.state).not.toBe('unsupported');
+		}
+		expect(report.capabilities.find(row => row.capability === 'priority')!.detail).toMatch(/always a label/);
+		expect(report.capabilities.find(row => row.capability === 'claim')!.detail).toMatch(/optimistic/);
 	});
 
 	it('check runs one line per capability and ends with the verification line (exit stays ok)', async () => {

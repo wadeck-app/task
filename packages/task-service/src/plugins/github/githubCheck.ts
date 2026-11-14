@@ -231,7 +231,7 @@ function writesLine(input: CheckInput): CheckLine {
 	const { settings } = input;
 	const quota = input.client.rateLimit('core');
 	const left = quota === undefined ? '' : ` (${quota.remaining} of ${quota.limit} requests left this hour)`;
-	const budget = `a write is sent one at a time, ${settings.writeSpacingSeconds} s apart, and costs one request of the hourly quota${left}; optimistic, not atomic: GitHub has no conditional write, so a change made on GitHub in the second between the read and the write can be overwritten`;
+	const budget = `a write is sent one at a time, ${settings.writeSpacingSeconds} s apart, and costs one request of the hourly quota${left}; optimistic, not atomic: GitHub has no conditional write, so a change made on GitHub in the second between the read and the write can be overwritten; for a claim, the last write wins; a worker that reads back after the winner's write is told, the first writer is not: a dispatcher needing a hard guarantee keeps its own lock or uses task serve`;
 	return { name: 'writes', status: 'ok', text: budget };
 }
 

@@ -1023,6 +1023,9 @@ ${options}`;
 		const listReads = requests =>
 			requests.filter(r => r.method === 'GET' && /\/repos\/[^/]+\/[^/]+\/issues\?/.test(r.url)).length;
 		const issueReads = requests => requests.filter(r => /\/issues\/\d+/.test(r.url)).length;
+		// The repository grows with every run (state=all): one request per page of 100 issues, never one per issue.
+		const onlyListPages = requests =>
+			requests.length > 0 && requests.every(r => r.method === 'GET' && /\/issues\?/.test(r.url));
 		const describeRequests = requests => requests.map(r => `${r.method} ${r.url.replace(API, '')}`).join(' | ');
 
 		// ---- 1. label mode
@@ -1078,8 +1081,8 @@ ${options}`;
 			]
 		);
 		check(
-			'that list of the whole project cost ONE list request and no per-issue read',
-			listReads(listWindow.requests) === 1 && issueReads(listWindow.requests) === 0,
+			'that list of the whole project cost list pages only (one request per 100 issues of the repository) and no per-issue read',
+			onlyListPages(listWindow.requests) && issueReads(listWindow.requests) === 0,
 			`${listWindow.requests.length} requests: ${describeRequests(listWindow.requests)}`
 		);
 
@@ -1184,8 +1187,8 @@ ${options}`;
 			`${availableWindow.result.output?.slice(0, 200)} available mine: ${JSON.stringify(availableIds.filter(i => [heldTask.id, worker.id].includes(i)))}`
 		);
 		check(
-			'that list again cost ONE list request (assignee and lease come with the list)',
-			listReads(availableWindow.requests) === 1 && issueReads(availableWindow.requests) === 0,
+			'that list again cost list pages only (assignee and lease come with the list)',
+			onlyListPages(availableWindow.requests) && issueReads(availableWindow.requests) === 0,
 			describeRequests(availableWindow.requests)
 		);
 

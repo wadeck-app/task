@@ -35,6 +35,10 @@ describe('syncLabels', () => {
 			'status:duplicate',
 			'type:bug',
 			'type:feature',
+			'priority:urgent',
+			'priority:high',
+			'priority:medium',
+			'priority:low',
 		]);
 		expect(report.existing).toEqual([]);
 		expect(fake.writes()).toEqual([]);
@@ -54,6 +58,10 @@ describe('syncLabels', () => {
 			'status:duplicate',
 			'type:bug',
 			'type:feature',
+			'priority:urgent',
+			'priority:high',
+			'priority:medium',
+			'priority:low',
 		]);
 		const labels = fake.projectLabels();
 		expect(labels.find(label => label.name === 'status:review')).toMatchObject({
@@ -64,11 +72,15 @@ describe('syncLabels', () => {
 			color: '#a2eeef',
 			description: 'Task type (set by the task tool)',
 		});
-		expect(fake.writes().map(request => request.method)).toEqual(['POST', 'POST', 'POST', 'POST', 'POST']);
+		expect(labels.find(label => label.name === 'priority:high')).toMatchObject({
+			color: '#fbca04',
+			description: 'Task priority (set by the task tool)',
+		});
+		expect(fake.writes().map(request => request.method)).toEqual(Array(9).fill('POST'));
 		// running it again creates nothing
 		const again = await t.backend.syncLabels({});
 		expect(again.created).toEqual([]);
-		expect(again.existing).toHaveLength(6);
+		expect(again.existing).toHaveLength(10);
 	});
 
 	it('creates the tombstone label with its fill, and says meta labels come on demand', async () => {

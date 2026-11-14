@@ -1,6 +1,7 @@
 import { BackendDataError } from '@wadeck-app/task-core';
 
 import type { ProjectStatus, ReadNotice } from '../kinds.js';
+import { createPriorityContext } from './gitlabPriority.js';
 import {
 	activityOf,
 	commentsOf,
@@ -53,6 +54,7 @@ function contextOf(
 		metaFromLabels: options.meta === 'labels',
 		metaFromBlock: options.meta === 'block',
 		projectTypes: [],
+		priority: createPriorityContext(parsed.settings, ['urgent', 'high', 'medium', 'low']),
 		notice: (_notice: ReadNotice) => undefined,
 		issueUrl,
 	};
@@ -507,5 +509,33 @@ describe('activity', () => {
 		const ctx = contextOf({ meta: 'labels' });
 		expect(activityOf([event('meta:=x', 'add')], ctx, 5)).toEqual([]);
 		expect(activityOf([{ id: 1, created_at: at, label: null, action: 'add' }], ctx, 5)).toEqual([]);
+	});
+});
+
+describe('summaries of issues whose block cannot be read', () => {
+	it('say it ONCE per issue however many times the issue is summarised, and once for each issue', () => {
+		const notices: ReadNotice[] = [];
+		const ctx: MapContext = { ...contextOf(), notice: notice => notices.push(notice) };
+		const broken = (iid: number): ApiIssue =>
+			issue({ iid, description: 'Text\n\n<!-- task:begin v1 -->{"claim":[]}<!-- task:end -->' });
+
+		for (let round = 0; round < 3; round++) {
+			for (const iid of [1, 2, 3]) expect(toSummary(broken(iid), ctx).assignee).toBeUndefined();
+		}
+
+		expect(notices).toHaveLength(3);
+		expect(notices.map(notice => notice.kind)).toEqual(['ignored', 'ignored', 'ignored']);
+		expect(notices.map(notice => /issue #(\d)/.exec(notice.text)?.[1])).toEqual(['1', '2', '3']);
+	});
+
+	it('does not hide a failure that is not a data error of the block', () => {
+		const ctx = contextOf();
+		const hostile = issue({ description: 'x<!-- task:begin v1 -->{}<!-- task:end -->' });
+		Object.defineProperty(hostile, 'iid', {
+			get() {
+				throw new TypeError('a bug, not a block problem');
+			},
+		});
+		expect(() => toSummary(hostile, ctx)).toThrow(TypeError);
 	});
 });

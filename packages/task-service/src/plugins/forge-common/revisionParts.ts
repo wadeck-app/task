@@ -3,6 +3,8 @@
 // not a conflict). Each forge says which parts exist, how it reads them out of an issue and how its revision text is laid out.
 import * as crypto from 'node:crypto';
 
+import { BackendDataError } from '@wadeck-app/task-core';
+
 /** Six hex characters of a SHA-1: enough to tell two states of one part apart, short enough to read in JSON and logs. */
 export function shortHash(text: string): string {
 	return crypto.createHash('sha1').update(text).digest('hex').slice(0, 6);
@@ -20,8 +22,9 @@ export function blockMetaPart(read: () => Record<string, string> | undefined): s
 				.sort()
 				.map(key => [key, meta[key]])
 		);
-	} catch {
-		return 'unreadable';
+	} catch (error) {
+		if (error instanceof BackendDataError) return 'unreadable';
+		throw error;
 	}
 }
 
@@ -38,8 +41,9 @@ export function blockClaimPart(
 		return claim === undefined
 			? ''
 			: JSON.stringify([claim.assignee, claim.claimedAt ?? '', claim.leaseUntil ?? '']);
-	} catch {
-		return 'unreadable';
+	} catch (error) {
+		if (error instanceof BackendDataError) return 'unreadable';
+		throw error;
 	}
 }
 

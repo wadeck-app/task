@@ -8,6 +8,12 @@
 //
 //   node scripts/live-gitlab-smoke.mjs --mock [--json <result file>]     (no token, no network: a FakeGitLab on a free port)
 //
+//   node scripts/live-gitlab-smoke.mjs --only "priority, assignee, claim" [--mock]
+//       runs the sections whose name CONTAINS the text (case-insensitive) and skips the others; the cleanup of the run still runs.
+//       The full run takes 15 to 25 minutes against the 100-requests-a-minute limit; the phase "priority, assignee, claim" is
+//       self-contained (about 250 requests, a few minutes). Other sections share state with the ones before them: run one alone
+//       only when it says it is self-contained. A text that matches no section is an error (exit 2), never a silent empty run.
+//
 // The SAME assertions run against both targets, so a difference between the mock and the real server shows as a failing assertion on
 // one of them; `scripts/live-gitlab-smoke-diff.mjs a.json b.json` compares two result files (names and ok flags).
 //
@@ -46,9 +52,19 @@ const MOCK_PROJECT = 'wadeck-app/test-task-gl';
 const argv = process.argv.slice(2);
 const useMock = argv.includes('--mock');
 let jsonFile;
+let only;
 for (let index = 0; index < argv.length; index++) {
 	const arg = argv[index];
 	if (arg === '--mock') continue;
+	if (arg === '--only') {
+		only = argv[index + 1];
+		if (only === undefined || only.startsWith('--') || only.trim() === '') {
+			console.error('live-gitlab-smoke: --only needs the name (or part of the name) of the section to run.');
+			process.exit(2);
+		}
+		index += 1;
+		continue;
+	}
 	if (arg === '--json') {
 		jsonFile = argv[index + 1];
 		if (jsonFile === undefined || jsonFile.startsWith('--')) {
@@ -59,7 +75,7 @@ for (let index = 0; index < argv.length; index++) {
 		continue;
 	}
 	console.error(
-		`live-gitlab-smoke: unknown argument "${arg}". Usage: node scripts/live-gitlab-smoke.mjs [--mock] [--json <file>]`
+		`live-gitlab-smoke: unknown argument "${arg}". Usage: node scripts/live-gitlab-smoke.mjs [--mock] [--only <section>] [--json <file>]`
 	);
 	process.exit(2);
 }
@@ -295,7 +311,14 @@ const eq = (name, actual, expected) =>
 let failedSections = 0;
 // Set once the project exists: puts the default configuration back, whatever a section did to it.
 let restoreConfig = () => {};
+const sectionNames = [];
+const skippedSections = [];
 async function section(name, run_) {
+	sectionNames.push(name);
+	if (only !== undefined && !name.toLowerCase().includes(only.toLowerCase())) {
+		skippedSections.push(name);
+		return;
+	}
 	log(`\n== ${name}`);
 	try {
 		await run_();
@@ -521,6 +544,10 @@ ${typeMap ?? '            outage: { issueType: incident }\n'}${FILLS[fills]}`;
 			'status:cancelled',
 			'type:bug',
 			'type:chore',
+			'priority:urgent',
+			'priority:high',
+			'priority:medium',
+			'priority:low',
 			'task:deleted',
 		];
 		const dry = await cliRun('labels', 'sync', '--dry-run');
@@ -1125,6 +1152,13 @@ ${typeMap ?? '            outage: { issueType: incident }\n'}${FILLS[fills]}`;
 			'strategy check: links says blockedBy is refused on the Free tier',
 			line('links')?.status === 'ok' && /blockedBy links are refused/.test(line('links')?.text ?? ''),
 			JSON.stringify(line('links'))
+		);
+		check(
+			'strategy check: fields says where priority, assignee and claim live and that no extra permission is needed',
+			line('fields')?.status === 'ok' &&
+				/priority is the label priority:<name>/.test(line('fields')?.text ?? '') &&
+				/no permission beyond Work Item and Label/.test(line('fields')?.text ?? ''),
+			JSON.stringify(line('fields'))
 		);
 		check('strategy check: writes line', line('writes')?.status === 'ok', JSON.stringify(line('writes')));
 		check(
@@ -1980,6 +2014,274 @@ ${typeMap ?? '            outage: { issueType: incident }\n'}${FILLS[fills]}`;
 		writeConfig('smoke', gitlabConfig());
 	});
 
+	// ================================================================ priority, assignee, claim (self-contained: `--only "priority, assignee, claim"`)
+	// GitLab Free has no priority field: a priority is ALWAYS a label (priority:<name>); the assignee and the claim are the `claim` key
+	// of the hidden block of the DESCRIPTION. Everything is checked with the real GitLab API, never through the strategy itself.
+	// NOT covered on purpose: `task next` skipping a blocked task (blockedBy is refused on the Free tier: see "writes: links").
+	await section('priority, assignee, claim', async () => {
+		writeConfig('smoke', gitlabConfig());
+		const priorityLabelsOf = issue => labelsOn(issue).filter(name => name.startsWith('priority:'));
+		const blockOf = issue => {
+			const match = /<!-- task:begin v1 -->([\s\S]*?)<!-- task:end -->/.exec(issue.description ?? '');
+			return match === null ? undefined : JSON.parse(match[1]);
+		};
+		const create = async name => {
+			const made = await cliJson('new', title(`pac ${name}`));
+			if (made.exitCode !== 0 || made.json?.id === undefined)
+				throw new Error(`could not create ${name}: ${made.output}`);
+			return made.json.id;
+		};
+
+		// ---- labels sync creates the priority labels, with a colour and a description
+		const synced = await cliJson('labels', 'sync');
+		check('priority: labels sync exits 0', synced.exitCode === 0, synced.output.slice(0, 500));
+		const labelsNow = new Map((await projectLabels()).map(label => [label.name, label]));
+		check(
+			'priority: labels sync leaves the four priority labels in the project, with a colour and a description',
+			['urgent', 'high', 'medium', 'low'].every(
+				name =>
+					/^#[0-9a-f]{6}$/i.test(labelsNow.get(`priority:${name}`)?.color ?? '') &&
+					(labelsNow.get(`priority:${name}`)?.description ?? '') !== ''
+			),
+			JSON.stringify(['urgent', 'high', 'medium', 'low'].map(name => labelsNow.get(`priority:${name}`)))
+		);
+
+		// ---- set-priority: ONE PUT, exactly one priority label, swap, unset, refusals
+		const A = await create('priority');
+		let mark = requestLog.length;
+		const high = await cliJson('set-priority', A, 'high');
+		let g = await getIssue(A);
+		eq(
+			'set-priority high: one PUT, exactly one priority label on GitLab',
+			[high.exitCode, priorityLabelsOf(g), writeKindsSince(mark)],
+			[0, ['priority:high'], ['PUT /issues/N']]
+		);
+		mark = requestLog.length;
+		const urgent = await cliJson('set-priority', A, 'urgent');
+		g = await getIssue(A);
+		eq(
+			'set-priority urgent after high: ONE PUT swaps the label (high is gone, urgent is there, exactly one)',
+			[urgent.exitCode, priorityLabelsOf(g), writeKindsSince(mark)],
+			[0, ['priority:urgent'], ['PUT /issues/N']]
+		);
+		const shown = await cliJson('show', A);
+		check(
+			'show reports the priority and the label is not among the labels of the task',
+			shown.json?.priority === 'urgent' && !(shown.json?.labels ?? []).some(l => l.startsWith('priority:')),
+			shown.output.slice(0, 400)
+		);
+		mark = requestLog.length;
+		const same = await cliJson('set-priority', A, 'urgent');
+		eq('set-priority with the same priority writes nothing', [same.exitCode, writeKindsSince(mark)], [0, []]);
+		mark = requestLog.length;
+		const unknown = await cliRun('set-priority', A, 'critical');
+		check(
+			'an unknown priority is refused (exit 1), naming the valid ones, nothing written',
+			unknown.exitCode === 1 && /urgent/.test(unknown.output) && writeKindsSince(mark).length === 0,
+			unknown.output
+		);
+		mark = requestLog.length;
+		const addReserved = await cliRun('add-label', A, 'priority:low');
+		const removeReserved = await cliRun('remove-label', A, 'priority:urgent');
+		g = await getIssue(A);
+		check(
+			'add-label / remove-label of a priority label are refused before any request, naming set-priority',
+			addReserved.exitCode === 1 &&
+				removeReserved.exitCode === 1 &&
+				/set-priority/.test(addReserved.output) &&
+				/set-priority/.test(removeReserved.output) &&
+				writeKindsSince(mark).length === 0 &&
+				priorityLabelsOf(g).join() === 'priority:urgent',
+			`${addReserved.output} | ${removeReserved.output}`
+		);
+		mark = requestLog.length;
+		const unset = await cliJson('unset-priority', A);
+		g = await getIssue(A);
+		eq(
+			'unset-priority: ONE PUT, no priority label left',
+			[unset.exitCode, priorityLabelsOf(g), writeKindsSince(mark)],
+			[0, [], ['PUT /issues/N']]
+		);
+		mark = requestLog.length;
+		const unsetAgain = await cliJson('unset-priority', A);
+		eq(
+			'unset-priority of a task without one writes nothing',
+			[unsetAgain.exitCode, writeKindsSince(mark)],
+			[0, []]
+		);
+
+		// ---- set-assignee, the claim, its conflicts, the lease
+		const B = await create('claim');
+		mark = requestLog.length;
+		const assigned = await cliJson('set-assignee', B, 'w0');
+		g = await getIssue(B);
+		eq(
+			'set-assignee: ONE PUT of the description, the claim block holds the name, no GitLab assignee is set',
+			[assigned.exitCode, blockOf(g), (g.assignees ?? []).length, writeKindsSince(mark)],
+			[0, { claim: { assignee: 'w0' } }, 0, ['PUT /issues/N']]
+		);
+		const claimed = await cliJson('claim', B, '--as', 'w1', '--lease', '30m');
+		g = await getIssue(B);
+		eq(
+			'claim w1 on an assignee without lease is a takeover naming w0; GitLab holds w1 with a lease',
+			[claimed.exitCode, claimed.json?.outcome, claimed.json?.previousAssignee, blockOf(g)?.claim?.assignee],
+			[0, 'takeover', 'w0', 'w1']
+		);
+		check(
+			'claim: claimedAt and leaseUntil are in the block, the lease about 30 minutes long',
+			(() => {
+				const held = blockOf(g)?.claim;
+				const span = Date.parse(held?.leaseUntil ?? '') - Date.parse(held?.claimedAt ?? '');
+				return Number.isFinite(span) && span === 30 * 60 * 1000;
+			})(),
+			JSON.stringify(blockOf(g))
+		);
+		mark = requestLog.length;
+		const refused = await cliRun('claim', B, '--as', 'w2');
+		check(
+			'claim by w2 on a live lease of w1: exit 1 naming w1, nothing written',
+			refused.exitCode === 1 && /w1/.test(refused.output) && writeKindsSince(mark).length === 0,
+			refused.output
+		);
+		const renewed = await cliJson('claim', B, '--as', 'w1', '--renew', '--lease', '1h');
+		const afterRenew = blockOf(await getIssue(B))?.claim;
+		eq(
+			'claim --renew by the holder: outcome renewed, claimedAt kept, the lease extended',
+			[
+				renewed.exitCode,
+				renewed.json?.outcome,
+				afterRenew?.claimedAt === blockOf(g)?.claim?.claimedAt,
+				afterRenew?.leaseUntil > blockOf(g)?.claim?.leaseUntil,
+			],
+			[0, 'renewed', true, true]
+		);
+		const forced = await cliJson('claim', B, '--as', 'w2', '--force');
+		eq(
+			'claim --force overrides a live lease: takeover naming w1',
+			[
+				forced.exitCode,
+				forced.json?.outcome,
+				forced.json?.previousAssignee,
+				blockOf(await getIssue(B))?.claim?.assignee,
+			],
+			[0, 'takeover', 'w1', 'w2']
+		);
+		mark = requestLog.length;
+		const wrongRelease = await cliRun('release', B, '--as', 'w1');
+		check(
+			'release --as w1 while w2 holds it is refused (exit 1) without --force, nothing written',
+			wrongRelease.exitCode === 1 && /w2/.test(wrongRelease.output) && writeKindsSince(mark).length === 0,
+			wrongRelease.output
+		);
+		mark = requestLog.length;
+		const released = await cliJson('release', B, '--as', 'w2');
+		g = await getIssue(B);
+		eq(
+			'release by the holder: ONE PUT, the block is gone from the description',
+			[released.exitCode, released.json?.previousAssignee, blockOf(g), writeKindsSince(mark)],
+			[0, 'w2', undefined, ['PUT /issues/N']]
+		);
+		const notHeld = await cliRun('release', B);
+		check('release of a task nobody holds is refused (exit 1)', notHeld.exitCode === 1, notHeld.output);
+
+		// ---- a claim on a closed task is refused, nothing written
+		const C = await create('closed');
+		await cliRun('set-status', C, 'done');
+		mark = requestLog.length;
+		const onClosed = await cliRun('claim', C, '--as', 'w1');
+		check(
+			'claim of a task in a terminal status is refused (exit 1), nothing written',
+			onClosed.exitCode === 1 && writeKindsSince(mark).length === 0,
+			onClosed.output
+		);
+
+		// ---- quick actions: the claim block is ONE line starting with <!--, so GitLab never runs a name that looks like a command
+		const D = await create('quick action');
+		mark = requestLog.length;
+		const slashed = await cliJson('claim', D, '--as', '/close');
+		g = await getIssue(D);
+		eq(
+			'claim as "/close": GitLab did NOT run it (issue still open), the name is in the block, the last line starts with <!--',
+			[
+				slashed.exitCode,
+				g.state,
+				blockOf(g)?.claim?.assignee,
+				(g.description ?? '').split('\n').at(-1).startsWith('<!--'),
+				(g.description ?? '').split('\n').some(line => /^\s*\//.test(line)),
+			],
+			[0, 'opened', '/close', true, false]
+		);
+		const slashRead = await cliJson('show', D);
+		eq('claim as "/close" reads back as written', slashRead.json?.assignee, '/close');
+		const lineBreak = await cliRun('set-assignee', D, 'x\u2028/close');
+		check(
+			'an assignee with a Unicode line break followed by /close is refused with a message that says why',
+			lineBreak.exitCode === 1 && /quick action/.test(lineBreak.output),
+			lineBreak.output
+		);
+		await cliRun('release', D, '--force');
+
+		// ---- the dispatcher: list --available / --assignee / --order, and next
+		const E = await create('urgent oldest');
+		const F = await create('low');
+		const G = await create('held');
+		const H = await create('medium default');
+		await cliRun('set-priority', E, 'urgent');
+		await cliRun('set-priority', F, 'low');
+		await cliRun('set-priority', G, 'high');
+		const held = await cliJson('claim', G, '--as', 'w9', '--lease', '2h');
+		check('the held task is claimed by w9 for 2 hours', held.exitCode === 0, held.output);
+		const phaseIds = new Set([E, F, G, H].map(String));
+		const rowsOf = async (...args) => {
+			const result = await cliJson('list', ...args);
+			if (result.exitCode !== 0 || !Array.isArray(result.json))
+				throw new Error(`list ${args.join(' ')}: ${result.output}`);
+			return result.json.filter(row => phaseIds.has(String(row.id)));
+		};
+		mark = requestLog.length;
+		const available = await rowsOf('--available', '--order', 'priority-then-oldest');
+		const listReads = requestLog.slice(mark).filter(entry => entry.kind.startsWith('GET /issues'));
+		eq(
+			'list --available --order priority-then-oldest: urgent, then the default (medium), then low; the leased task is left out',
+			available.map(row => [String(row.id), row.priority]),
+			[
+				[String(E), 'urgent'],
+				[String(H), 'medium'],
+				[String(F), 'low'],
+			]
+		);
+		check(
+			'the list is read from the issue list alone: no request per issue (GET /issues/N)',
+			listReads.length > 0 && listReads.every(entry => entry.kind === 'GET /issues'),
+			listReads.map(entry => entry.kind).join(', ')
+		);
+		const held9 = await rowsOf('--assignee', 'w9');
+		eq(
+			'list --assignee w9: the held task, with its priority and its lease',
+			held9.map(row => [String(row.id), row.priority, typeof row.leaseUntil]),
+			[[String(G), 'high', 'string']]
+		);
+		const byPriority = await rowsOf('--priority', 'urgent,low', '--order', 'priority-then-oldest');
+		eq(
+			'list --priority urgent,low',
+			byPriority.map(row => String(row.id)),
+			[String(E), String(F)]
+		);
+
+		const first = await cliJson('next', '--as', 'w1', '--priority', 'urgent', '--lease', '30m');
+		eq(
+			'next --priority urgent claims the urgent task: GitLab holds w1 on it',
+			[first.exitCode, String(first.json?.taskId), blockOf(await getIssue(E))?.claim?.assignee],
+			[0, String(E), 'w1']
+		);
+		const second = await cliJson('next', '--as', 'w1', '--priority', 'urgent');
+		eq(
+			'next again: nothing available any more (the urgent task is held), exit 0',
+			[second.exitCode, second.json?.task],
+			[0, null]
+		);
+	});
+
 	await section('the token stays in the environment', async () => {
 		eq('the token appears in no output of the strategy (stdout, stderr)', leaked, 0);
 		// every file the run wrote: registry, config, logs, journals
@@ -2110,6 +2412,13 @@ ${typeMap ?? '            outage: { issueType: incident }\n'}${FILLS[fills]}`;
 	}
 }
 
+if (only !== undefined && skippedSections.length === sectionNames.length) {
+	log(
+		`\nlive-gitlab-smoke: --only "${only}" matches no section; nothing was run. Sections: ${sectionNames.join(' | ')}`
+	);
+	process.exit(2);
+}
+if (skippedSections.length > 0) log(`\n(--only "${only}": skipped ${skippedSections.length} section(s))`);
 const failed = results.filter(r => !r.ok);
 log(
 	`\nlive-gitlab-smoke: ${results.length - failed.length} of ${results.length} assertions passed${failedSections > 0 ? `, ${failedSections} section(s) did not run to the end` : ''}${failed.length > 0 ? `; FAILED: ${failed.map(f => f.name).join(' | ')}` : ''}`

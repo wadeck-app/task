@@ -204,4 +204,39 @@ describe('migrate local -> gitlab -> local', () => {
 		expect(byTitle.get('Alpha')!.meta).toEqual({ migratedFrom: `${from.id}/${alpha}` });
 		await ctx.dispose?.();
 	});
+
+	it('priority and assignee survive local -> gitlab -> local; the lease is never migrated (a label and a description block carry them)', async () => {
+		fake = await FakeGitLab.start({ project: 'acme/shop' });
+		const from = await project('old');
+		const middle = await project('shop', gitlabConfig());
+		const back = await project('again');
+		const global = path.join(sandbox.root, 'global');
+		const source = openResolvedProject(from, global);
+		const urgent = await source.store.create({ title: 'Urgent one', status: 'backlog' });
+		await source.store.setPriority!(urgent.id, 'urgent');
+		await source.store.setAssignee!(urgent.id, 'ann');
+		await source.store.create({ title: 'Plain', status: 'backlog' });
+		await source.dispose?.();
+
+		// What is not carried is only the creation instant, the history and the marker: nothing about the priority or the assignee.
+		const forward = await migrate(from, middle, { allowLoss: ['history', 'created-at'] });
+		expect(forward.status, JSON.stringify(forward.blocking)).toBe('completed');
+		expect(forward.verification!.mismatches).toEqual([]);
+		const issues = [1, 2].map(iid => fake!.issue(iid)!);
+		const issue = issues.find(candidate => candidate.title === 'Urgent one')!;
+		expect(fake.labelsOf(issue.iid)).toContain('priority:urgent');
+		expect(issue.description).toContain('"claim":{"assignee":"ann"}');
+		const plain = issues.find(candidate => candidate.title === 'Plain')!;
+		expect(fake.labelsOf(plain.iid).filter(label => label.startsWith('priority:'))).toEqual([]);
+
+		const reverse = await migrate(middle, back, { allowLoss: ['all'] });
+		expect(reverse.status).toBe('completed');
+		const ctx = openResolvedProject(back, global);
+		const tasks = await Promise.all((await ctx.store.list()).map(summary => ctx.store.get(summary.id)));
+		const byTitle = new Map(tasks.map(task => [task.title, task]));
+		expect(byTitle.get('Urgent one')).toMatchObject({ priority: 'urgent', assignee: 'ann' });
+		expect(byTitle.get('Urgent one')!.leaseUntil).toBeUndefined();
+		expect(byTitle.get('Plain')!.priority).toBeUndefined();
+		await ctx.dispose?.();
+	});
 });

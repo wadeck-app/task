@@ -555,6 +555,9 @@ describe('strategy check', () => {
 		const writes = line(result.lines, 'writes')!;
 		expect(writes.text).toContain('one at a time');
 		expect(writes.text).toContain('not atomic');
+		expect(writes.text).toContain(
+			"the last write wins; a worker that reads back after the winner's write is told, the first writer is not: a dispatcher needing a hard guarantee keeps its own lock or uses task serve"
+		);
 		expect(writes.text).toContain('5000');
 		expect(line(result.lines, 'repo')?.text).toBe('acme/shop (private)');
 		expect(line(result.lines, 'limits')?.text).toMatch(

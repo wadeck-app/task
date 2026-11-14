@@ -368,3 +368,98 @@ describe('checkOptionsAgainstProject', () => {
 		expect(check(map, facts({ types: ['bug'] }), { typeMap: { bug: { issueType: 'incident' } } })).toBeUndefined();
 	});
 });
+
+describe('parseGitLabOptions: priority labels', () => {
+	it('defaults to the prefix "priority:" and no map; a scoped prefix is allowed (a plain label on Free)', () => {
+		expect(settingsOf()).toMatchObject({ priorityPrefix: 'priority:', priorityMap: {} });
+		expect(settingsOf({ priorityPrefix: 'priority::' }).priorityPrefix).toBe('priority::');
+		expect(settingsOf({ priorityMap: { urgent: 'P0' } }).priorityMap).toEqual({ urgent: 'P0' });
+	});
+
+	it('a key priorityStorage is a load error saying GitLab Free has no native priority field', () => {
+		const problem = problemOf({ priorityStorage: 'label' });
+
+		expect(problem).toMatch(/^priorityStorage: GitLab Free has no native priority field/);
+		expect(problem).toContain('remove priorityStorage');
+		// the GitHub-only options are plain unknown options
+		expect(problemOf({ priorityFieldId: 5 })).toMatch(/^priorityFieldId: unknown option for strategy "gitlab"/);
+	});
+
+	it('refuses a prefix that collides with the type or the meta prefix, either way round', () => {
+		expect(problemOf({ priorityPrefix: 'type:' })).toMatch(/^priorityPrefix: must differ from typePrefix/);
+		expect(problemOf({ priorityPrefix: 'meta:x:' })).toMatch(/^priorityPrefix:.*starts with metaPrefix/);
+		expect(problemOf({ priorityPrefix: 'ty' })).toMatch(/^typePrefix: "type:" starts with priorityPrefix "ty"/);
+		expect(problemOf({ priorityPrefix: '' })).toMatch(/^priorityPrefix: must be a non-empty/);
+		expect(problemOf({ priorityPrefix: 'a,b:' })).toMatch(/^priorityPrefix:.*comma/);
+		expect(problemOf({ priorityPrefix: 'task:' })).toMatch(/reserved label "task:deleted"/);
+	});
+
+	it('refuses a status or type label that would read as a priority label', () => {
+		expect(
+			problemOf({ statusMap: { backlog: { state: 'open', label: 'priority:x' }, done: { state: 'closed' } } })
+		).toMatch(/^statusMap\.backlog\.label: "priority:x" starts with priorityPrefix "priority:"/);
+		expect(problemOf({ typeMap: { bug: { label: 'priority:bug' } } })).toMatch(
+			/^typeMap\.bug\.label: "priority:bug" starts with priorityPrefix/
+		);
+	});
+
+	it('checks priorityMap: label names, duplicates, collisions', () => {
+		expect(problemOf({ priorityMap: 'P0' })).toMatch(/^priorityMap: must be a mapping/);
+		expect(problemOf({ priorityMap: { urgent: '' } })).toMatch(/^priorityMap\.urgent: must be a label name/);
+		expect(problemOf({ priorityMap: { urgent: 'a,b' } })).toMatch(/^priorityMap\.urgent:.*comma/);
+		expect(problemOf({ priorityMap: { urgent: 'P0', high: 'P0' } })).toMatch(
+			/^priorityMap\.high: the same label as "urgent"/
+		);
+		expect(
+			problemOf({
+				statusMap: {
+					backlog: { state: 'open' },
+					wip: { state: 'open', label: 'P0' },
+					done: { state: 'closed' },
+				},
+				priorityMap: { urgent: 'P0' },
+			})
+		).toMatch(/^priorityMap\.urgent: "P0" is already the label of statusMap\.wip\.label/);
+		expect(problemOf({ priorityMap: { urgent: 'task:deleted' } })).toMatch(/reserved/);
+		expect(problemOf({ priorityMap: { urgent: 'type:u' } })).toMatch(/starts with typePrefix/);
+	});
+});
+
+describe('checkOptionsAgainstProject: priorities', () => {
+	const facts = (priorities?: string[]): ProjectFacts => ({
+		statuses: [
+			{ name: 'backlog', terminal: false, default: true, outcome: undefined },
+			{ name: 'done', terminal: true, default: false, outcome: 'positive' },
+		],
+		types: [],
+		...(priorities === undefined ? {} : { priorities }),
+	});
+
+	it('accepts the default scale, and checks nothing for a hand-built fact list without priorities', () => {
+		expect(checkOptionsAgainstProject(settingsOf(), facts(['urgent', 'high', 'medium', 'low']))).toBeUndefined();
+		expect(checkOptionsAgainstProject(settingsOf({ priorityMap: { nope: 'N' } }), facts())).toBeUndefined();
+	});
+
+	it('refuses a priorityMap key the project does not have, listing the priorities', () => {
+		expect(
+			checkOptionsAgainstProject(settingsOf({ priorityMap: { critical: 'P0' } }), facts(['urgent', 'high']))
+		).toBe('priorityMap.critical: the project has no priority "critical" (priorities: urgent, high)');
+	});
+
+	it('refuses a priority whose label GitLab would not accept, naming the key to change', () => {
+		expect(checkOptionsAgainstProject(settingsOf(), facts(['a,b']))).toMatch(
+			/^priorityPrefix: the label of the priority "a,b" is not usable/
+		);
+		// a mapped name is checked at load already, so it never reaches the project check
+		expect(problemOf({ priorityMap: { high: ' H' } })).toMatch(/^priorityMap\.high:.*space/);
+	});
+
+	it('refuses two priorities that would share one label (a mapped name equal to the prefixed name of another)', () => {
+		expect(
+			checkOptionsAgainstProject(
+				settingsOf({ priorityMap: { urgent: 'priority:high' } }),
+				facts(['urgent', 'high'])
+			)
+		).toMatch(/^priorityMap\.urgent: the label "priority:high" would carry both "urgent" and "high"/);
+	});
+});

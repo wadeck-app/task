@@ -356,7 +356,15 @@ describe('task labels sync on a gitlab project', () => {
 
 		expect(first.exitCode, first.output).toBe(0);
 		expect(first.output).toMatch(/created\s+status:in-progress/);
-		expect(fake.projectLabels().map(label => label.name)).toEqual(['status:in-progress', 'status:cancelled']);
+		// The priority of the project lives in labels on GitLab Free: one per priority, after the status labels.
+		expect(fake.projectLabels().map(label => label.name)).toEqual([
+			'status:in-progress',
+			'status:cancelled',
+			'priority:urgent',
+			'priority:high',
+			'priority:medium',
+			'priority:low',
+		]);
 		expect(fake.projectLabels()[0]!.color).toMatch(/^#[0-9A-Fa-f]{6}$/);
 		expect(second.output).toContain('nothing to create');
 	});
@@ -367,7 +375,17 @@ describe('task labels sync on a gitlab project', () => {
 			created: string[];
 		};
 
-		expect(report).toMatchObject({ dryRun: false, created: ['status:in-progress', 'status:cancelled'] });
+		expect(report).toMatchObject({
+			dryRun: false,
+			created: [
+				'status:in-progress',
+				'status:cancelled',
+				'priority:urgent',
+				'priority:high',
+				'priority:medium',
+				'priority:low',
+			],
+		});
 	});
 });
 

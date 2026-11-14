@@ -30,6 +30,9 @@ export function gitlabTraits(settings: GitLabSettings, fills: DeclaredFills): Ba
 	const typePrefix = settings.typePrefix;
 	const metaPrefix = settings.metaPrefix;
 	const metaInLabels = fills['meta']?.use === 'labels';
+	// The labels of the priorities (the prefix, and the names priorityMap gives): reserved, a priority is changed by set-priority.
+	const priorityPrefix = settings.priorityPrefix;
+	const priorityLabels = new Set(Object.values(settings.priorityMap));
 
 	return {
 		// `created_at` of a create needs administrator or owner rights (docs.gitlab.com/api/issues): never relied on.
@@ -52,6 +55,9 @@ export function gitlabTraits(settings: GitLabSettings, fills: DeclaredFills): Ba
 			if (statusLabels.has(label)) return `"${label}" is reserved: it carries the status of a task`;
 			if (typeLabels.has(label) || label.startsWith(typePrefix)) {
 				return `"${label}" is reserved: it carries the type of a task`;
+			}
+			if (priorityLabels.has(label) || label.startsWith(priorityPrefix)) {
+				return `"${label}" is reserved: it carries the priority of a task`;
 			}
 			if (metaInLabels && label.startsWith(metaPrefix))
 				return `"${label}" is reserved: it carries the metadata of a task`;

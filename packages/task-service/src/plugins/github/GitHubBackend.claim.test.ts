@@ -338,15 +338,16 @@ describe('a second worker writing between the re-read and the write', () => {
 		expect(result.task).toMatchObject({ assignee: 'w1' });
 	});
 
-	it('release: a claim that appears after ours is TaskReleaseRefusedError naming the new holder', async () => {
+	it('release: a claim that appears after ours is a TaskConflictError describing the race and naming the new holder', async () => {
 		const number = fake.addIssue({ title: 'a' });
 		await t.backend.claim!(String(number), { assignee: 'w1', leaseUntil: END, now: NOW });
 		fake.afterNextWrite(rival(number, 'w2'));
 
 		const error = await failure(() => t.backend.release!(String(number), {}));
 
-		expect(error).toBeInstanceOf(TaskReleaseRefusedError);
-		expect((error as TaskReleaseRefusedError).holder).toBe('w2');
+		expect(error.name).toBe('TaskConflictError');
+		expect(error).not.toBeInstanceOf(TaskReleaseRefusedError);
+		expect(error.message).toContain(`Task "${number}" was claimed by "w2" while you were releasing it`);
 	});
 
 	it('setAssignee: the rival wrote last, so the caller is told who holds the issue', async () => {
@@ -359,14 +360,51 @@ describe('a second worker writing between the re-read and the write', () => {
 		expect((error as TaskClaimedError).holder).toBe('w2');
 	});
 
-	it('clearAssignee: an assignee that appeared after the clear is reported', async () => {
+	it('clearAssignee: an assignee that appeared after the clear is a TaskConflictError describing the race (no empty requester)', async () => {
 		const number = fake.addIssue({ title: 'a' });
 		await t.backend.setAssignee!(String(number), 'w1');
 		fake.afterNextWrite(rival(number, 'w2'));
 
 		const error = await failure(() => t.backend.clearAssignee!(String(number)));
 
-		expect(error).toBeInstanceOf(TaskClaimedError);
-		expect((error as TaskClaimedError).holder).toBe('w2');
+		expect(error.name).toBe('TaskConflictError');
+		expect(error).not.toBeInstanceOf(TaskClaimedError);
+		expect(error.message).toContain(`Task "${number}" was claimed by "w2" while you were releasing it`);
+	});
+});
+
+describe('the visible body is kept byte for byte', () => {
+	const TEXT = '  Lead\r\nline two  \r\n\r\n';
+
+	it('a claim appends the block after the raw text and a release takes it away again, leaving the text as it was', async () => {
+		const number = fake.addIssue({ title: 'a' });
+		fake.updateIssue(number, { body: TEXT });
+
+		await t.backend.claim!(String(number), { assignee: 'w1', leaseUntil: END, now: NOW });
+
+		const claimed = bodyOf(number);
+		expect(claimed.startsWith(TEXT)).toBe(true);
+		expect(claimed.slice(TEXT.length)).toBe(
+			`\n\n${block(`{"claim":{"assignee":"w1","claimedAt":"${NOW}","leaseUntil":"${END}"}}`)}`
+		);
+
+		await t.backend.release!(String(number), {});
+
+		expect(bodyOf(number)).toBe(TEXT);
+	});
+
+	it('a block in the middle of the text is replaced in place: the bytes before and after it are untouched', async () => {
+		const number = fake.addIssue({ title: 'a' });
+		const before = '  before \r\n';
+		const after = '\r\n after  \r\n';
+		fake.updateIssue(number, { body: `${before}${block('{"meta":{"k":"v"}}')}${after}` });
+
+		await t.backend.setAssignee!(String(number), 'w1');
+
+		expect(bodyOf(number)).toBe(`${before}${block('{"meta":{"k":"v"},"claim":{"assignee":"w1"}}')}${after}`);
+
+		await t.backend.clearAssignee!(String(number));
+
+		expect(bodyOf(number)).toBe(`${before}${block('{"meta":{"k":"v"}}')}${after}`);
 	});
 });

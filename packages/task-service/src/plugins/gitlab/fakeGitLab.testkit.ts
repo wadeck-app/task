@@ -548,6 +548,9 @@ export class FakeGitLab {
 	private clockMs = BASE_TIME;
 	private frozenAt: string | undefined;
 	private readonly faults: Fault[] = [];
+	/** One-shot callbacks of `beforeNextWrite` / `afterNextWrite`. */
+	private readonly beforeWrites: Array<() => void> = [];
+	private readonly afterWrites: Array<() => void> = [];
 	private readonly sockets = new Set<import('node:net').Socket>();
 	private readonly held: http.ServerResponse[] = [];
 	private readonly options: FakeGitLabOptions;
@@ -1077,6 +1080,29 @@ export class FakeGitLab {
 	/** The next `times` requests (matching method / pathPrefix when given) get this answer instead of the real one. */
 	failNext(response: ForcedResponse, times = 1): void {
 		for (let i = 0; i < times; i++) this.faults.push({ kind: 'respond', response: { ...response } });
+	}
+
+	/**
+	 * Runs `action` (a change another client makes) just BEFORE the next write is applied, after the strategy has read the issue: the
+	 * race of a check-then-write. Test hook, no HTTP form.
+	 */
+	beforeNextWrite(action: () => void): void {
+		this.beforeWrites.push(action);
+	}
+
+	/** Runs `action` just AFTER the next write is applied and before it is answered (another client writes right behind it). */
+	afterNextWrite(action: () => void): void {
+		this.afterWrites.push(action);
+	}
+
+	/**
+	 * A person editing the description of an issue on GitLab (the text is stored as written: no quick action is run, no API rule is
+	 * checked). The issue moves its `updated_at`.
+	 */
+	editDescription(iid: number, description: string | null): void {
+		const issue = this.require(iid);
+		issue.description = description;
+		issue.updatedAt = this.stamp();
 	}
 
 	/** The next request's connection is destroyed before any answer (a network failure). */
@@ -1659,9 +1685,12 @@ export class FakeGitLab {
 			return;
 		}
 		const params: Params = { ...paramsFromSearch(url.searchParams), ...body };
+		const isWrite = method !== 'GET';
+		if (isWrite) this.beforeWrites.shift()?.();
 		const answer = this.atOneInstant(() =>
 			this.route(method, normalised.segments, normalised.unknownProject, url, params, normalised.rawProject)
 		);
+		if (isWrite) this.afterWrites.shift()?.();
 		send(answer, this.bucket);
 	}
 

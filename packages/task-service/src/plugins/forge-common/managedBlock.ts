@@ -138,3 +138,37 @@ export function composeBody(visibleText: string, data: Record<string, unknown> |
 
 ${blockOf(data)}`;
 }
+
+/** The text task puts between the visible text and a block it appends. */
+const BLOCK_SEPARATOR = '\n\n';
+
+/**
+ * The raw text with its managed block replaced by one holding `data`, every other byte kept (no trim, no line-ending change). A text
+ * without a block gets the block appended after `\n\n` (or alone when the text is empty). An empty `data` removes the block, and the
+ * `\n\n` task put before it when it is still there, so a claim followed by a release gives the text back as it was. A block that
+ * cannot be read is not this function's business: callers read it first.
+ */
+export function replaceManagedBlock(raw: string, data: Record<string, unknown> | undefined): string {
+	const empty = data === undefined || Object.keys(data).length === 0;
+	const match = BLOCK.exec(raw);
+	if (match === null) return empty ? raw : raw === '' ? blockOf(data) : `${raw}${BLOCK_SEPARATOR}${blockOf(data)}`;
+	const start = match.index;
+	const end = start + match[0].length;
+	if (!empty) return `${raw.slice(0, start)}${blockOf(data)}${raw.slice(end)}`;
+	const before = raw.slice(0, start);
+	const kept = before.endsWith(BLOCK_SEPARATOR) ? before.slice(0, -BLOCK_SEPARATOR.length) : before;
+	return `${kept}${raw.slice(end)}`;
+}
+
+/**
+ * Runs a read of the managed block and returns its result, or the typed data error when the block cannot be read. Anything else
+ * (a bug, an out-of-memory) is thrown: only a problem of the block's content is a value.
+ */
+export function tryReadBlock<T>(read: () => T): T | BackendDataError {
+	try {
+		return read();
+	} catch (error) {
+		if (error instanceof BackendDataError) return error;
+		throw error;
+	}
+}

@@ -44,8 +44,8 @@ export const githubPlugin: StrategyPlugin = {
 		priority:
 			'an issue field (single select, organization) or a label priority:<name>: see priorityStorage; the change is not in the timeline',
 		assignee:
-			'stored in a hidden block of the issue body (not the GitHub assignee); optimistic: a race of one PATCH remains',
-		claim: 'stored in the same hidden block of the body; optimistic (check, then write), not atomic',
+			'stored in a hidden block of the issue body (not the GitHub assignee); optimistic, not atomic: the last write wins and the first writer is not told: a dispatcher needing a hard guarantee keeps its own lock or uses task serve',
+		claim: 'stored in the same hidden block of the body; optimistic (check, then write), not atomic: the last write wins and the first writer is not told: a dispatcher needing a hard guarantee keeps its own lock or uses task serve',
 		hierarchy: 'sub-issues: 8 levels, 100 per parent; a parent in another repository reads as no parent',
 		history: 'derived from the timeline (labels, close, reopen), not stored',
 		activity: 'the timeline mapped; edits of the description are not readable (GraphQL only)',

@@ -23,7 +23,6 @@ import {
 	TaskClaimedError,
 	TaskConflictError,
 	TaskNotFoundError,
-	TaskReleaseRefusedError,
 	UnsupportedByBackendError,
 	normalizeAssignee,
 	normalizeClaimRequest,
@@ -51,6 +50,7 @@ import {
 	planSetAssignee,
 	withClaim,
 } from '../forge-common/taskFieldBlocks.js';
+import { replaceManagedBlock } from '../forge-common/managedBlock.js';
 import type { BlockClaim } from '../forge-common/managedBlock.js';
 import type { DeclaredFills } from '../kinds.js';
 import { priorityLabelsWanted, wantedLabels } from './githubLabels.js';
@@ -137,6 +137,8 @@ interface Step {
 	repair?: string;
 }
 
+// CRLF read as LF: how a text is compared with what GitHub holds.
+const lf = (text: string): string => text.split('\r\n').join('\n');
 const eq = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
 const has = (issue: ApiIssue, label: string): boolean => labelNames(issue).some(name => eq(name, label));
 const enc = encodeURIComponent;
@@ -740,12 +742,12 @@ export class GitHubWriter {
 	/** One PATCH of the body, skipped when it is already that text. */
 	private async writeBody(issue: ApiIssue, operation: string, body: string): Promise<void> {
 		if (body.length > BODY_MAX) throw this.bodyLimit(body.length);
-		if (body === (issue.body ?? '').replace(/\r\n/g, '\n')) return;
+		if (lf(body) === lf(issue.body ?? '')) return;
 		await this.runSteps(operation, issue.number, [
 			{
 				description: 'wrote the body',
 				run: () => this.send(operation, String(issue.number), 'PATCH', this.path(issue.number), { body }),
-				applied: current => (current.body ?? '').replace(/\r\n/g, '\n') === body,
+				applied: current => lf(current.body ?? '') === lf(body),
 			},
 		]);
 	}
@@ -1096,13 +1098,19 @@ export class GitHubWriter {
 		parts: BodyParts,
 		claim: BlockClaim | undefined
 	): Promise<void> {
-		await this.writeBody(issue, operation, composeBody(parts.visibleText, withClaim(parts.blockData, claim)));
+		// Only the managed block is replaced in the raw body: every other byte of the text stays as GitHub holds it.
+		await this.writeBody(
+			issue,
+			operation,
+			replaceManagedBlock(issue.body ?? '', withClaim(parts.blockData, claim))
+		);
 	}
 
 	/**
 	 * GitHub has no conditional write: two workers can both pass the check and both PATCH, the last body wins. The record read after
-	 * the write says who holds the issue; a caller whose claim is not the one held is told so, never answered "claimed". A worker whose
-	 * read came before the other's PATCH still cannot know: the race of one PATCH stays (CLAUDE.md).
+	 * the write says who holds the issue; a caller whose claim is not the one held is told so, never answered "claimed". The last write
+	 * wins: a worker that reads back after the winner's write is told, the first writer is not (CLAUDE.md); a dispatcher that needs a
+	 * hard guarantee keeps its own lock or uses task serve.
 	 */
 	private async verifyClaim(
 		number: number,
@@ -1126,6 +1134,13 @@ export class GitHubWriter {
 		}
 		throw new TaskConflictError(
 			`Task "${number}" was changed by someone else while the claim was written: nobody holds it now; nothing is claimed. Run the command again.`
+		);
+	}
+
+	/** A release or a clear that another worker's claim overwrote: a race to report, not a refusal (the caller's write DID go through). */
+	private releaseRace(number: number, holder: string): TaskConflictError {
+		return new TaskConflictError(
+			`Task "${number}" was claimed by "${holder}" while you were releasing it: their write came after yours and now stands. Check with task show, then release again if the claim should go.`
 		);
 	}
 
@@ -1153,7 +1168,7 @@ export class GitHubWriter {
 		const plan = planClearAssignee(parts.claim);
 		if (!plan.changed) return this.read(issue.number);
 		await this.writeClaim(issue, 'clearAssignee', parts, plan.claim);
-		return this.verifyClaim(issue.number, undefined, this.claimedBy(issue.number, ''));
+		return this.verifyClaim(issue.number, undefined, held => this.releaseRace(issue.number, held.assignee));
 	}
 
 	async claim(id: string, input: BackendClaimInput): Promise<BackendClaimResult> {
@@ -1184,10 +1199,8 @@ export class GitHubWriter {
 		const parts = splitBody(issue, this.map);
 		const { previousAssignee } = planRelease(String(issue.number), parts.claim, options);
 		await this.writeClaim(issue, 'release', parts, undefined);
-		const task = await this.verifyClaim(
-			issue.number,
-			undefined,
-			held => new TaskReleaseRefusedError(String(issue.number), held.assignee, previousAssignee)
+		const task = await this.verifyClaim(issue.number, undefined, held =>
+			this.releaseRace(issue.number, held.assignee)
 		);
 		return { task, previousAssignee };
 	}

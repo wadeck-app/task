@@ -196,32 +196,76 @@ describe('queue events: a gitlab project emits what a local one does', () => {
 });
 
 describe('priority, assignee and claim on a gitlab project', () => {
-	const commands: string[][] = [
-		['set-priority', '1', 'high'],
-		['unset-priority', '1'],
-		['set-assignee', '1', 'bob'],
-		['unset-assignee', '1'],
-		['claim', '1', '--as', 'w1'],
-		['release', '1'],
+	// The same use cases as a local project: the command works and raises the same event, once, after the write.
+	const commands: Array<[string[], string]> = [
+		[['set-priority', '1', 'high'], 'onTaskPriorityChanged'],
+		[['set-assignee', '1', 'bob'], 'onTaskAssigneeChanged'],
+		[['claim', '1', '--as', 'w1'], 'onTaskAssigneeChanged'],
 	];
 
-	it.each(commands)(
-		'%s is refused with exit 1, the strategy and the local alternative, and raises no event',
-		async (...args) => {
-			await runTaskCommand(['-p', gitlab.name, 'new', 'Task'], gitlab.dir);
-			publishMock.mockClear();
+	it.each(commands)('%j works on gitlab and raises %s', async (args, event) => {
+		await runTaskCommand(['-p', gitlab.name, 'new', 'Task'], gitlab.dir);
+		publishMock.mockClear();
 
-			const text = await runTaskCommand(['-p', gitlab.name, ...args], gitlab.dir);
-			const asJson = await runTaskCommand(['-p', gitlab.name, ...args, '--json'], gitlab.dir);
+		const result = await runTaskCommand(['-p', gitlab.name, ...args, '--json'], gitlab.dir);
 
-			expect(text.exitCode).toBe(1);
-			expect(text.output).toContain('gitlab');
-			expect(text.output).toMatch(/local/);
-			expect(asJson.exitCode).toBe(1);
-			const body = JSON.parse(asJson.output) as { error: string; hint: string };
-			expect(body.error).toContain('gitlab');
-			expect(body.hint).toMatch(/local/);
-			expect(publishMock).not.toHaveBeenCalled();
-		}
-	);
+		expect(result.exitCode, result.output).toBe(0);
+		expect(pushed().map(entry => entry.event)).toEqual([event]);
+		expect(pushed()[0]!.payload).toMatchObject({ taskId: '1', taskProjectName: gitlab.name });
+	});
+
+	it('unset-priority and release undo them, each with its event, and a released task can be claimed again', async () => {
+		await runTaskCommand(['-p', gitlab.name, 'new', 'Task'], gitlab.dir);
+		await runTaskCommand(['-p', gitlab.name, 'set-priority', '1', 'high'], gitlab.dir);
+		await runTaskCommand(['-p', gitlab.name, 'claim', '1', '--as', 'w1'], gitlab.dir);
+		publishMock.mockClear();
+
+		const unset = await runTaskCommand(['-p', gitlab.name, 'unset-priority', '1'], gitlab.dir);
+		const release = await runTaskCommand(['-p', gitlab.name, 'release', '1'], gitlab.dir);
+		const again = await runTaskCommand(['-p', gitlab.name, 'claim', '1', '--as', 'w2'], gitlab.dir);
+
+		expect([unset.exitCode, release.exitCode, again.exitCode]).toEqual([0, 0, 0]);
+		expect(pushed().map(entry => entry.event)).toEqual([
+			'onTaskPriorityChanged',
+			'onTaskAssigneeChanged',
+			'onTaskAssigneeChanged',
+		]);
+	});
+
+	it('a claim held by another worker is refused with exit 1 naming the holder, and raises no event', async () => {
+		await runTaskCommand(['-p', gitlab.name, 'new', 'Task'], gitlab.dir);
+		await runTaskCommand(['-p', gitlab.name, 'claim', '1', '--as', 'w1'], gitlab.dir);
+		publishMock.mockClear();
+
+		const result = await runTaskCommand(['-p', gitlab.name, 'claim', '1', '--as', 'w2'], gitlab.dir);
+
+		expect(result.exitCode).toBe(1);
+		expect(result.output).toContain('w1');
+		expect(publishMock).not.toHaveBeenCalled();
+	});
+
+	it('list --available, --order and next work on the priority and the claim kept in GitLab', async () => {
+		await runTaskCommand(['-p', gitlab.name, 'new', 'Low one'], gitlab.dir);
+		await runTaskCommand(['-p', gitlab.name, 'new', 'Urgent one'], gitlab.dir);
+		await runTaskCommand(['-p', gitlab.name, 'set-priority', '1', 'low'], gitlab.dir);
+		await runTaskCommand(['-p', gitlab.name, 'set-priority', '2', 'urgent'], gitlab.dir);
+
+		const listed = await runTaskCommand(
+			['-p', gitlab.name, 'list', '--order', 'priority-then-oldest', '--available', '--json'],
+			gitlab.dir
+		);
+		const next = await runTaskCommand(['-p', gitlab.name, 'next', '--as', 'w1', '--json'], gitlab.dir);
+		const after = await runTaskCommand(['-p', gitlab.name, 'list', '--available', '--json'], gitlab.dir);
+
+		expect(listed.exitCode, listed.output).toBe(0);
+		expect(
+			(JSON.parse(listed.output) as Array<{ id: string; priority: string }>).map(row => [row.id, row.priority])
+		).toEqual([
+			['2', 'urgent'],
+			['1', 'low'],
+		]);
+		expect(next.exitCode, next.output).toBe(0);
+		expect((JSON.parse(next.output) as { taskId: string; assignee: string }).taskId).toBe('2');
+		expect((JSON.parse(after.output) as Array<{ id: string }>).map(row => row.id)).toEqual(['1']);
+	});
 });

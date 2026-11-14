@@ -16,7 +16,7 @@
 import { activityPreview, BackendDataError } from '@wadeck-app/task-core';
 import type { ActivityEntry, TaskComment, TaskLink, TaskRecord, TaskSummary } from '@wadeck-app/task-core';
 
-import { readManagedBlock } from '../forge-common/managedBlock.js';
+import { readManagedBlock, tryReadBlock } from '../forge-common/managedBlock.js';
 import type { BlockClaim } from '../forge-common/managedBlock.js';
 import type { ReadNotice } from '../kinds.js';
 import type { GitHubSettings } from './githubOptions.js';
@@ -151,17 +151,26 @@ export function priorityOf(issue: ApiIssue, ctx: MapContext): string | undefined
  */
 function claimForSummary(issue: ApiIssue, ctx: MapContext): BlockClaim | undefined {
 	if (!(issue.body ?? '').includes('task:begin')) return undefined;
-	try {
-		return splitBody(issue, ctx).claim;
-	} catch (error) {
-		if (!(error instanceof BackendDataError)) throw error;
+	const read = readBody(issue, ctx);
+	if (!(read instanceof BackendDataError)) return read.claim;
+	// One notice per issue and context, however many times the issue is summarised (list, forest, children...).
+	let told = unreadableBlocksTold.get(ctx);
+	if (told === undefined) {
+		told = new Set<number>();
+		unreadableBlocksTold.set(ctx, told);
+	}
+	if (!told.has(issue.number)) {
+		told.add(issue.number);
 		ctx.notice({
 			kind: 'ignored',
-			text: `${error.message}; its assignee and lease read as none until it is repaired (${error.hint})`,
+			text: `${read.message}; its assignee and lease read as none until it is repaired (${read.hint})`,
 		});
-		return undefined;
 	}
+	return undefined;
 }
+
+// The issues whose unreadable block a context already reported (a WeakMap: the set lives and dies with the context).
+const unreadableBlocksTold = new WeakMap<MapContext, Set<number>>();
 
 export function toSummary(issue: ApiIssue, ctx: MapContext): TaskSummary {
 	const parent = parentNumber(issue, ctx);
@@ -193,6 +202,11 @@ export interface BodyParts {
 	blockData: Record<string, unknown> | undefined;
 	/** The body without the block, trimmed (CRLF as LF): what a write puts back in front of the block. */
 	visibleText: string;
+}
+
+/** The body of the issue split, or the data error of its block: for the callers that need the answer more than once. */
+export function readBody(issue: ApiIssue, ctx: MapContext): BodyParts | BackendDataError {
+	return tryReadBlock(() => splitBody(issue, ctx));
 }
 
 /**

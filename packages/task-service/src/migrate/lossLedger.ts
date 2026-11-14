@@ -39,12 +39,12 @@ const WORDING: Record<LossKind, { what: (items: number, tasks: number, details: 
 	priority: {
 		what: (items, tasks, details) =>
 			`${items} priorit${items === 1 ? 'y' : 'ies'} on ${tasks} task(s) cannot be stored on the target (${details}); they are not set`,
-		fix: 'add the priority to the target project (priorities in its config.yml), use a target project on the local or github strategy (gitlab and remote do not carry priorities yet), or accept the loss',
+		fix: 'add the priority to the target project (priorities in its config.yml), use a target project on the local, github or gitlab strategy (remote does not carry priorities yet), or accept the loss',
 	},
 	assignee: {
 		what: (items, tasks) =>
 			`${items} assignee(s) on ${tasks} task(s) cannot be stored: the target does not carry assignees; they are not set (a claim lease is never migrated)`,
-		fix: 'use a target project on the local or github strategy (gitlab and remote do not carry assignees yet), or accept the loss',
+		fix: 'use a target project on the local, github or gitlab strategy (remote does not carry assignees yet), or accept the loss',
 	},
 	lease: {
 		what: (_items, tasks) =>

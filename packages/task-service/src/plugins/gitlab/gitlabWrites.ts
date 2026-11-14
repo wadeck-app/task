@@ -25,10 +25,18 @@ import {
 	StaleRevisionError,
 	TaskConflictError,
 	TaskNotFoundError,
+	TaskClaimedError,
 	UnsupportedByBackendError,
+	normalizeAssignee,
+	normalizeClaimRequest,
 	normalizeCommentText,
+	normalizePriority,
 } from '@wadeck-app/task-core';
 import type {
+	BackendClaimInput,
+	BackendClaimResult,
+	BackendReleaseResult,
+	ReleaseOptions,
 	BackendCommentChange,
 	BackendCommentEdit,
 	CreateTaskInput,
@@ -38,6 +46,15 @@ import type {
 	WriteOptions,
 } from '@wadeck-app/task-core';
 
+import {
+	planClaim,
+	planClearAssignee,
+	planRelease,
+	planSetAssignee,
+	withClaim,
+} from '../forge-common/taskFieldBlocks.js';
+import { replaceManagedBlock } from '../forge-common/managedBlock.js';
+import type { BlockClaim } from '../forge-common/managedBlock.js';
 import { GitLabHttpError } from './gitlabClient.js';
 import type { ClientResponse } from './gitlabClient.js';
 import { wantedLabels } from './gitlabLabels.js';
@@ -59,7 +76,8 @@ import {
 import type { MapContext } from './gitlabMapping.js';
 import { COMMENT_MAX, DESCRIPTION_MAX, LABELS_PER_ISSUE, labelProblem } from './gitlabOptions.js';
 import { HIERARCHY_DEPTH } from './gitlabWorkItems.js';
-import { checkRevision, revisionOf } from './gitlabRevision.js';
+import { isPriorityLabel, labelOfPriority, priorityLabelsOf } from './gitlabPriority.js';
+import { FIELD_GROUPS, checkRevision, revisionOf } from './gitlabRevision.js';
 import type { FieldGroup } from './gitlabRevision.js';
 import type { StatusRepresentation } from './gitlabStatusMapping.js';
 import type { ApiIssue, ApiNote, ApiProjectLabel } from './gitlabTypes.js';
@@ -72,7 +90,6 @@ const LABEL_STYLE: Record<LabelKind, { color: string; description?: string }> = 
 	status: { color: '#1d76db', description: 'Task status (set by the task tool)' },
 	type: { color: '#a2eeef', description: 'Task type (set by the task tool)' },
 	meta: { color: '#d4c5f9', description: 'Task metadata (set by the task tool)' },
-	// Not written by this strategy yet (priority on GitLab is a later stage); the shared label list may name the kind.
 	priority: { color: '#fbca04', description: 'Task priority (set by the task tool)' },
 	user: { color: '#ededed' },
 	deleted: { color: '#b60205', description: 'Deleted task, hidden by the task tool' },
@@ -89,6 +106,8 @@ interface Step {
 
 /** GitLab refuses a title longer than this (VERIFIED-LIVE: 256 characters answer 400 `title is too long (maximum is 255 characters)`). */
 export const TITLE_MAX = 255;
+// CRLF read as LF: how a text is compared with what GitLab holds.
+const lf = (text: string): string => text.replace(/\r\n/g, '\n');
 /** Label names are case sensitive on GitLab (VERIFIED-LIVE: `bug` and `Bug` are two labels). */
 const eq = (a: string, b: string): boolean => a === b;
 const has = (issue: ApiIssue, label: string): boolean => labelNames(issue).some(name => eq(name, label));
@@ -98,6 +117,13 @@ const stateOf = (issue: Pick<ApiIssue, 'state'>): 'open' | 'closed' => (issue.st
 
 /** A line that starts with a slash and a letter is a quick action for GitLab (`/close`, `/label ~x`, `/duplicate #3`...). */
 const QUICK_ACTION_LINE = /^[ \t]*\/[A-Za-z][^\s/]*(?:[ \t]|$)/m;
+
+/**
+ * A line that starts with a slash and a letter after a line break other than the one GitLab splits on (CR, VT, FF, NEL, the
+ * Unicode line and paragraph separators): the one way a name written inside the one-line managed block could still start a line
+ * with a quick action.
+ */
+const QUICK_LINE_AFTER_SEPARATOR = /(?:^|[\n\r\v\f\u0085\u2028\u2029])[ \t]*\/[A-Za-z]/;
 
 /** The stable hint of the refusal of blockedBy / blocks: GitLab has them on its paid tiers only. */
 const BLOCKED_BY_HINT = 'requires a paid GitLab tier, which task does not support';
@@ -366,7 +392,7 @@ export class GitLabWriter {
 	/** `task labels sync`: creates the labels the configuration needs, in the order of the config; never deletes or edits one. */
 	async syncLabels(options: { dryRun?: boolean }): Promise<LabelSyncReport> {
 		const dryRun = options.dryRun === true;
-		const wanted = wantedLabels(this.host.settings, this.map.projectTypes, this.host.fills);
+		const wanted = wantedLabels(this.host.settings, this.map.projectTypes, this.host.fills, this.map.priority);
 		// include_ancestor_groups is true by default: a label of a parent group (is_project_label: false) counts as existing, and creating
 		// it in the project would answer 409 (VERIFIED-LIVE). Names are compared exactly: `bug` and `Bug` are two labels.
 		const present = await this.host.client.getAll<ApiProjectLabel>(`${this.host.projectPath}/labels`, {
@@ -425,17 +451,26 @@ export class GitLabWriter {
 		);
 	}
 
+	private reservedLabel(operation: string, label: string, command: string, what: string): Error {
+		return new BackendRejectedError(
+			'gitlab',
+			operation,
+			`the label "${label}" is reserved: ${what}`,
+			`Use ${command} instead of a label of that name`
+		);
+	}
+
+	/** The refusal of a priority label (changed by set-priority only), shared by addLabel and removeLabel. */
+	private priorityLabelRefusal(operation: string, label: string): Error {
+		return this.reservedLabel(operation, label, 'task set-priority', 'it carries the priority of a task');
+	}
+
 	private reservedLabelError(operation: string, label: string): Error | undefined {
 		const ctx = this.map;
-		const use = (command: string, what: string): Error =>
-			new BackendRejectedError(
-				'gitlab',
-				operation,
-				`the label "${label}" is reserved: ${what}`,
-				`Use ${command} instead of a label of that name`
-			);
+		const use = (command: string, what: string): Error => this.reservedLabel(operation, label, command, what);
 		if (ctx.mapper.isStatusLabel(label)) return use('task set-status', 'it carries the status of a task');
 		if (typeOfLabel(label, ctx) !== undefined) return use('task set-type', 'it carries the type of a task');
+		if (isPriorityLabel(label, ctx.priority)) return this.priorityLabelRefusal(operation, label);
 		if (this.fill('meta') === 'labels' && label.startsWith(ctx.settings.metaPrefix)) {
 			return use('task set-meta', 'it carries the metadata of a task');
 		}
@@ -468,6 +503,8 @@ export class GitLabWriter {
 	}
 
 	async removeLabel(id: string, label: string, options?: WriteOptions): Promise<VersionedRecord> {
+		// A priority label is changed by set-priority / unset-priority: refused before any request, not skipped.
+		if (isPriorityLabel(label, this.map.priority)) throw this.priorityLabelRefusal('removeLabel', label);
 		const { issue } = await this.prepare(id, options, ['labels']);
 		const held = labelNames(issue).find(name => eq(name, label));
 		if (held !== undefined && !this.map.mapper.isStatusLabel(held) && typeOfLabel(held, this.map) === undefined) {
@@ -505,7 +542,12 @@ export class GitLabWriter {
 	}
 
 	/** Throws when GitLab would RUN something written in this text (a quick action), or when it is longer than GitLab keeps. */
-	private checkText(operation: string, text: string, what: 'description' | 'comment'): void {
+	private checkText(
+		operation: string,
+		text: string,
+		what: 'description' | 'comment',
+		quickActions: boolean = true
+	): void {
 		const max = what === 'description' ? DESCRIPTION_MAX : COMMENT_MAX;
 		if (text.length > max) {
 			throw new BackendLimitError(
@@ -515,7 +557,7 @@ export class GitLabWriter {
 				`The text has ${text.length} characters; GitLab keeps ${max} at most in a ${what}. Shorten it${what === 'description' ? ', or put the long text in a comment (task comment)' : ''}.`
 			);
 		}
-		const line = QUICK_ACTION_LINE.exec(text);
+		const line = quickActions ? QUICK_ACTION_LINE.exec(text) : null;
 		if (line !== null) {
 			throw new BackendRejectedError(
 				'gitlab',
@@ -660,14 +702,20 @@ export class GitLabWriter {
 	}
 
 	/** One PUT of the description, skipped when it is already that text. */
-	private async writeBody(issue: ApiIssue, operation: string, body: string): Promise<void> {
-		this.checkText(operation, body, 'description');
-		if (body === (issue.description ?? '').replace(/\r\n/g, '\n')) return;
+	private async writeBody(
+		issue: ApiIssue,
+		operation: string,
+		body: string,
+		options: { textUnchanged?: boolean } = {}
+	): Promise<void> {
+		// A claim keeps the visible text as GitLab holds it: only the length is checked again, the block is checked by its caller.
+		this.checkText(operation, body, 'description', options.textUnchanged !== true);
+		if (lf(body) === lf(issue.description ?? '')) return;
 		await this.runSteps(operation, issue.iid, [
 			{
 				description: 'wrote the description',
 				run: () => this.send(operation, String(issue.iid), 'PUT', this.path(issue.iid), { description: body }),
-				applied: current => (current.description ?? '').replace(/\r\n/g, '\n') === body,
+				applied: current => lf(current.description ?? '') === lf(body),
 			},
 		]);
 	}
@@ -882,6 +930,198 @@ export class GitLabWriter {
 		return this.read(iid);
 	}
 
+	// ---------------------------------------------------------------- priority
+	//
+	// GitLab Free has no priority field: a task priority is ALWAYS a label (priorityPrefix + name, or a name of priorityMap), swapped in
+	// ONE PUT of the whole label set, so no reader sees two priority labels or none in between.
+
+	/** The label of a priority, refused before any request when GitLab would refuse it. */
+	private priorityLabel(wanted: string): string {
+		const label = labelOfPriority(wanted, this.map.priority);
+		const problem = labelProblem(label);
+		if (problem !== undefined) {
+			throw new BackendRejectedError(
+				'gitlab',
+				'setPriority',
+				`The priority "${wanted}" needs the label ${problem}`,
+				'Give the priority a name GitLab accepts as a label (no comma, no space at either end), or map it in strategy.options.priorityMap.'
+			);
+		}
+		return label;
+	}
+
+	async setPriority(id: string, priority: string, options?: WriteOptions): Promise<VersionedRecord> {
+		const wanted = normalizePriority(priority, this.map.priority.priorities);
+		const label = this.priorityLabel(wanted);
+		const { issue } = await this.prepare(id, options, ['priority']);
+		const stray = priorityLabelsOf(labelNames(issue), this.map.priority);
+		if (stray.length === 1 && eq(stray[0]!, label)) return this.read(issue.iid);
+		const steps = this.labelSetStep({
+			operation: 'setPriority',
+			issue,
+			remove: stray.filter(held => !eq(held, label)),
+			add: has(issue, label) ? [] : [label],
+			repair: `task set-priority ${issue.iid} ${wanted}`,
+		});
+		await this.runSteps('setPriority', issue.iid, steps);
+		return this.read(issue.iid);
+	}
+
+	async clearPriority(id: string, options?: WriteOptions): Promise<VersionedRecord> {
+		const { issue } = await this.prepare(id, options, ['priority']);
+		const steps = this.labelSetStep({
+			operation: 'clearPriority',
+			issue,
+			remove: priorityLabelsOf(labelNames(issue), this.map.priority),
+			add: [],
+			repair: `task unset-priority ${issue.iid}`,
+		});
+		await this.runSteps('clearPriority', issue.iid, steps);
+		return this.read(issue.iid);
+	}
+
+	// ---------------------------------------------------------------- assignee and claim
+
+	/**
+	 * The one write of an assignee or a claim: the `claim` key of the managed block of the description (the other keys and the visible
+	 * text are kept), in ONE PUT of the description. GitLab has no field for a worker name that is not a user of the instance. The block
+	 * is ONE line starting with `<!--` (JSON never holds a raw newline), so GitLab never takes it for a quick action; a name that could
+	 * still start a line with a slash (a Unicode line separator) is refused before any request. The visible text is not touched (no
+	 * trim, no line-ending change) and not checked again: it is what GitLab already holds.
+	 */
+	private async writeClaim(
+		issue: ApiIssue,
+		operation: string,
+		parts: ReturnType<typeof splitBody>,
+		claim: BlockClaim | undefined
+	): Promise<void> {
+		const data = withClaim(parts.blockData, claim);
+		// Only the managed block is replaced in the raw description: every other byte of the text stays as GitLab holds it.
+		const body = replaceManagedBlock(issue.description ?? '', data);
+		const line = QUICK_LINE_AFTER_SEPARATOR.exec(replaceManagedBlock('', data));
+		if (line !== null) {
+			throw new BackendRejectedError(
+				'gitlab',
+				operation,
+				`the assignee "${claim?.assignee ?? ''}" would put a line that starts with a slash and a command word ("${line[0].trim().slice(0, 40)}") in the description, which GitLab would run as a quick action`,
+				'Nothing was sent. Use an assignee name without line separators (the name is one line of plain text).'
+			);
+		}
+		await this.writeBody(issue, operation, body, { textUnchanged: true });
+	}
+
+	/**
+	 * A name GitLab could take for a quick action once written in the block: a line separator (CR, VT, FF, NEL, the Unicode line and
+	 * paragraph separators) followed by a slash and a command word. Refused before any request, with the way out.
+	 */
+	private refuseUnsafeAssignee(operation: string, assignee: string): void {
+		const line = QUICK_LINE_AFTER_SEPARATOR.exec(`<!--${assignee}`);
+		if (line === null) return;
+		throw new BackendRejectedError(
+			'gitlab',
+			operation,
+			`the assignee "${JSON.stringify(assignee).slice(1, -1)}" holds a line break followed by a slash and a command word, which GitLab would run as a quick action once it is written in the description`,
+			'Nothing was sent. Use an assignee name on one line of plain text (a slash inside the name is fine, a line break is not).'
+		);
+	}
+
+	/**
+	 * GitLab has no conditional write: two workers can both pass the check and both PUT, the last description wins. The record read
+	 * after the write says who holds the issue; a caller whose claim is not the one held is told so, never answered "claimed". The last
+	 * write wins: a worker that reads back after the winner's write is told, the first writer is not (CLAUDE.md); a dispatcher that
+	 * needs a hard guarantee keeps its own lock or uses task serve.
+	 */
+	private async verifyClaim(
+		iid: number,
+		wrote: BlockClaim | undefined,
+		onHeld: (held: { assignee: string; leaseUntil?: string }) => Error
+	): Promise<VersionedRecord> {
+		const record = await this.read(iid);
+		const held = record.assignee;
+		const same =
+			wrote === undefined
+				? held === undefined
+				: held === wrote.assignee &&
+					record.claimedAt === wrote.claimedAt &&
+					record.leaseUntil === wrote.leaseUntil;
+		if (same) return record;
+		if (held !== undefined) {
+			throw onHeld({
+				assignee: held,
+				...(record.leaseUntil === undefined ? {} : { leaseUntil: record.leaseUntil }),
+			});
+		}
+		throw new TaskConflictError(
+			`Task "${iid}" was changed by someone else while the claim was written: nobody holds it now; nothing is claimed. Run the command again.`
+		);
+	}
+
+	/** A release or a clear that another worker's claim overwrote: a race to report, not a refusal (the caller's write DID go through). */
+	private releaseRace(iid: number, holder: string): TaskConflictError {
+		return new TaskConflictError(
+			`Task "${iid}" was claimed by "${holder}" while you were releasing it: their write came after yours and now stands. Check with task show, then release again if the claim should go.`
+		);
+	}
+
+	private claimedBy(iid: number, requestedBy: string): (held: { assignee: string; leaseUntil?: string }) => Error {
+		return held => {
+			const until = held.leaseUntil ?? 'no lease end';
+			const remaining = held.leaseUntil === undefined ? 0 : Math.max(0, Date.parse(held.leaseUntil) - Date.now());
+			return new TaskClaimedError(String(iid), held.assignee, until, remaining, held.assignee === requestedBy);
+		};
+	}
+
+	async setAssignee(id: string, assignee: string, options?: WriteOptions): Promise<VersionedRecord> {
+		this.refuseUnsafeAssignee('setAssignee', normalizeAssignee(assignee));
+		const { issue } = await this.prepare(id, options, ['claim']);
+		const parts = splitBody(issue, this.map);
+		const plan = planSetAssignee(parts.claim, assignee);
+		if (!plan.changed) return this.read(issue.iid);
+		await this.writeClaim(issue, 'setAssignee', parts, plan.claim);
+		return this.verifyClaim(issue.iid, plan.claim, this.claimedBy(issue.iid, plan.claim?.assignee ?? ''));
+	}
+
+	async clearAssignee(id: string, options?: WriteOptions): Promise<VersionedRecord> {
+		const { issue } = await this.prepare(id, options, ['claim']);
+		const parts = splitBody(issue, this.map);
+		const plan = planClearAssignee(parts.claim);
+		if (!plan.changed) return this.read(issue.iid);
+		await this.writeClaim(issue, 'clearAssignee', parts, plan.claim);
+		return this.verifyClaim(issue.iid, undefined, held => this.releaseRace(issue.iid, held.assignee));
+	}
+
+	async claim(id: string, input: BackendClaimInput): Promise<BackendClaimResult> {
+		// A bad request is refused before GitLab is asked anything.
+		this.refuseUnsafeAssignee('claim', normalizeClaimRequest(input).assignee);
+		const { issue } = await this.prepare(
+			id,
+			input.expectedRevision === undefined ? undefined : { expectedRevision: input.expectedRevision },
+			['claim']
+		);
+		const parts = splitBody(issue, this.map);
+		const plan = planClaim(String(issue.iid), parts.claim, input);
+		await this.writeClaim(issue, 'claim', parts, plan.claim);
+		return {
+			task: await this.verifyClaim(issue.iid, plan.claim, this.claimedBy(issue.iid, plan.claim.assignee)),
+			outcome: plan.outcome,
+			...(plan.previousAssignee === undefined ? {} : { previousAssignee: plan.previousAssignee }),
+		};
+	}
+
+	async release(id: string, options: ReleaseOptions = {}): Promise<BackendReleaseResult> {
+		if (options.assignee !== undefined) normalizeAssignee(options.assignee);
+		const { issue } = await this.prepare(
+			id,
+			options.expectedRevision === undefined ? undefined : { expectedRevision: options.expectedRevision },
+			['claim']
+		);
+		const parts = splitBody(issue, this.map);
+		const { previousAssignee } = planRelease(String(issue.iid), parts.claim, options);
+		await this.writeClaim(issue, 'release', parts, undefined);
+		const task = await this.verifyClaim(issue.iid, undefined, held => this.releaseRace(issue.iid, held.assignee));
+		return { task, previousAssignee };
+	}
+
 	// ---------------------------------------------------------------- hierarchy
 	//
 	// GitLab Free (VERIFIED-LIVE, 2026-11-09): a parent is an Issue or an Incident, a child is a native Task, so a hierarchy has two
@@ -1083,7 +1323,7 @@ export class GitLabWriter {
 		options?: WriteOptions
 	): Promise<VersionedRecord> {
 		this.requireBlockFill(type, 'addLink');
-		const { issue } = await this.prepare(id, options, ['body']);
+		const { issue } = await this.prepare(id, options, ['links']);
 		const source = String(issue.iid);
 		const target = (await this.targetOf(issue, targetId, source)).issue;
 		const targetRef = String(target.iid);
@@ -1163,7 +1403,7 @@ export class GitLabWriter {
 		options?: WriteOptions
 	): Promise<VersionedRecord> {
 		this.requireBlockFill(type, 'removeLink');
-		const { issue } = await this.prepare(id, options, ['body']);
+		const { issue } = await this.prepare(id, options, ['links']);
 		const source = String(issue.iid);
 		const targetRef = targetId.replace('#', '');
 		const parts = splitBody(issue, this.map);
@@ -1345,7 +1585,7 @@ export class GitLabWriter {
 		if (mode !== 'tombstone' && mode !== 'hard') throw this.deleteUnsupported();
 		let issue: ApiIssue;
 		try {
-			({ issue } = await this.prepare(id, options, ['title', 'body', 'status', 'type', 'labels', 'meta']));
+			({ issue } = await this.prepare(id, options, FIELD_GROUPS));
 		} catch (error) {
 			if (error instanceof TaskNotFoundError) return false;
 			throw error;
