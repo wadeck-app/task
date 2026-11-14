@@ -1,3 +1,17 @@
+## CLI Development Workflow
+
+`task-cli` is installed globally via CI (GitHub Packages). Source edits alone do nothing: the `task` on PATH is the published version. Never patch `node_modules`.
+
+To deploy a change:
+
+1. Verify locally: `npm test` (run it twice), `npm run lint`, `npm run check` in `packages/app-module-task`, `violations check` = 0. Windows-only green is not CI green: see "Tests, Linux CI" under Shared project registry (CI also runs `vitest run --bail=1`).
+2. `git commit` + `git push` -> CI builds and publishes.
+3. Wait for CI, never poll: `queue wait ci <sha> --name task.ci-<first 7 chars of sha> --cli-foreground`, with `run_in_background: true`, from this repository.
+4. Check the registry, it is the proof of publish: `npm view @wadeck-app/task-cli versions --registry=https://npm.pkg.github.com`. A cancelled macOS smoke job (no runner) does not block publish; only a real smoke failure does (see Updater, incident).
+5. `UPDATER_MANUAL=1 task cli update`, then `task -v` to confirm the version.
+
+A source-checkout dev build (`BUNDLE_VERSION=0.0.0-local`, not CalVer) never updates the global install: `task cli update` refuses it (see Updater, dev build guard).
+
 ## Packages
 
 | Package           | Role                                                                                                                |
@@ -596,6 +610,10 @@ Main column blocks (`variants/_sections.yaml`): Description = `task:Panel` `appe
 
 ## Agent reference docs
 
-| Doc                             | Description                                                      |
-| ------------------------------- | ---------------------------------------------------------------- |
-| `.claude/guiding-principles.md` | `--follow`/`-f` convention: list/snapshot diffing vs log tailing |
+| Doc                               | Description                                                                                                 |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `.claude/guiding-principles.md`   | `--follow`/`-f` convention: list/snapshot diffing vs log tailing                                            |
+| `.claude/product-vision.md`       | Purpose, contracts that define the product, intended direction, known gaps                                  |
+| `.claude/out-of-scope.md`         | What task explicitly does not cover (platforms, tiers, plugins, registry, remote), with the decision source |
+| `.claude/threat-model.md`         | Repo-level threats: files, registry, tokens, events, module routes, updater, plugin host                    |
+| `docs/threat-model-task-serve.md` | `task serve` and the `remote` strategy: protocol v1, T1 to T14, deferred items                              |
