@@ -1622,7 +1622,15 @@ ${typeMap ?? '            outage: { issueType: incident }\n'}${FILLS[fills]}`;
 			const page = await c.store.listPage({ parentId: hp1 });
 			eq('listPage parentId: the children', page.items.map(t => t.id).sort(), [hc, hx].sort());
 			const roots = await c.store.listPage({ parentId: null, text: 'h parent' });
-			eq('listPage parentId null: the roots only', roots.items.map(t => t.id).sort(), [hp1, hp2].sort());
+			// Older runs left issues titled alike in the same project: keep this run's (its tag ends every title).
+			eq(
+				'listPage parentId null: the roots only',
+				roots.items
+					.filter(t => t.title.endsWith(run))
+					.map(t => t.id)
+					.sort(),
+				[hp1, hp2].sort()
+			);
 		});
 		const cliChildren = await cliRun('children', hp1);
 		check(
