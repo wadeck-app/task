@@ -4,12 +4,30 @@
 // label changes. So the revision is `<updated_at>#<etag>#<one short hash per part of the issue>`, and a write compares the PARTS IT
 // CHANGES: a comment, or a label added to a task whose title is being edited, is not a conflict, while a rename made behind our back
 // is, even when both fall in the same second. The hashes hide the text (the revision is shown in JSON and logs).
-import { blockMetaPart, checkRevisionParts, partsFromHashes, shortHash } from '../forge-common/revisionParts.js';
+import {
+	blockClaimPart,
+	blockMetaPart,
+	checkRevisionParts,
+	partsFromHashes,
+	shortHash,
+} from '../forge-common/revisionParts.js';
+import { fieldPriorityName, priorityLabelsOf } from './githubPriority.js';
 import { labelNames, splitBody, typeOfLabel, userLabels } from './issueMapping.js';
 import type { ApiIssue, MapContext } from './issueMapping.js';
 
 /** The parts of an issue a write can change. */
-export const FIELD_GROUPS = ['title', 'body', 'status', 'type', 'labels', 'meta', 'parent', 'dependencies'] as const;
+export const FIELD_GROUPS = [
+	'title',
+	'body',
+	'status',
+	'type',
+	'labels',
+	'meta',
+	'parent',
+	'dependencies',
+	'priority',
+	'claim',
+] as const;
 export type FieldGroup = (typeof FIELD_GROUPS)[number];
 export type FieldHashes = Record<FieldGroup, string>;
 
@@ -28,6 +46,26 @@ function metaPart(issue: ApiIssue, ctx: MapContext): string {
 	return lowerSorted(labelNames(issue).filter(name => name.toLowerCase().startsWith(prefix)));
 }
 
+/**
+ * The text of the body a person edits: without the managed block, whose keys are covered by their own parts (meta, dependencies for
+ * the duplicate marker, claim). A block that cannot be read is hashed whole under its own marker: the write that reads it reports it.
+ */
+function visibleBody(issue: ApiIssue, ctx: MapContext): string {
+	try {
+		return splitBody(issue, ctx).visibleText;
+	} catch {
+		return `unreadable|${(issue.body ?? '').replace(/\r\n/g, '\n')}`;
+	}
+}
+
+function duplicateOfPart(issue: ApiIssue, ctx: MapContext): string {
+	try {
+		return splitBody(issue, ctx).duplicateOf ?? '';
+	} catch {
+		return 'unreadable';
+	}
+}
+
 /** One short hash per part of the issue. */
 export function fieldHashes(issue: ApiIssue, ctx: MapContext): FieldHashes {
 	const names = labelNames(issue);
@@ -35,15 +73,21 @@ export function fieldHashes(issue: ApiIssue, ctx: MapContext): FieldHashes {
 	const typeLabels = names.filter(name => typeOfLabel(name, ctx) !== undefined);
 	return {
 		title: hash(issue.title),
-		body: hash((issue.body ?? '').replace(/\r\n/g, '\n')),
+		body: hash(visibleBody(issue, ctx)),
 		status: hash(`${issue.state}|${issue.state_reason ?? ''}|${lowerSorted(statusLabels)}`),
 		type: hash(`${lowerSorted(typeLabels)}|${(issue.type?.name ?? '').toLowerCase()}`),
 		labels: hash(lowerSorted(userLabels(issue, ctx))),
 		meta: hash(metaPart(issue, ctx)),
 		parent: hash(issue.parent_issue_url ?? ''),
+		// The counts, and the `duplicateOf` target the managed block holds (the one key of the block no other part covers).
 		dependencies: hash(
-			`${issue.issue_dependencies_summary?.total_blocked_by ?? 0}|${issue.issue_dependencies_summary?.total_blocking ?? 0}`
+			`${issue.issue_dependencies_summary?.total_blocked_by ?? 0}|${issue.issue_dependencies_summary?.total_blocking ?? 0}|${duplicateOfPart(issue, ctx)}`
 		),
+		// The raw option name and the raw labels: a change of the value on GitHub is a change whatever the project calls it.
+		priority: hash(
+			`${fieldPriorityName(issue.issue_field_values, ctx.priority)?.toLowerCase() ?? ''}|${lowerSorted(priorityLabelsOf(issue, ctx.priority))}`
+		),
+		claim: hash(blockClaimPart(() => splitBody(issue, ctx).claim)),
 	};
 }
 

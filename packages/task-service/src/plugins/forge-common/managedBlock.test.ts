@@ -52,12 +52,32 @@ describe('readManagedBlock', () => {
 		[block('{"meta":[]}'), 'has a "meta" that is not an object'],
 		[block('{"meta":{"k":1}}'), 'has a meta value that is not a text (k)'],
 		[block('{"links":{}}'), 'has a "links" that is not a list'],
+		[block('{"claim":[]}'), 'has a "claim" that is not an object'],
+		[block('{"claim":{}}'), 'has a claim without an assignee'],
+		[block('{"claim":{"assignee":""}}'), 'has a claim without an assignee'],
+		[block('{"claim":{"assignee":"w","leaseUntil":5}}'), 'has a claim whose leaseUntil is not an ISO instant'],
+		[block('{"claim":{"assignee":"w","claimedAt":"soon"}}'), 'has a claim whose claimedAt is not an ISO instant'],
 	])('%s is an error naming the issue and the fix', (raw, message) => {
 		const error = failure(raw);
 		expect(error).toBeInstanceOf(BackendDataError);
 		expect(error.backendKind).toBe('github');
 		expect(error.message).toContain(`the task block of issue #7 ${message}`);
 		expect(error.hint).toContain('https://example.test/7');
+	});
+
+	it('reads the claim: an assignee alone, or with the claim instants; no claim key reads as none', () => {
+		expect(readManagedBlock(input(block('{"claim":{"assignee":"w1"}}'))).claim).toEqual({ assignee: 'w1' });
+		const full =
+			'{"meta":{"a":"1"},"claim":{"assignee":"w1","claimedAt":"2026-11-14T10:00:00.000Z","leaseUntil":"2026-11-14T10:30:00.000Z"}}';
+		const read = readManagedBlock(input(`Text\n\n${block(full)}`));
+		expect(read.claim).toEqual({
+			assignee: 'w1',
+			claimedAt: '2026-11-14T10:00:00.000Z',
+			leaseUntil: '2026-11-14T10:30:00.000Z',
+		});
+		expect(read.blockMeta).toEqual({ a: '1' });
+		expect(readManagedBlock(input('plain')).claim).toBeUndefined();
+		expect(readManagedBlock(input(block('{"meta":{}}'))).claim).toBeUndefined();
 	});
 
 	it('another format version says to update task or remove the block on the forge', () => {

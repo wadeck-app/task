@@ -27,7 +27,21 @@ export interface BlockReadInput {
 	linkTypes: readonly string[];
 }
 
+/**
+ * Who holds the issue, as the block keeps it (`claim` key): the assignee alone for a plain assignment, with the instants of a claim
+ * under a lease. Neither forge has a field for it that is not a forge user, so it travels in the block.
+ */
+export interface BlockClaim {
+	assignee: string;
+	/** ISO instant of the claim; absent for a hand-made assignee. */
+	claimedAt?: string;
+	/** ISO instant the lease ends; absent for a hand-made assignee. */
+	leaseUntil?: string;
+}
+
 export interface BlockRead {
+	/** The claim the block holds; absent without a `claim` key. */
+	claim: BlockClaim | undefined;
 	/** The meta the block holds; absent without a `meta` key. */
 	blockMeta: Record<string, string> | undefined;
 	/** The whole content of the block; absent when the text has no block. */
@@ -47,7 +61,7 @@ export function readManagedBlock(input: BlockReadInput): BlockRead {
 	const match = BLOCK.exec(raw);
 	if (match === null) {
 		if (BLOCK_BEGIN.test(raw)) throw bad('has no end marker');
-		return { blockMeta: undefined, blockData: undefined, links: [], text: raw };
+		return { claim: undefined, blockMeta: undefined, blockData: undefined, links: [], text: raw };
 	}
 	if (match[1] !== '1') {
 		throw bad(
@@ -88,7 +102,28 @@ export function readManagedBlock(input: BlockReadInput): BlockRead {
 			}
 		}
 	}
-	return { blockMeta, blockData: data as Record<string, unknown>, links, text: raw.replace(BLOCK, '') };
+	let claim: BlockClaim | undefined;
+	const held = (data as { claim?: unknown }).claim;
+	if (held !== undefined) {
+		if (typeof held !== 'object' || held === null || Array.isArray(held))
+			throw bad('has a "claim" that is not an object');
+		const { assignee, claimedAt, leaseUntil } = held as Record<string, unknown>;
+		if (typeof assignee !== 'string' || assignee.trim() === '') throw bad('has a claim without an assignee');
+		for (const [key, value] of [
+			['claimedAt', claimedAt],
+			['leaseUntil', leaseUntil],
+		] as const) {
+			if (value !== undefined && (typeof value !== 'string' || Number.isNaN(Date.parse(value)))) {
+				throw bad(`has a claim whose ${key} is not an ISO instant`);
+			}
+		}
+		claim = {
+			assignee,
+			...(claimedAt === undefined ? {} : { claimedAt: claimedAt as string }),
+			...(leaseUntil === undefined ? {} : { leaseUntil: leaseUntil as string }),
+		};
+	}
+	return { claim, blockMeta, blockData: data as Record<string, unknown>, links, text: raw.replace(BLOCK, '') };
 }
 
 const blockOf = (data: Record<string, unknown>): string =>

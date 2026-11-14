@@ -1,9 +1,10 @@
 // The labels a forge project's configuration needs in the repository: the status labels of the statusMap, the labels of the types,
-// and the tombstone label when deletion is emulated. `task labels sync` creates them, `task strategy check` reports the missing ones.
+// the labels of the priorities when the priority lives in labels, and the tombstone label when deletion is emulated. `task labels
+// sync` creates them, `task strategy check` reports the missing ones.
 // Pure: no I/O. What differs between forges is whether two names that differ by case are one label (`sameLabel`).
 import type { DeclaredFills } from '../kinds.js';
 
-export type WantedLabelKind = 'status' | 'type' | 'deleted';
+export type WantedLabelKind = 'status' | 'type' | 'priority' | 'deleted';
 
 export interface WantedLabel {
 	name: string;
@@ -20,15 +21,17 @@ export interface LabelSettings {
 }
 
 /**
- * In the order of the config: statuses, then types, then the tombstone. A name appears once; `identity` maps a name to what makes
- * two names the same label (lower case on GitHub, the name itself on GitLab).
+ * In the order of the config: statuses, then types, then priorities (`priorityLabels`, already in the order of the project's
+ * priorities; empty when the priority does not live in labels), then the tombstone. A name appears once; `identity` maps a name to
+ * what makes two names the same label (lower case on GitHub, the name itself on GitLab).
  */
 export function wantedLabelsOf(
 	settings: LabelSettings,
 	projectTypes: readonly string[],
 	fills: DeclaredFills,
 	tombstone: string,
-	identity: (name: string) => string
+	identity: (name: string) => string,
+	priorityLabels: ReadonlyArray<{ name: string; why: string }> = []
 ): WantedLabel[] {
 	const wanted = new Map<string, WantedLabel>();
 	const add = (label: WantedLabel): void =>
@@ -42,6 +45,7 @@ export function wantedLabelsOf(
 		if (rule?.issueType !== undefined) continue;
 		add({ name: rule?.label ?? `${settings.typePrefix}${type}`, kind: 'type', why: `type "${type}"` });
 	}
+	for (const label of priorityLabels) add({ name: label.name, kind: 'priority', why: label.why });
 	if (fills['delete']?.use === 'tombstone') {
 		add({ name: tombstone, kind: 'deleted', why: 'deleted tasks (fills.delete: tombstone)' });
 	}

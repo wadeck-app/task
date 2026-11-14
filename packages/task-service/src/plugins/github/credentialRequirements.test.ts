@@ -17,6 +17,16 @@ describe('the github credential table', () => {
 		}
 	});
 
+	it('keeps the organization permission of the issue fields apart from the repository ones, as unverified', () => {
+		const row = requirementFor('issue-fields');
+		expect(row.fineGrained).toEqual([]);
+		expect(row.organization).toEqual(['Issue fields: Read']);
+		expect(row.required).toBe(false);
+		expect(row.probe.request).toContain('/orgs/:owner/issue-fields');
+		expect(row.evidence).toMatch(/^unverified/);
+		expect(tokenHowTo().join('\n')).toContain('Issue fields: Read');
+	});
+
 	it('marks as required only what every command needs', () => {
 		expect(CREDENTIAL_REQUIREMENTS.filter(row => row.required).map(row => row.key)).toEqual(['metadata', 'read']);
 	});

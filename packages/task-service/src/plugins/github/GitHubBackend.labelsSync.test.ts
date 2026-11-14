@@ -17,6 +17,8 @@ function make(extra: Parameters<typeof makeGitHubBackend>[1] = {}): TestBackend 
 	return makeGitHubBackend(fake, {
 		statuses: WRITE_STATUSES,
 		projectTypes: ['bug', 'feature'],
+		// The priority labels have a test of their own below.
+		priorities: [],
 		...extra,
 		options: { statusMap: WRITE_STATUS_MAP, ...extra.options },
 	});
@@ -122,5 +124,51 @@ describe('syncLabels', () => {
 		const report = await make().backend.syncLabels({ dryRun: true });
 
 		expect(report.created).toEqual(['status:in-progress', 'status:review', 'type:bug', 'type:feature']);
+	});
+});
+
+describe('syncLabels: the priority labels', () => {
+	it('creates priority:<name> for every priority of the project, in config order, with a colour and a description', async () => {
+		const report = await make({ priorities: ['urgent', 'high', 'low'] }).backend.syncLabels({});
+
+		expect(created().filter(name => name.startsWith('priority:'))).toEqual([
+			'priority:urgent',
+			'priority:high',
+			'priority:low',
+		]);
+		expect(report.wanted.filter(label => label.kind === 'priority').map(label => label.why)).toEqual([
+			'priority "urgent"',
+			'priority "high"',
+			'priority "low"',
+		]);
+		expect(
+			fake.writes().find(request => (request.body as { name: string }).name === 'priority:high')!.body
+		).toEqual({
+			name: 'priority:high',
+			color: expect.stringMatching(/^[0-9a-f]{6}$/),
+			description: 'Task priority (set by the task tool)',
+		});
+	});
+
+	it('follows priorityMap (a mapped label is the whole name) and does not create labels when the priority lives in the field', async () => {
+		const mapped = await make({
+			priorities: ['urgent', 'low'],
+			options: { priorityMap: { urgent: 'P0' } },
+		}).backend.syncLabels({ dryRun: true });
+		expect(mapped.wanted.filter(label => label.kind === 'priority').map(label => label.name)).toEqual([
+			'P0',
+			'priority:low',
+		]);
+
+		await fake.stop();
+		fake = await FakeGitHub.start({
+			repo: 'acme/shop',
+			issueFields: [{ id: 501, name: 'Priority', options: ['Urgent'] }],
+			issueFieldDefinitions: 'readable',
+		});
+		const field = await make({ priorities: ['urgent'], options: { priorityStorage: 'auto' } }).backend.syncLabels({
+			dryRun: true,
+		});
+		expect(field.wanted.filter(label => label.kind === 'priority')).toEqual([]);
 	});
 });

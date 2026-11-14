@@ -14,7 +14,8 @@ export const FINE_GRAINED_PERMISSIONS_DOC =
 export const MANAGING_TOKENS_DOC =
 	'https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens';
 
-export type GitHubCredentialKey = 'metadata' | 'read' | 'labels' | 'labels-write' | 'write' | 'delete' | 'expiry';
+export type GitHubCredentialKey =
+	'metadata' | 'read' | 'labels' | 'labels-write' | 'write' | 'delete' | 'issue-fields' | 'expiry';
 
 export interface GitHubCredentialProbe {
 	/**
@@ -34,6 +35,11 @@ export interface GitHubCredentialRequirement {
 	required: boolean;
 	/** Repository permissions of a fine-grained token, as the token page prints them. All are needed. Empty: none (a role or a header). */
 	fineGrained: readonly string[];
+	/**
+	 * Permissions of the OWNING ORGANIZATION the token needs (a fine-grained token lists them apart from the repository ones). The
+	 * token page wording is UNVERIFIED; the API names it in `x-accepted-github-permissions` (measured 2026-11-14: `issue_fields=read`).
+	 */
+	organization?: readonly string[];
 	/** A role the USER of the token needs on the repository, which no token permission can grant. */
 	role?: string;
 	/** Classic token scope that covers it (DOCUMENTED, NOT LIVE). */
@@ -115,6 +121,18 @@ export const CREDENTIAL_REQUIREMENTS: readonly GitHubCredentialRequirement[] = O
 			'live 2026-11-08 (deleteIssue worked for an administrator with an Issues write token); the refusal for a non-administrator is untested',
 	},
 	{
+		key: 'issue-fields',
+		title: 'read the issue fields of the organization, to store the priority in the native Priority field (priorityStorage: auto|field)',
+		required: false,
+		fineGrained: [],
+		organization: ['Issue fields: Read'],
+		classic: 'unknown (not tested with a classic token)',
+		probe: { kind: 'get', request: 'GET /orgs/:owner/issue-fields (only an organization has issue fields)' },
+		usedBy: 'priorityStorage auto and field without priorityFieldId (the definitions); priorityFieldId or priorityStorage: label need none',
+		evidence:
+			'unverified: a 403 naming issue_fields=read was measured on 2026-11-14 with an Issues-only token, an allowed read never was, and the wording of the token page was not seen',
+	},
+	{
 		key: 'expiry',
 		title: 'expiry date of the token',
 		required: false,
@@ -181,8 +199,10 @@ export function tokenHowTo(): string[] {
 	const permissions = unique(CREDENTIAL_REQUIREMENTS.flatMap(row => row.fineGrained)).sort((a, b) =>
 		a.localeCompare(b)
 	);
+	const organization = unique(CREDENTIAL_REQUIREMENTS.flatMap(row => row.organization ?? []));
 	return [
 		`Fine-grained token (recommended, ${MANAGING_TOKENS_DOC}): Settings > Developer settings > Personal access tokens > Fine-grained tokens > Generate new token; Repository access: only select repositories, the one of the project; Repository permissions: ${permissions.join(', ')}; set an expiration date.`,
+		`Optional, only to store the priority in the native Priority issue field without giving its id (priorityStorage auto or field): the organization permission ${organization.join(', ')} (wording UNVERIFIED), or set priorityFieldId, or use priorityStorage: label.`,
 		'Hard delete (fills.delete: hard) also needs the user of the token to administer the repository.',
 		'Classic token: scope repo (public_repo for a public repository). DOCUMENTED, NOT LIVE.',
 	];

@@ -686,4 +686,72 @@ export const MOCK_LEDGER: readonly LedgerEntry[] = [
 		'GET the parent after a child closed',
 		'DELETE sub-issue'
 	),
+	// ---- issue fields (priority in the native field), added with stage 3a. NOT in the conformance fixture: the facts below were measured
+	// on 2026-11-14 with scripts/live-github-fields-probe.mjs (API version 2026-03-10, a token with Issues read and write); the steps of
+	// the scenario group "issue fields" would record them and are NOT recorded yet, so none of these lines is LIVE-VERIFIED.
+	documented(
+		'issue-fields',
+		'GET /repos/{r}/issues/{n}/issue-field-values answers the values of the issue (a list, empty without values) with the Issues read permission',
+		'scripts/live-github-fields-probe.mjs, run of 2026-11-14 (API version 2026-03-10); no documentation page was read for this route',
+		'measured on 2026-11-14 with the field probe script, which is not part of the conformance scenario; the page was not re-read to confirm the shape of one item',
+		'GET issue field values of I (none yet)'
+	),
+	documented(
+		'issue-fields',
+		'PUT /repos/{r}/issues/{n}/issue-field-values with {issue_field_values:[{field_id:<number>, value:"<option name>"}]} REPLACES every value of the issue and answers the new list',
+		'scripts/live-github-fields-probe.mjs, run of 2026-11-14 (API version 2026-03-10); no documentation page was read for this route',
+		'measured on 2026-11-14 with the field probe script (replace-all included); not recorded through the conformance scenario',
+		'PUT issue field value on I'
+	),
+	documented(
+		'issue-fields',
+		'DELETE /repos/{r}/issues/{n}/issue-field-values/{field_id} removes that value and answers 204',
+		'scripts/live-github-fields-probe.mjs, run of 2026-11-14 (API version 2026-03-10); no documentation page was read for this route',
+		'measured on 2026-11-14 with the field probe script; not recorded through the conformance scenario',
+		'DELETE issue field value on I'
+	),
+	documented(
+		'issue-fields',
+		'the issue and the issue list carry issue_field_values (the fake: items with issue_field_id, issue_field_name, data_type single_select, value = the option id and single_select_option {id, name, color}) when the request asks API version 2026-03-10',
+		'scripts/live-github-fields-probe.mjs, run of 2026-11-14 (API version 2026-03-10); no documentation page was read for this route',
+		"the presence of issue_field_values on the issue and the list was measured on 2026-11-14; the exact keys of one item are the fake's reading of that probe, not a recorded answer",
+		'GET I carries the issue field values',
+		'GET the issue list carries the issue field values'
+	),
+	documented(
+		'issue-fields',
+		'there is no server-side filter by field: a list is always read whole and filtered by the client',
+		'scripts/live-github-fields-probe.mjs, run of 2026-11-14 (API version 2026-03-10); no documentation page was read for this route',
+		'measured on 2026-11-14 (no query parameter filtered by field); the absence of a parameter cannot be proven by a request, only by the docs listing none'
+	),
+	documented(
+		'issue-fields',
+		'GET /orgs/{owner}/issue-fields with a token without the organization permission is 403 "Resource not accessible by personal access token" with x-accepted-github-permissions issue_fields=read; /repos/... and /users/... forms are 404',
+		'scripts/live-github-fields-probe.mjs, run of 2026-11-14 (API version 2026-03-10); no documentation page was read for this route',
+		'measured on 2026-11-14 with the Issues-only probe token; the answer of a token that HAS the permission could not be obtained',
+		'GET the issue fields of the organization'
+	),
+	unverifiable(
+		'issue-fields',
+		'the definitions of a readable GET /orgs/{owner}/issue-fields are a list of {id:"IFSS_..", full_database_id, name, data_type:"SINGLE_SELECT", options:[{id,name,color,priority}]} (fake option issueFieldDefinitions: readable)',
+		'the shape is the one of the MCP list_issue_fields tool; the REST answer was never observed because the probe token lacks the organization permission. The strategy reads only id/full_database_id, name, data_type and options[].name and says so when it finds something else',
+		'GET the issue fields of the organization'
+	),
+	unverifiable(
+		'issue-fields',
+		'POST /repos/{r}/issues/{n}/issue-field-values adds or updates the listed values and keeps the others (the strategy uses POST for a single value)',
+		'POST was not probed (only PUT and DELETE were); the fake gives it add-or-update semantics from the docs wording, and the strategy verifies the answer of every write so a different behaviour would be reported, not hidden'
+	),
+	unverifiable(
+		'issue-fields',
+		'a value with an option the field does not have, a field_id that does not exist, and a DELETE of a value that is not set answer 501 "mock: not modelled" (never an invented status)',
+		'the real statuses of these refusals were not observed; the strategy lists the valid options in its own error before relying on any of them',
+		'PUT issue field value with an unknown option',
+		'DELETE issue field value that is not set'
+	),
+	unverifiable(
+		'issue-fields',
+		'what an API version older than 2026-03-10 returns for issue_field_values, and whether updated_at moves when a field value changes',
+		'only the version 2026-03-10 was probed; the strategy sends that version only when the priority lives in the field (the cache keys it per version) and does not rely on updated_at for these writes'
+	),
 ];

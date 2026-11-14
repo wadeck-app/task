@@ -38,6 +38,9 @@ export function createLazyBackend(
 			return async (...args: unknown[]): Promise<unknown> => {
 				const { backend: real } = await instance();
 				const method = (real as unknown as Record<string, unknown>)[property];
+				// `prepare` is optional on the port, and the proxy cannot tell before the backend is opened: a backend without it has
+				// nothing to prepare.
+				if (property === 'prepare' && method === undefined) return undefined;
 				if (typeof method !== 'function') {
 					throw new TypeError(`the ${plugin.backendKind} backend has no method "${property}"`);
 				}

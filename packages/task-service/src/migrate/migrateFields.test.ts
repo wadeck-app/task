@@ -182,7 +182,7 @@ describe('migrating priority and assignee', () => {
 		const priority = blocked.losses.find(row => row.kind === 'priority')!;
 		expect(priority.count).toBe(2);
 		expect(priority.taskIds).toHaveLength(2);
-		expect(priority.fix).toMatch(/local strategy/);
+		expect(priority.fix).toMatch(/local or github strategy/);
 		expect(blocked.losses.find(row => row.kind === 'assignee')!.count).toBe(1);
 		expect(target.log.writes).toEqual([]);
 

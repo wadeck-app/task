@@ -125,7 +125,7 @@ export interface BackendReleaseResult {
 /** One label a project needs in the remote system, and why. */
 export interface LabelSyncEntry {
 	name: string;
-	kind: 'status' | 'type' | 'deleted';
+	kind: 'status' | 'type' | 'priority' | 'deleted';
 	why: string;
 }
 
@@ -200,6 +200,14 @@ export interface TaskBackend {
 	addComment(id: string, text: string, options?: WriteOptions & { author?: string }): Promise<BackendCommentChange>;
 	editComment(id: string, commentId: string, text: string, options?: WriteOptions): Promise<BackendCommentEdit>;
 	removeComment(id: string, commentId: string, options?: WriteOptions): Promise<BackendCommentChange>;
+
+	// ---- optional: getting ready for a read that depends on a fact a plain read may not carry ----
+	/**
+	 * Makes the reads that follow carry the named facts (`priority`: the effective priority of every task). May do requests; failing
+	 * loudly is allowed (the error says how to fix it). Absent = nothing to do: the caller must not call it then. A dispatch read (an
+	 * order, a priority filter, `available`, an assignee filter) calls it before listing.
+	 */
+	prepare?(needs: { priority?: boolean }): Promise<void>;
 
 	// ---- optional: priority, assignee and claim (capabilities `priority`, `assignee`, `claim`) ----
 	// Optional so that a backend written before them keeps compiling. A backend WITHOUT the capability must still implement them,

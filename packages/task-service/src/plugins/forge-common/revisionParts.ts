@@ -25,6 +25,24 @@ export function blockMetaPart(read: () => Record<string, string> | undefined): s
 	}
 }
 
+/**
+ * The part of the revision that stands for the claim kept in the managed block (assignee and its lease), so a claim is compared on
+ * its own: a description edited meanwhile is no conflict for a claim, and a claim made meanwhile is one for another claim. A block
+ * that cannot be read has a stable hash of its own.
+ */
+export function blockClaimPart(
+	read: () => { assignee: string; claimedAt?: string; leaseUntil?: string } | undefined
+): string {
+	try {
+		const claim = read();
+		return claim === undefined
+			? ''
+			: JSON.stringify([claim.assignee, claim.claimedAt ?? '', claim.leaseUntil ?? '']);
+	} catch {
+		return 'unreadable';
+	}
+}
+
 /** `a.b.c` (one hash per group, in order) as a record; undefined when it is not what a revision of these groups holds. */
 export function partsFromHashes<G extends string>(hashes: string, groups: readonly G[]): Record<G, string> | undefined {
 	const values = hashes.split('.');

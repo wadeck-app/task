@@ -148,6 +148,8 @@ export async function listTasks(ctx: TaskServiceContext, input: ListTasksInput):
 	const hideClosed = createStatusFilter(ctx.config, input.showAll ?? false);
 
 	const summaries = await withFreshReads(ctx, input.fresh, async read => {
+		// The rows carry the effective priority: a backend that has to find out where it is kept (github) does it now, loudly.
+		await read.store.prepare?.({ priority: true });
 		const parentId = input.parent === undefined ? undefined : (await read.store.resolve(input.parent)).id;
 		return parentId === undefined ? await read.store.list() : await read.store.getChildren(parentId);
 	});

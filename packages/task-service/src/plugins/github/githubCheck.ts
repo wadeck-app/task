@@ -2,6 +2,7 @@
 // with its fix; a failed probe is a line, never a throw. Nothing is written: GET only, cache bypassed (a check must see the server).
 import {
 	BackendAuthError,
+	BackendRejectedError,
 	BackendLimitError,
 	BackendTimeoutError,
 	BackendUnreachableError,
@@ -11,10 +12,12 @@ import {
 import type { CheckLine, DeclaredFills, ProjectFacts } from '../kinds.js';
 import { FINE_GRAINED_PERMISSIONS_DOC, requirementFor } from './credentialRequirements.js';
 import type { GitHubCredentialRequirement } from './credentialRequirements.js';
-import { wantedLabels } from './githubLabels.js';
+import { priorityLabelsWanted, wantedLabels } from './githubLabels.js';
 import { GitHubHttpError } from './githubClient.js';
 import type { GitHubClient } from './githubClient.js';
 import type { GitHubSettings } from './githubOptions.js';
+import type { PriorityContext } from './githubPriority.js';
+import type { PriorityResolution, PriorityResolver } from './githubPriorityStorage.js';
 
 export interface CheckInput {
 	client: GitHubClient;
@@ -27,6 +30,8 @@ export interface CheckInput {
 	tokenHint: string;
 	/** The fills the project declared. */
 	fills: DeclaredFills;
+	/** Where the priority lives (asked fresh by the check) and the context the readers share. */
+	priority: { resolver: PriorityResolver; context: PriorityContext };
 	/** The project as `-p` takes it, for the commands the fixes name. */
 	projectName: string;
 }
@@ -63,7 +68,9 @@ export function sendsTokenInClear(baseUrl: string): boolean {
 /** What a row needs, in the words of the token page (and the role of the user, when it is a role). */
 function needs(row: GitHubCredentialRequirement): string {
 	const role = row.role === undefined ? [] : [`the ${row.role} role`];
-	return [...row.fineGrained, ...role].join(' and ');
+	return [...row.fineGrained, ...(row.organization ?? []).map(name => `${name} (organization)`), ...role].join(
+		' and '
+	);
 }
 
 function enabled(row: GitHubCredentialRequirement): CheckLine {
@@ -228,6 +235,68 @@ function writesLine(input: CheckInput): CheckLine {
 	return { name: 'writes', status: 'ok', text: budget };
 }
 
+/** Where the priority lives, asked to GitHub (never from the memory of another process). A failure is a line, not a stop. */
+async function resolvePriority(input: CheckInput): Promise<PriorityResolution | Error> {
+	try {
+		return await input.priority.resolver.resolve({ fresh: true });
+	} catch (error) {
+		input.priority.context.storage = 'label';
+		return error instanceof Error ? error : new Error(String(error));
+	}
+}
+
+/** `priority` (where it lives and why) and `issue-fields` (the organization permission the definitions need). */
+function priorityLines(resolution: PriorityResolution | Error, input: CheckInput): CheckLine[] {
+	const row = requirementFor('issue-fields');
+	if (resolution instanceof Error) {
+		const error = resolution;
+		return [
+			{
+				name: 'priority',
+				status: 'error',
+				text: error.message,
+				fix:
+					error instanceof BackendRejectedError || error instanceof BackendAuthError
+						? error.hint
+						: 'Run the command again; if it keeps failing, task cli logs shows the cause',
+			},
+		];
+	}
+	const where =
+		resolution.storage === 'field'
+			? `the issue field "${resolution.field?.name ?? input.settings.priority.fieldName}" (id ${resolution.field?.id ?? '?'})`
+			: `labels ${input.settings.priority.prefix}<name>`;
+	const lines: CheckLine[] = [
+		{
+			name: 'priority',
+			status: resolution.fix !== undefined && resolution.definitions.kind === 'forbidden' ? 'warn' : 'ok',
+			text: `stored in ${where}: ${resolution.reason}`,
+			...(resolution.fix === undefined ? {} : { fix: resolution.fix }),
+		},
+	];
+	const { definitions } = resolution;
+	if (definitions.kind === 'not-read') {
+		lines.push(notTested(row, definitions.why));
+	} else if (definitions.kind === 'forbidden') {
+		lines.push(
+			disabled(
+				row,
+				row.organization!.join(', '),
+				`Give the token the organization permission "Issue fields: Read" (GitHub says: ${definitions.accepted ?? 'issue_fields=read'}; the wording of the token page is unverified), or set strategy.options.priorityFieldId. Until then the priority is stored in labels. ${input.tokenHint}`
+			)
+		);
+	} else if (definitions.kind === 'not-found') {
+		lines.push(
+			notTested(row, `${input.settings.repo.owner} has no issue fields (not an organization, or none enabled)`)
+		);
+	} else if (definitions.kind === 'unreadable') {
+		lines.push({ name: row.key, status: 'warn', text: `the issue fields could not be read: ${definitions.why}` });
+	} else {
+		lines.push(enabled(row));
+	}
+	return lines;
+}
+
 /** The lines of `task strategy check` for a github project. */
 export async function checkGitHub(input: CheckInput): Promise<CheckLine[]> {
 	const { client, settings, project } = input;
@@ -311,7 +380,17 @@ export async function checkGitHub(input: CheckInput): Promise<CheckLine[]> {
 		text: `${Object.keys(settings.statusMap).length} statuses mapped: ${describeMap(settings)}`,
 	});
 
-	const wanted = wantedLabels(settings, project.types, input.fills).map(label => label.name);
+	const resolution = await resolvePriority(input);
+	lines.push(...priorityLines(resolution, input));
+
+	const wanted = wantedLabels(
+		settings,
+		project.types,
+		input.fills,
+		!(resolution instanceof Error) && resolution.storage === 'label'
+			? priorityLabelsWanted(input.priority.context)
+			: []
+	).map(label => label.name);
 	if (wanted.length > 0) {
 		try {
 			const present = await client.getAll<LabelInfo>(`${repoPath}/labels`, {

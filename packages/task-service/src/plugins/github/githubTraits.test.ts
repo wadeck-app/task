@@ -60,6 +60,15 @@ describe('githubTraits (what task migrate needs to know about GitHub as a target
 		expect(labelProblem?.('task:deleted')).toMatch(/reserved/);
 	});
 
+	it('the priority prefix is reserved unless the priority is the native field', () => {
+		expect(githubTraits(settingsWith(), {}).labelProblem?.('priority:high')).toMatch(/reserved.*priority/);
+		expect(
+			githubTraits(settingsWith({ priorityStorage: 'field', priorityFieldId: 5 }), {}).labelProblem?.(
+				'priority:high'
+			)
+		).toBeUndefined();
+	});
+
 	it('the meta prefix is reserved only when metadata is stored in labels', () => {
 		const metaLabels = { meta: { use: 'labels', fidelity: 'strict' as const } };
 

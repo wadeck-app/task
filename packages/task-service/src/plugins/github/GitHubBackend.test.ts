@@ -461,7 +461,7 @@ describe('reads: revision and staleness', () => {
 		const second = await t.backend.get('1');
 		expect(second.revision).not.toBe(first.revision);
 		// <updated_at>#<etag>#<one short hash per part of the issue>: the parts let a write tell a comment from a rename.
-		expect(first.revision).toMatch(/^2026-11-08T\d\d:\d\d:\d\dZ#[0-9a-f]{40}#([0-9a-f]{6}\.){7}[0-9a-f]{6}$/);
+		expect(first.revision).toMatch(/^2026-11-08T\d\d:\d\d:\d\dZ#[0-9a-f]{40}#([0-9a-f]{6}\.){9}[0-9a-f]{6}$/);
 	});
 
 	it('a record served from the cache after a failure says so: stale and the instant it was read', async () => {

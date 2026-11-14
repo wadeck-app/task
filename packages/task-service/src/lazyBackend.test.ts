@@ -133,3 +133,22 @@ describe('createLazyBackend', () => {
 		expect(methods.length).toBeGreaterThan(30);
 	});
 });
+
+describe('the optional prepare member', () => {
+	it('is a no-op when the opened backend has none, and is forwarded when it has one', async () => {
+		const prepared: unknown[] = [];
+		const plain = createLazyBackend({ backendKind: 'local', capabilities: {} } as never, () =>
+			Promise.resolve({ backend: {} } as never)
+		);
+		const rich = createLazyBackend({ backendKind: 'github', capabilities: {} } as never, () =>
+			Promise.resolve({
+				backend: { prepare: (needs: unknown) => Promise.resolve(void prepared.push(needs)) },
+			} as never)
+		);
+
+		await expect(plain.backend.prepare!({ priority: true })).resolves.toBeUndefined();
+		await rich.backend.prepare!({ priority: true });
+
+		expect(prepared).toEqual([{ priority: true }]);
+	});
+});

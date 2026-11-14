@@ -62,6 +62,14 @@ export interface GetOptions {
 	allowNotFound?: boolean;
 	/** true: skip the "served without asking" shortcut of the TTL and revalidate (a re-read before a write). */
 	revalidate?: boolean;
+	/** `X-GitHub-Api-Version` of this request; default: the one the strategy was recorded with (2022-11-28); a request that needs another names it. */
+	apiVersion?: string;
+}
+
+/** What one write may say besides its method, path and body. */
+export interface WriteOptions {
+	/** `X-GitHub-Api-Version` of this request; default: the one the strategy was recorded with (2022-11-28). */
+	apiVersion?: string;
 }
 
 export interface ClientResponse<T> {
@@ -125,7 +133,9 @@ export interface GraphQlAnswer<T> {
 /** Hides the token, and any `Bearer` credential, in a text. */
 export { redactToken };
 
-const API_VERSION = '2022-11-28';
+/** The version every request names unless it is told another one. */
+export const DEFAULT_API_VERSION = '2022-11-28';
+const API_VERSION = DEFAULT_API_VERSION;
 const REDIRECT_STATUSES = new Set([301, 302, 307, 308]);
 
 interface Raw {
@@ -249,9 +259,11 @@ export class GitHubClient {
 	async write<T>(
 		method: 'POST' | 'PATCH' | 'PUT' | 'DELETE',
 		path: string,
-		body?: unknown
+		body?: unknown,
+		options: WriteOptions = {}
 	): Promise<ClientResponse<T>> {
-		return this.serialized(() => this.writeNow<T>(method, this.urlOf(path), body));
+		const version = options.apiVersion ?? API_VERSION;
+		return this.serialized(() => this.writeNow<T>(method, this.urlOf(path), body, version));
 	}
 
 	/** One GraphQL call. GraphQL reports most failures in the body (`errors`), so they are returned, not thrown. */
@@ -266,13 +278,18 @@ export class GitHubClient {
 		return this.writes.run(task);
 	}
 
-	private async writeNow<T>(method: string, url: string, body: unknown): Promise<ClientResponse<T>> {
+	private async writeNow<T>(
+		method: string,
+		url: string,
+		body: unknown,
+		version: string = API_VERSION
+	): Promise<ClientResponse<T>> {
 		const stamp = new Date(this.now()).toISOString();
 		const maxWait = this.options.maxRetryWaitMs ?? 15_000;
 		try {
 			for (let attempt = 0; ; attempt++) {
 				try {
-					const raw = await this.send(url, undefined, false, { method, body });
+					const raw = await this.send(url, undefined, false, version, { method, body });
 					return {
 						status: raw.status,
 						body: raw.body as T,
@@ -310,7 +327,10 @@ export class GitHubClient {
 
 	private async request<T>(url: string, options: GetOptions): Promise<ClientResponse<T>> {
 		const useCache = options.cache !== false;
-		const entry = useCache ? this.options.cache.get(url) : undefined;
+		const version = options.apiVersion ?? API_VERSION;
+		// An answer read for another API version may have another shape: the cache keeps them apart.
+		const cacheKey = version === API_VERSION ? url : `${url}#api-version=${version}`;
+		const entry = useCache ? this.options.cache.get(cacheKey) : undefined;
 		const stamp = new Date(this.now()).toISOString();
 		if (
 			entry !== undefined &&
@@ -325,7 +345,7 @@ export class GitHubClient {
 		}
 		let raw: Raw;
 		try {
-			raw = await this.send(url, entry?.etag, options.allowNotFound === true);
+			raw = await this.send(url, entry?.etag, options.allowNotFound === true, version);
 		} catch (error) {
 			if (entry !== undefined && this.canServeStale(error)) {
 				this.options.onNotice?.({
@@ -357,7 +377,7 @@ export class GitHubClient {
 		const next = this.nextLink(raw.headers.get('link'));
 		if (useCache && etag !== undefined) {
 			this.options.cache.put({
-				url,
+				url: cacheKey,
 				etag,
 				cachedAt: stamp,
 				body: raw.body,
@@ -444,6 +464,7 @@ export class GitHubClient {
 		url: string,
 		etag: string | undefined,
 		allowNotFound: boolean,
+		version: string,
 		write?: { method: string; body: unknown }
 	): Promise<Raw> {
 		const resource = this.resourceOf(url);
@@ -458,7 +479,7 @@ export class GitHubClient {
 		}
 		await this.acquire();
 		try {
-			return await this.sendNow(url, etag, allowNotFound, write);
+			return await this.sendNow(url, etag, allowNotFound, version, write);
 		} finally {
 			this.release();
 		}
@@ -468,6 +489,7 @@ export class GitHubClient {
 		url: string,
 		etag: string | undefined,
 		allowNotFound: boolean,
+		version: string,
 		write?: { method: string; body: unknown }
 	): Promise<Raw> {
 		const method = write?.method ?? 'GET';
@@ -490,7 +512,7 @@ export class GitHubClient {
 					headers: {
 						authorization: `Bearer ${this.options.token}`,
 						accept: 'application/vnd.github+json',
-						'x-github-api-version': API_VERSION,
+						'x-github-api-version': version,
 						'user-agent': 'task-cli (github strategy)',
 						...(etag === undefined ? {} : { 'if-none-match': etag }),
 						...(write?.body === undefined ? {} : { 'content-type': 'application/json' }),

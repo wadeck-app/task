@@ -20,27 +20,53 @@ import {
 	LINK_TYPES,
 	PartialWriteError,
 	StaleRevisionError,
+	TaskClaimedError,
 	TaskConflictError,
 	TaskNotFoundError,
+	TaskReleaseRefusedError,
 	UnsupportedByBackendError,
+	normalizeAssignee,
+	normalizeClaimRequest,
 	normalizeCommentText,
+	normalizePriority,
 } from '@wadeck-app/task-core';
 import type {
+	BackendClaimInput,
+	BackendClaimResult,
 	BackendCommentChange,
 	BackendCommentEdit,
+	BackendReleaseResult,
 	CreateTaskInput,
 	LabelSyncReport,
 	LinkType,
+	ReleaseOptions,
 	VersionedRecord,
 	WriteOptions,
 } from '@wadeck-app/task-core';
 
+import {
+	planClaim,
+	planClearAssignee,
+	planRelease,
+	planSetAssignee,
+	withClaim,
+} from '../forge-common/taskFieldBlocks.js';
+import type { BlockClaim } from '../forge-common/managedBlock.js';
 import type { DeclaredFills } from '../kinds.js';
-import { wantedLabels } from './githubLabels.js';
+import { priorityLabelsWanted, wantedLabels } from './githubLabels.js';
 import { GitHubHttpError } from './githubClient.js';
 import type { ClientResponse, GitHubClient } from './githubClient.js';
 import { GITHUB_LABEL_MAX, labelProblem } from './githubOptions.js';
 import type { GitHubSettings } from './githubOptions.js';
+import {
+	fieldPriorityName,
+	isPriorityLabel,
+	labelOfPriority,
+	listPriorities,
+	priorityLabelsOf,
+} from './githubPriority.js';
+import { FIELDS_API_VERSION } from './githubPriorityStorage.js';
+import type { PriorityResolution, PriorityResolver } from './githubPriorityStorage.js';
 import { checkRevision, revisionOf } from './githubRevision.js';
 import type { FieldGroup } from './githubRevision.js';
 import {
@@ -56,7 +82,7 @@ import {
 	typeOf,
 	typeOfLabel,
 } from './issueMapping.js';
-import type { ApiComment, ApiIssue, MapContext } from './issueMapping.js';
+import type { ApiComment, ApiIssue, BodyParts, MapContext } from './issueMapping.js';
 import type { StatusRepresentation } from './statusMapping.js';
 
 /** GitHub refuses a body over this many characters (measured). */
@@ -74,6 +100,8 @@ export interface WriteHost {
 	readonly client: GitHubClient;
 	readonly map: MapContext;
 	readonly fills: DeclaredFills;
+	/** Where the priority lives: asked once, shared with the reads. */
+	readonly priority: PriorityResolver;
 	readonly repoPath: string;
 	readonly issueUrl: (number: number) => string;
 	/** The issue as GitHub holds it; TaskNotFoundError for a missing, deleted, hidden or pull-request number. `revalidate`: skip the TTL. */
@@ -89,12 +117,13 @@ export interface WriteHost {
 	mayHaveChildren(issue: ApiIssue): boolean;
 }
 
-type LabelKind = 'status' | 'type' | 'meta' | 'user' | 'deleted';
+type LabelKind = 'status' | 'type' | 'meta' | 'priority' | 'user' | 'deleted';
 
 const LABEL_STYLE: Record<LabelKind, { color: string; description?: string }> = {
 	status: { color: '1d76db', description: 'Task status (set by the task tool)' },
 	type: { color: 'a2eeef', description: 'Task type (set by the task tool)' },
 	meta: { color: 'd4c5f9', description: 'Task metadata (set by the task tool)' },
+	priority: { color: 'fbca04', description: 'Task priority (set by the task tool)' },
 	user: { color: 'ededed' },
 	deleted: { color: 'b60205', description: 'Deleted task, hidden by the task tool' },
 };
@@ -192,10 +221,11 @@ export class GitHubWriter {
 		subject: string,
 		method: 'POST' | 'PATCH' | 'PUT' | 'DELETE',
 		path: string,
-		body?: unknown
+		body?: unknown,
+		options?: { apiVersion?: string }
 	): Promise<ClientResponse<T>> {
 		try {
-			return await this.host.client.write<T>(method, path, body);
+			return await this.host.client.write<T>(method, path, body, options);
 		} catch (error) {
 			throw this.translate(error, operation, subject);
 		}
@@ -485,7 +515,13 @@ export class GitHubWriter {
 	/** `task labels sync`: creates the labels the configuration needs, in the order of the config; never deletes or edits one. */
 	async syncLabels(options: { dryRun?: boolean }): Promise<LabelSyncReport> {
 		const dryRun = options.dryRun === true;
-		const wanted = wantedLabels(this.host.settings, this.map.projectTypes, this.host.fills);
+		const resolution = await this.host.priority.resolve();
+		const wanted = wantedLabels(
+			this.host.settings,
+			this.map.projectTypes,
+			this.host.fills,
+			resolution.storage === 'label' ? priorityLabelsWanted(this.map.priority) : []
+		);
 		const present = await this.host.client.getAll<{ name: string }>(`${this.host.repoPath}/labels`, {
 			query: { per_page: this.host.settings.pageSize },
 			revalidate: true,
@@ -544,6 +580,7 @@ export class GitHubWriter {
 			);
 		if (ctx.mapper.isStatusLabel(label)) return use('task set-status', 'it carries the status of a task');
 		if (typeOfLabel(label, ctx) !== undefined) return use('task set-type', 'it carries the type of a task');
+		if (isPriorityLabel(label, ctx.priority)) return use('task set-priority', 'it carries the priority of a task');
 		if (this.host.fills['meta']?.use === 'labels' && lower.startsWith(ctx.settings.metaPrefix.toLowerCase())) {
 			return use('task set-meta', 'it carries the metadata of a task');
 		}
@@ -566,7 +603,12 @@ export class GitHubWriter {
 	async removeLabel(id: string, label: string, options?: WriteOptions): Promise<VersionedRecord> {
 		const { issue } = await this.prepare(id, options, ['labels']);
 		const held = labelNames(issue).find(name => eq(name, label));
-		if (held !== undefined && !this.map.mapper.isStatusLabel(held) && typeOfLabel(held, this.map) === undefined) {
+		if (
+			held !== undefined &&
+			!this.map.mapper.isStatusLabel(held) &&
+			typeOfLabel(held, this.map) === undefined &&
+			!isPriorityLabel(held, this.map.priority)
+		) {
 			await this.runSteps('removeLabel', issue.number, [this.removeLabelStep(issue.number, 'removeLabel', held)]);
 		}
 		return this.read(issue.number);
@@ -888,6 +930,266 @@ export class GitHubWriter {
 		visible: string
 	): Promise<void> {
 		await this.writeBody(issue, operation, composeBody(visible, data));
+	}
+
+	// ---------------------------------------------------------------- priority
+
+	/** The option of the field a task priority is written as: checked against the options when the definitions were read. */
+	private optionFor(wanted: string, resolution: PriorityResolution): string {
+		const remote = this.map.priority.fieldNames.remoteName(wanted);
+		const options = resolution.field?.options;
+		if (options === undefined) return remote;
+		const hit = options.find(option => eq(option, remote));
+		if (hit !== undefined) return hit;
+		throw new BackendRejectedError(
+			'github',
+			'setPriority',
+			`the issue field "${resolution.field!.name}" has no option for the priority "${wanted}" (it has: ${options.join(', ')})`,
+			`Add the option to the field in the organization, or map the priority to an option that exists with strategy.options.priorityMap (for example priorityMap: { ${wanted}: ${options[0]} }), or choose another priority (${listPriorities(this.map.priority)})`
+		);
+	}
+
+	/** A write to the issue field routes: the field API version, and a refusal that names what to check. */
+	private async sendField<T>(
+		operation: string,
+		number: number,
+		method: 'POST' | 'DELETE',
+		path: string,
+		body?: unknown
+	): Promise<ClientResponse<T>> {
+		try {
+			return await this.send<T>(operation, String(number), method, path, body, {
+				apiVersion: FIELDS_API_VERSION,
+			});
+		} catch (error) {
+			if (!(error instanceof BackendRejectedError)) throw error;
+			throw new BackendRejectedError(
+				'github',
+				operation,
+				error.message,
+				`The value is the NAME of an option of the issue field, as GitHub spells it (case included): map the priorities to the options with strategy.options.priorityMap. ${error.hint}`
+			);
+		}
+	}
+
+	/** The label of a priority, refused before any request when GitHub would refuse it. */
+	private priorityLabel(wanted: string): string {
+		const label = labelOfPriority(wanted, this.map.priority);
+		const problem = labelProblem(label);
+		if (problem !== undefined) {
+			throw new BackendLimitError(
+				'github',
+				'label name length',
+				GITHUB_LABEL_MAX,
+				`The priority "${wanted}" needs the label ${problem}. Give the priority a shorter name, set strategy.options.priorityPrefix to a shorter prefix, or map it in strategy.options.priorityMap.`
+			);
+		}
+		return label;
+	}
+
+	/** A priority written to a label because the field is not usable (and labels were not asked for) is said, on every such write. */
+	private warnOfFallback(resolution: PriorityResolution, label: string | undefined): void {
+		const text = this.host.priority.fallbackWarning(resolution, label);
+		if (text !== undefined) this.map.notice({ kind: 'emulated', text });
+	}
+
+	async setPriority(id: string, priority: string, options?: WriteOptions): Promise<VersionedRecord> {
+		const wanted = normalizePriority(priority, this.map.priority.priorities);
+		const resolution = await this.host.priority.resolve();
+		const pc = this.map.priority;
+		const operation = 'setPriority';
+		const option = resolution.storage === 'field' ? this.optionFor(wanted, resolution) : undefined;
+		const label = resolution.storage === 'label' ? this.priorityLabel(wanted) : undefined;
+		this.warnOfFallback(resolution, label);
+		const { issue } = await this.prepare(id, options, ['priority']);
+		const number = issue.number;
+		// Priority labels are reserved only in label storage: in the field storage there are none, and a label named like one is ordinary.
+		const stray = priorityLabelsOf(issue, pc);
+		if (option !== undefined) {
+			const held = fieldPriorityName(issue.issue_field_values, pc);
+			const steps: Step[] = [];
+			if (held === undefined || !eq(held, option)) {
+				const fieldId = resolution.field!.id;
+				steps.push({
+					description: `set the issue field ${resolution.field!.name} to ${option}`,
+					run: async () => {
+						const answer = await this.sendField<
+							Array<{ issue_field_id?: number; single_select_option?: { name?: string } | null }>
+						>(operation, number, 'POST', this.path(number, '/issue-field-values'), {
+							issue_field_values: [{ field_id: fieldId, value: option }],
+						});
+						const applied = Array.isArray(answer.body)
+							? answer.body.find(value => value.issue_field_id === fieldId)
+							: undefined;
+						if (
+							applied?.single_select_option?.name === undefined ||
+							!eq(applied.single_select_option.name, option)
+						) {
+							throw new BackendDataError(
+								'github',
+								`issue #${number}`,
+								`GitHub did not apply the value ${option} of the issue field ${resolution.field!.name} on issue #${number} (it answered ${JSON.stringify(answer.body)})`,
+								`Look at ${this.host.issueUrl(number)}; the field may be restricted for this token`
+							);
+						}
+					},
+					applied: current => {
+						const now = fieldPriorityName(current.issue_field_values, pc);
+						return now !== undefined && eq(now, option);
+					},
+					repair: `task set-priority ${number} ${wanted}`,
+				});
+			}
+			await this.runSteps(operation, number, steps);
+			return this.read(number);
+		}
+		if (stray.length === 1 && eq(stray[0]!, label!)) return this.read(number);
+		const steps = this.labelSteps({
+			operation,
+			issue,
+			remove: stray.filter(held => !eq(held, label!)),
+			add: has(issue, label!) ? [] : [{ name: label!, kind: 'priority' }],
+		});
+		await this.runSteps(operation, number, steps);
+		return this.read(number);
+	}
+
+	async clearPriority(id: string, options?: WriteOptions): Promise<VersionedRecord> {
+		const resolution = await this.host.priority.resolve();
+		const pc = this.map.priority;
+		const operation = 'clearPriority';
+		this.warnOfFallback(resolution, undefined);
+		const { issue } = await this.prepare(id, options, ['priority']);
+		const number = issue.number;
+		const steps: Step[] = [];
+		if (resolution.storage === 'field') {
+			const fieldId = resolution.field!.id;
+			if (fieldPriorityName(issue.issue_field_values, pc) !== undefined) {
+				steps.push({
+					description: `cleared the issue field ${resolution.field!.name}`,
+					run: () =>
+						this.sendField(
+							operation,
+							number,
+							'DELETE',
+							this.path(number, `/issue-field-values/${fieldId}`)
+						),
+					applied: current => fieldPriorityName(current.issue_field_values, pc) === undefined,
+					repair: `task unset-priority ${number}`,
+				});
+			}
+		}
+		steps.push(...priorityLabelsOf(issue, pc).map(held => this.removeLabelStep(number, operation, held)));
+		await this.runSteps(operation, number, steps);
+		return this.read(number);
+	}
+
+	// ---------------------------------------------------------------- assignee and claim
+
+	/**
+	 * The one write of an assignee or a claim: the `claim` key of the managed block of the body (the other keys and the visible text are
+	 * kept), in ONE PATCH of the body. A forge has no field for a worker name that is not a user of the forge.
+	 */
+	private async writeClaim(
+		issue: ApiIssue,
+		operation: string,
+		parts: BodyParts,
+		claim: BlockClaim | undefined
+	): Promise<void> {
+		await this.writeBody(issue, operation, composeBody(parts.visibleText, withClaim(parts.blockData, claim)));
+	}
+
+	/**
+	 * GitHub has no conditional write: two workers can both pass the check and both PATCH, the last body wins. The record read after
+	 * the write says who holds the issue; a caller whose claim is not the one held is told so, never answered "claimed". A worker whose
+	 * read came before the other's PATCH still cannot know: the race of one PATCH stays (CLAUDE.md).
+	 */
+	private async verifyClaim(
+		number: number,
+		wrote: BlockClaim | undefined,
+		onHeld: (held: { assignee: string; leaseUntil?: string }) => Error
+	): Promise<VersionedRecord> {
+		const record = await this.read(number);
+		const held = record.assignee;
+		const same =
+			wrote === undefined
+				? held === undefined
+				: held === wrote.assignee &&
+					record.claimedAt === wrote.claimedAt &&
+					record.leaseUntil === wrote.leaseUntil;
+		if (same) return record;
+		if (held !== undefined) {
+			throw onHeld({
+				assignee: held,
+				...(record.leaseUntil === undefined ? {} : { leaseUntil: record.leaseUntil }),
+			});
+		}
+		throw new TaskConflictError(
+			`Task "${number}" was changed by someone else while the claim was written: nobody holds it now; nothing is claimed. Run the command again.`
+		);
+	}
+
+	private claimedBy(number: number, requestedBy: string): (held: { assignee: string; leaseUntil?: string }) => Error {
+		return held => {
+			const until = held.leaseUntil ?? 'no lease end';
+			const remaining = held.leaseUntil === undefined ? 0 : Math.max(0, Date.parse(held.leaseUntil) - Date.now());
+			return new TaskClaimedError(String(number), held.assignee, until, remaining, held.assignee === requestedBy);
+		};
+	}
+
+	async setAssignee(id: string, assignee: string, options?: WriteOptions): Promise<VersionedRecord> {
+		normalizeAssignee(assignee);
+		const { issue } = await this.prepare(id, options, ['claim']);
+		const parts = splitBody(issue, this.map);
+		const plan = planSetAssignee(parts.claim, assignee);
+		if (!plan.changed) return this.read(issue.number);
+		await this.writeClaim(issue, 'setAssignee', parts, plan.claim);
+		return this.verifyClaim(issue.number, plan.claim, this.claimedBy(issue.number, plan.claim?.assignee ?? ''));
+	}
+
+	async clearAssignee(id: string, options?: WriteOptions): Promise<VersionedRecord> {
+		const { issue } = await this.prepare(id, options, ['claim']);
+		const parts = splitBody(issue, this.map);
+		const plan = planClearAssignee(parts.claim);
+		if (!plan.changed) return this.read(issue.number);
+		await this.writeClaim(issue, 'clearAssignee', parts, plan.claim);
+		return this.verifyClaim(issue.number, undefined, this.claimedBy(issue.number, ''));
+	}
+
+	async claim(id: string, input: BackendClaimInput): Promise<BackendClaimResult> {
+		// A bad request is refused before GitHub is asked anything.
+		normalizeClaimRequest(input);
+		const { issue } = await this.prepare(
+			id,
+			input.expectedRevision === undefined ? undefined : { expectedRevision: input.expectedRevision },
+			['claim']
+		);
+		const parts = splitBody(issue, this.map);
+		const plan = planClaim(String(issue.number), parts.claim, input);
+		await this.writeClaim(issue, 'claim', parts, plan.claim);
+		return {
+			task: await this.verifyClaim(issue.number, plan.claim, this.claimedBy(issue.number, plan.claim.assignee)),
+			outcome: plan.outcome,
+			...(plan.previousAssignee === undefined ? {} : { previousAssignee: plan.previousAssignee }),
+		};
+	}
+
+	async release(id: string, options: ReleaseOptions = {}): Promise<BackendReleaseResult> {
+		if (options.assignee !== undefined) normalizeAssignee(options.assignee);
+		const { issue } = await this.prepare(
+			id,
+			options.expectedRevision === undefined ? undefined : { expectedRevision: options.expectedRevision },
+			['claim']
+		);
+		const parts = splitBody(issue, this.map);
+		const { previousAssignee } = planRelease(String(issue.number), parts.claim, options);
+		await this.writeClaim(issue, 'release', parts, undefined);
+		const task = await this.verifyClaim(
+			issue.number,
+			undefined,
+			held => new TaskReleaseRefusedError(String(issue.number), held.assignee, previousAssignee)
+		);
+		return { task, previousAssignee };
 	}
 
 	// ---------------------------------------------------------------- hierarchy

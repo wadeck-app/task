@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { blockMetaPart, checkRevisionParts, partsFromHashes, shortHash } from './revisionParts.js';
+import { blockClaimPart, blockMetaPart, checkRevisionParts, partsFromHashes, shortHash } from './revisionParts.js';
 
 const GROUPS = ['title', 'body'] as const;
 const partsOf = (revision: string) => partsFromHashes(revision.split('#')[1] ?? '', GROUPS);
@@ -47,5 +47,19 @@ describe('checkRevisionParts', () => {
 
 	it('a revision this backend did not issue is stale for any write', () => {
 		expect(checkRevisionParts('foreign', rev('aaaaaa', 'bbbbbb'), ['title'], partsOf)).toEqual(['revision']);
+	});
+});
+
+describe('blockClaimPart', () => {
+	it('is empty without a claim, changes with the assignee and the lease, and is stable for an unreadable block', () => {
+		expect(blockClaimPart(() => undefined)).toBe('');
+		const bare = blockClaimPart(() => ({ assignee: 'w1' }));
+		expect(bare).not.toBe('');
+		expect(blockClaimPart(() => ({ assignee: 'w2' }))).not.toBe(bare);
+		expect(blockClaimPart(() => ({ assignee: 'w1', claimedAt: 'a', leaseUntil: 'b' }))).not.toBe(bare);
+		const broken = (): never => {
+			throw new Error('bad block');
+		};
+		expect(blockClaimPart(broken)).toBe('unreadable');
 	});
 });

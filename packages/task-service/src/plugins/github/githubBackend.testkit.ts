@@ -5,8 +5,12 @@ import { GitHubBackend } from './GitHubBackend.js';
 import { GitHubClient } from './githubClient.js';
 import type { GitHubClientOptions } from './githubClient.js';
 import { parseGitHubOptions } from './githubOptions.js';
+import { createPriorityContext } from './githubPriority.js';
+import { PriorityResolver } from './githubPriorityStorage.js';
 import type { GitHubSettings } from './githubOptions.js';
 import { MemoryResponseCache } from './responseCache.js';
+import type { ResponseCache } from './responseCache.js';
+import type { PriorityContext } from './githubPriority.js';
 import { StatusMapper } from './statusMapping.js';
 
 export const TEST_STATUSES: ProjectStatus[] = [
@@ -40,10 +44,15 @@ export const WRITE_STATUS_MAP = {
 	duplicate: { state: 'closed', reason: 'duplicate' },
 };
 
+/** The priorities the tests give the project unless they say otherwise. */
+export const PRIORITIES = ['urgent', 'high', 'medium', 'low'];
+
 export interface TestBackend {
 	backend: GitHubBackend;
 	client: GitHubClient;
 	settings: GitHubSettings;
+	resolver: PriorityResolver;
+	context: PriorityContext;
 	notices: ReadNotice[];
 	clock: { ms: number };
 	/** The waits the client asked for (spacing between writes, retry-after), instead of really waiting. */
@@ -56,11 +65,15 @@ export function makeGitHubBackend(
 		options?: Record<string, unknown>;
 		statuses?: ProjectStatus[];
 		projectTypes?: string[];
+		/** The priorities of the project, highest first. Default: urgent, high, medium, low. */
+		priorities?: string[];
 		metaFromLabels?: boolean;
 		fills?: DeclaredFills;
 		/** What the test says the project accepted; the config loader enforces it, the backend only follows the fills. */
 		fidelity?: 'strict' | 'degrade';
 		client?: Partial<GitHubClientOptions>;
+		/** The cache the client AND the priority resolution memory share (default: a new one in memory). */
+		cache?: ResponseCache;
 	} = {}
 ): TestBackend {
 	const parsed = parseGitHubOptions({
@@ -70,6 +83,8 @@ export function makeGitHubBackend(
 		statusMap: TEST_STATUS_MAP,
 		// A TTL of zero: every read revalidates, which exercises the 304 path too.
 		cache: { ttlSeconds: 0 },
+		// Labels, so that a test does not pay the one request that resolves `auto`; the tests of `auto` and of the field say so.
+		priorityStorage: 'label',
 		timeoutSeconds: 2,
 		...options.options,
 	});
@@ -77,6 +92,7 @@ export function makeGitHubBackend(
 	const { settings } = parsed;
 	const fills = options.fills ?? {};
 	const notices: ReadNotice[] = [];
+	const cache = options.cache ?? new MemoryResponseCache();
 	const waits: number[] = [];
 	const clock = { ms: Date.parse('2026-11-08T12:00:00Z') };
 	const issueUrl = (number: number): string => `https://github.com/${settings.repo.full}/issues/${number}`;
@@ -88,7 +104,7 @@ export function makeGitHubBackend(
 		timeoutMs: settings.timeoutSeconds * 1000,
 		cacheTtlMs: settings.cacheTtlSeconds * 1000,
 		maxPages: settings.maxPages,
-		cache: new MemoryResponseCache(),
+		cache,
 		now: () => clock.ms,
 		onNotice: notice => notices.push(notice),
 		// The tests do not wait: what the client would have waited for is in `waits`.
@@ -106,8 +122,19 @@ export function makeGitHubBackend(
 		seen.add(next.text);
 		notices.push(next);
 	};
+	const priorityContext = createPriorityContext(settings.priority, options.priorities ?? PRIORITIES);
+	const resolver = new PriorityResolver({
+		client,
+		settings: settings.priority,
+		owner: settings.repo.owner,
+		baseUrl: settings.baseUrl,
+		context: priorityContext,
+		cache,
+		notice,
+	});
 	const backend = new GitHubBackend({
 		settings,
+		priority: resolver,
 		client,
 		issueUrl,
 		newIssueUrl: `https://github.com/${settings.repo.full}/issues/new`,
@@ -118,9 +145,10 @@ export function makeGitHubBackend(
 			metaFromLabels: options.metaFromLabels === true || fills['meta']?.use === 'labels',
 			metaFromBlock: fills['meta']?.use === 'body-block',
 			projectTypes: options.projectTypes ?? [],
+			priority: priorityContext,
 			notice,
 			issueUrl,
 		},
 	});
-	return { backend, client, settings, notices, clock, waits };
+	return { backend, client, settings, resolver, context: priorityContext, notices, clock, waits };
 }

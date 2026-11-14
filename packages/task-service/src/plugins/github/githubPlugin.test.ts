@@ -359,11 +359,15 @@ describe('the cache lives in the project data folder', () => {
 		const cacheDir = path.join(root, 'data', 'cache', 'github');
 		const files = fs.readdirSync(cacheDir);
 		expect(files.length).toBeGreaterThan(0);
+		const urls: string[] = [];
 		for (const file of files) {
 			const text = fs.readFileSync(path.join(cacheDir, file), 'utf8');
 			expect(text).not.toContain(fake.token);
-			expect(JSON.parse(text)).toMatchObject({ url: expect.stringContaining('/repos/acme/shop/issues') });
+			urls.push((JSON.parse(text) as { url: string }).url);
 		}
+		// The issue list only: a plain read of an `auto` project does not ask where the priority lives, so nothing is remembered.
+		expect(urls.some(url => url.includes('/repos/acme/shop/issues'))).toBe(true);
+		expect(urls.filter(url => !url.includes('/repos/acme/shop/issues'))).toEqual([]);
 	});
 
 	it('the next command revalidates with If-None-Match instead of downloading again', async () => {
@@ -416,6 +420,16 @@ describe('strategy show', () => {
 		]);
 	});
 
+	it('priority, assignee and claim are partial (declared by the plugin, no fill): the note says where they live', () => {
+		const report = showStrategy(target(config()));
+		const row = (name: string) => report.capabilities.find(r => r.capability === name)!;
+
+		expect(row('priority')).toMatchObject({ state: 'partial' });
+		expect(row('priority').detail).toContain('priorityStorage');
+		expect(row('assignee').detail).toContain('hidden block');
+		expect(row('claim').detail).toContain('optimistic');
+	});
+
 	it('with fills.meta: labels the meta row is emulated', () => {
 		const report = showStrategy(target(config('        fills:\n            meta: labels\n')));
 
@@ -457,11 +471,45 @@ describe('strategy show', () => {
 });
 
 describe('strategy check', () => {
+	it('auto with the definitions refused (403): the priority is in labels, said with the permission to give, and the row is disabled', async () => {
+		fake.addIssue({ title: 'Probe me' });
+
+		const result = await checkStrategy(target(config()));
+
+		const priority = line(result.lines, 'priority')!;
+		expect(priority.status).toBe('warn');
+		expect(priority.text).toContain('labels priority:<name>');
+		expect(priority.fix).toContain('Issue fields: Read');
+		expect(priority.fix).toContain('priorityFieldId');
+		const row = line(result.lines, 'issue-fields')!;
+		expect(row.status).toBe('warn');
+		expect(row.text).toMatch(/^disabled \(missing Issue fields: Read\)/);
+		expect(row.fix).toContain('issue_fields=read');
+		expect(result.errors).toBe(0);
+	});
+
+	it('auto with readable definitions: the priority is the issue field, the row is enabled', async () => {
+		await fake.stop();
+		fake = await FakeGitHub.start({
+			repo: 'acme/shop',
+			issueFields: [{ id: 7, name: 'Priority', options: ['Low', 'High'] }],
+			issueFieldDefinitions: 'readable',
+		});
+		fake.addIssue({ title: 'Probe me' });
+
+		const result = await checkStrategy(target(config()));
+
+		expect(line(result.lines, 'priority')).toMatchObject({ status: 'ok' });
+		expect(line(result.lines, 'priority')!.text).toContain('issue field "Priority" (id 7)');
+		expect(line(result.lines, 'issue-fields')).toMatchObject({ status: 'ok' });
+		expect(line(result.lines, 'issue-fields')!.text).toMatch(/^enabled: /);
+	});
+
 	it('a healthy project: reachable, token, repository, issues, limits, statuses, labels, hierarchy, writes', async () => {
 		fake.addIssue({ title: 'Probe me' });
 		fake.addRepoLabel('status:in-progress');
 
-		const result = await checkStrategy(target(config()));
+		const result = await checkStrategy(target(config('        priorityStorage: label\n')));
 
 		expect(result.ok).toBe(true);
 		expect(result.errors).toBe(0);
@@ -477,6 +525,8 @@ describe('strategy check', () => {
 			['read', 'ok'],
 			['limits', 'ok'],
 			['statuses', 'ok'],
+			['priority', 'ok'],
+			['issue-fields', 'ok'],
 			['labels', 'ok'],
 			['labels-write', 'ok'],
 			['hierarchy', 'ok'],
@@ -748,6 +798,8 @@ describe('the request lines of TASK_DEBUG=1 go to the task log, without any secr
 				repo: 'acme/shop',
 				baseUrl: fake.baseUrl,
 				tokenEnv: 'GH_TOKEN_FOR_TESTS',
+				// Labels: the line of the request that resolves `auto` is the subject of its own test below.
+				priorityStorage: 'label',
 				statusMap: {
 					backlog: { state: 'open' },
 					'in-progress': { state: 'open', label: 'status:in-progress' },

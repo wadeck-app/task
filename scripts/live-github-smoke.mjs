@@ -3,6 +3,7 @@
 //   npm run build
 //   GH_TEST_TOKEN=<fine-grained token: Issues read/write + Metadata read on the repo> \
 //   GH_TEST_REPO=wadeck-app/temp-test-api-for-issues \
+//   [GH_TEST_FIELD_ID=<numeric id of the org issue field Priority>  enables the native-field block of phase 3] \
 //   node scripts/live-github-smoke.mjs
 //
 // Phase 1 (reads): seeds a few issues, labels, sub-issues, a dependency and comments through the official REST API with the token
@@ -12,6 +13,8 @@
 // creates itself -- create (also in a terminal status), status, title, description, type, labels, meta (labels, then body block),
 // parent, blockedBy and duplicateOf links, comments, expectedRevision, labels sync, tombstone and hard deletion -- and checks what
 // GitHub holds after each, with the API read directly. It also prints what the real server answered where the fake server models it.
+// Phase 3 (priority, assignee, claim): label mode, assignee and claim (managed block of the body), `next`, and, only with
+// GH_TEST_FIELD_ID, the native issue field; a skipped block is printed as SKIPPED and counted apart from the passes.
 // Cleanup (always, also on failure): every issue of this run is CLOSED as not_planned (a hard-deleted one is gone) and every label
 // the run created is deleted; labels that existed before are left alone.
 //
@@ -32,6 +35,14 @@ if (token === '' || repo === '') {
 			'  GH_TEST_TOKEN  a fine-grained token with Issues read/write and Metadata read on the repository',
 			'  GH_TEST_REPO   owner/name of a THROWAWAY repository (for example wadeck-app/temp-test-api-for-issues)',
 		].join('\n')
+	);
+	process.exit(2);
+}
+// Optional: the numeric id of the organization issue field "Priority" (full_database_id); without it the field block is skipped.
+const fieldIdText = process.env.GH_TEST_FIELD_ID ?? '';
+if (fieldIdText !== '' && !/^\d+$/.test(fieldIdText)) {
+	console.error(
+		'live-github-smoke: GH_TEST_FIELD_ID must be the numeric id of the Priority issue field (full_database_id).'
 	);
 	process.exit(2);
 }
@@ -73,11 +84,11 @@ const headers = {
 };
 const timings = new Map();
 
-async function api(method, route, body, { allow = [] } = {}) {
+async function api(method, route, body, { allow = [], version } = {}) {
 	const started = performance.now();
 	const response = await fetch(`${API}${route}`, {
 		method,
-		headers,
+		headers: version === undefined ? headers : { ...headers, 'x-github-api-version': version },
 		body: body === undefined ? undefined : JSON.stringify(body),
 	});
 	const text = await response.text();
@@ -107,6 +118,11 @@ function check(name, ok, detail = '') {
 	results.push({ name, ok });
 	log(`${ok ? '  PASS' : '  FAIL'}  ${name}${ok || detail === '' ? '' : `\n        ${detail}`}`);
 }
+/** A block that could not run: counted apart, never as a pass. */
+function skipped(name, reason) {
+	results.push({ name, ok: true, skipped: true });
+	log(`  SKIPPED: ${name} (${reason})`);
+}
 const eq = (name, actual, expected) =>
 	check(
 		name,
@@ -116,9 +132,12 @@ const eq = (name, actual, expected) =>
 
 // Every request of the run goes through this counter (the seeding client and the strategy both use the global fetch).
 let requestCount = 0;
+// The method and URL of every request (never a header, so never the token).
+const requestLog = [];
 const realFetch = globalThis.fetch;
 globalThis.fetch = (...args) => {
 	requestCount += 1;
+	requestLog.push({ method: args[1]?.method ?? 'GET', url: String(args[0]) });
 	return realFetch(...args);
 };
 
@@ -296,7 +315,7 @@ ${options}`;
 	);
 	check(
 		'show A: revision is <updated_at>#<etag>#<one hash per part>',
-		/^\d{4}-.*Z#[0-9a-f]+#([0-9a-f]{6}\.){7}[0-9a-f]{6}$/.test(shownA.revision),
+		/^\d{4}-.*Z#[0-9a-f]+#([0-9a-f]{6}\.){9}[0-9a-f]{6}$/.test(shownA.revision),
 		shownA.revision
 	);
 
@@ -429,6 +448,13 @@ ${options}`;
 				'comment-edit',
 				'comment-rm',
 				'delete',
+				'set-priority',
+				'unset-priority',
+				'set-assignee',
+				'unset-assignee',
+				'claim',
+				'release',
+				'next',
 			].includes(args[0])
 				? writeTimings
 				: readTimings
@@ -971,6 +997,329 @@ ${options}`;
 		.filter(l => l.startsWith('warning:'));
 	log(`  warnings printed on stderr by the writes: ${stderrWarnings.length}`);
 	for (const line of [...new Set(stderrWarnings)]) log(`    ${line.slice(0, 220)}`);
+
+	// ================================================================ phase 3: priority, assignee, claim
+	log('\n== phase 3: priority, assignee and claim through the real strategy, checked on GitHub');
+	const phase3From = results.length;
+	try {
+		const MANAGED_BLOCK = /<!-- task:begin v1 -->([\s\S]*?)<!-- task:end -->/;
+		const managedBlock = body => {
+			const match = MANAGED_BLOCK.exec(body ?? '');
+			return match === null ? undefined : JSON.parse(match[1]);
+		};
+		const prioLabelsOf = async n => labelsOn(await get(n)).filter(label => label.startsWith('priority:'));
+		const claimOf = async n => managedBlock((await get(n)).body)?.claim;
+		const newTask = async text => {
+			const created = await cliJson('new', title(text));
+			if (created.exitCode !== 0) throw new Error(`task new "${text}" failed: ${created.output.slice(0, 300)}`);
+			return { id: created.json.id, n: Number(created.json.id) };
+		};
+		/** The requests a command sent: its own window of the request log. */
+		const windowOf = async command => {
+			const mark = requestLog.length;
+			const result = await command();
+			return { result, requests: requestLog.slice(mark) };
+		};
+		const listReads = requests =>
+			requests.filter(r => r.method === 'GET' && /\/repos\/[^/]+\/[^/]+\/issues\?/.test(r.url)).length;
+		const issueReads = requests => requests.filter(r => /\/issues\/\d+/.test(r.url)).length;
+		const describeRequests = requests => requests.map(r => `${r.method} ${r.url.replace(API, '')}`).join(' | ');
+
+		// ---- 1. label mode
+		log('\n-- priority stored in labels (priorityStorage: label)');
+		writeConfig('strict', '        priorityStorage: label\n');
+		const prioSync = await cliJson('labels', 'sync');
+		const labelNames = (await apiAll(`/repos/${repo}/labels`)).map(label => label.name);
+		check(
+			'labels sync (label mode) leaves a priority:<name> label for every priority of the project',
+			prioSync.exitCode === 0 &&
+				['urgent', 'high', 'medium', 'low'].every(p => labelNames.includes(`priority:${p}`)),
+			`${prioSync.output.slice(0, 300)} labels: ${labelNames.filter(l => l.startsWith('priority:')).join(', ')}`
+		);
+		const lowOld = await newTask('p lowest and oldest');
+		const topNew = await newTask('p urgent and newer');
+		const setUrgent = await cliJson('set-priority', topNew.id, 'urgent');
+		eq(
+			'set-priority urgent: exactly the label priority:urgent on GitHub',
+			[setUrgent.exitCode, setUrgent.json?.priority, await prioLabelsOf(topNew.n)],
+			[0, 'urgent', ['priority:urgent']]
+		);
+		const setLow = await cliJson('set-priority', topNew.id, 'low');
+		eq(
+			'set-priority low: a swap, exactly one priority label (priority:low)',
+			[setLow.exitCode, await prioLabelsOf(topNew.n)],
+			[0, ['priority:low']]
+		);
+		const unset = await cliJson('unset-priority', topNew.id);
+		eq('unset-priority: no priority label left', [unset.exitCode, await prioLabelsOf(topNew.n)], [0, []]);
+		const reservedWindow = await windowOf(() => cliRun('add-label', topNew.id, 'priority:high'));
+		const reservedWrites = reservedWindow.requests.filter(r => r.method !== 'GET');
+		check(
+			'add-label priority:high is refused as reserved, nothing written (only reads, if any)',
+			reservedWindow.result.exitCode === 1 &&
+				/reserved/.test(reservedWindow.result.output) &&
+				reservedWrites.length === 0 &&
+				(await prioLabelsOf(topNew.n)).length === 0,
+			`${reservedWindow.result.output.slice(0, 300)} writes: ${JSON.stringify(reservedWrites)}`
+		);
+		await cliRun('set-priority', topNew.id, 'urgent');
+		await cliRun('set-priority', lowOld.id, 'low');
+		const listWindow = await windowOf(() => cliJson('list', '--order', 'priority-then-oldest', '--available'));
+		const orderedByList = (listWindow.result.json ?? []).filter(row => [topNew.id, lowOld.id].includes(row.id));
+		eq(
+			'list --order priority-then-oldest --available: urgent (newer) before low (older), with the effective priority',
+			[listWindow.result.exitCode, orderedByList.map(row => [row.id, row.priority])],
+			[
+				0,
+				[
+					[topNew.id, 'urgent'],
+					[lowOld.id, 'low'],
+				],
+			]
+		);
+		check(
+			'that list of the whole project cost ONE list request and no per-issue read',
+			listReads(listWindow.requests) === 1 && issueReads(listWindow.requests) === 0,
+			`${listWindow.requests.length} requests: ${describeRequests(listWindow.requests)}`
+		);
+
+		// ---- 2. assignee and claim
+		log('\n-- assignee and claim (managed block of the body, no GitHub assignee)');
+		const worker = await newTask('c worker task');
+		const setAss = await cliJson('set-assignee', worker.id, 'ann');
+		let gh = await get(worker.n);
+		check(
+			'set-assignee: the body holds the managed block with claim.assignee, no GitHub assignee is set',
+			setAss.exitCode === 0 &&
+				managedBlock(gh.body)?.claim?.assignee === 'ann' &&
+				(gh.assignees ?? []).length === 0,
+			`${setAss.output.slice(0, 200)} ${JSON.stringify([gh.body, gh.assignees])}`
+		);
+		const claim1 = await cliJson('claim', worker.id, '--as', 'w1', '--lease', '5m');
+		gh = await get(worker.n);
+		const block1 = managedBlock(gh.body)?.claim;
+		const leaseLeft = Date.parse(claim1.json?.leaseUntil ?? '') - Date.now();
+		check(
+			'claim --as w1 --lease 5m: outcome claimed, lease about 5 minutes',
+			claim1.exitCode === 0 &&
+				// The task was given an assignee without a lease just before (set-assignee ann): taking it over is the rule.
+				claim1.json.outcome === 'takeover' &&
+				claim1.json.previousAssignee === 'ann' &&
+				leaseLeft > 3 * 60e3 &&
+				leaseLeft < 5.5 * 60e3,
+			`${claim1.output.slice(0, 300)} lease left ${leaseLeft} ms`
+		);
+		check(
+			'claim on GitHub: the body block has a claim key (assignee w1, claimedAt, leaseUntil), no GitHub assignee',
+			block1?.assignee === 'w1' &&
+				typeof block1.leaseUntil === 'string' &&
+				typeof block1.claimedAt === 'string' &&
+				(gh.assignees ?? []).length === 0 &&
+				gh.assignee === null,
+			JSON.stringify([gh.body, gh.assignees, gh.assignee])
+		);
+		const claim2 = await cliRun('claim', worker.id, '--as', 'w2');
+		check(
+			'second claim --as w2: conflict naming the holder w1 and the time left',
+			claim2.exitCode === 1 && claim2.output.includes('w1') && /left/.test(claim2.output),
+			claim2.output
+		);
+		eq(
+			'and GitHub still holds w1 (nothing written by the refused claim)',
+			(await claimOf(worker.n))?.assignee,
+			'w1'
+		);
+		const take = await cliJson('claim', worker.id, '--as', 'w2', '--force', '--lease', '5m');
+		check(
+			'claim --as w2 --force: takeover from w1, GitHub holds w2',
+			take.exitCode === 0 &&
+				take.json.outcome === 'takeover' &&
+				take.json.previousAssignee === 'w1' &&
+				(await claimOf(worker.n))?.assignee === 'w2',
+			take.output.slice(0, 300)
+		);
+		const renew = await cliJson('claim', worker.id, '--as', 'w2', '--renew', '--lease', '10m');
+		const renewedBlock = await claimOf(worker.n);
+		check(
+			'claim --renew by the holder: renewed, claimedAt kept, lease extended (on GitHub too)',
+			renew.exitCode === 0 &&
+				renew.json.outcome === 'renewed' &&
+				renew.json.claimedAt === take.json.claimedAt &&
+				Date.parse(renew.json.leaseUntil) > Date.parse(take.json.leaseUntil) &&
+				renewedBlock?.claimedAt === take.json.claimedAt &&
+				renewedBlock?.leaseUntil === renew.json.leaseUntil,
+			`${renew.output.slice(0, 300)} ${JSON.stringify(renewedBlock)}`
+		);
+		const released = await cliJson('release', worker.id, '--as', 'w2');
+		check(
+			'release by the holder: GitHub no longer holds a claim',
+			released.exitCode === 0 &&
+				released.json.previousAssignee === 'w2' &&
+				(await claimOf(worker.n))?.assignee === undefined,
+			`${released.output.slice(0, 300)} ${JSON.stringify(await claimOf(worker.n))}`
+		);
+		const releasedAgain = await cliRun('release', worker.id);
+		check('release of a task nobody holds is refused (exit 1)', releasedAgain.exitCode === 1, releasedAgain.output);
+
+		const closedTask = await newTask('c closed task');
+		await cliRun('set-status', closedTask.id, 'done');
+		const closedClaim = await cliRun('claim', closedTask.id, '--as', 'w1');
+		check(
+			'claim on a closed task is refused (exit 1) and nothing is written to the body',
+			closedClaim.exitCode === 1 &&
+				/closed|terminal|set-status/i.test(closedClaim.output) &&
+				(await claimOf(closedTask.n)) === undefined,
+			closedClaim.output
+		);
+
+		const heldTask = await newTask('c held task');
+		await cliRun('claim', heldTask.id, '--as', 'w1', '--lease', '30m');
+		const availableWindow = await windowOf(() => cliJson('list', '--available'));
+		const availableIds = (availableWindow.result.json ?? []).map(row => row.id);
+		check(
+			'list --available excludes the claimed task and includes the released one',
+			availableWindow.result.exitCode === 0 &&
+				!availableIds.includes(heldTask.id) &&
+				availableIds.includes(worker.id),
+			`${availableWindow.result.output?.slice(0, 200)} available mine: ${JSON.stringify(availableIds.filter(i => [heldTask.id, worker.id].includes(i)))}`
+		);
+		check(
+			'that list again cost ONE list request (assignee and lease come with the list)',
+			listReads(availableWindow.requests) === 1 && issueReads(availableWindow.requests) === 0,
+			describeRequests(availableWindow.requests)
+		);
+
+		// next: the highest priority unblocked task; an older urgent one blocked by an open blockedBy link is skipped
+		const blocker = await newTask('n blocker (open)');
+		const high = await newTask('n high (oldest of the candidates)');
+		const blockedUrgent = await newTask('n urgent but blocked');
+		const freeUrgent = await newTask('n urgent and free');
+		await cliRun('set-priority', high.id, 'high');
+		await cliRun('set-priority', blockedUrgent.id, 'urgent');
+		await cliRun('set-priority', freeUrgent.id, 'urgent');
+		await cliRun('link', blockedUrgent.id, 'blockedBy', blocker.id);
+		const next = await cliJson('next', '--as', 'w3', '--priority', 'urgent,high', '--lease', '5m');
+		check(
+			'next --as w3 claims the urgent unblocked task, not the older high one and not the blocked urgent one',
+			// Older urgent issues of earlier blocks of this run are legitimate candidates: next may take one of them.
+			next.exitCode === 0 &&
+				next.json?.taskId !== undefined &&
+				![high.id, blockedUrgent.id, blocker.id].includes(next.json.taskId) &&
+				next.json.assignee === 'w3',
+			next.output.slice(0, 400)
+		);
+		// The first next may have taken an older free urgent issue; the second one must skip the blocked urgent one and take the free one.
+		// Older free urgent issues of this run may come first: call next again until the free urgent one of this block is taken.
+		const taken = [];
+		let skippedTotal = 0;
+		for (let attempt = 0; attempt < 8; attempt++) {
+			const again = await cliJson('next', '--as', 'w4', '--priority', 'urgent', '--lease', '5m');
+			if (again.exitCode !== 0 || again.json?.taskId === undefined) break;
+			taken.push(again.json.taskId);
+			skippedTotal += again.json.skippedBlocked ?? 0;
+			if (again.json.taskId === freeUrgent.id) break;
+		}
+		check(
+			'repeated next --as w4 skips the blocked urgent task and reaches the free urgent one without ever claiming the blocked one',
+			taken.at(-1) === freeUrgent.id && !taken.includes(blockedUrgent.id) && skippedTotal >= 1,
+			JSON.stringify({ taken, skippedTotal })
+		);
+		const nextTaken = await get(Number(next.json?.taskId));
+		eq('and GitHub holds the claim of w3 on it', managedBlock(nextTaken.body)?.claim?.assignee, 'w3');
+		check(
+			'the skipped blocked task and the high one were not claimed',
+			(await claimOf(blockedUrgent.n)) === undefined && (await claimOf(high.n)) === undefined
+		);
+
+		// ---- 3. field mode
+		log('\n-- priority stored in the native issue field (priorityStorage: field)');
+		if (fieldIdText === '') {
+			skipped('field mode', 'GH_TEST_FIELD_ID not set');
+		} else {
+			const fieldId = Number(fieldIdText);
+			const apiVersion = '2026-03-10';
+			writeConfig('strict', `        priorityStorage: field\n        priorityFieldId: ${fieldId}\n`);
+			const fieldValues = async n => {
+				const { body } = await api('GET', `/repos/${repo}/issues/${n}/issue-field-values`, undefined, {
+					version: apiVersion,
+				});
+				const all = Array.isArray(body) ? body : [];
+				const ours = all.filter(v =>
+					[v.issue_field_id, v.field_id, v.field?.id, v.field?.full_database_id].some(
+						x => x !== undefined && Number(x) === fieldId
+					)
+				);
+				return ours.length > 0 ? ours : all;
+			};
+			const optionOf = values => values.map(v => String(v.single_select_option?.name ?? '').toLowerCase());
+			const fieldTask = await newTask('f field mode task');
+			const setHigh = await cliJson('set-priority', fieldTask.id, 'high');
+			let values = await fieldValues(fieldTask.n);
+			log(
+				`  shape of an issue-field-values entry (to keep the fake faithful): ${JSON.stringify(values[0] ?? null)}`
+			);
+			check(
+				'set-priority high (POST .../issue-field-values) is accepted by GitHub and the value is High',
+				setHigh.exitCode === 0 && values.length === 1 && values[0].single_select_option?.name === 'High',
+				`${setHigh.output.slice(0, 500)} values: ${JSON.stringify(values)}`
+			);
+			check(
+				'no priority label was written in field mode',
+				(await prioLabelsOf(fieldTask.n)).length === 0,
+				JSON.stringify(await prioLabelsOf(fieldTask.n))
+			);
+			const setUrgentField = await cliJson('set-priority', fieldTask.id, 'urgent');
+			values = await fieldValues(fieldTask.n);
+			check(
+				'set-priority urgent: the value is replaced, exactly one value',
+				setUrgentField.exitCode === 0 && values.length === 1 && optionOf(values)[0] === 'urgent',
+				`${setUrgentField.output.slice(0, 500)} values: ${JSON.stringify(values)}`
+			);
+			const unsetField = await cliJson('unset-priority', fieldTask.id);
+			values = await fieldValues(fieldTask.n);
+			check(
+				'unset-priority (DELETE): no value left',
+				unsetField.exitCode === 0 && values.length === 0,
+				`${unsetField.output.slice(0, 500)} values: ${JSON.stringify(values)}`
+			);
+			await cliRun('set-priority', fieldTask.id, 'high');
+			const fieldList = await cliJson('list');
+			eq(
+				'list --json shows the priority read from issue_field_values',
+				(fieldList.json ?? []).find(row => row.id === fieldTask.id)?.priority,
+				'high'
+			);
+			const viaRest = await api(
+				'PUT',
+				`/repos/${repo}/issues/${fieldTask.n}/issue-field-values`,
+				{ issue_field_values: [{ field_id: fieldId, value: 'Low' }] },
+				{ version: apiVersion, allow: [403, 404, 422] }
+			);
+			check('the direct REST PUT (value Low) is accepted', viaRest.status === 200, JSON.stringify(viaRest.body));
+			const afterRest = await cliJson('list', '--order', 'priority-then-oldest');
+			eq(
+				'a change made directly with the REST API (Low) is read by list',
+				(afterRest.json ?? []).find(row => row.id === fieldTask.id)?.priority,
+				'low'
+			);
+			const fieldCheck = await timed('strategy check (field mode)', () => service.checkStrategy(target));
+			const priorityLine = fieldCheck.lines.find(line => line.name === 'priority');
+			check(
+				'strategy check: the priority line says the priority lives in the native issue field',
+				priorityLine !== undefined && priorityLine.status !== 'error' && /issue field/.test(priorityLine.text),
+				JSON.stringify(priorityLine)
+			);
+		}
+	} catch (error) {
+		exitCode = 1;
+		check('phase 3 ran to its end', false, error instanceof Error ? error.stack : String(error));
+	}
+	{
+		const own = results.slice(phase3From);
+		log(
+			`\nphase 3 (priority, assignee, claim): ${own.filter(r => r.ok && !r.skipped).length} passed, ${own.filter(r => !r.ok).length} failed, ${own.filter(r => r.skipped).length} skipped`
+		);
+	}
 } catch (error) {
 	exitCode = 1;
 	log(`\nlive-github-smoke: FAILED with an exception: ${error instanceof Error ? error.stack : error}`);
@@ -1043,7 +1392,9 @@ ${options}`;
 }
 
 const failed = results.filter(r => !r.ok);
+const skippedCount = results.filter(r => r.skipped).length;
+const executed = results.length - skippedCount;
 log(
-	`\nlive-github-smoke: ${results.length - failed.length} of ${results.length} assertions passed${failed.length > 0 ? `; FAILED: ${failed.map(f => f.name).join(' | ')}` : ''}`
+	`\nlive-github-smoke: ${executed - failed.length} of ${executed} assertions passed, ${skippedCount} skipped${failed.length > 0 ? `; FAILED: ${failed.map(f => f.name).join(' | ')}` : ''}`
 );
 process.exit(failed.length > 0 ? 1 : exitCode);

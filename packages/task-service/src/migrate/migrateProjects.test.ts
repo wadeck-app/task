@@ -180,6 +180,47 @@ describe('migrateProjects: local to GitHub and back, over the fake server', () =
 		expect(fake.writes().length).toBe(writes);
 	});
 
+	it.each([
+		['label', 'priorityStorage: label', undefined],
+		[
+			'issue field',
+			'priorityStorage: field\n        priorityFieldId: 7',
+			{ issueFields: [{ id: 7, name: 'Priority', options: ['urgent', 'high', 'medium', 'low'] }] },
+		],
+	])('priority and assignee survive local -> GitHub -> local (priority in %s)', async (_name, extra, fakeOptions) => {
+		fake = await FakeGitHub.start({ repo: 'acme/shop', ...fakeOptions });
+		const from = await project('old');
+		const middle = await project('shop', githubConfig('acme/shop', extra));
+		const back = await project('again');
+		const global = path.join(sandbox.root, 'global');
+		const source = openResolvedProject(from, global);
+		const urgent = await source.store.create({ title: 'Urgent one', status: 'backlog' });
+		await source.store.setPriority!(urgent.id, 'urgent');
+		await source.store.setAssignee!(urgent.id, 'ann');
+		await source.store.create({ title: 'Plain', status: 'backlog' });
+		await source.dispose?.();
+
+		// What is not carried is only the creation instant, the history and the marker: nothing about the priority or the assignee.
+		const forward = await migrate(from, middle, { allowLoss: ['history', 'created-at', 'marker'] });
+		expect(forward.status).toBe('completed');
+		expect(forward.verification!.mismatches).toEqual([]);
+		const issue = [...fake.issues.values()].find(candidate => candidate.title === 'Urgent one')!;
+		if (fakeOptions === undefined) expect(issue.labels).toContain('priority:urgent');
+		else expect(fake.fieldValuesOf(issue.number)).toEqual({ Priority: 'urgent' });
+		const [plain] = [...fake.issues.values()].filter(candidate => candidate.title === 'Plain');
+		expect(plain!.labels.filter(label => label.startsWith('priority:'))).toEqual([]);
+
+		const reverse = await migrate(middle, back, { allowLoss: ['all'] });
+		expect(reverse.status).toBe('completed');
+		const ctx = openResolvedProject(back, global);
+		const tasks = await Promise.all((await ctx.store.list()).map(summary => ctx.store.get(summary.id)));
+		const byTitle = new Map(tasks.map(task => [task.title, task]));
+		expect(byTitle.get('Urgent one')).toMatchObject({ priority: 'urgent', assignee: 'ann' });
+		expect(byTitle.get('Urgent one')!.leaseUntil).toBeUndefined();
+		expect(byTitle.get('Plain')!.priority).toBeUndefined();
+		await ctx.dispose?.();
+	});
+
 	it('GitHub to local: the issues become tasks, the author of a comment is kept, the creation instant too', async () => {
 		fake = await FakeGitHub.start({ repo: 'acme/shop' });
 		fake.addIssue({ title: 'Alpha', body: 'The body', labels: ['billing'] });

@@ -46,6 +46,7 @@ describe('parseGitHubOptions: a valid configuration and its defaults', () => {
 			cacheTtlSeconds: 60,
 			timeoutSeconds: 15,
 			writeSpacingSeconds: 1,
+			priority: { storage: 'auto', fieldName: 'Priority', prefix: 'priority:', map: {} },
 		});
 	});
 
@@ -98,6 +99,11 @@ describe('parseGitHubOptions: a valid configuration and its defaults', () => {
 				'maxPages',
 				'metaPrefix',
 				'pageSize',
+				'priorityFieldId',
+				'priorityFieldName',
+				'priorityMap',
+				'priorityPrefix',
+				'priorityStorage',
 				'repo',
 				'statusMap',
 				'timeoutSeconds',
@@ -365,5 +371,114 @@ describe('checkOptionsAgainstProject: the map agrees with the statuses of the pr
 		expect(check(valid({ typePrefix: `${'p'.repeat(46)}:` }), { ...facts, types: ['feature'] })).toBe(
 			`typePrefix: the label of the type "feature" would be ${47 + 7} characters (${'p'.repeat(46)}:feature); GitHub label names are at most 50`
 		);
+	});
+});
+
+describe('parseGitHubOptions: priority options', () => {
+	it('reads the storage, the field, the prefix and the map', () => {
+		expect(
+			settings(
+				valid({
+					priorityStorage: 'field',
+					priorityFieldId: 123,
+					priorityFieldName: 'Urgency',
+					priorityMap: { urgent: 'P0', high: 'P1' },
+				})
+			).priority
+		).toEqual({
+			storage: 'field',
+			fieldId: 123,
+			fieldName: 'Urgency',
+			prefix: 'priority:',
+			map: { urgent: 'P0', high: 'P1' },
+		});
+		expect(settings(valid({ priorityStorage: 'label', priorityPrefix: 'prio/' })).priority).toMatchObject({
+			storage: 'label',
+			prefix: 'prio/',
+		});
+	});
+
+	it.each([
+		[{ priorityStorage: 'native' }, 'priorityStorage: must be "auto", "field" or "label", found "native"'],
+		[
+			{ priorityFieldId: 0 },
+			'priorityFieldId: must be the numeric id of the organization issue field (a positive whole number), found 0',
+		],
+		[
+			{ priorityFieldId: 'IFSS_x' },
+			'priorityFieldId: must be the numeric id of the organization issue field (a positive whole number), found "IFSS_x"',
+		],
+		[{ priorityFieldName: '' }, 'priorityFieldName: must be the name of a single-select issue field, found ""'],
+		[{ priorityPrefix: '' }, 'priorityPrefix: must be a non-empty label prefix, found ""'],
+		[
+			{ priorityMap: ['a'] },
+			'priorityMap: must be a mapping of task priority to the name GitHub uses, found a list',
+		],
+		[{ priorityMap: { urgent: '' } }, 'priorityMap.urgent: must be a non-empty name, found ""'],
+		[
+			{ priorityMap: { urgent: 'P0', high: 'p0' } },
+			'priorityMap.high: the same name as "urgent" ("P0"), whatever its case',
+		],
+	])('refuses %j: %s', (extra, text) => {
+		expect(problem(valid(extra))).toContain(text);
+	});
+
+	it('an option that the storage never reads is an error, not silence', () => {
+		expect(problem(valid({ priorityStorage: 'label', priorityFieldId: 5 }))).toBe(
+			'priorityFieldId: has no effect with priorityStorage: label (labels are used): remove it, or use priorityStorage: auto or field'
+		);
+		expect(problem(valid({ priorityStorage: 'label', priorityFieldName: 'P' }))).toBe(
+			'priorityFieldName: has no effect with priorityStorage: label (labels are used): remove it, or use priorityStorage: auto or field'
+		);
+		expect(problem(valid({ priorityStorage: 'field', priorityPrefix: 'p:' }))).toBe(
+			'priorityPrefix: has no effect with priorityStorage: field (the issue field is used): remove it, or use priorityStorage: auto or label'
+		);
+	});
+
+	it('the prefix may not be, start or be started by the type or meta prefix', () => {
+		expect(problem(valid({ priorityPrefix: 'type:' }))).toMatch(/^priorityPrefix: must differ from typePrefix/);
+		expect(problem(valid({ priorityPrefix: 'type:x/' }))).toMatch(/^priorityPrefix: .* starts with typePrefix/);
+		expect(problem(valid({ priorityPrefix: 'meta:' }))).toMatch(/^priorityPrefix: must differ from metaPrefix/);
+		expect(problem(valid({ typePrefix: 'priority:x/' }))).toMatch(/^typePrefix: .* starts with priorityPrefix/);
+		expect(settings(valid({ priorityStorage: 'field', typePrefix: 'priority:' })).typePrefix).toBe('priority:');
+	});
+});
+
+describe('checkOptionsAgainstProject: priorities', () => {
+	const facts: ProjectFacts = {
+		statuses: [
+			{ name: 'todo', terminal: false, default: true, outcome: undefined },
+			{ name: 'done', terminal: true, default: false, outcome: 'positive' },
+		],
+		types: [],
+		priorities: ['urgent', 'high', 'medium', 'low'],
+	};
+	const map = { todo: { state: 'open' }, done: { state: 'closed' } };
+	const check = (extra: Record<string, unknown>, project: ProjectFacts = facts): string | undefined =>
+		checkOptionsAgainstProject(settings({ ...valid(extra), statusMap: map }), project);
+
+	it('a priorityMap key must be a priority of the project', () => {
+		expect(check({ priorityMap: { critical: 'P0' } })).toBe(
+			'priorityMap.critical: the project has no priority "critical" (priorities: urgent, high, medium, low)'
+		);
+		expect(check({ priorityMap: { urgent: 'P0' } })).toBeUndefined();
+	});
+
+	it('with labels only, the label of every priority must fit GitHub (50 characters, no comma)', () => {
+		const long: ProjectFacts = { ...facts, priorities: ['x'.repeat(45)] };
+		expect(check({ priorityStorage: 'label' }, long)).toBe(
+			`priorityPrefix: the label of the priority "${'x'.repeat(45)}" is not usable: "priority:${'x'.repeat(45)}" is 54 characters; GitHub label names are at most 50`
+		);
+		expect(check({ priorityStorage: 'label', priorityMap: { [long.priorities![0]!]: 'a,b' } }, long)).toBe(
+			`priorityMap.${'x'.repeat(45)}: the label is not usable: "a,b" contains a comma, which GitHub refuses in a label name`
+		);
+		// Auto and field may never use the label: the long name is only a problem if the label is used.
+		expect(check({}, long)).toBeUndefined();
+		expect(check({ priorityStorage: 'field' }, long)).toBeUndefined();
+	});
+
+	it('a hand-built fact list without priorities checks nothing about them', () => {
+		const { priorities: _drop, ...bare } = facts;
+		expect(check({ priorityMap: { anything: 'P' } }, bare)).toBeUndefined();
 	});
 });

@@ -24,6 +24,21 @@ export interface TypeRule {
 
 export type { TokenSource };
 
+/** Where the priority of a task lives on GitHub: `field` = a native organization issue field, `label` = a label, `auto` = the field when it can be used, else the label. */
+export type PriorityStorage = 'auto' | 'field' | 'label';
+
+export interface PrioritySettings {
+	storage: PriorityStorage;
+	/** The numeric id of the organization issue field (`full_database_id`); absent: found by `fieldName` among the definitions. */
+	fieldId?: number;
+	/** Name of the single-select issue field, `Priority` by default. */
+	fieldName: string;
+	/** Prefix of the label that carries a priority (`priority:high`). */
+	prefix: string;
+	/** Task priority -> the option name of the field, or the whole label name. */
+	map: Record<string, string>;
+}
+
 export interface GitHubSettings {
 	repo: { owner: string; name: string; full: string };
 	/** No trailing slash: `https://api.github.com`, or `https://HOST/api/v3` for GitHub Enterprise Server. */
@@ -39,6 +54,7 @@ export interface GitHubSettings {
 	timeoutSeconds: number;
 	/** Least time between the start of two writes. GitHub asks integrators to go slowly with content-creating requests: 1 s. */
 	writeSpacingSeconds: number;
+	priority: PrioritySettings;
 }
 
 /** The documented option names, in the order the documentation lists them. */
@@ -56,6 +72,11 @@ export const GITHUB_OPTION_NAMES: readonly string[] = [
 	'cache',
 	'timeoutSeconds',
 	'writeSpacingSeconds',
+	'priorityStorage',
+	'priorityFieldId',
+	'priorityFieldName',
+	'priorityPrefix',
+	'priorityMap',
 ];
 
 export const DEFAULT_BASE_URL = 'https://api.github.com';
@@ -250,6 +271,108 @@ function parsePrefixes(options: Record<string, unknown>): Parsed<{ typePrefix: s
 	return { value: { typePrefix: type.value, metaPrefix: meta.value } };
 }
 
+const PRIORITY_STORAGES: readonly PriorityStorage[] = ['auto', 'field', 'label'];
+
+function parsePriority(
+	options: Record<string, unknown>,
+	prefixes: { typePrefix: string; metaPrefix: string }
+): Parsed<PrioritySettings> {
+	const storageValue = options['priorityStorage'] ?? 'auto';
+	if (!(PRIORITY_STORAGES as readonly unknown[]).includes(storageValue)) {
+		return { problem: `priorityStorage: must be "auto", "field" or "label", found ${found(storageValue)}` };
+	}
+	const storage = storageValue as PriorityStorage;
+	const given = (key: string): boolean => options[key] !== undefined;
+
+	let fieldId: number | undefined;
+	if (given('priorityFieldId')) {
+		const id = options['priorityFieldId'];
+		if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) {
+			return {
+				problem: `priorityFieldId: must be the numeric id of the organization issue field (a positive whole number), found ${found(id)}`,
+			};
+		}
+		fieldId = id;
+	}
+	const fieldNameValue = options['priorityFieldName'] ?? 'Priority';
+	if (typeof fieldNameValue !== 'string' || fieldNameValue.trim() === '') {
+		return {
+			problem: `priorityFieldName: must be the name of a single-select issue field, found ${found(fieldNameValue)}`,
+		};
+	}
+	const prefixValue = options['priorityPrefix'] ?? 'priority:';
+	if (typeof prefixValue !== 'string' || prefixValue === '') {
+		return { problem: `priorityPrefix: must be a non-empty label prefix, found ${found(prefixValue)}` };
+	}
+	const mapValue = options['priorityMap'] ?? {};
+	if (!isMapping(mapValue)) {
+		return {
+			problem: `priorityMap: must be a mapping of task priority to the name GitHub uses, found ${found(mapValue)}`,
+		};
+	}
+	const map: Record<string, string> = {};
+	const owners = new Map<string, string>();
+	for (const [priority, name] of Object.entries(mapValue)) {
+		if (typeof name !== 'string' || name.trim() === '') {
+			return { problem: `priorityMap.${priority}: must be a non-empty name, found ${found(name)}` };
+		}
+		const owner = owners.get(name.toLowerCase());
+		if (owner !== undefined) {
+			return {
+				problem: `priorityMap.${priority}: the same name as "${owner}" ("${map[owner]}"), whatever its case: two priorities cannot share a GitHub name`,
+			};
+		}
+		owners.set(name.toLowerCase(), priority);
+		map[priority] = name;
+	}
+
+	// An option the chosen storage never reads is a mistake to report, not something to ignore silently.
+	if (storage === 'label') {
+		for (const key of ['priorityFieldId', 'priorityFieldName']) {
+			if (given(key)) {
+				return {
+					problem: `${key}: has no effect with priorityStorage: label (labels are used): remove it, or use priorityStorage: auto or field`,
+				};
+			}
+		}
+	}
+	if (storage === 'field' && given('priorityPrefix')) {
+		return {
+			problem:
+				'priorityPrefix: has no effect with priorityStorage: field (the issue field is used): remove it, or use priorityStorage: auto or label',
+		};
+	}
+	if (storage !== 'field') {
+		const own = prefixValue.toLowerCase();
+		for (const [key, other] of [
+			['typePrefix', prefixes.typePrefix],
+			['metaPrefix', prefixes.metaPrefix],
+		] as const) {
+			const theirs = other.toLowerCase();
+			if (own === theirs) return { problem: `priorityPrefix: must differ from ${key} ("${other}")` };
+			if (own.startsWith(theirs)) {
+				return {
+					problem: `priorityPrefix: "${prefixValue}" starts with ${key} "${other}", so a priority label would read as another kind of label`,
+				};
+			}
+			if (theirs.startsWith(own)) {
+				return {
+					problem: `${key}: "${other}" starts with priorityPrefix "${prefixValue}", so a label of that kind would read as a priority label`,
+				};
+			}
+		}
+	}
+	return {
+		value: {
+			storage,
+			...(fieldId === undefined ? {} : { fieldId }),
+			fieldName: fieldNameValue,
+			prefix: prefixValue,
+			map,
+		},
+	};
+}
+
 function parseTypeMap(value: unknown): Parsed<Record<string, TypeRule>> {
 	if (value === undefined) return { value: {} };
 	if (!isMapping(value)) {
@@ -334,6 +457,8 @@ export function parseGitHubOptions(
 	if ('problem' in timeout) return timeout;
 	const spacing = parseNumber(options, 'writeSpacingSeconds', 1, n => n >= 0, 'zero or a positive number of seconds');
 	if ('problem' in spacing) return spacing;
+	const priority = parsePriority(options, prefixes.value);
+	if ('problem' in priority) return priority;
 	return {
 		settings: {
 			repo: repo.value,
@@ -348,6 +473,7 @@ export function parseGitHubOptions(
 			cacheTtlSeconds: cache.value,
 			timeoutSeconds: timeout.value,
 			writeSpacingSeconds: spacing.value,
+			priority: priority.value,
 		},
 	};
 }
@@ -444,6 +570,31 @@ export function checkOptionsAgainstProject(settings: GitHubSettings, project: Pr
 			return label.length > GITHUB_LABEL_MAX
 				? `typePrefix: the label of the type "${type}" would be ${label.length} characters (${label}); GitHub label names are at most ${GITHUB_LABEL_MAX}`
 				: `typePrefix: the label of the type "${type}" is not usable: ${bad}`;
+		}
+	}
+	return checkPriorities(settings, project);
+}
+
+/** The priority options against the priorities of the project (a hand-built fact list without them checks nothing). */
+function checkPriorities(settings: GitHubSettings, project: ProjectFacts): string | undefined {
+	const { priorities } = project;
+	if (priorities === undefined) return undefined;
+	const { priority } = settings;
+	for (const key of Object.keys(priority.map)) {
+		if (!priorities.includes(key)) {
+			return `priorityMap.${key}: the project has no priority "${key}" (priorities: ${priorities.join(', ')})`;
+		}
+	}
+	// Only a project that has to use labels is stopped by a label GitHub would refuse; with auto the field may be what is used.
+	if (priority.storage === 'label') {
+		for (const name of priorities) {
+			const mapped = Object.hasOwn(priority.map, name) ? priority.map[name] : undefined;
+			const label = mapped ?? `${priority.prefix}${name}`;
+			const bad = labelProblem(label);
+			if (bad === undefined) continue;
+			return mapped === undefined
+				? `priorityPrefix: the label of the priority "${name}" is not usable: ${bad}`
+				: `priorityMap.${name}: the label is not usable: ${bad}`;
 		}
 	}
 	return undefined;

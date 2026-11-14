@@ -1,4 +1,5 @@
 import { parseGitHubOptions } from './githubOptions.js';
+import { createPriorityContext } from './githubPriority.js';
 import { checkRevision, fieldHashes, revisionOf } from './githubRevision.js';
 import type { ApiIssue, MapContext } from './issueMapping.js';
 import { StatusMapper } from './statusMapping.js';
@@ -18,6 +19,7 @@ function context(extra: Partial<MapContext> = {}): MapContext {
 		metaFromLabels: true,
 		metaFromBlock: false,
 		projectTypes: [],
+		priority: createPriorityContext(parsed.settings.priority, ['urgent', 'high', 'medium', 'low']),
 		notice: () => undefined,
 		issueUrl,
 		...extra,
@@ -150,5 +152,90 @@ describe('revisionOf and checkRevision', () => {
 		const revision = revisionOf(issue({ title: 'secret title', body: 'secret body' }), 'e1', ctx);
 
 		expect(revision).not.toContain('secret');
+	});
+});
+
+describe('the priority and the claim are parts of their own', () => {
+	const claimBody = (json: string): string => `Body\n\n<!-- task:begin v1 -->${json}<!-- task:end -->`;
+
+	it('a priority label or field value changes the priority part and nothing else (it is not a user label)', () => {
+		// Where the priority lives decides what is a priority label: in labels the label is one, in the field it is an ordinary label.
+		const ctx = context();
+		ctx.priority.storage = 'label';
+		const base = fieldHashes(issue(), ctx);
+		const labelled = fieldHashes(issue({ labels: [label('priority:high')] }), ctx);
+		ctx.priority.storage = 'field';
+		const fielded = fieldHashes(
+			issue({
+				issue_field_values: [
+					{
+						issue_field_id: 7,
+						data_type: 'single_select',
+						issue_field_name: 'Priority',
+						value: 1,
+						single_select_option: { id: 1, name: 'High' },
+					},
+				],
+			}),
+			ctx
+		);
+
+		expect(labelled).toEqual({ ...base, priority: expect.not.stringMatching(base.priority) });
+		expect(fielded).toEqual({ ...base, priority: expect.not.stringMatching(base.priority) });
+		expect(labelled.priority).not.toBe(fielded.priority);
+	});
+
+	it('a claim changes the claim part only; a description edit changes body only', () => {
+		const ctx = context();
+		const base = fieldHashes(issue(), ctx);
+		const claimed = fieldHashes(issue({ body: claimBody('{"claim":{"assignee":"w1"}}') }), ctx);
+		const other = fieldHashes(issue({ body: claimBody('{"claim":{"assignee":"w2"}}') }), ctx);
+		const edited = fieldHashes(issue({ body: 'Other body' }), ctx);
+
+		expect(claimed.claim).not.toBe(base.claim);
+		// The managed block is not the text a person edits: the body part hashes the visible text only.
+		expect(claimed.body).toBe(base.body);
+		expect(other.claim).not.toBe(claimed.claim);
+		expect(edited.claim).toBe(base.claim);
+		expect(edited.body).not.toBe(base.body);
+	});
+
+	it('a claim is compared on the claim part: a description edited meanwhile is no conflict, another claim is', () => {
+		const ctx = context();
+		const before = revisionOf(issue({ body: claimBody('{"claim":{"assignee":"w1"}}') }), 'e1', ctx);
+		const edited = revisionOf(
+			issue({ body: `Edited\n\n<!-- task:begin v1 -->{"claim":{"assignee":"w1"}}<!-- task:end -->` }),
+			'e2',
+			ctx
+		);
+		const taken = revisionOf(issue({ body: claimBody('{"claim":{"assignee":"w2"}}') }), 'e3', ctx);
+
+		expect(checkRevision(before, edited, ['claim'])).toEqual([]);
+		expect(checkRevision(before, taken, ['claim'])).toEqual(['claim']);
+		expect(checkRevision(before, edited, ['body'])).toEqual(['body']);
+	});
+
+	it('the duplicate marker of the block is part of the dependencies, the visible text is not', () => {
+		const ctx = context();
+		const plain = fieldHashes(issue({ body: 'Text' }), ctx);
+		const marked = fieldHashes(
+			issue({
+				body: 'Text\n\n<!-- task:begin v1 -->{"links":[{"type":"duplicateOf","target":"12"}]}<!-- task:end -->',
+			}),
+			ctx
+		);
+
+		expect(marked.dependencies).not.toBe(plain.dependencies);
+		expect(marked.body).toBe(plain.body);
+	});
+
+	it('a corrupt claim block still hashes', () => {
+		expect(() =>
+			fieldHashes(issue({ body: '<!-- task:begin v1 -->{"claim":[]}<!-- task:end -->' }), context())
+		).not.toThrow();
+	});
+
+	it('the revision holds one hash per part, ten of them', () => {
+		expect(revisionOf(issue(), 'e', context())).toMatch(/#([0-9a-f]{6}\.){9}[0-9a-f]{6}$/);
 	});
 });

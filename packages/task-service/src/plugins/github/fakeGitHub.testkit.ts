@@ -55,6 +55,8 @@ export interface FakeIssue {
 	visibleAtSearch: number;
 	/** The issue list shows the issue once this many list requests have been made. */
 	visibleAtList: number;
+	/** Values of the issue fields: field id -> option name. */
+	fieldValues: Map<number, string>;
 }
 
 export interface NewIssue {
@@ -92,6 +94,8 @@ export interface RequestRecord {
 	at: number;
 	/** The parsed JSON body of a write; absent for a read or a write without body. */
 	body?: unknown;
+	/** The `X-GitHub-Api-Version` the request named; absent when it named none. */
+	apiVersion?: string;
 }
 
 export interface FakeGitHubOptions {
@@ -136,6 +140,16 @@ export interface FakeGitHubOptions {
 	admin?: boolean;
 	/** Milliseconds the fake clock moves for each change (GitHub's resolution is a second). Default 5000; 0 puts changes in one second. */
 	clockStepMs?: number;
+	/**
+	 * The single-select issue fields of the organization (`id` = `full_database_id`, the options by name, highest first). Absent: the
+	 * organization has none and the issues carry no `issue_field_values`.
+	 */
+	issueFields?: Array<{ id: number; name: string; options: string[] }>;
+	/**
+	 * What `GET /orgs/{owner}/issue-fields` answers: `forbidden` (measured with a token that has only Issues read and write: 403 naming
+	 * `issue_fields=read`, the default) or `readable` (a token with the organization permission).
+	 */
+	issueFieldDefinitions?: 'readable' | 'forbidden';
 }
 
 export interface ForcedResponse {
@@ -216,6 +230,9 @@ export class FakeGitHub {
 	private core: { limit: number; remaining: number; resetAt: number };
 	private search = { limit: 30, remaining: 30, resetAt: Math.floor(BASE_TIME / 1000) + 3600 };
 	private readonly faults: Fault[] = [];
+	/** One-shot callbacks of `beforeNextWrite` / `afterNextWrite`. */
+	private readonly beforeWrites: Array<() => void> = [];
+	private readonly afterWrites: Array<() => void> = [];
 	private readonly sockets = new Set<import('node:net').Socket>();
 	private readonly held: Array<http.ServerResponse> = [];
 	private readonly options: Required<Pick<FakeGitHubOptions, 'latencyMs' | 'searchLagRequests' | 'hasIssues'>> &
@@ -296,6 +313,7 @@ export class FakeGitHub {
 			duplicateTarget: null,
 			visibleAtSearch: this.searchCount + this.options.searchLagRequests,
 			visibleAtList: 0,
+			fieldValues: new Map(),
 		};
 		this.issues.set(issue.number, issue);
 		// Measured on the real API: the events of an issue created with labels (or a type) all carry one instant, one second after
@@ -324,6 +342,137 @@ export class FakeGitHub {
 
 	addRepoLabel(name: string, color = 'ededed'): void {
 		this.repoLabels.set(name, color);
+	}
+
+	// ---------------------------------------------------------------- issue fields (see the options and the ledger)
+
+	private fieldNamed(name: string): { id: number; name: string; options: string[] } {
+		const field = this.options.issueFields?.find(candidate => candidate.name.toLowerCase() === name.toLowerCase());
+		if (field === undefined) throw new Error(`the fake has no issue field named "${name}"`);
+		return field;
+	}
+
+	/** Sets (or, with null, clears) a value of an issue field the way a person would on GitHub. */
+	setIssueField(number: number, field: string, option: string | null): void {
+		const issue = this.require(number);
+		const definition = this.fieldNamed(field);
+		if (option === null) {
+			issue.fieldValues.delete(definition.id);
+			return;
+		}
+		if (!definition.options.includes(option)) {
+			throw new Error(`the issue field "${field}" of the fake has no option "${option}"`);
+		}
+		issue.fieldValues.set(definition.id, option);
+	}
+
+	/** The values an issue holds, by field name. */
+	fieldValuesOf(number: number): Record<string, string> {
+		const values: Record<string, string> = {};
+		for (const [id, option] of this.require(number).fieldValues) {
+			const definition = this.options.issueFields?.find(candidate => candidate.id === id);
+			values[definition?.name ?? String(id)] = option;
+		}
+		return values;
+	}
+
+	private optionId(field: { id: number; options: string[] }, option: string): number {
+		return field.id * 1000 + field.options.indexOf(option) + 1;
+	}
+
+	private fieldValuesJson(issue: FakeIssue): unknown[] {
+		const items: unknown[] = [];
+		for (const field of this.options.issueFields ?? []) {
+			const option = issue.fieldValues.get(field.id);
+			if (option === undefined) continue;
+			const id = this.optionId(field, option);
+			items.push({
+				issue_field_id: field.id,
+				node_id: `IFSSV_${field.id}_${issue.id}`,
+				data_type: 'single_select',
+				issue_field_name: field.name,
+				value: id,
+				single_select_option: { id, name: option, color: 'gray' },
+			});
+		}
+		return items;
+	}
+
+	/** The definitions in the shape of the MCP `list_issue_fields`; the REST shape was NOT observed (a 403 for the probe token). */
+	private fieldDefinitionsJson(): unknown[] {
+		return (this.options.issueFields ?? []).map(field => ({
+			id: `IFSS_${field.id}`,
+			full_database_id: field.id,
+			name: field.name,
+			data_type: 'SINGLE_SELECT',
+			options: field.options.map((name, index) => ({
+				id: this.optionId(field, name),
+				name,
+				color: 'GRAY',
+				priority: index + 1,
+			})),
+		}));
+	}
+
+	/** `GET /orgs/{owner}/issue-fields`: of the owner of the repository only (another organization is a 404, like any unknown route). */
+	private fieldDefinitions(path: string): {
+		status: number;
+		body: unknown;
+		headers?: Record<string, string>;
+		noRoute?: boolean;
+	} {
+		const owner = this.repo.split('/')[0]!.toLowerCase();
+		if (path.toLowerCase() !== `/orgs/${owner}/issue-fields`) {
+			return {
+				status: 404,
+				body: { message: 'Not Found', documentation_url: DOCS, status: '404' },
+				noRoute: true,
+			};
+		}
+		if (this.options.issueFieldDefinitions === 'readable') {
+			return { status: 200, body: this.fieldDefinitionsJson() };
+		}
+		return {
+			status: 403,
+			body: {
+				message: 'Resource not accessible by personal access token',
+				documentation_url: DOCS,
+				status: '403',
+			},
+			headers: { 'x-accepted-github-permissions': 'issue_fields=read' },
+		};
+	}
+
+	/** What the fake does not know about the real API: said loudly, never invented (the GitLab mock does the same). */
+	private notModelled(what: string): WriteAnswer {
+		return {
+			status: 501,
+			body: { message: `mock: not modelled: ${what}` },
+			headers: { 'x-mock-not-modelled': '1' },
+		};
+	}
+
+	/** PUT (replaces every value of the issue, measured) and POST (adds or updates, NOT probed) of `issue-field-values`. */
+	private writeFieldValues(method: string, issue: FakeIssue, input: Record<string, unknown>): WriteAnswer {
+		const list = input['issue_field_values'];
+		if (!Array.isArray(list)) return this.notModelled('issue-field-values without an issue_field_values list');
+		const next = new Map<number, string>(method === 'PUT' ? [] : issue.fieldValues);
+		for (const item of list as Array<Record<string, unknown>>) {
+			const field = this.options.issueFields?.find(candidate => candidate.id === item['field_id']);
+			if (field === undefined) {
+				return this.notModelled(
+					`an issue field with id ${JSON.stringify(item['field_id'])} (the status is not known)`
+				);
+			}
+			if (typeof item['value'] !== 'string' || !field.options.includes(item['value'])) {
+				return this.notModelled(
+					`the value ${JSON.stringify(item['value'])} for the field ${field.name}, which is not one of its options (the status of that refusal is not known)`
+				);
+			}
+			next.set(field.id, item['value']);
+		}
+		issue.fieldValues = next;
+		return { status: 200, body: this.fieldValuesJson(issue) };
 	}
 
 	updateIssue(number: number, patch: IssuePatch): void {
@@ -525,6 +674,19 @@ export class FakeGitHub {
 		for (let i = 0; i < times; i++) this.faults.push({ kind: 'respond', response });
 	}
 
+	/**
+	 * Runs `action` (a change another client makes) just BEFORE the next write is applied, after the strategy has read the issue: the
+	 * race of a check-then-write. Test hook, no HTTP form.
+	 */
+	beforeNextWrite(action: () => void): void {
+		this.beforeWrites.push(action);
+	}
+
+	/** Runs `action` just AFTER the next write is applied and before it is answered (another client writes right behind it). */
+	afterNextWrite(action: () => void): void {
+		this.afterWrites.push(action);
+	}
+
 	/** The next request's connection is destroyed before any answer (a network failure). */
 	dropNext(times = 1): void {
 		for (let i = 0; i < times; i++) this.faults.push({ kind: 'drop' });
@@ -608,6 +770,7 @@ export class FakeGitHub {
 			author_association: 'MEMBER',
 			type: issue.type === null ? null : this.typeJson(issue.type),
 			sub_issues_summary: this.servedSubIssueSummary(issue),
+			...(this.options.issueFields === undefined ? {} : { issue_field_values: this.fieldValuesJson(issue) }),
 			issue_dependencies_summary: this.servedDependencySummary(issue),
 			...(issue.parent === null ? {} : { parent_issue_url: this.issueUrl(this.require(issue.parent)) }),
 			...(issue.pull
@@ -660,6 +823,9 @@ export class FakeGitHub {
 			auth: 'missing',
 			conditional: req.headers['if-none-match'] !== undefined,
 			at: Date.now(),
+			...(typeof req.headers['x-github-api-version'] === 'string'
+				? { apiVersion: req.headers['x-github-api-version'] }
+				: {}),
 		};
 		this.requests.push(record);
 		const rawBody = await readBody(req);
@@ -789,7 +955,9 @@ export class FakeGitHub {
 		}
 
 		if (isWrite) {
+			this.beforeWrites.shift()?.();
 			const written = this.routeWrite(req.method ?? '', url, parsedBody, req.headers);
+			this.afterWrites.shift()?.();
 			if (written.noRoute === true) {
 				finish(written.status, written.body);
 				return;
@@ -890,6 +1058,7 @@ export class FakeGitHub {
 			};
 		}
 		if (path === '/search/issues') return this.searchIssues(url);
+		if (path.startsWith('/orgs/') && path.endsWith('/issue-fields')) return this.fieldDefinitions(path);
 
 		const repoMatch = /^\/repos\/([^/]+)\/([^/]+)(\/.*)?$/.exec(path);
 		if (repoMatch === null) return noRoute();
@@ -942,6 +1111,7 @@ export class FakeGitHub {
 		}
 		if (tail === '') return { status: 200, body: this.issueJson(issue) };
 		if (tail === 'labels') return this.paged(url, issue.labels, name => this.labelJson(name));
+		if (tail === 'issue-field-values') return { status: 200, body: this.fieldValuesJson(issue) };
 		if (tail === 'comments') {
 			return this.paged(url, issue.comments, comment => this.commentJson(issue, comment));
 		}
@@ -1285,6 +1455,20 @@ export class FakeGitHub {
 			issue.labels = issue.labels.filter(label => label !== held);
 			this.event(issue, 'unlabeled', { label: { name: held, color: this.repoLabels.get(held) ?? 'ededed' } });
 			return { status: 200, body: this.labelsJson(issue) };
+		}
+		if (tail === 'issue-field-values' && (method === 'PUT' || method === 'POST')) {
+			return this.writeFieldValues(method, issue, input);
+		}
+		const fieldValue = /^issue-field-values\/(\d+)$/.exec(tail);
+		if (fieldValue !== null && method === 'DELETE') {
+			const fieldId = Number(fieldValue[1]);
+			if (!issue.fieldValues.has(fieldId)) {
+				return this.notModelled(
+					`the deletion of a value the issue does not hold (field ${fieldId}); the status is not known`
+				);
+			}
+			issue.fieldValues.delete(fieldId);
+			return { status: 204, body: undefined };
 		}
 		if (tail === 'sub_issues' && method === 'POST') return this.addSubIssue(issue, input);
 		if (tail === 'sub_issue' && method === 'DELETE') {

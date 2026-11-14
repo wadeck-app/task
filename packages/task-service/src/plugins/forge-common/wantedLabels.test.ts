@@ -27,3 +27,21 @@ describe('wantedLabelsOf', () => {
 		expect(wanted.map(label => label.name)).toEqual(['Status:Review']);
 	});
 });
+
+describe('wantedLabelsOf: priority labels', () => {
+	it('come after the types and before the tombstone, in the order given; a name seen twice is one label', () => {
+		const fills = { delete: { use: 'tombstone' } } as unknown as DeclaredFills;
+		const wanted = wantedLabelsOf(settings, ['chore'], fills, 'task:deleted', n => n.toLowerCase(), [
+			{ name: 'priority:urgent', why: 'priority "urgent"' },
+			{ name: 'Priority:URGENT', why: 'again' },
+			{ name: 'priority:low', why: 'priority "low"' },
+		]);
+		expect(wanted.map(label => `${label.kind}:${label.name}`)).toEqual([
+			'status:Status:Review',
+			'type:type:chore',
+			'priority:priority:urgent',
+			'priority:priority:low',
+			'deleted:task:deleted',
+		]);
+	});
+});

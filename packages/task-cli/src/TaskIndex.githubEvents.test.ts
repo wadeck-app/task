@@ -203,32 +203,39 @@ describe('queue events: a github project emits what a local one does', () => {
 });
 
 describe('priority, assignee and claim on a github project', () => {
-	const commands: string[][] = [
-		['set-priority', '1', 'high'],
-		['unset-priority', '1'],
-		['set-assignee', '1', 'bob'],
-		['unset-assignee', '1'],
-		['claim', '1', '--as', 'w1'],
-		['release', '1'],
+	// The same use cases as a local project: the command works and raises the same event, once, after the write.
+	const commands: Array<[string[], string]> = [
+		[['set-priority', '1', 'high'], 'onTaskPriorityChanged'],
+		[['set-assignee', '1', 'bob'], 'onTaskAssigneeChanged'],
+		[['claim', '1', '--as', 'w1'], 'onTaskAssigneeChanged'],
 	];
 
-	it.each(commands)(
-		'%s is refused with exit 1, the strategy and the local alternative, and raises no event',
-		async (...args) => {
-			await runTaskCommand(['-p', github.name, 'new', 'Task'], github.dir);
-			publishMock.mockClear();
+	it.each(commands)('%j works on github and raises %s', async (args, event) => {
+		await runTaskCommand(['-p', github.name, 'new', 'Task'], github.dir);
+		publishMock.mockClear();
 
-			const text = await runTaskCommand(['-p', github.name, ...args], github.dir);
-			const asJson = await runTaskCommand(['-p', github.name, ...args, '--json'], github.dir);
+		const result = await runTaskCommand(['-p', github.name, ...args, '--json'], github.dir);
 
-			expect(text.exitCode).toBe(1);
-			expect(text.output).toContain('github');
-			expect(text.output).toMatch(/local/);
-			expect(asJson.exitCode).toBe(1);
-			const body = JSON.parse(asJson.output) as { error: string; hint: string };
-			expect(body.error).toContain('github');
-			expect(body.hint).toMatch(/local/);
-			expect(publishMock).not.toHaveBeenCalled();
-		}
-	);
+		expect(result.exitCode).toBe(0);
+		expect(pushed().map(entry => entry.event)).toEqual([event]);
+		expect(pushed()[0]!.payload).toMatchObject({ taskId: '1', taskProjectName: github.name });
+	});
+
+	it('unset-priority and release undo them, each with its event, and a released task can be claimed again', async () => {
+		await runTaskCommand(['-p', github.name, 'new', 'Task'], github.dir);
+		await runTaskCommand(['-p', github.name, 'set-priority', '1', 'high'], github.dir);
+		await runTaskCommand(['-p', github.name, 'claim', '1', '--as', 'w1'], github.dir);
+		publishMock.mockClear();
+
+		const unset = await runTaskCommand(['-p', github.name, 'unset-priority', '1'], github.dir);
+		const release = await runTaskCommand(['-p', github.name, 'release', '1'], github.dir);
+		const again = await runTaskCommand(['-p', github.name, 'claim', '1', '--as', 'w2'], github.dir);
+
+		expect([unset.exitCode, release.exitCode, again.exitCode]).toEqual([0, 0, 0]);
+		expect(pushed().map(entry => entry.event)).toEqual([
+			'onTaskPriorityChanged',
+			'onTaskAssigneeChanged',
+			'onTaskAssigneeChanged',
+		]);
+	});
 });

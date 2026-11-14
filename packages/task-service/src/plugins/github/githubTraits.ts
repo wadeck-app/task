@@ -34,6 +34,8 @@ export function githubTraits(settings: GitHubSettings, fills: DeclaredFills): Ba
 	const typePrefix = settings.typePrefix.toLowerCase();
 	const metaPrefix = settings.metaPrefix.toLowerCase();
 	const metaInLabels = fills['meta']?.use === 'labels';
+	// With the native field the prefix is free; with labels (or auto, which may fall back to them) it carries the priority of a task.
+	const priorityPrefix = settings.priority.storage === 'field' ? undefined : settings.priority.prefix.toLowerCase();
 
 	return {
 		keepsCreatedAt: false,
@@ -59,6 +61,9 @@ export function githubTraits(settings: GitHubSettings, fills: DeclaredFills): Ba
 			}
 			if (metaInLabels && lower.startsWith(metaPrefix))
 				return `"${label}" is reserved: it carries the metadata of a task`;
+			if (priorityPrefix !== undefined && lower.startsWith(priorityPrefix)) {
+				return `"${label}" is reserved: it carries the priority of a task`;
+			}
 			if (lower === TOMBSTONE_LABEL) return `"${label}" is reserved: it marks a deleted task`;
 			return undefined;
 		},

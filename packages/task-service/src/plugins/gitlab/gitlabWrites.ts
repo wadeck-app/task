@@ -65,13 +65,15 @@ import type { StatusRepresentation } from './gitlabStatusMapping.js';
 import type { ApiIssue, ApiNote, ApiProjectLabel } from './gitlabTypes.js';
 import type { WriteHost } from './gitlabWriteHost.js';
 
-type LabelKind = 'status' | 'type' | 'meta' | 'user' | 'deleted';
+type LabelKind = 'status' | 'type' | 'meta' | 'priority' | 'user' | 'deleted';
 
 /** The colour and description a label created by `task labels sync` gets (GitLab needs a colour: `#RRGGBB`). */
 const LABEL_STYLE: Record<LabelKind, { color: string; description?: string }> = {
 	status: { color: '#1d76db', description: 'Task status (set by the task tool)' },
 	type: { color: '#a2eeef', description: 'Task type (set by the task tool)' },
 	meta: { color: '#d4c5f9', description: 'Task metadata (set by the task tool)' },
+	// Not written by this strategy yet (priority on GitLab is a later stage); the shared label list may name the kind.
+	priority: { color: '#fbca04', description: 'Task priority (set by the task tool)' },
 	user: { color: '#ededed' },
 	deleted: { color: '#b60205', description: 'Deleted task, hidden by the task tool' },
 };

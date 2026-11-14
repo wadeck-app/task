@@ -4,9 +4,11 @@
 import { BackendDataError, BackendLimitError, TaskNotFoundError } from '@wadeck-app/task-core';
 import type {
 	BackendCapabilities,
+	BackendClaimInput,
 	BackendClaimResult,
 	BackendCommentChange,
 	BackendReleaseResult,
+	ReleaseOptions,
 	BackendCommentEdit,
 	CreateTaskInput,
 	LabelCount,
@@ -28,21 +30,25 @@ import type {
 
 import { GitHubHttpError } from './githubClient.js';
 import type { ClientResponse, GitHubClient } from './githubClient.js';
-import { refuseTaskField } from '../kinds.js';
 import type { DeclaredFills } from '../kinds.js';
 import type { GitHubSettings } from './githubOptions.js';
 import { revisionOf } from './githubRevision.js';
 import { CREATION_MEMORY_MS } from './responseCache.js';
 import { GitHubWriter } from './githubWrites.js';
+import { nameCarriesPriority } from './githubPriority.js';
+import { FIELDS_API_VERSION } from './githubPriorityStorage.js';
+import type { PriorityResolver } from './githubPriorityStorage.js';
 import {
 	activityOf,
 	commentsOf,
 	isPullRequest,
 	isTombstone,
+	labelNames,
 	iso,
 	linksOf,
 	metaOf,
 	parentNumber,
+	priorityOf,
 	replayHistory,
 	splitBody,
 	statusOfIssue,
@@ -72,10 +78,11 @@ export const GITHUB_CAPABILITIES: BackendCapabilities = Object.freeze({
 	// With fills.meta: labels the labels `meta:key=value` are read as meta; the plugin reports it as emulated.
 	meta: false,
 	comments: true,
-	// Not carried yet (stage 3): the operations answer UnsupportedByBackendError.
-	priority: false,
-	assignee: false,
-	claim: false,
+	// Priority: a native organization issue field or a label (priorityStorage); assignee and claim: the managed block of the body.
+	// No fill: all three work with nothing declared (see "Storage strategy: github" in CLAUDE.md).
+	priority: true,
+	assignee: true,
+	claim: true,
 	writes: 'full',
 	// The list carries the parent of each issue, not its links.
 	indexedGraph: false,
@@ -151,6 +158,8 @@ export interface GitHubBackendInit {
 	newIssueUrl: string;
 	/** The fills the project declared (`strategy.options.fills`): they decide what meta, delete and duplicateOf do. */
 	fills: DeclaredFills;
+	/** Where the priority lives: a read uses what is known without a request (see PriorityResolver.known / forRead), a priority write resolves it. */
+	priority: PriorityResolver;
 }
 
 export class GitHubBackend implements TaskBackend {
@@ -159,6 +168,7 @@ export class GitHubBackend implements TaskBackend {
 	private readonly settings: GitHubSettings;
 	private readonly fills: DeclaredFills;
 	private readonly writer: GitHubWriter;
+	private readonly priority: PriorityResolver;
 	private readonly client: GitHubClient;
 	private readonly map: MapContext;
 	private readonly issueUrl: (number: number) => string;
@@ -173,6 +183,7 @@ export class GitHubBackend implements TaskBackend {
 		this.newIssueUrl = init.newIssueUrl;
 		this.repoPath = `/repos/${init.settings.repo.full}`;
 		this.fills = init.fills;
+		this.priority = init.priority;
 		this.capabilities = githubCapabilities(init.fills);
 		this.writer = new GitHubWriter({
 			settings: init.settings,
@@ -185,6 +196,7 @@ export class GitHubBackend implements TaskBackend {
 			readRecord: id => this.get(id),
 			related: path => this.related(path),
 			mayHaveChildren: issue => this.mayHaveChildren(issue),
+			priority: this.priority,
 		});
 	}
 
@@ -209,10 +221,15 @@ export class GitHubBackend implements TaskBackend {
 		if (number === undefined) throw new TaskNotFoundError(id);
 		let response: ClientResponse<ApiIssue>;
 		try {
-			response = await this.client.get<ApiIssue>(`${this.repoPath}/issues/${number}`, {
-				allowNotFound: true,
-				...(options.revalidate === true ? { revalidate: true } : {}),
-			});
+			response = await this.withStorage(
+				version =>
+					this.client.get<ApiIssue>(`${this.repoPath}/issues/${number}`, {
+						allowNotFound: true,
+						...(options.revalidate === true ? { revalidate: true } : {}),
+						...version,
+					}),
+				answer => (answer.status === 404 ? [] : [answer.body])
+			);
 		} catch (error) {
 			if (error instanceof GitHubHttpError && error.status === 410) throw new TaskNotFoundError(id);
 			throw error;
@@ -221,10 +238,47 @@ export class GitHubBackend implements TaskBackend {
 		return { issue: response.body, response };
 	}
 
+	/**
+	 * The API version asked for the reads that must carry the values of the issue fields (the issue and the list), when the priority lives
+	 * in the field. Every other request keeps the default version.
+	 */
+	private versionFor(storage: 'field' | 'label' | undefined): { apiVersion?: string } {
+		return storage === 'field' ? { apiVersion: FIELDS_API_VERSION } : {};
+	}
+
+	private hasPrioritySign(issue: ApiIssue): boolean {
+		return labelNames(issue).some(name => nameCarriesPriority(name, this.settings.priority));
+	}
+
+	/**
+	 * A read of issues that does not wait for the question of where the priority lives: the explicit settings and what was remembered
+	 * say it without a request; when nothing is known the issues are read with the default version, and only a priority label among
+	 * them makes the question worth asking (a failure to ask reads as labels, with a notice). If the answer is the field, the read is
+	 * made again with the version that carries the values.
+	 */
+	private async withStorage<T>(
+		load: (version: { apiVersion?: string }) => Promise<T>,
+		issuesOf: (data: T) => ApiIssue[]
+	): Promise<T> {
+		const before = this.priority.known();
+		const data = await load(this.versionFor(before));
+		if (before !== undefined) return data;
+		let storage = this.priority.known();
+		if (storage === undefined && issuesOf(data).some(issue => this.hasPrioritySign(issue))) {
+			storage = await this.priority.forRead();
+		}
+		return storage === 'field' ? load(this.versionFor('field')) : data;
+	}
+
 	private async issuesAll(): Promise<{ issues: ApiIssue[]; stale: boolean }> {
-		const all = await this.client.getAll<ApiIssue>(`${this.repoPath}/issues`, {
-			query: { state: 'all', per_page: this.settings.pageSize, sort: 'created', direction: 'asc' },
-		});
+		const all = await this.withStorage(
+			version =>
+				this.client.getAll<ApiIssue>(`${this.repoPath}/issues`, {
+					query: { state: 'all', per_page: this.settings.pageSize, sort: 'created', direction: 'asc' },
+					...version,
+				}),
+			answer => answer.items
+		);
 		const issues = all.items.filter(issue => !isPullRequest(issue) && !isTombstone(issue));
 		issues.push(...(await this.missingRecent(new Set(issues.map(issue => issue.number)), 0)));
 		return { issues, stale: all.stale };
@@ -250,6 +304,8 @@ export class GitHubBackend implements TaskBackend {
 
 	/** The issues on the other end of a relation list (`dependencies/...`, `sub_issues`), this repository's only. */
 	private async related(path: string): Promise<ApiIssue[]> {
+		// The default version: the values of the issue fields are not read on these lists (the labels still are).
+		this.priority.known();
 		const all = await this.client.getAll<ApiIssue>(path, { query: { per_page: this.settings.pageSize } });
 		const own: ApiIssue[] = [];
 		for (const issue of all.items) {
@@ -269,6 +325,17 @@ export class GitHubBackend implements TaskBackend {
 
 	private sameRepository(repositoryUrl: string): boolean {
 		return repositoryUrl.toLowerCase().endsWith(`/repos/${this.settings.repo.full.toLowerCase()}`);
+	}
+
+	// ---------------------------------------------------------------- preparing the reads
+
+	/**
+	 * A dispatch read needs the priority of every task: resolve where it lives (the memory of an earlier command, else the definitions
+	 * request in `auto`), so the list that follows carries the field values. Loud, like a priority write: `priorityStorage: field` with
+	 * no way to find the field is an error with the fix; `auto` that cannot read the definitions is label storage, quietly.
+	 */
+	async prepare(needs: { priority?: boolean }): Promise<void> {
+		if (needs.priority === true) await this.priority.resolve();
 	}
 
 	// ---------------------------------------------------------------- reads: records
@@ -309,9 +376,11 @@ export class GitHubBackend implements TaskBackend {
 					'Raise strategy.options.maxPages in the project config, or ask for a narrower page.'
 				);
 			}
-			const page: ClientResponse<ApiIssue[] | { items: ApiIssue[] }> = await this.client.getUrl(url, {
-				cache: !searching,
-			});
+			const fetchUrl = url;
+			const page: ClientResponse<ApiIssue[] | { items: ApiIssue[] }> = await this.withStorage(
+				version => this.client.getUrl(fetchUrl, { cache: !searching, ...version }),
+				answer => (Array.isArray(answer.body) ? answer.body : answer.body.items)
+			);
 			const issues = (Array.isArray(page.body) ? page.body : page.body.items).filter(
 				issue => !isPullRequest(issue) && !isTombstone(issue)
 			);
@@ -410,11 +479,12 @@ export class GitHubBackend implements TaskBackend {
 	 */
 	async resolve(prefix: string): Promise<ResolvedTask> {
 		const { issue, response } = await this.issue(prefix);
-		const { description } = splitBody(issue, this.map);
+		const { description, claim } = splitBody(issue, this.map);
 		const parent = parentNumber(issue, this.map);
 		const type = typeOf(issue, this.map);
 		const labels = userLabels(issue, this.map);
 		const meta = metaOf(issue, this.map);
+		const priority = priorityOf(issue, this.map);
 		return {
 			id: String(issue.number),
 			title: issue.title,
@@ -424,6 +494,8 @@ export class GitHubBackend implements TaskBackend {
 			...(type === undefined ? {} : { type }),
 			...(labels.length === 0 ? {} : { labels }),
 			...(meta === undefined ? {} : { meta }),
+			...(priority === undefined ? {} : { priority }),
+			...(claim === undefined ? {} : { assignee: claim.assignee }),
 			createdAt: iso(issue.created_at),
 			updatedAt: iso(issue.updated_at),
 			revision: revisionOf(issue, response.etag, this.map),
@@ -456,12 +528,13 @@ export class GitHubBackend implements TaskBackend {
 			this.client.getAll<ApiEvent>(`${base}/timeline`, { query }),
 			this.mayHaveBlockers(issue) ? this.related(`${base}/dependencies/blocked_by`) : [],
 		]);
-		const { description, duplicateOf } = splitBody(issue, this.map);
+		const { description, duplicateOf, claim } = splitBody(issue, this.map);
 		const status = statusOfIssue(issue, this.map);
 		const parent = parentNumber(issue, this.map);
 		const type = typeOf(issue, this.map);
 		const labels = userLabels(issue, this.map);
 		const meta = metaOf(issue, this.map);
+		const priority = priorityOf(issue, this.map);
 		const links = linksOf(
 			blockers.map(blocker => blocker.number),
 			duplicateOf
@@ -482,6 +555,10 @@ export class GitHubBackend implements TaskBackend {
 			...(type === undefined ? {} : { type }),
 			...(labels.length === 0 ? {} : { labels }),
 			...(meta === undefined ? {} : { meta }),
+			...(priority === undefined ? {} : { priority }),
+			...(claim === undefined ? {} : { assignee: claim.assignee }),
+			...(claim?.claimedAt === undefined ? {} : { claimedAt: claim.claimedAt }),
+			...(claim?.leaseUntil === undefined ? {} : { leaseUntil: claim.leaseUntil }),
 			createdAt: iso(issue.created_at),
 			updatedAt: iso(issue.updated_at),
 			history: replayHistory(issue, timeline.items, this.map, status),
@@ -821,29 +898,29 @@ export class GitHubBackend implements TaskBackend {
 		return this.writer.removeComment(id, commentId, options);
 	}
 
-	// Priority, assignee and claim: not available on this storage strategy yet (stage 3 / 4 of the priority plan); each answers UnsupportedByBackendError.
-	setPriority(): Promise<VersionedRecord> {
-		return refuseTaskField('github', 'setPriority');
+	// Priority (native issue field or label), assignee and claim (the managed block of the body): see githubWrites.ts.
+	setPriority(id: string, priority: string, options?: WriteOptions): Promise<VersionedRecord> {
+		return this.writer.setPriority(id, priority, options);
 	}
 
-	clearPriority(): Promise<VersionedRecord> {
-		return refuseTaskField('github', 'clearPriority');
+	clearPriority(id: string, options?: WriteOptions): Promise<VersionedRecord> {
+		return this.writer.clearPriority(id, options);
 	}
 
-	setAssignee(): Promise<VersionedRecord> {
-		return refuseTaskField('github', 'setAssignee');
+	setAssignee(id: string, assignee: string, options?: WriteOptions): Promise<VersionedRecord> {
+		return this.writer.setAssignee(id, assignee, options);
 	}
 
-	clearAssignee(): Promise<VersionedRecord> {
-		return refuseTaskField('github', 'clearAssignee');
+	clearAssignee(id: string, options?: WriteOptions): Promise<VersionedRecord> {
+		return this.writer.clearAssignee(id, options);
 	}
 
-	claim(): Promise<BackendClaimResult> {
-		return refuseTaskField('github', 'claim');
+	claim(id: string, input: BackendClaimInput): Promise<BackendClaimResult> {
+		return this.writer.claim(id, input);
 	}
 
-	release(): Promise<BackendReleaseResult> {
-		return refuseTaskField('github', 'release');
+	release(id: string, options?: ReleaseOptions): Promise<BackendReleaseResult> {
+		return this.writer.release(id, options);
 	}
 
 	deleteTask(id: string, options?: WriteOptions): Promise<boolean> {

@@ -566,3 +566,52 @@ describe('GitHubClient: a read sends GET only', () => {
 		).toEqual([]);
 	});
 });
+
+describe('GitHubClient: the API version', () => {
+	const versions = (calls: string[]): typeof fetch => {
+		return (input, init) => {
+			calls.push(`${init?.method ?? 'GET'} ${new Headers(init?.headers).get('x-github-api-version')}`);
+			return fetch(input, init);
+		};
+	};
+
+	it('sends the default version, and the one a single request asks for', async () => {
+		const number = fake.addIssue({ title: 'First' });
+		const calls: string[] = [];
+		const c = client({ fetch: versions(calls), cacheTtlMs: 0 });
+		const path = `/repos/acme/shop/issues/${number}`;
+
+		await c.get(path);
+		await c.get(path, { apiVersion: '2026-03-10' });
+		await c.get(path);
+		await c.get(path, { apiVersion: '2022-11-28' });
+		await c.write('PATCH', path, { title: 'x' });
+		await c.write('PATCH', path, { title: 'y' }, { apiVersion: '2022-11-28' });
+		await c.write('PATCH', path, { title: 'z' }, { apiVersion: '2026-03-10' });
+
+		expect(calls).toEqual([
+			'GET 2022-11-28',
+			'GET 2026-03-10',
+			'GET 2022-11-28',
+			'GET 2022-11-28',
+			'PATCH 2022-11-28',
+			'PATCH 2022-11-28',
+			'PATCH 2026-03-10',
+		]);
+	});
+
+	it('caches the answers of two versions apart: an answer read for one version is never served for the other', async () => {
+		const number = fake.addIssue({ title: 'First' });
+		const calls: string[] = [];
+		const c = client({ fetch: versions(calls), cacheTtlMs: 60_000 });
+		const path = `/repos/acme/shop/issues/${number}`;
+
+		await c.get(path);
+		await c.get(path);
+		await c.get(path, { apiVersion: '2026-03-10' });
+		await c.get(path, { apiVersion: '2026-03-10' });
+
+		// One request per version: the second read of each is served from the cache.
+		expect(calls).toEqual(['GET 2022-11-28', 'GET 2026-03-10']);
+	});
+});

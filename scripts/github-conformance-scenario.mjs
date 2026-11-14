@@ -432,6 +432,50 @@ export function steps() {
 		labels: Array.from({ length: 100 }, (_, i) => `conf-{{run}}-huge${i}`),
 	});
 	get('GET H after 100 new labels', `${I('h')}/labels`, { wait: 3000 });
+	// ================================ group: issue fields (NOT RECORDED YET)
+	// The steps below are the requests the priority-in-an-issue-field storage sends. They are NOT in the fixture: the 2026-11-14 probe
+	// (scripts/live-github-fields-probe.mjs) measured the routes with another script and nothing was recorded through this one. They
+	// need a repository of an organization that has an issue field, whose numeric id is given as the variable fieldId (a run without
+	// it skips them, loudly, and leaves them out of the fixture). Record them with GH_TEST_FIELD_ID once the owner agrees, then move
+	// the ledger rows G-fields from DOCUMENTED-NOT-LIVE to LIVE-VERIFIED naming them. The fake answers 501 "mock: not modelled" for
+	// anything these steps ask that the ledger does not list.
+	// The whole group (the issue it creates included) is recorded ONLY when GH_TEST_FIELD_ID is set: each of its steps carries
+	// `needs: 'fieldId'`, which the recorder checks (a skipped run creates no issue and records no 403 or 404).
+	const fieldsFrom = s.length;
+	const FIELDS = { 'X-GitHub-Api-Version': '2026-03-10' };
+	mk('create I (issue field)', 'i', { title: T('I') });
+	get('GET issue field values of I (none yet)', `${I('i')}/issue-field-values`, { headers: FIELDS });
+	add(
+		'PUT issue field value on I',
+		'PUT',
+		`${I('i')}/issue-field-values`,
+		{
+			issue_field_values: [{ field_id: '{{fieldId:n}}', value: '{{fieldOption}}' }],
+		},
+		{ headers: FIELDS }
+	);
+	get('GET I carries the issue field values', I('i'), { headers: FIELDS });
+	get('GET the issue list carries the issue field values', `${R}/issues?per_page=100&state=all`, {
+		headers: FIELDS,
+		subset: true,
+	});
+	add(
+		'PUT issue field value with an unknown option',
+		'PUT',
+		`${I('i')}/issue-field-values`,
+		{
+			issue_field_values: [{ field_id: '{{fieldId:n}}', value: 'conf-no-such-option' }],
+		},
+		{ headers: FIELDS }
+	);
+	add('DELETE issue field value on I', 'DELETE', `${I('i')}/issue-field-values/{{fieldId}}`, undefined, {
+		headers: FIELDS,
+	});
+	add('DELETE issue field value that is not set', 'DELETE', `${I('i')}/issue-field-values/{{fieldId}}`, undefined, {
+		headers: FIELDS,
+	});
+	get('GET the issue fields of the organization', 'orgs/{{owner}}/issue-fields', { headers: FIELDS, subset: true });
+	for (const step of s.slice(fieldsFrom)) step.needs = 'fieldId';
 	return s;
 }
 
@@ -440,10 +484,22 @@ export async function runScenario({ call, repo, run, apiBase, track, source }) {
 	const kit = await import(kitUrl);
 	const ctx = { run, apiBase };
 	const vars = kit.scenarioVariables(repo, run);
+	// The issue field group (see "group: issue fields"): only when the run names a field; else those steps are skipped, loudly.
+	vars.owner = repo.split('/')[0];
+	if (process.env.GH_TEST_FIELD_ID) vars.fieldId = process.env.GH_TEST_FIELD_ID;
+	if (process.env.GH_TEST_FIELD_OPTION) vars.fieldOption = process.env.GH_TEST_FIELD_OPTION;
 	const out = [];
 	const base = new Date().toISOString().slice(0, 10);
 	// GH_SCENARIO_FROM=<step name> records only the tail of the scenario starting at that step (a few steps added later).
-	const all = steps();
+	let all = steps();
+	// The group "issue fields" runs only when the run names the field (GH_TEST_FIELD_ID): said loudly when it does not.
+	const gated = all.filter(step => step.needs !== undefined && vars[step.needs] === undefined);
+	if (gated.length > 0) {
+		console.log(
+			`  !!! ${gated.length} steps of the group "issue fields" SKIPPED: GH_TEST_FIELD_ID is not set (they are not recorded; set it, with GH_TEST_FIELD_OPTION, to a field of the organization to record them)`
+		);
+		all = all.filter(step => !gated.includes(step));
+	}
 	const from = process.env.GH_SCENARIO_FROM;
 	const start = from === undefined || from === '' ? 0 : all.findIndex(candidate => candidate.name === from);
 	if (start < 0) throw new Error(`GH_SCENARIO_FROM: no scenario step is named "${from}"`);
@@ -490,8 +546,9 @@ export async function runScenario({ call, repo, run, apiBase, track, source }) {
 		console.log(
 			`  ${String(r.status).padStart(3)} ${String(r.ms).padStart(5)}ms ${step.name}${problems.length ? ` !! ${problems.join('; ')}` : ''}`
 		);
-		const { track: _track, ...kept } = step;
+		const { track: _track, needs: _needs, ...kept } = step;
 		void _track;
+		void _needs;
 		out.push({ ...kept, expect });
 	}
 	return { format: 1, recordedAt: base, source, steps: out };

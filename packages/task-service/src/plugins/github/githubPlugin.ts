@@ -7,6 +7,8 @@ import { GITHUB_CAPABILITIES, GitHubBackend, githubCapabilities } from './GitHub
 import { checkGitHub } from './githubCheck.js';
 import { GitHubClient } from './githubClient.js';
 import { checkOptionsAgainstProject, parseGitHubOptions } from './githubOptions.js';
+import { createPriorityContext } from './githubPriority.js';
+import { PriorityResolver } from './githubPriorityStorage.js';
 import type { GitHubSettings } from './githubOptions.js';
 import { resolveToken } from './githubToken.js';
 import { githubTraits } from './githubTraits.js';
@@ -39,6 +41,11 @@ export const githubPlugin: StrategyPlugin = {
 	},
 	// What is only partly true, said once and printed by `task strategy show` as `partial`.
 	capabilityNotes: {
+		priority:
+			'an issue field (single select, organization) or a label priority:<name>: see priorityStorage; the change is not in the timeline',
+		assignee:
+			'stored in a hidden block of the issue body (not the GitHub assignee); optimistic: a race of one PATCH remains',
+		claim: 'stored in the same hidden block of the body; optimistic (check, then write), not atomic',
 		hierarchy: 'sub-issues: 8 levels, 100 per parent; a parent in another repository reads as no parent',
 		history: 'derived from the timeline (labels, close, reopen), not stored',
 		activity: 'the timeline mapped; edits of the description are not readable (GraphQL only)',
@@ -85,6 +92,12 @@ export const githubPlugin: StrategyPlugin = {
 				typeMap:
 					'task type -> { issueType: <GitHub issue type> } or { label: <name> }; default: the label typePrefix + type',
 				metaPrefix: 'label prefix of metadata with fills.meta: labels; default "meta:" (labels meta:key=value)',
+				priorityStorage:
+					'auto (default: the issue field when the definitions are readable or priorityFieldId is set, else a label) | field | label',
+				priorityFieldId: 'numeric id of the issue field of the priority (skips the definitions request)',
+				priorityFieldName: 'name of the issue field to look for with auto; default "Priority"',
+				priorityPrefix: 'label prefix of the priority with label storage; default "priority:"',
+				priorityMap: 'task priority -> GitHub option or label name; default: the priority name itself',
 				pageSize: 'items per request, 1 to 100; default 100',
 				maxPages: 'pages one read may walk before failing loudly, 1 to 1000; default 50',
 				cache: '{ ttlSeconds }: seconds a read is served without asking GitHub; default 60, 0 = always revalidate',
@@ -161,7 +174,18 @@ export const githubPlugin: StrategyPlugin = {
 			onNotice: notice,
 			...(debug ? { debug: (line: string) => context.log('info', `github: ${line}`) } : {}),
 		});
+		const priorityContext = createPriorityContext(settings.priority, context.priorities);
+		const priorityResolver = new PriorityResolver({
+			client,
+			settings: settings.priority,
+			owner: settings.repo.owner,
+			baseUrl: settings.baseUrl,
+			notice,
+			context: priorityContext,
+			cache,
+		});
 		const backend = new GitHubBackend({
+			priority: priorityResolver,
 			settings,
 			client,
 			issueUrl,
@@ -173,6 +197,7 @@ export const githubPlugin: StrategyPlugin = {
 				metaFromLabels: context.fills['meta']?.use === 'labels',
 				metaFromBlock: context.fills['meta']?.use === 'body-block',
 				projectTypes: context.types,
+				priority: priorityContext,
 				notice,
 				issueUrl,
 			},
@@ -196,6 +221,7 @@ export const githubPlugin: StrategyPlugin = {
 					tokenHint: tokenSentence(settings),
 					fills: context.fills,
 					projectName: context.project.name,
+					priority: { resolver: priorityResolver, context: priorityContext },
 				}),
 			takeNotices: () => notices.splice(0, notices.length),
 			dispose: () => Promise.resolve(),

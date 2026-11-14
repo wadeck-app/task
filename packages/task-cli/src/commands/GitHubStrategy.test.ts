@@ -367,9 +367,16 @@ describe('task labels sync on a github project', () => {
 
 		expect(first.exitCode).toBe(0);
 		expect(first.output).toMatch(/created\s+status:in-progress/);
-		expect([...fake.repoLabels.keys()]).toEqual(['status:in-progress']);
+		// The priority of the project lives in labels here (the fake refuses the issue field definitions, so `auto` falls back).
+		expect([...fake.repoLabels.keys()]).toEqual([
+			'status:in-progress',
+			'priority:urgent',
+			'priority:high',
+			'priority:medium',
+			'priority:low',
+		]);
 		expect(second.output).toContain('nothing to create');
-		expect(fake.writes()).toHaveLength(1);
+		expect(fake.writes()).toHaveLength(5);
 	});
 
 	it('--json is the report of the service', async () => {
@@ -379,7 +386,11 @@ describe('task labels sync on a github project', () => {
 			existing: string[];
 		};
 
-		expect(report).toMatchObject({ dryRun: false, created: ['status:in-progress'], existing: [] });
+		expect(report).toMatchObject({
+			dryRun: false,
+			created: ['status:in-progress', 'priority:urgent', 'priority:high', 'priority:medium', 'priority:low'],
+			existing: [],
+		});
 	});
 
 	it('an unknown argument is a usage error', async () => {

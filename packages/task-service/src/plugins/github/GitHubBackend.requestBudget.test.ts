@@ -21,6 +21,10 @@ import { openResolvedProject } from '../../openContext.js';
 import { resolveProject } from '../../resolveProject.js';
 import { setStatus } from '../../setStatus.js';
 import { setTaskText } from '../../setTaskText.js';
+import { listTasks } from '../../listTasks.js';
+import { setTaskAssignee } from '../../taskAssignee.js';
+import { claimTask, releaseTask } from '../../taskClaim.js';
+import { clearTaskPriority, setTaskPriority } from '../../taskPriority.js';
 import { ownConfigFile } from '../../storage.js';
 import { addLabel } from '../../taskFields.js';
 import { createSharedRegistrySandbox } from '../../testHelpers.js';
@@ -57,6 +61,7 @@ strategy:
         cache: { ttlSeconds: 0 }
         timeoutSeconds: 3
         writeSpacingSeconds: 0
+        priorityStorage: label
         statusMap:
             backlog: { state: open }
             in-progress: { state: open, label: 'status:in-progress' }
@@ -69,6 +74,7 @@ strategy:
 	fake.addRepoLabel('status:in-progress');
 	fake.addRepoLabel('task:deleted');
 	fake.addRepoLabel('urgent');
+	fake.addRepoLabel('priority:high');
 });
 
 afterEach(async () => {
@@ -113,6 +119,13 @@ const BUDGET: Record<string, { total: number; writes: number }> = {
 	// An issue with comments and a blocker: the record read after the write has the comments and the blockers, the resolution has not.
 	'set-status (3 comments, 1 blocker)': { total: 8, writes: 1 },
 	'delete (tombstone)': { total: 9, writes: 2 },
+	// Priority in a label (a swap is ONE PATCH), assignee and claim (ONE PATCH of the body each; the claim reads the issue once to
+	// resolve the id and once to decide).
+	'set-priority (label)': { total: 6, writes: 1 },
+	'unset-priority (label)': { total: 5, writes: 1 },
+	'set-assignee': { total: 5, writes: 1 },
+	claim: { total: 5, writes: 1 },
+	release: { total: 5, writes: 1 },
 };
 
 const results = new Map<string, Measure>();
@@ -148,6 +161,16 @@ describe('request budget of the github writes (ttl 0, fresh process per command)
 			})
 		);
 
+		const p = fake.addIssue({ title: 'Prioritized task' });
+		results.set(
+			'set-priority (label)',
+			await measure(ctx => setTaskPriority(ctx, { id: String(p), priority: 'high' }))
+		);
+		results.set('unset-priority (label)', await measure(ctx => clearTaskPriority(ctx, { id: String(p) })));
+		results.set('set-assignee', await measure(ctx => setTaskAssignee(ctx, { id: String(p), assignee: 'w1' })));
+		results.set('claim', await measure(ctx => claimTask(ctx, { id: String(p), assignee: 'w1', renew: true })));
+		results.set('release', await measure(ctx => releaseTask(ctx, { id: String(p) })));
+
 		const table = [...results].map(
 			([name, m]) => `${name.padEnd(36)} ${String(m.total).padStart(3)} requests, ${m.writes} write(s)`
 		);
@@ -161,5 +184,39 @@ describe('request budget of the github writes (ttl 0, fresh process per command)
 					`${name}: ${m.total} requests / ${m.writes} writes, budget ${BUDGET[name]!.total} / ${BUDGET[name]!.writes}`
 			);
 		expect(over).toEqual([]);
+	});
+});
+
+describe('the request that resolves priorityStorage: auto (the default)', () => {
+	beforeEach(() => {
+		// The default: no priorityStorage in the config, so `auto`. The fake refuses the definitions (an Issues-only token).
+		const file = ownConfigFile(resolveProject({ cwd: projectDir, env: sandbox.env }).storage);
+		fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('        priorityStorage: label\n', ''));
+	});
+
+	it('a project that never uses a priority pays nothing for it: no request about it on reads and on other writes', async () => {
+		const a = fake.addIssue({ title: 'First task' });
+
+		const first = await measure(ctx => setTaskText(ctx, { id: String(a), title: 'Renamed' }));
+		const second = await measure(ctx => setTaskText(ctx, { id: String(a), title: 'Renamed again' }));
+		const listed = await measure(ctx => listTasks(ctx, {}));
+
+		expect(first.lines.some(line => line.includes('/orgs/'))).toBe(false);
+		expect([first.total, second.total]).toEqual([5, 5]);
+		expect(listed.lines).toEqual(['GET /issues']);
+	});
+
+	it('is paid once by the first priority write of a project, then remembered by the processes', async () => {
+		const a = fake.addIssue({ title: 'First task' });
+
+		const first = await measure(ctx => setTaskPriority(ctx, { id: String(a), priority: 'high' }));
+		const second = await measure(ctx => clearTaskPriority(ctx, { id: String(a) }));
+		const listed = await measure(ctx => listTasks(ctx, {}));
+
+		expect(first.lines.filter(line => line.includes('/orgs/'))).toEqual(['GET /orgs/acme/issue-fields']);
+		expect(first.total).toBe(7);
+		expect(second.lines.some(line => line.includes('/orgs/'))).toBe(false);
+		expect(second.total).toBe(5);
+		expect(listed.lines).toEqual(['GET /issues']);
 	});
 });

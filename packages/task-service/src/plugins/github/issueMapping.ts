@@ -17,8 +17,11 @@ import { activityPreview, BackendDataError } from '@wadeck-app/task-core';
 import type { ActivityEntry, TaskComment, TaskLink, TaskRecord, TaskSummary } from '@wadeck-app/task-core';
 
 import { readManagedBlock } from '../forge-common/managedBlock.js';
+import type { BlockClaim } from '../forge-common/managedBlock.js';
 import type { ReadNotice } from '../kinds.js';
 import type { GitHubSettings } from './githubOptions.js';
+import { isPriorityLabel, priorityOfLabel, readPriority } from './githubPriority.js';
+import type { ApiFieldValue, PriorityContext } from './githubPriority.js';
 import type { StatusMapper } from './statusMapping.js';
 
 export interface ApiLabel {
@@ -43,6 +46,8 @@ export interface ApiIssue {
 	sub_issues_summary?: { total: number; completed: number };
 	issue_dependencies_summary?: { total_blocked_by: number; total_blocking: number };
 	pull_request?: unknown;
+	/** The values of the organization issue fields of the issue (the list carries them too); measured on 2026-11-14 with API version 2026-03-10; what an older version returns is NOT known). */
+	issue_field_values?: ApiFieldValue[];
 }
 
 export interface ApiComment {
@@ -69,6 +74,8 @@ export interface MapContext {
 	metaFromBlock: boolean;
 	/** The valid task types of the project (empty = any). */
 	projectTypes: readonly string[];
+	/** How a priority is read from an issue (the field value or the priority label) and written. */
+	priority: PriorityContext;
 	/** Called for something left out of a read that the user should know. */
 	notice: (notice: ReadNotice) => void;
 	issueUrl: (number: number) => string;
@@ -129,14 +136,46 @@ export function statusOfIssue(issue: ApiIssue, ctx: MapContext): string {
 	});
 }
 
+/** The task priority an issue has (its field value or its priority label); undefined without one. */
+export function priorityOf(issue: ApiIssue, ctx: MapContext): string | undefined {
+	return readPriority(issue, ctx.priority, ctx.issueUrl, text => {
+		if (ctx.priority.reported.has(text)) return;
+		ctx.priority.reported.add(text);
+		ctx.notice({ kind: 'ignored', text });
+	});
+}
+
+/**
+ * Who holds the issue (the claim of its managed block), for a LIST: a block that cannot be read must not fail the whole list, so
+ * the issue reads as held by nobody and the read says so (the write that touches the issue reports the block as an error).
+ */
+function claimForSummary(issue: ApiIssue, ctx: MapContext): BlockClaim | undefined {
+	if (!(issue.body ?? '').includes('task:begin')) return undefined;
+	try {
+		return splitBody(issue, ctx).claim;
+	} catch (error) {
+		if (!(error instanceof BackendDataError)) throw error;
+		ctx.notice({
+			kind: 'ignored',
+			text: `${error.message}; its assignee and lease read as none until it is repaired (${error.hint})`,
+		});
+		return undefined;
+	}
+}
+
 export function toSummary(issue: ApiIssue, ctx: MapContext): TaskSummary {
 	const parent = parentNumber(issue, ctx);
+	const priority = priorityOf(issue, ctx);
+	const claim = claimForSummary(issue, ctx);
 	return {
 		id: String(issue.number),
 		title: issue.title,
 		status: statusOfIssue(issue, ctx),
 		createdAt: iso(issue.created_at),
 		...(parent === undefined ? {} : { parentId: String(parent) }),
+		...(priority === undefined ? {} : { priority }),
+		...(claim === undefined ? {} : { assignee: claim.assignee }),
+		...(claim?.leaseUntil === undefined ? {} : { leaseUntil: claim.leaseUntil }),
 	};
 }
 
@@ -148,6 +187,8 @@ export interface BodyParts {
 	duplicateOf: string | undefined;
 	/** The meta the managed block holds (always read; only used with `fills.meta: body-block`). */
 	blockMeta: Record<string, string> | undefined;
+	/** Who holds the issue (the claim of the block); absent without one. */
+	claim: BlockClaim | undefined;
 	/** The whole content of the managed block, to be written back with a change; absent when the body has no block. */
 	blockData: Record<string, unknown> | undefined;
 	/** The body without the block, trimmed (CRLF as LF): what a write puts back in front of the block. */
@@ -174,6 +215,7 @@ export function splitBody(issue: ApiIssue, ctx: MapContext): BodyParts {
 	return {
 		description: trimmed === '' || trimmed === issue.title ? undefined : trimmed,
 		duplicateOf,
+		claim: block.claim,
 		blockMeta: block.blockMeta,
 		blockData: block.blockData,
 		visibleText: trimmed,
@@ -198,10 +240,14 @@ function isMetaLabel(name: string, ctx: MapContext): boolean {
 	return ctx.metaFromLabels && lower(name).startsWith(lower(ctx.settings.metaPrefix));
 }
 
-/** Labels that are neither a status, a type nor (with the fill) a meta entry. */
+/** Labels that are neither a status, a type, a priority nor (with the fill) a meta entry. */
 export function userLabels(issue: ApiIssue, ctx: MapContext): string[] {
 	return labelNames(issue).filter(
-		name => !ctx.mapper.isStatusLabel(name) && !isTypeLabel(name, ctx) && !isMetaLabel(name, ctx)
+		name =>
+			!ctx.mapper.isStatusLabel(name) &&
+			!isTypeLabel(name, ctx) &&
+			!isMetaLabel(name, ctx) &&
+			!isPriorityLabel(name, ctx.priority)
 	);
 }
 
@@ -430,6 +476,10 @@ export function activityOf(events: readonly ApiEvent[], ctx: MapContext): Activi
 				if (isTypeLabel(name, ctx)) {
 					const type = typeOfLabel(name, ctx);
 					add('type', added ? { newValue: type } : { oldValue: type });
+				} else if (isPriorityLabel(name, ctx.priority)) {
+					// A label of a priority the project does not have is shown as written: the activity says what happened on GitHub.
+					const priority = priorityOfLabel(name, ctx.priority) ?? name;
+					add('priority', added ? { newValue: priority } : { oldValue: priority });
 				} else if (isMetaLabel(name, ctx)) {
 					const rest = name.slice(ctx.settings.metaPrefix.length);
 					const at2 = rest.indexOf('=');
