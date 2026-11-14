@@ -1,4 +1,3 @@
-import { TaskNotFoundError } from '@wadeck-app/task-core';
 import { DanglingParentError } from '@wadeck-app/task-service';
 
 import { errorOutput, failure, jsonResult, runJson, taskLine } from './output.js';
@@ -41,9 +40,9 @@ describe('failure', () => {
 	});
 
 	it('has no hint line for an error without hint', () => {
-		expect(failure(false, new TaskNotFoundError('abc'))).toEqual({
+		expect(failure(false, new Error('boom'))).toEqual({
 			exitCode: 1,
-			output: 'Error: Task not found: abc',
+			output: 'Error: boom',
 		});
 	});
 });
@@ -56,9 +55,9 @@ describe('runJson', () => {
 
 	it('turns a thrown error into the failure answer', async () => {
 		const result = await runJson(true, () => {
-			throw new TaskNotFoundError('abc');
+			throw new Error('boom');
 		});
-		expect(result).toEqual({ exitCode: 1, output: '{"error":"Task not found: abc"}' });
+		expect(result).toEqual({ exitCode: 1, output: '{"error":"boom"}' });
 	});
 });
 
