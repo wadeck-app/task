@@ -10,7 +10,7 @@ import {
 } from '@wadeck-app/task-core';
 
 import type { CheckLine, DeclaredFills, ProjectFacts } from '../kinds.js';
-import { FINE_GRAINED_PERMISSIONS_DOC, requirementFor } from './credentialRequirements.js';
+import { FINE_GRAINED_PERMISSIONS_DOC, GITHUB_TOKEN_GUIDE_POINTER, requirementFor } from './credentialRequirements.js';
 import type { GitHubCredentialRequirement } from './credentialRequirements.js';
 import { priorityLabelsWanted, wantedLabels } from './githubLabels.js';
 import { GitHubHttpError } from './githubClient.js';
@@ -120,7 +120,7 @@ function failureLine(name: string, error: unknown, input: CheckInput, row?: GitH
 			name: 'repo',
 			status: 'error',
 			text: `${input.settings.repo.full} was not found, or this token cannot see it`,
-			fix: `Check strategy.options.repo (owner/name) in the project config, and that the token's repository access includes ${input.settings.repo.full} (GitHub answers 404 for a private repository the token cannot see). It is read from ${input.tokenHint}.`,
+			fix: `Check strategy.options.repo (owner/name) in the project config, and that the token's repository access includes ${input.settings.repo.full} (GitHub answers 404 for a private repository the token cannot see). It is read from ${input.tokenHint}. ${GITHUB_TOKEN_GUIDE_POINTER}`,
 		};
 	}
 	if (error instanceof GitHubHttpError && error.status === 410) {
@@ -155,7 +155,7 @@ function expiryLine(expires: string | undefined, now: number): CheckLine {
 			name: 'expiry',
 			status: 'error',
 			text: `the token expired on ${expires}`,
-			fix: 'Create a new fine-grained token with the same permissions and put it where the config points',
+			fix: `Create a new fine-grained token with the same permissions and put it where the config points. ${GITHUB_TOKEN_GUIDE_POINTER}`,
 		};
 	}
 	if (days <= 7) {

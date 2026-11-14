@@ -14,6 +14,9 @@ export const FINE_GRAINED_PERMISSIONS_DOC =
 export const MANAGING_TOKENS_DOC =
 	'https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens';
 
+/** Appended to every message about a missing, refused or incomplete token: where the step-by-step guide is. */
+export const GITHUB_TOKEN_GUIDE_POINTER = 'Step by step guide: task strategy help github';
+
 export type GitHubCredentialKey =
 	'metadata' | 'read' | 'labels' | 'labels-write' | 'write' | 'delete' | 'issue-fields' | 'expiry';
 
@@ -190,7 +193,7 @@ export function deniedPermissionHint(
 				? 'Issues: Read and write, Metadata: Read'
 				: 'Issues: Read, Metadata: Read'
 			: `${named.join(', ')} (GitHub says: ${accepted})`;
-	return `The token needs ${needs} on ${repo}. Edit the token in GitHub (Settings > Developer settings > Personal access tokens > Fine-grained tokens > the token > Repository permissions), or use one that has it; a classic token needs the scope repo (public_repo for a public repository). It is read from ${tokenHint}. Details: ${FINE_GRAINED_PERMISSIONS_DOC}`;
+	return `The token needs ${needs} on ${repo}. Edit the token in GitHub (Settings > Developer settings > Personal access tokens > Fine-grained tokens > the token > Repository permissions), or use one that has it; a classic token needs the scope repo (public_repo for a public repository). It is read from ${tokenHint}. Details: ${FINE_GRAINED_PERMISSIONS_DOC} ${GITHUB_TOKEN_GUIDE_POINTER}`;
 }
 
 /** Lines for "How to create the token" (the doc is written from them). */

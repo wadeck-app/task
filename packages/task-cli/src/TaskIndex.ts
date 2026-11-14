@@ -120,7 +120,7 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 	// The strategy commands open the project themselves: a config problem is their answer (a line of the check), not a failure
 	// before the command ran. The subcommand is validated first, so a typo fails the same in any folder.
 	if (command === 'strategy') {
-		if (isStrategyHelp(rest)) return strategyHelp();
+		if (isStrategyHelp(rest)) return strategyHelp(rest, jsonMode);
 		const invocation = parseStrategyInvocation(rest, jsonMode);
 		if ('exitCode' in invocation) return invocation;
 		let resolved: ResolvedProject;

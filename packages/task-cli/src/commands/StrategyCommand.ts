@@ -1,5 +1,5 @@
 // task strategy show|check: arguments and printing over the task-service use cases `showStrategy` / `checkStrategy`.
-import { checkStrategy, showStrategy } from '@wadeck-app/task-service';
+import { checkStrategy, renderGithubTokenGuide, showStrategy } from '@wadeck-app/task-service';
 import type {
 	CapabilityRow,
 	CheckLine,
@@ -22,11 +22,33 @@ const USAGE: Record<StrategySubcommand, string> = {
 
 /** `task strategy` / `task strategy --help` need no project: the dispatcher answers them before resolving one. */
 export function isStrategyHelp(rest: readonly string[]): boolean {
-	return rest[0] === undefined || rest[0] === '--help';
+	return rest[0] === undefined || rest[0] === '--help' || rest[0] === 'help';
 }
 
-export function strategyHelp(): CommandResult {
-	return { exitCode: 0, output: STRATEGY_HELP };
+/** The guides `task strategy help <topic>` prints. Only github has one: gitlab and remote keep their token table in `strategy --help`. */
+const HELP_TOPICS: Record<string, () => string> = {
+	github: renderGithubTokenGuide,
+};
+
+const TOPIC_LIST = `Topics:\n${Object.keys(HELP_TOPICS)
+	.map(topic => `  task strategy help ${topic}    the token of the ${topic} strategy, step by step`)
+	.join('\n')}`;
+
+export function strategyHelp(rest: readonly string[] = [], jsonMode = false): CommandResult {
+	if (rest[0] !== 'help') return { exitCode: 0, output: STRATEGY_HELP };
+	const [, topic, ...extra] = rest;
+	if (topic === undefined) return { exitCode: 0, output: TOPIC_LIST };
+	const guide = Object.hasOwn(HELP_TOPICS, topic) ? HELP_TOPICS[topic] : undefined;
+	if (guide === undefined) {
+		return errorOutput(
+			jsonMode,
+			`unknown help topic: ${topic}`,
+			`Valid topics: ${Object.keys(HELP_TOPICS).join(', ')} (task strategy help <topic>)`
+		);
+	}
+	if (extra.length > 0)
+		return errorOutput(jsonMode, `unexpected argument: ${extra[0]}`, `Usage: task strategy help ${topic}`);
+	return { exitCode: 0, output: guide() };
 }
 
 /** The subcommand, or the error to print: checked before any project is looked up, so a typo fails the same in any folder. */

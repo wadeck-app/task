@@ -281,6 +281,8 @@ Usage:
                                                 expiry, repository and Issues readable, quota left, statuses mapped, labels that exist,
                                                 sub-issues and dependencies available; gitlab: one line per capability the token gives or lacks (read, write, labels, hierarchy: the missing fine-grained permission and how to add it), quota, statuses and labels, and what was verified live). Each problem prints its fix; exit 1 on any error
                                                 (warnings do not fail it).
+  task strategy help github                     Step-by-step guide to the github token: create it, store it, check it, fix a refusal
+                                                (also in docs/github-strategy-token.md); 'task strategy help' lists the topics
   task strategy --help                          Show this help
 
 Configuration (the project's config.yml, section 'strategy'; no section = type: local, silently):

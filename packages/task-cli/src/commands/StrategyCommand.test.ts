@@ -3,7 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ownConfigFile } from '@wadeck-app/task-service';
+import { ownConfigFile, renderGithubTokenGuide } from '@wadeck-app/task-service';
 
 import { runTaskCommand } from '../TaskIndex.js';
 import { type RegisteredTestProject, registerTestProject } from '../testHelpers.js';
@@ -31,6 +31,64 @@ function writeStrategy(yml: string): void {
 	const file = ownConfigFile(project.storage);
 	fs.appendFileSync(file, `\n${yml}`);
 }
+
+describe('task strategy help <topic>', () => {
+	async function outsideRun(args: string[]): Promise<{ exitCode: number; output: string }> {
+		const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'task-strategy-cmd-'));
+		try {
+			return await runTaskCommand(args, outside);
+		} finally {
+			fs.rmSync(outside, { recursive: true, force: true });
+		}
+	}
+
+	it('help github prints the token guide and needs no project', async () => {
+		const result = await outsideRun(['strategy', 'help', 'github']);
+
+		expect(result.exitCode).toBe(0);
+		expect(result.output).toBe(renderGithubTokenGuide());
+		expect(result.output).toContain('1. Create the token');
+		expect(result.output).toContain('4. When the token is refused');
+	});
+
+	it('help without a topic lists the topics, exit 0', async () => {
+		const result = await outsideRun(['strategy', 'help']);
+
+		expect(result.exitCode).toBe(0);
+		expect(result.output).toContain('task strategy help github');
+	});
+
+	it('an unknown topic is an error listing the valid ones', async () => {
+		const result = await outsideRun(['strategy', 'help', 'gitlab']);
+
+		expect(result.exitCode).toBe(1);
+		expect(result.output).toContain('unknown help topic: gitlab');
+		expect(result.output).toContain('Valid topics: github');
+	});
+
+	it('an unknown topic with --json is {error, hint}', async () => {
+		const result = await outsideRun(['strategy', 'help', 'nope', '--json']);
+
+		expect(result.exitCode).toBe(1);
+		expect(JSON.parse(result.output)).toEqual({
+			error: 'unknown help topic: nope',
+			hint: expect.stringContaining('Valid topics: github'),
+		});
+	});
+
+	it('an extra argument after the topic is refused', async () => {
+		const result = await outsideRun(['strategy', 'help', 'github', 'more']);
+
+		expect(result.exitCode).toBe(1);
+		expect(result.output).toContain('unexpected argument: more');
+	});
+
+	it('task strategy --help points to the guide and to the other token sections', async () => {
+		const result = await outsideRun(['strategy', '--help']);
+
+		expect(result.output).toContain('task strategy help github');
+	});
+});
 
 describe('task strategy: help and arguments', () => {
 	it.each([[['strategy']], [['strategy', '--help']]])('%j prints the help and needs no project', async args => {

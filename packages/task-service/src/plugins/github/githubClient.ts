@@ -22,7 +22,7 @@ import {
 	WriteSerializer,
 } from '../forge-common/httpHelpers.js';
 import type { ReadNotice } from '../kinds.js';
-import { deniedPermissionHint } from './credentialRequirements.js';
+import { GITHUB_TOKEN_GUIDE_POINTER, deniedPermissionHint } from './credentialRequirements.js';
 import type { CacheEntry, RecentKind, ResponseCache } from './responseCache.js';
 
 export interface GitHubClientOptions {
@@ -609,7 +609,7 @@ export class GitHubClient {
 				'github',
 				'unauthenticated',
 				`GitHub refused the token (401${detail === '' ? '' : ` ${detail}`})`,
-				`Create or renew a fine-grained token with ${access} on ${this.options.repo}, and put it in ${this.options.tokenHint}. An expired or revoked token gives this answer; task strategy check shows the expiry date.`
+				`Create or renew a fine-grained token with ${access} on ${this.options.repo}, and put it in ${this.options.tokenHint}. An expired or revoked token gives this answer; task strategy check shows the expiry date. ${GITHUB_TOKEN_GUIDE_POINTER}`
 			);
 		}
 		if (status === 403 || status === 429) {
