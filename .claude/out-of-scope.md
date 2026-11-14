@@ -4,11 +4,11 @@ Raising an item here is a change-of-scope conversation, not a design question. E
 
 ## Platforms and tiers
 
-| Item                                                                                        | Decision                                                                       | Source                                    |
-| ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ----------------------------------------- |
-| Intel Macs (`darwin-x64`), `linux-arm64`, any other platform                                | Unsupported, no partial support. Supported: win32-x64, darwin-arm64, linux-x64 | `CLAUDE.md` "Updater" (owner, 2026-11-13) |
-| GitLab paid tiers (blocking links, epics, weight, scoped-label exclusivity, tier detection) | Free tier only; no `tier` option; fails with "requires a paid GitLab tier"     | `CLAUDE.md` gitlab section (owner)        |
-| GitLab classic tokens, self-managed instances                                               | Documented, not verified live; not a supported claim (to validate)             | `CLAUDE.md` gitlab section                |
+| Item                                                                                        | Decision                                                                                                                                                        | Source                                    |
+| ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| Intel Macs (`darwin-x64`), `linux-arm64`, any other platform                                | Unsupported, no partial support. Supported: win32-x64, darwin-arm64, linux-x64                                                                                  | `CLAUDE.md` "Updater" (owner, 2026-11-13) |
+| GitLab paid tiers (blocking links, epics, weight, scoped-label exclusivity, tier detection) | Free tier only; no `tier` option; fails with "requires a paid GitLab tier"                                                                                      | `CLAUDE.md` gitlab section (owner)        |
+| GitLab classic tokens, self-managed instances                                               | NOT SUPPORTED (owner decision 2026-11-14): only a fine-grained token on gitlab.com; the `baseUrl` option accepts another host but nothing is tested or promised | `CLAUDE.md` gitlab section                |
 
 ## Plugins, credentials, forges
 

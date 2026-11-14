@@ -37,12 +37,12 @@ From `.claude/plans/2026-10-25_todo.md` (2026-11-14) and `2026-11-13_remaining-w
 
 ## Known gaps
 
-| Gap                                                                                                               | Source                 |
-| ----------------------------------------------------------------------------------------------------------------- | ---------------------- |
-| Unverified: GHES, personal-account repos, `delete: hard` by a non-admin token, secondary rate limits, GitHub caps | todo section 5         |
-| Unverified: GitLab classic tokens, self-managed, a token weaker than the test token, roles                        | `CLAUDE.md` gitlab     |
-| `remote` verified on loopback only                                                                                | `CLAUDE.md` remote     |
-| Virtual projects (no path): undelivered events, absent from cross-project views and the module                    | `CLAUDE.md` registry   |
-| `listLabels` and `/meta-keys` read every task file (128-190 ms at 1000 tasks); Tree "last added" = creation date  | todo section 1         |
-| No `--follow` for `--all-projects`                                                                                | `CLAUDE.md` CLI parity |
-| shared-updater swap window: `task` unusable for a few seconds during a background self-update; no owner           | todo sections 1 and 3  |
+| Gap                                                                                                                                    | Source                 |
+| -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| Unverified: GHES, personal-account repos, `delete: hard` by a non-admin token, secondary rate limits, GitHub caps                      | todo section 5         |
+| Unsupported (owner decision 2026-11-14): GitLab classic tokens and self-managed. Unverified: a token weaker than the test token, roles | `CLAUDE.md` gitlab     |
+| `remote` verified on loopback only                                                                                                     | `CLAUDE.md` remote     |
+| Virtual projects (no path): undelivered events, absent from cross-project views and the module                                         | `CLAUDE.md` registry   |
+| `listLabels` and `/meta-keys` read every task file (128-190 ms at 1000 tasks); Tree "last added" = creation date                       | todo section 1         |
+| No `--follow` for `--all-projects`                                                                                                     | `CLAUDE.md` CLI parity |
+| shared-updater swap window: `task` unusable for a few seconds during a background self-update; no owner                                | todo sections 1 and 3  |

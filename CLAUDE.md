@@ -199,7 +199,7 @@ Architecture: `plugins/github/responseCache.ts` and `plugins/forge-common/forgeT
 
 ## Storage strategy: gitlab (stage 5, read and write)
 
-FREE TIER ONLY, by owner decision: what needs a paid tier (blocking links, epics, weight, scoped-label exclusivity, tier detection) is not supported and fails with `requires a paid GitLab tier, which task does not support`. There is no `tier` option (a `tier:` key is a load error). VERIFIED LIVE on gitlab.com Free (2026-11-09, throwaway project, one FINE-GRAINED personal access token): the findings are in the storage plan (`.claude/plans/2026-11-08_storage-strategies.md`, "2.3.1 Live GitLab findings"), the mock behind the tests is guarded by recorded live exchanges (below). NOT verified: classic tokens (`api` / `read_api`), self-managed instances, other GitLab versions, a token weaker than the test token (its permissions could not be listed).
+FREE TIER ONLY, by owner decision: what needs a paid tier (blocking links, epics, weight, scoped-label exclusivity, tier detection) is not supported and fails with `requires a paid GitLab tier, which task does not support`. There is no `tier` option (a `tier:` key is a load error). VERIFIED LIVE on gitlab.com Free (2026-11-09, throwaway project, one FINE-GRAINED personal access token): the findings are in the storage plan (`.claude/plans/2026-11-08_storage-strategies.md`, "2.3.1 Live GitLab findings"), the mock behind the tests is guarded by recorded live exchanges (below). NOT SUPPORTED (owner decision 2026-11-14, to be read as a support statement, not only as a verification gap): classic personal access tokens (`api` / `read_api`) and self-managed instances (`baseUrl` accepts another host but nothing is tested or promised there); only a FINE-GRAINED token on gitlab.com is supported. NOT verified: other GitLab versions, a token weaker than the test token (its permissions could not be listed).
 
 Shared with github: `plugins/forge-common/` (see the github Code paragraph).
 
@@ -269,7 +269,7 @@ Live scripts (never in CI or `npm test`; they read `GL_TEST_TOKEN` and `GL_TEST_
 
 Tests: unit tests per module, the shared `runBackendContract` (strict, fills with tombstone delete, fills with hard delete, body-block), hierarchy tests, migrate local -> gitlab -> local, CLI and module tests, `scripts/gitlab-fake-smoke.mjs` (bundled CLI against the mock; not in CI).
 
-Not done: keyset pagination (offset only), events for changes made on GitLab (R7), a `blockedBy` fill (nothing on Free carries it), a measured cost model for `migrate`, classic-token and self-managed verification.
+Not done: keyset pagination (offset only), events for changes made on GitLab (R7), a `blockedBy` fill (nothing on Free carries it), a measured cost model for `migrate`, classic-token and self-managed support (declared unsupported, see above).
 
 ## Storage strategy: remote (`task serve`, stage 4)
 
