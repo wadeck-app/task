@@ -20,8 +20,10 @@ import {
 } from '@wadeck-app/task-core';
 import type {
 	BackendCapabilities,
+	BackendClaimResult,
 	BackendCommentChange,
 	BackendCommentEdit,
+	BackendReleaseResult,
 	CreateTaskInput,
 	EventsOutcome,
 	LabelCount,
@@ -41,6 +43,7 @@ import type {
 	WriteOptions,
 } from '@wadeck-app/task-core';
 
+import { refuseTaskField } from '../kinds.js';
 import type { ReadNotice, TransportInstance } from '../kinds.js';
 
 export interface RemoteBackendOptions {
@@ -367,6 +370,31 @@ export class RemoteBackend implements TaskBackend {
 	}
 
 	// ---- delete ----
+	// Priority, assignee and claim: not available on this storage strategy yet (stage 3 / 4 of the priority plan); each answers UnsupportedByBackendError.
+	setPriority(): Promise<VersionedRecord> {
+		return refuseTaskField('remote', 'setPriority');
+	}
+
+	clearPriority(): Promise<VersionedRecord> {
+		return refuseTaskField('remote', 'clearPriority');
+	}
+
+	setAssignee(): Promise<VersionedRecord> {
+		return refuseTaskField('remote', 'setAssignee');
+	}
+
+	clearAssignee(): Promise<VersionedRecord> {
+		return refuseTaskField('remote', 'clearAssignee');
+	}
+
+	claim(): Promise<BackendClaimResult> {
+		return refuseTaskField('remote', 'claim');
+	}
+
+	release(): Promise<BackendReleaseResult> {
+		return refuseTaskField('remote', 'release');
+	}
+
 	async deleteTask(id: string, options?: WriteOptions): Promise<boolean> {
 		return (await this.call<{ deleted: boolean }>('deleteTask', { params: { id }, ...revision(options) })).deleted;
 	}

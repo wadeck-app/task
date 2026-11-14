@@ -21,7 +21,8 @@ const DEFAULT_TEST_CONFIG: TaskResolvedConfig = {
 	terminalStatuses: ['done'],
 	negativeStatuses: [],
 	types: [],
-	defaults: { priority: 'medium' },
+	priorities: ['urgent', 'high', 'medium', 'low'],
+	defaults: { priority: 'medium', leaseMinutes: 30 },
 };
 
 /** Builds a context over a disposable `<tmp>/data/tasks` store (index lives next to it, inside the tmp root): a plain folder standing in for a registry data dir. */
@@ -29,10 +30,11 @@ export function createTestContext(configOverrides: Partial<TaskResolvedConfig> =
 	const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-service-'));
 	const tasksDir = path.join(rootDir, 'data', 'tasks');
 	fs.mkdirSync(tasksDir, { recursive: true });
+	const config = { ...DEFAULT_TEST_CONFIG, ...configOverrides };
 	return {
 		ctx: {
-			store: createLocalBackend(tasksDir),
-			config: { ...DEFAULT_TEST_CONFIG, ...configOverrides },
+			store: createLocalBackend(tasksDir, { priorities: config.priorities }),
+			config,
 			storage: { dataDir: path.join(rootDir, 'data'), configFiles: [path.join(rootDir, 'data', 'config.yml')] },
 			project: { name: 'proj', path: rootDir },
 		},

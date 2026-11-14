@@ -194,3 +194,34 @@ describe('queue events: a gitlab project emits what a local one does', () => {
 		expect(publishMock).not.toHaveBeenCalled();
 	});
 });
+
+describe('priority, assignee and claim on a gitlab project', () => {
+	const commands: string[][] = [
+		['set-priority', '1', 'high'],
+		['unset-priority', '1'],
+		['set-assignee', '1', 'bob'],
+		['unset-assignee', '1'],
+		['claim', '1', '--as', 'w1'],
+		['release', '1'],
+	];
+
+	it.each(commands)(
+		'%s is refused with exit 1, the strategy and the local alternative, and raises no event',
+		async (...args) => {
+			await runTaskCommand(['-p', gitlab.name, 'new', 'Task'], gitlab.dir);
+			publishMock.mockClear();
+
+			const text = await runTaskCommand(['-p', gitlab.name, ...args], gitlab.dir);
+			const asJson = await runTaskCommand(['-p', gitlab.name, ...args, '--json'], gitlab.dir);
+
+			expect(text.exitCode).toBe(1);
+			expect(text.output).toContain('gitlab');
+			expect(text.output).toMatch(/local/);
+			expect(asJson.exitCode).toBe(1);
+			const body = JSON.parse(asJson.output) as { error: string; hint: string };
+			expect(body.error).toContain('gitlab');
+			expect(body.hint).toMatch(/local/);
+			expect(publishMock).not.toHaveBeenCalled();
+		}
+	);
+});

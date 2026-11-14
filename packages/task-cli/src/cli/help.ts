@@ -38,6 +38,25 @@ Usage:
   task comment-edit <id> <comment-id> <text...> [--file <path|->]
                                              Replace the text of a comment (an identical text changes nothing); ids: task comments <id>
   task comment-rm <id> <comment-id>          Remove a comment
+  task set-priority <id> <priority>          Set the priority; it must be one of the project's priorities (config 'priorities', highest first; default
+                                             urgent, high, medium, low). Prints the task
+  task unset-priority <id>                   Remove the priority (the project default applies again)
+  task set-assignee <id> <name...>           Give the task to a name by hand (free text, at most 100 characters; words are joined with a space, --
+                                             before a name starting with --). Drops the lease of a previous claim
+  task unset-assignee <id>                   Remove the assignee and its lease
+  task claim <id> --as <name> [--lease <n>m|<n>h|<n>d] [--renew] [--force] [--json]
+                                             Take a task under a lease (atomic on the local strategy). --as can be left out when the TASK_WORKER
+                                             environment variable holds the worker name (blank = unset). --lease: a whole number and m, h or d
+                                             (30m, 2h, 1d; seconds are refused); default defaults.leaseMinutes of the config (30). Free task or
+                                             expired lease: claimed (an expired lease of someone else is a takeover). Live lease of another name:
+                                             conflict naming the holder and the time left, unless --force. The same name needs --renew to extend its
+                                             lease. Text: "claimed|renewed <id> as <name> until <iso> (30m)" or "took over <id> from <name> as <name> ...";
+                                             --json: {taskId, outcome (claimed|renewed|takeover), assignee, claimedAt, leaseUntil, previousAssignee?,
+                                             revision, task}. github, gitlab and remote projects refuse it, saying what to use
+  task release <id> [--as <name>] [--force] [--json]
+                                             Give a claimed task up (assignee, claimedAt and leaseUntil are cleared). With --as, another holder needs
+                                             --force; TASK_WORKER is not read here. Text: "released <id> (was held by <name>)";
+                                             --json: {taskId, previousAssignee, task}
   task find <query> [--limit N] [--json]     Find tasks by id prefix or title text, best match first (id prefix, title word prefix, substring);
                                              N from 1 to 20 (default 8); text lines "id  headline  [status]", --json: [{id, headline, status}]
   task labels [--json]                       Labels in use with the number of tasks carrying each, most used first
@@ -122,6 +141,9 @@ Events (pushed to queue through @wadeck-app/queue-sdk after the change is saved,
   onTaskCommentEdited  comment-edit                     taskId, commentId, oldText, newText (both full)
   onTaskCommentRemoved comment-rm                       taskId, commentId
   onTaskParentChanged  set-parent, remove-parent        taskId, oldParentId, newParentId
+  onTaskPriorityChanged set-priority, unset-priority    taskId, oldPriority, newPriority (each absent when the task had none / has none)
+  onTaskAssigneeChanged set-assignee, unset-assignee,   taskId, oldAssignee, newAssignee, outcome (claim and release only: claimed, renewed
+                       claim, release                   with old = new, takeover, released)
   onTaskDeleted        delete                           taskId, description (the full text), status, parentId, orphanedChildIds, removedLinkCount, commentCount (only when the task had comments)
   onTasksMigrated      migrate                          fromProjectId, fromProjectName, toProjectId, toProjectName, created, resumed, skipped, failed, remaining, complete (one per run, after
                                                         the last write; its project fields are the target's; migrate raises no per-task event unless --emit-events)
@@ -150,7 +172,8 @@ Exit codes:
 
 Environment variables:
   TASK_CONFIG       Override global config directory (default: ~/.task)
-  TASK_PROJECT      Project of the shared registry (name, alias or id), below -p; refused by 'task list --all-projects'`;
+  TASK_PROJECT      Project of the shared registry (name, alias or id), below -p; refused by 'task list --all-projects'
+  TASK_WORKER       Name of the worker for 'task claim' when --as is not given (a blank value counts as unset); not read by any other command`;
 }
 
 /** `task migrate --help`. */
@@ -190,8 +213,10 @@ overwritten (a field a person set is left alone). updatedAt is the migration tim
 Loss kinds (--dry-run lists the ones that apply):
   status, status-outcome   a status the target lacks (task gets its default) / ends a task differently there
   type, labels, meta       a type the target does not list, a label it refuses (length, reserved), metadata it cannot store
+  priority, assignee       a priority the target does not list, or no priority / assignee support on the target
+  lease                    a claim lease is never migrated (reported for each task that holds one)
   comments                 the target has no comments
-  history, created-at      the status history and activity log cannot be replayed through the port; the target assigns the creation instant
+  history, created-at     the status history and activity log cannot be replayed through the port; the target assigns the creation instant
                            (--history-comment keeps both in a note comment)
   marker                   the target has no metadata, so migrated tasks are recognised by the journal only
   text-length              a text longer than the target accepts is cut with a note

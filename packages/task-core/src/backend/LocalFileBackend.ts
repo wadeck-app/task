@@ -11,6 +11,10 @@ import type { LinkType, TaskRecord, TaskStatus, TaskStoreOptions, TaskSummary } 
 import { StaleRevisionError } from './backendErrors.js';
 import { LOCAL_CAPABILITIES } from './capabilities.js';
 import type {
+	BackendClaimInput,
+	BackendClaimResult,
+	BackendReleaseResult,
+	ReleaseOptions,
 	BackendCommentChange,
 	BackendCommentEdit,
 	CreateTaskInput,
@@ -56,16 +60,21 @@ export class LocalFileBackend implements TaskBackend {
 
 	constructor(private readonly store: TaskStore) {}
 
-	/** Compares the revision right before the write; the store is synchronous and single-threaded, so nothing can slip in between. */
+	/**
+	 * Compares the revision right before the write, both under the project write lock: the store is synchronous, so nothing of this
+	 * process can slip in between, and the lock keeps the other task processes out as well.
+	 */
 	private checked<T>(id: string, options: WriteOptions | undefined, write: () => T): T {
-		const expected = options?.expectedRevision;
-		if (expected !== undefined) {
-			const actual = revisionOf(this.store.get(id));
-			if (actual !== expected) {
-				throw new StaleRevisionError(id, expected, actual);
+		return this.store.withWriteLock(() => {
+			const expected = options?.expectedRevision;
+			if (expected !== undefined) {
+				const actual = revisionOf(this.store.get(id));
+				if (actual !== expected) {
+					throw new StaleRevisionError(id, expected, actual);
+				}
 			}
-		}
-		return write();
+			return write();
+		});
 	}
 
 	// ---- reads: records ----
@@ -217,6 +226,35 @@ export class LocalFileBackend implements TaskBackend {
 
 	async removeMeta(id: string, key: string, options?: WriteOptions): Promise<VersionedRecord> {
 		return versioned(this.checked(id, options, () => this.store.removeMeta(id, key)));
+	}
+
+	// ---- writes: priority, assignee, claim ----
+	async setPriority(id: string, priority: string, options?: WriteOptions): Promise<VersionedRecord> {
+		return versioned(this.checked(id, options, () => this.store.setPriority(id, priority)));
+	}
+
+	async clearPriority(id: string, options?: WriteOptions): Promise<VersionedRecord> {
+		return versioned(this.checked(id, options, () => this.store.clearPriority(id)));
+	}
+
+	async setAssignee(id: string, assignee: string, options?: WriteOptions): Promise<VersionedRecord> {
+		return versioned(this.checked(id, options, () => this.store.setAssignee(id, assignee)));
+	}
+
+	async clearAssignee(id: string, options?: WriteOptions): Promise<VersionedRecord> {
+		return versioned(this.checked(id, options, () => this.store.clearAssignee(id)));
+	}
+
+	async claim(id: string, input: BackendClaimInput): Promise<BackendClaimResult> {
+		const { expectedRevision, ...request } = input;
+		const change = this.checked(id, { expectedRevision }, () => this.store.claim(id, request));
+		return { ...change, task: versioned(change.task) };
+	}
+
+	async release(id: string, options: ReleaseOptions = {}): Promise<BackendReleaseResult> {
+		const { expectedRevision, ...rest } = options;
+		const change = this.checked(id, { expectedRevision }, () => this.store.release(id, rest));
+		return { ...change, task: versioned(change.task) };
 	}
 
 	// ---- writes: graph ----

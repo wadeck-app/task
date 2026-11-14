@@ -42,6 +42,9 @@ describe('LocalFileBackend', () => {
 			labels: true,
 			meta: true,
 			comments: true,
+			priority: true,
+			assignee: true,
+			claim: true,
 			writes: 'full',
 			indexedGraph: true,
 			events: 'client',
@@ -236,6 +239,63 @@ describe('LocalFileBackend', () => {
 				{ label: 'a', count: 1 },
 				{ label: 'b', count: 1 },
 			]);
+		});
+	});
+
+	describe('project write lock', () => {
+		const lockPath = () => path.join(root, 'data', '.write-lock');
+
+		it('the revision check and the write of a claim both happen under the lock, which is gone afterwards', async () => {
+			const lockedWrites: boolean[] = [];
+			const observed = new LocalFileBackend(
+				new TaskStore(tasksDir, {
+					writeFile: (file, content) => {
+						lockedWrites.push(fs.existsSync(lockPath()));
+						fs.writeFileSync(file, content, 'utf8');
+					},
+				})
+			);
+			const task = await observed.create({ title: 'locked', status: 'backlog' });
+			lockedWrites.length = 0;
+			const claimed = await observed.claim(task.id, {
+				assignee: 'w1',
+				leaseUntil: '2026-11-14T10:30:00.000Z',
+				now: '2026-11-14T10:00:00.000Z',
+				expectedRevision: task.revision,
+			});
+			expect(claimed.outcome).toBe('claimed');
+			// The task file and the index entry.
+			expect(lockedWrites).toEqual([true, true]);
+			expect(fs.existsSync(lockPath())).toBe(false);
+		});
+
+		it('a lock held by another process makes a write reject with the holder named, and a read still works', async () => {
+			const task = await backend.create({ title: 'busy', status: 'backlog' });
+			fs.writeFileSync(
+				lockPath(),
+				JSON.stringify({ pid: 4321, host: 'other-host', at: '2026-11-14T09:00:00.000Z', token: 'x' })
+			);
+			let clock = Date.parse('2026-11-14T10:00:00.000Z');
+			const waiting = new LocalFileBackend(
+				new TaskStore(tasksDir, { lock: { timeoutMs: 30, now: () => clock, sleep: ms => (clock += ms) } })
+			);
+			expect((await waiting.get(task.id)).title).toBe('busy');
+			const refusal = (await waiting.setTitle(task.id, 'x').then(
+				() => undefined,
+				(error: unknown) => error
+			)) as Error;
+			expect(refusal.name).toBe('WriteLockTimeoutError');
+			expect(refusal.message).toContain('pid 4321');
+			expect(refusal.message).toContain('other-host');
+			expect((await backend.get(task.id)).title).toBe('busy');
+		});
+
+		it('a stale revision is refused under the lock and releases it', async () => {
+			const task = await backend.create({ title: 'stale', status: 'backlog' });
+			await expect(backend.setPriority(task.id, 'high', { expectedRevision: 'nope' })).rejects.toBeInstanceOf(
+				StaleRevisionError
+			);
+			expect(fs.existsSync(lockPath())).toBe(false);
 		});
 	});
 

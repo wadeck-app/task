@@ -7,6 +7,7 @@ import {
 	BackendRejectedError,
 	BackendTimeoutError,
 	BackendUnreachableError,
+	InvalidTaskFieldError,
 	PartialWriteError,
 	RateLimitedError,
 	RemoteIncompatibleError,
@@ -14,9 +15,14 @@ import {
 	RemoteTimeoutError,
 	RemoteUnauthorizedError,
 	RemoteUnreachableError,
+	TaskClaimedError,
 	TaskConflictError,
+	TaskNotClaimedError,
 	TaskNotFoundError,
+	TaskReleaseRefusedError,
+	UnknownPriorityError,
 	UnsupportedByBackendError,
+	WriteLockTimeoutError,
 } from '@wadeck-app/task-core';
 
 import { describeError, isRemoteFailure } from './describeError.js';
@@ -352,5 +358,73 @@ describe('describeError: the remote strategy', () => {
 		expect(isRemoteFailure(new RemoteTimeoutError('nas.lan:7788', 1000, 'read'))).toBe(true);
 		expect(isRemoteFailure(new RemoteIncompatibleError('http://nas.lan:7788', 2, undefined))).toBe(true);
 		expect(isRemoteFailure(new RemoteProjectMismatchError('http://h:1', 'a', { name: 'b' }))).toBe(true);
+	});
+});
+
+describe('describeError: priority, assignee and claim', () => {
+	it('an invalid or unknown priority is "invalid" with its hint; the unknown one lists the valid priorities', () => {
+		const invalid = describeError(
+			new InvalidTaskFieldError('assignee', 'a assignee cannot be blank', 'Give the assignee.')
+		);
+		const unknown = describeError(new UnknownPriorityError('critical', ['urgent', 'high']));
+
+		expect(invalid).toEqual({
+			kind: 'invalid',
+			message: 'a assignee cannot be blank',
+			hint: 'Give the assignee.',
+			details: { field: 'assignee' },
+		});
+		expect(unknown.kind).toBe('invalid');
+		expect(unknown.message).toContain('urgent, high');
+		expect(unknown.hint).toBe('Use one of: urgent, high.');
+		expect(unknown.details).toEqual({ field: 'priority', validPriorities: ['urgent', 'high'] });
+	});
+
+	it('a task held by someone else is a "conflict" naming the holder, with the fix of the error', () => {
+		const description = describeError(
+			new TaskClaimedError('abc', 'w1', '2026-11-14T10:30:00.000Z', 900_000, false)
+		);
+
+		expect(description.kind).toBe('conflict');
+		expect(description.message).toContain('"w1"');
+		expect(description.message).toContain('15m');
+		expect(description.hint).toContain('--force');
+		expect(description.details).toEqual({
+			taskId: 'abc',
+			holder: 'w1',
+			leaseUntil: '2026-11-14T10:30:00.000Z',
+			remainingMs: 900_000,
+			ownLease: false,
+		});
+	});
+
+	it('the own lease says to renew; release errors are conflicts with their hints', () => {
+		expect(describeError(new TaskClaimedError('abc', 'w1', '2026-11-14T10:30:00.000Z', 1000, true)).hint).toContain(
+			'--renew'
+		);
+		const notClaimed = describeError(new TaskNotClaimedError('abc'));
+		const refused = describeError(new TaskReleaseRefusedError('abc', 'w1', 'w2'));
+
+		expect(notClaimed).toMatchObject({ kind: 'conflict', hint: expect.stringContaining('task claim') });
+		expect(refused).toMatchObject({ kind: 'conflict', hint: expect.stringContaining('--force') });
+	});
+
+	it('a project write lock that stays busy is "unavailable" (retry later), with the hint of the error', () => {
+		const description = describeError(
+			new WriteLockTimeoutError(
+				'could not take the lock in 10 s',
+				'Wait for the other task command to end, then retry.',
+				'/x/.write-lock',
+				{
+					pid: 42,
+					host: 'h',
+					at: '2026-11-14T10:00:00.000Z',
+				}
+			)
+		);
+
+		expect(description.kind).toBe('unavailable');
+		expect(description.hint).toBe('Wait for the other task command to end, then retry.');
+		expect(description.details).toMatchObject({ lockPath: '/x/.write-lock', holder: { pid: 42, host: 'h' } });
 	});
 });

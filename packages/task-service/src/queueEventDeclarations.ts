@@ -46,6 +46,8 @@ export const TASK_EVENT_NAMES: Record<TaskEvent['name'], true> = {
 	onTaskCommentEdited: true,
 	onTaskCommentRemoved: true,
 	onTaskParentChanged: true,
+	onTaskPriorityChanged: true,
+	onTaskAssigneeChanged: true,
 	onTaskDeleted: true,
 	onTasksMigrated: true,
 };
@@ -422,6 +424,61 @@ export const queueEventDeclarations: readonly QueueEventDeclaration[] = [
 		example: {
 			taskId: '3f2a9c1e-0000-4000-8000-000000000002',
 			oldParentId: '3f2a9c1e-0000-4000-8000-000000000001',
+			...projectExample,
+		},
+		correlationKey: 'payload.taskId',
+	},
+	{
+		name: 'onTaskPriorityChanged',
+		description:
+			'The priority of a task was set, changed or cleared (task set-priority / unset-priority). Fires once per change, after it ' +
+			'is saved. oldPriority is absent when the task had none (the project default applied), newPriority when it was cleared. ' +
+			'Does NOT fire when the priority is unchanged, nor at creation (onTaskCreated).',
+		schema: {
+			type: 'object',
+			properties: {
+				taskId: string,
+				oldPriority: { type: 'string', description: 'Absent when the task had no priority of its own.' },
+				newPriority: { type: 'string', description: 'Absent when the priority was cleared.' },
+				...projectProperties,
+			},
+			required: ['taskId', ...projectRequired],
+			additionalProperties: false,
+		},
+		example: {
+			taskId: '3f2a9c1e-0000-4000-8000-000000000001',
+			oldPriority: 'medium',
+			newPriority: 'high',
+			...projectExample,
+		},
+		correlationKey: 'payload.taskId',
+	},
+	{
+		name: 'onTaskAssigneeChanged',
+		description:
+			'The assignee of a task changed: by hand (task set-assignee / unset-assignee), or by a claim or a release (task claim / ' +
+			'release). Fires once per change, after it is saved. outcome is present for a claim (claimed, renewed with oldAssignee = ' +
+			'newAssignee, takeover of another holder) and a release (released, no newAssignee), absent for a hand assignment. ' +
+			'Does NOT fire when the assignee is unchanged by hand, nor when a claim is refused.',
+		schema: {
+			type: 'object',
+			properties: {
+				taskId: string,
+				oldAssignee: { type: 'string', description: 'Absent when nobody held the task.' },
+				newAssignee: { type: 'string', description: 'Absent when the task was released or unassigned.' },
+				outcome: {
+					enum: ['claimed', 'renewed', 'takeover', 'released'],
+					description: 'Only for a claim or a release; absent for an assignment by hand.',
+				},
+				...projectProperties,
+			},
+			required: ['taskId', ...projectRequired],
+			additionalProperties: false,
+		},
+		example: {
+			taskId: '3f2a9c1e-0000-4000-8000-000000000001',
+			newAssignee: 'worker-1',
+			outcome: 'claimed',
 			...projectExample,
 		},
 		correlationKey: 'payload.taskId',

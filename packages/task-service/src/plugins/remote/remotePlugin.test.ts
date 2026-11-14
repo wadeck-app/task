@@ -63,12 +63,15 @@ async function server(options: Parameters<typeof startServerFixture>[0] = {}): P
 const line = (lines: CheckLine[], name: string): CheckLine | undefined => lines.find(l => l.name === name);
 
 describe('the remote plugin: declaration', () => {
-	it('is the remote kind, declares the local capabilities with the events raised by the server, and needs no fill', () => {
+	it('is the remote kind, declares the local capabilities with the events raised by the server and no priority, assignee or claim yet, and needs no fill', () => {
 		expect(remotePlugin.extensionPoint).toBe('strategy');
 		expect(remotePlugin.backendKind).toBe('remote');
 		expect(remotePlugin.capabilities).toBe(REMOTE_CAPABILITIES);
 		expect(remotePlugin.capabilities).toEqual({
 			...createBuiltinRegistry().lookup('local', 'strategy').capabilities,
+			priority: false,
+			assignee: false,
+			claim: false,
 			events: 'server',
 		});
 		expect(remotePlugin.fillTechniques).toEqual({});

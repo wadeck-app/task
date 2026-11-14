@@ -16,6 +16,20 @@ describe('the events capability', () => {
 	});
 });
 
+describe('the priority, assignee and claim capabilities', () => {
+	it('the local store holds all three', () => {
+		expect(LOCAL_CAPABILITIES.priority).toBe(true);
+		expect(LOCAL_CAPABILITIES.assignee).toBe(true);
+		expect(LOCAL_CAPABILITIES.claim).toBe(true);
+	});
+
+	it('are named in the runtime list, so a fill or a strategy table can refer to them', () => {
+		for (const name of ['priority', 'assignee', 'claim'] as const) {
+			expect(BACKEND_CAPABILITY_NAMES).toContain(name);
+		}
+	});
+});
+
 describe('the writes capability', () => {
 	it('the local store writes in full', () => {
 		expect(LOCAL_CAPABILITIES.writes).toBe('full');

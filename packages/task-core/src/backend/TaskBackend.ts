@@ -7,6 +7,7 @@
 //  - `updateStatus` has no `existing` record (the backend re-reads; a remote cannot mutate the caller's object).
 // Domain rules (cycles, single duplicateOf, inverse links, activity entries) still live in the local TaskStore; step 0.7
 // of the design lifts them into a shared layer over a thinner port.
+import type { ClaimOutcome, ClaimRequest } from '../taskFields.js';
 import type { CommentChange, CommentEdit } from '../taskComments.js';
 import type { LinkType, TaskLink, TaskLinks, TaskRecord, TaskStatus, TaskSummary, TaskTreeNode } from '../TaskStore.js';
 import type { BackendCapabilities, BackendKind } from './capabilities.js';
@@ -37,6 +38,8 @@ export type ResolvedTask = Pick<
 	| 'type'
 	| 'labels'
 	| 'meta'
+	| 'priority'
+	| 'assignee'
 	| 'createdAt'
 	| 'updatedAt'
 	| 'revision'
@@ -95,6 +98,28 @@ export interface BackendCommentChange extends Omit<CommentChange, 'task'> {
 
 export interface BackendCommentEdit extends Omit<CommentEdit, 'task'> {
 	task: VersionedRecord;
+}
+
+/** What `claim` takes: the claim rules' input (see ClaimRequest) and the revision the caller read, if it wants the write refused when the task changed. */
+export type BackendClaimInput = ClaimRequest & WriteOptions;
+
+/** What `claim` answers: the saved task, how it went, and who held the task before a takeover. */
+export interface BackendClaimResult {
+	task: VersionedRecord;
+	outcome: ClaimOutcome;
+	previousAssignee?: string;
+}
+
+/** Options of `release`: with `assignee`, a holder other than it needs `force`. */
+export interface ReleaseOptions extends WriteOptions {
+	assignee?: string;
+	force?: boolean;
+}
+
+/** What `release` answers: the saved task and who held it. */
+export interface BackendReleaseResult {
+	task: VersionedRecord;
+	previousAssignee: string;
 }
 
 /** One label a project needs in the remote system, and why. */
@@ -175,6 +200,25 @@ export interface TaskBackend {
 	addComment(id: string, text: string, options?: WriteOptions & { author?: string }): Promise<BackendCommentChange>;
 	editComment(id: string, commentId: string, text: string, options?: WriteOptions): Promise<BackendCommentEdit>;
 	removeComment(id: string, commentId: string, options?: WriteOptions): Promise<BackendCommentChange>;
+
+	// ---- optional: priority, assignee and claim (capabilities `priority`, `assignee`, `claim`) ----
+	// Optional so that a backend written before them keeps compiling. A backend WITHOUT the capability must still implement them,
+	// answering UnsupportedByBackendError (the contract suite fails a backend that lacks the method).
+	/** Sets the priority; validated against the project's list when the backend was given one. The same value writes nothing. */
+	setPriority?(id: string, priority: string, options?: WriteOptions): Promise<VersionedRecord>;
+	/** Removes the priority (the project's default applies again). A task without one writes nothing. */
+	clearPriority?(id: string, options?: WriteOptions): Promise<VersionedRecord>;
+	/** Gives the task to a name by hand; the lease of a previous claim is dropped when the assignee changes. */
+	setAssignee?(id: string, assignee: string, options?: WriteOptions): Promise<VersionedRecord>;
+	/** Removes the assignee and its lease. A task nobody holds writes nothing. */
+	clearAssignee?(id: string, options?: WriteOptions): Promise<VersionedRecord>;
+	/**
+	 * Claims a task under a lease: check and write are one step (local: under the project write lock; remote: the server queue).
+	 * The clock is the caller's (`input.now`). Refused with TaskClaimedError (a TaskConflictError) while someone else holds a live lease.
+	 */
+	claim?(id: string, input: BackendClaimInput): Promise<BackendClaimResult>;
+	/** Gives the task up (assignee, claimedAt, leaseUntil cleared). TaskNotClaimedError when nobody holds it. */
+	release?(id: string, options?: ReleaseOptions): Promise<BackendReleaseResult>;
 
 	// ---- delete ----
 	/** True when the task existed and was removed (or closed, `capabilities.delete` = `close-only`), false when it was not found. */

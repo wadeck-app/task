@@ -70,6 +70,9 @@ describe('the contract itself', () => {
 		['labels', { ...LOCAL_CAPABILITIES, labels: false }],
 		['meta', { ...LOCAL_CAPABILITIES, meta: false }],
 		['comments', { ...LOCAL_CAPABILITIES, comments: false }],
+		['priority', { ...LOCAL_CAPABILITIES, priority: false }],
+		['assignee', { ...LOCAL_CAPABILITIES, assignee: false }],
+		['claim', { ...LOCAL_CAPABILITIES, claim: false }],
 		['hierarchy', { ...LOCAL_CAPABILITIES, hierarchy: 'none' as const }],
 		['linkTypes', { ...LOCAL_CAPABILITIES, linkTypes: ['blockedBy'] as BackendCapabilities['linkTypes'] }],
 		['delete', { ...LOCAL_CAPABILITIES, delete: 'no' as const }],
@@ -108,6 +111,26 @@ describe('the contract itself', () => {
 			} finally {
 				fixture.dispose();
 			}
+		}
+	});
+
+	it('fails loudly, naming the missing operation, a backend that lacks the optional priority / claim operations', async () => {
+		const fixture = localFixture();
+		try {
+			const lacking = Object.assign(Object.create(fixture.backend) as TaskBackend, {
+				setPriority: undefined,
+				claim: undefined,
+			});
+			const priorityCase = BACKEND_CONTRACT_CASES.find(c => c.needs?.capability === 'priority')!;
+			await expect(runContractCase(priorityCase, { backend: lacking }, {})).rejects.toThrow(
+				/does not implement setPriority/
+			);
+			const claimCase = BACKEND_CONTRACT_CASES.find(c => c.needs?.capability === 'claim')!;
+			await expect(runContractCase(claimCase, { backend: lacking }, {})).rejects.toThrow(
+				/does not implement claim/
+			);
+		} finally {
+			fixture.dispose();
 		}
 	});
 

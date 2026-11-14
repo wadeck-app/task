@@ -74,6 +74,9 @@ const UNSUPPORTED: Partial<Record<keyof BackendCapabilities, unknown>> = {
 	labels: false,
 	meta: false,
 	comments: false,
+	priority: false,
+	assignee: false,
+	claim: false,
 	writes: 'none',
 };
 

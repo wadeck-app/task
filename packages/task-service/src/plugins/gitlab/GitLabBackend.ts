@@ -7,7 +7,9 @@
 import { BackendDataError, BackendLimitError, TaskNotFoundError } from '@wadeck-app/task-core';
 import type {
 	BackendCapabilities,
+	BackendClaimResult,
 	BackendCommentChange,
+	BackendReleaseResult,
 	BackendCommentEdit,
 	CreateTaskInput,
 	LabelCount,
@@ -26,6 +28,7 @@ import type {
 	WriteOptions,
 } from '@wadeck-app/task-core';
 
+import { refuseTaskField } from '../kinds.js';
 import type { DeclaredFills } from '../kinds.js';
 import type { ClientResponse, GitLabClient } from './gitlabClient.js';
 import {
@@ -70,6 +73,10 @@ export const GITLAB_CAPABILITIES: BackendCapabilities = Object.freeze({
 	// With fills.meta: labels the labels `meta:key=value` are read as meta; the plugin reports it as emulated.
 	meta: false,
 	comments: true,
+	// Not carried yet (stage 3): the operations answer UnsupportedByBackendError.
+	priority: false,
+	assignee: false,
+	claim: false,
 	writes: 'full',
 	// The list carries the parent (one batched GraphQL read per page) but not the links of an issue.
 	indexedGraph: false,
@@ -716,6 +723,31 @@ export class GitLabBackend implements TaskBackend {
 
 	removeComment(id: string, commentId: string, options?: WriteOptions): Promise<BackendCommentChange> {
 		return this.writer.removeComment(id, commentId, options);
+	}
+
+	// Priority, assignee and claim: not available on this storage strategy yet (stage 3 / 4 of the priority plan); each answers UnsupportedByBackendError.
+	setPriority(): Promise<VersionedRecord> {
+		return refuseTaskField('gitlab', 'setPriority');
+	}
+
+	clearPriority(): Promise<VersionedRecord> {
+		return refuseTaskField('gitlab', 'clearPriority');
+	}
+
+	setAssignee(): Promise<VersionedRecord> {
+		return refuseTaskField('gitlab', 'setAssignee');
+	}
+
+	clearAssignee(): Promise<VersionedRecord> {
+		return refuseTaskField('gitlab', 'clearAssignee');
+	}
+
+	claim(): Promise<BackendClaimResult> {
+		return refuseTaskField('gitlab', 'claim');
+	}
+
+	release(): Promise<BackendReleaseResult> {
+		return refuseTaskField('gitlab', 'release');
 	}
 
 	deleteTask(id: string, options?: WriteOptions): Promise<boolean> {

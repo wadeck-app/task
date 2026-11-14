@@ -273,3 +273,36 @@ describe('task strategy show and check on a remote project', () => {
 		expect(result.output).toContain('Result: FAILED');
 	});
 });
+
+describe('priority, assignee and claim on a remote project', () => {
+	const commands: string[][] = [
+		['set-priority', 'ID', 'high'],
+		['unset-priority', 'ID'],
+		['set-assignee', 'ID', 'bob'],
+		['unset-assignee', 'ID'],
+		['claim', 'ID', '--as', 'w1'],
+		['release', 'ID'],
+	];
+
+	it.each(commands)(
+		'%s is refused with exit 1 naming the remote strategy, and nothing is raised',
+		async (...args) => {
+			const id = json((await run('new', 'First task')).output).id as string;
+			serverEvents.length = 0;
+			const withId = args.map(arg => (arg === 'ID' ? id : arg));
+
+			const text = await run(...withId);
+			const asJson = await run(...withId, '--json');
+
+			expect(text.exitCode).toBe(1);
+			expect(text.output).toContain('remote');
+			expect(asJson.exitCode).toBe(1);
+			expect(json(asJson.output)).toMatchObject({
+				error: expect.stringContaining('remote'),
+				hint: expect.any(String),
+			});
+			expect(serverEvents).toEqual([]);
+			expect(publishMock).not.toHaveBeenCalled();
+		}
+	);
+});

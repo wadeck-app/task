@@ -92,7 +92,12 @@ export const runShow: ProjectCommand = (rest, { jsonMode, ctx }) => {
 		// A link to a vanished task is marked in the answer and warned about, never a failure: the task must stay readable.
 		const report = await readTaskLinks(ctx, { id: taskId });
 		warnDangling(report);
-		return report.dangling.length > 0 ? { ...detail, dangling: report.dangling } : detail;
+		const full = report.dangling.length > 0 ? { ...detail, dangling: report.dangling } : detail;
+		// Computed here, not stored: whether the lease of a claim is over depends on the clock of the reader.
+		const leaseUntil = typeof full['leaseUntil'] === 'string' ? Date.parse(full['leaseUntil']) : undefined;
+		return leaseUntil === undefined || Number.isNaN(leaseUntil)
+			? full
+			: { ...full, leaseExpired: leaseUntil <= Date.now() };
 	});
 };
 

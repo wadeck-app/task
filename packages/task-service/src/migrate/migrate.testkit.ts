@@ -107,6 +107,8 @@ export interface SideOptions {
 	name?: string;
 	statuses?: ProjectFacts['statuses'];
 	types?: string[];
+	/** The priorities the project allows, highest first: the backend refuses any other. Absent: any text is accepted. */
+	priorities?: string[];
 	traits?: Partial<BackendTraits>;
 	/** The backend with fewer capabilities of the contract suite (no hierarchy, labels, meta, comments; blockedBy only). */
 	restricted?: boolean;
@@ -120,13 +122,20 @@ export function localSide(options: SideOptions): LocalSide {
 	const root = fs.mkdtempSync(path.join(os.tmpdir(), 'task-migrate-'));
 	const dataDir = path.join(root, 'data');
 	const tasksDir = path.join(dataDir, 'tasks');
-	const raw = options.restricted === true ? createRestrictedBackend(tasksDir) : createLocalBackend(tasksDir);
+	const raw =
+		options.restricted === true
+			? createRestrictedBackend(tasksDir)
+			: createLocalBackend(tasksDir, options.priorities === undefined ? {} : { priorities: options.priorities });
 	const { backend, log } = spied(options.wrap?.(raw) ?? raw, options.before);
 	return {
 		endpoint: {
 			project: { id: options.id, name: options.name ?? `project-${options.id}` },
 			backend,
-			facts: { statuses: options.statuses ?? STATUSES, types: options.types ?? [] },
+			facts: {
+				statuses: options.statuses ?? STATUSES,
+				types: options.types ?? [],
+				...(options.priorities === undefined ? {} : { priorities: options.priorities }),
+			},
 			traits: { ...LOCAL_TRAITS, ...options.traits },
 		},
 		dataDir,

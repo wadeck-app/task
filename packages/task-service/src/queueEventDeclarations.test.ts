@@ -14,6 +14,9 @@ import {
 } from './queueEventDeclarations.js';
 import { setStatus } from './setStatus.js';
 import { setTaskText } from './setTaskText.js';
+import { clearTaskAssignee, setTaskAssignee } from './taskAssignee.js';
+import { claimTask, releaseTask } from './taskClaim.js';
+import { clearTaskPriority, setTaskPriority } from './taskPriority.js';
 import { addLabel, removeLabel, setMeta, setType, unsetMeta, unsetType } from './taskFields.js';
 import { createTestContext, type TestContext } from './testHelpers.js';
 
@@ -38,6 +41,7 @@ describe('queueEventDeclarations', () => {
 		const expected = Object.keys(TASK_EVENT_NAMES).sort();
 		expect(expected).toEqual([
 			'onStatusChange',
+			'onTaskAssigneeChanged',
 			'onTaskCommentAdded',
 			'onTaskCommentEdited',
 			'onTaskCommentRemoved',
@@ -48,6 +52,7 @@ describe('queueEventDeclarations', () => {
 			'onTaskLinked',
 			'onTaskMetaChanged',
 			'onTaskParentChanged',
+			'onTaskPriorityChanged',
 			'onTaskTextChanged',
 			'onTaskTypeChanged',
 			'onTaskUnblocked',
@@ -346,6 +351,65 @@ describe('queueEventDeclarations', () => {
 			const task = (await createTask(t.ctx, { description: 'a' })).task;
 			expectConform((await addLabel(t.ctx, { id: task.id, label: 'urgent' })).events);
 			expectConform((await removeLabel(t.ctx, { id: task.id, label: 'urgent' })).events);
+		});
+	});
+
+	describe('the schemas follow the payloads of priority, assignee and claim', () => {
+		let t: TestContext;
+		beforeEach(() => {
+			t = createTestContext();
+		});
+		afterEach(() => t.cleanup());
+
+		function expectConform(events: readonly TaskEvent[], expectedName: string): void {
+			expect(events.map(event => event.name)).toEqual([expectedName]);
+			const payload = throughJson(events[0]!.payload);
+			expect(checkAgainstSchema(declaration(expectedName).schema, payload), JSON.stringify(payload)).toEqual([]);
+		}
+
+		it('onTaskPriorityChanged: set, change and clear', async () => {
+			const task = (await createTask(t.ctx, { description: 'a' })).task;
+			expectConform(
+				(await setTaskPriority(t.ctx, { id: task.id, priority: 'high' })).events,
+				'onTaskPriorityChanged'
+			);
+			expectConform(
+				(await setTaskPriority(t.ctx, { id: task.id, priority: 'low' })).events,
+				'onTaskPriorityChanged'
+			);
+			const cleared = await clearTaskPriority(t.ctx, { id: task.id });
+			expect(throughJson(cleared.events[0]!.payload)).not.toHaveProperty('newPriority');
+			expectConform(cleared.events, 'onTaskPriorityChanged');
+		});
+
+		it('onTaskAssigneeChanged: by hand, unassign, claim, renew, takeover and release', async () => {
+			const task = (await createTask(t.ctx, { description: 'a' })).task;
+			expectConform(
+				(await setTaskAssignee(t.ctx, { id: task.id, assignee: 'bob' })).events,
+				'onTaskAssigneeChanged'
+			);
+			expectConform((await clearTaskAssignee(t.ctx, { id: task.id })).events, 'onTaskAssigneeChanged');
+			expectConform((await claimTask(t.ctx, { id: task.id, assignee: 'w1' })).events, 'onTaskAssigneeChanged');
+			expectConform(
+				(await claimTask(t.ctx, { id: task.id, assignee: 'w1', renew: true })).events,
+				'onTaskAssigneeChanged'
+			);
+			expectConform(
+				(await claimTask(t.ctx, { id: task.id, assignee: 'w2', force: true })).events,
+				'onTaskAssigneeChanged'
+			);
+			expectConform((await releaseTask(t.ctx, { id: task.id })).events, 'onTaskAssigneeChanged');
+		});
+
+		it('the outcome is limited to claimed, renewed, takeover and released', () => {
+			const properties = declaration('onTaskAssigneeChanged').schema['properties'] as Record<
+				string,
+				{ enum?: string[] }
+			>;
+			expect(properties['outcome']!.enum).toEqual(['claimed', 'renewed', 'takeover', 'released']);
+			expect(declaration('onTaskAssigneeChanged').schema['required']).not.toContain('outcome');
+			expect(declaration('onTaskAssigneeChanged').description).toMatch(/Does NOT fire/);
+			expect(declaration('onTaskPriorityChanged').description).toMatch(/Does NOT fire/);
 		});
 	});
 

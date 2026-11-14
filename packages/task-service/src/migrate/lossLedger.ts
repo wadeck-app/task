@@ -36,6 +36,21 @@ const WORDING: Record<LossKind, { what: (items: number, tasks: number, details: 
 			`${items} metadata entr${items === 1 ? 'y' : 'ies'} on ${tasks} task(s) cannot be stored: the target has no metadata; they are not set`,
 		fix: 'declare a meta fill in the target strategy (strategy.options.fills.meta), or accept the loss',
 	},
+	priority: {
+		what: (items, tasks, details) =>
+			`${items} priorit${items === 1 ? 'y' : 'ies'} on ${tasks} task(s) cannot be stored on the target (${details}); they are not set`,
+		fix: 'add the priority to the target project (priorities in its config.yml), use a target project on the local strategy (the other storage strategies do not carry priorities yet), or accept the loss',
+	},
+	assignee: {
+		what: (items, tasks) =>
+			`${items} assignee(s) on ${tasks} task(s) cannot be stored: the target does not carry assignees; they are not set (a claim lease is never migrated)`,
+		fix: 'use a target project on the local strategy (the other storage strategies do not carry assignees yet), or accept the loss',
+	},
+	lease: {
+		what: (_items, tasks) =>
+			`${tasks} task(s) hold a claim lease on the source: a lease is never migrated, so on the target nothing keeps another worker from claiming them (even with an assignee kept) without --force`,
+		fix: 'finish or release the claims on the source first (task release <id>), or accept the loss',
+	},
 	comments: {
 		what: (items, tasks) =>
 			`${items} comment(s) on ${tasks} task(s) cannot be stored: the target has no comments; they are not written`,

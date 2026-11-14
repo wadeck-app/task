@@ -32,6 +32,7 @@ export function statusOutcomeProblem(entry: TaskStatusEntry): string | undefined
 export interface TaskGlobalConfig {
 	defaults?: {
 		priority?: string;
+		leaseMinutes?: number;
 	};
 }
 
@@ -39,8 +40,12 @@ export interface TaskProjectConfig {
 	statuses?: TaskStatusEntry[];
 	types?: string[];
 	fields?: Array<{ name: string; type: string; required?: boolean }>;
+	/** The priorities the project allows, highest first. Absent = {@link DEFAULT_PRIORITIES}. */
+	priorities?: string[];
 	defaults?: {
 		priority?: string;
+		/** Length of a claim lease when the caller gives none (1..10080). */
+		leaseMinutes?: number;
 	};
 }
 
@@ -54,10 +59,22 @@ export interface TaskResolvedConfig {
 	negativeStatuses: string[];
 	/** Valid task types. Empty array means no validation (any string accepted). */
 	types: string[];
+	/** The valid priorities, highest first (the order of the list is the order of importance). */
+	priorities: string[];
 	defaults: {
+		/** The priority a task without one has; one of `priorities` (checked by task-service when it reads a project). */
 		priority: string;
+		/** Default lease of a claim, in minutes. */
+		leaseMinutes: number;
 	};
 }
+
+/** The priorities of a project that lists none, highest first. */
+export const DEFAULT_PRIORITIES: readonly string[] = Object.freeze(['urgent', 'high', 'medium', 'low']);
+/** The lease of a claim when neither the caller nor the config says. */
+export const DEFAULT_LEASE_MINUTES = 30;
+/** The longest lease a config or a caller may ask for: one week. */
+export const MAX_LEASE_MINUTES = 10080;
 
 const DEFAULT_STATUSES: TaskStatusEntry[] = ['backlog', 'in-progress', 'done'];
 const DEFAULT_PRIORITY = 'medium';
@@ -131,6 +148,22 @@ function resolveStatuses(
 	};
 }
 
+/**
+ * The default priority of a project. A value a PROJECT layer wrote is kept as is (task-service refuses it when it is not in the
+ * list, naming the file). Otherwise: the global value when it is in the list, else `medium` when it is, else the LAST entry
+ * (the lowest priority). So a global default outside a project's list is ignored, never an error.
+ */
+function resolveDefaultPriority(
+	fromProject: string | undefined,
+	fromGlobal: string | undefined,
+	priorities: readonly string[]
+): string {
+	if (fromProject !== undefined) return fromProject;
+	if (fromGlobal !== undefined && priorities.includes(fromGlobal)) return fromGlobal;
+	if (priorities.includes(DEFAULT_PRIORITY)) return DEFAULT_PRIORITY;
+	return priorities[priorities.length - 1] ?? DEFAULT_PRIORITY;
+}
+
 export class TaskConfigLoader {
 	static expandTilde(p: string): string {
 		if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) {
@@ -173,14 +206,24 @@ export class TaskConfigLoader {
 			input.source
 		);
 
+		const priorities = [...(projectConfig.priorities ?? DEFAULT_PRIORITIES)];
 		return {
 			statuses,
 			defaultStatus,
 			terminalStatuses,
 			negativeStatuses,
 			types: projectConfig.types ?? [],
+			priorities,
 			defaults: {
-				priority: projectConfig.defaults?.priority ?? globalConfig.defaults?.priority ?? DEFAULT_PRIORITY,
+				priority: resolveDefaultPriority(
+					projectConfig.defaults?.priority,
+					globalConfig.defaults?.priority,
+					priorities
+				),
+				leaseMinutes:
+					projectConfig.defaults?.leaseMinutes ??
+					globalConfig.defaults?.leaseMinutes ??
+					DEFAULT_LEASE_MINUTES,
 			},
 		};
 	}

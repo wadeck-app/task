@@ -2,6 +2,17 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { AmbiguousTaskPrefixError, TaskConflictError, TaskNotFoundError } from './errors.js';
+import { ProjectWriteLock } from './projectLock.js';
+import type { WriteLockOptions } from './projectLock.js';
+import {
+	TaskNotClaimedError,
+	TaskReleaseRefusedError,
+	decideClaim,
+	normalizeAssignee,
+	normalizeClaimRequest,
+	normalizePriority,
+} from './taskFields.js';
+import type { ClaimDecision, ClaimOutcome, ClaimRequest } from './taskFields.js';
 import {
 	CommentNotFoundError,
 	generateCommentId,
@@ -49,6 +60,11 @@ export interface TaskSummary {
 	links?: TaskLink[];
 	// Absent for root tasks. Mirrored from TaskRecord so hierarchy queries never need to read task files.
 	parentId?: string;
+	// Absent = the project's default priority / nobody holds the task / no lease. Mirrored from TaskRecord so a dispatcher's
+	// list never reads task files. Old indexes without them stay valid.
+	priority?: string;
+	assignee?: string;
+	leaseUntil?: string;
 }
 
 export interface TaskTreeNode extends TaskSummary {
@@ -74,6 +90,13 @@ export type ActivityKind =
 	| 'child-removed'
 	| 'title'
 	| 'description'
+	// `oldValue` / `newValue`: the priority or the assignee (either absent). `assignee` is a hand-made change; a claim has its own kinds.
+	| 'priority'
+	| 'assignee'
+	// A claim (also a renewal or a takeover): `newValue` = the assignee, `field` = the lease end (ISO), `oldValue` = the previous holder of a takeover.
+	| 'claim'
+	// The holder gave the task up: `oldValue` = the holder.
+	| 'release'
 	// An event of a remote system (a forge) that has no task equivalent (assigned, locked...): `field` is its name, `newValue` its detail. Never written by the local store.
 	| 'other'
 	// Comments: an added one is not logged here (the comment itself is the record); `field` is the comment id.
@@ -126,6 +149,14 @@ export interface TaskRecord {
 	type?: string;
 	labels?: string[];
 	meta?: Record<string, string>;
+	/** One of the project's priorities (free text, 1..50 characters); absent = the project's default priority. */
+	priority?: string;
+	/** Who holds the task: free text (a worker name), 1..100 characters, no user model; absent = nobody. */
+	assignee?: string;
+	/** ISO instant of the claim that gave the task to `assignee`; absent for a hand-made assignee. */
+	claimedAt?: string;
+	/** ISO instant the claim lease ends; absent = no lease (a hand-made assignee, or a task nobody holds). */
+	leaseUntil?: string;
 	createdAt: string;
 	updatedAt: string;
 	history: Array<{ status: TaskStatus; timestamp: string }>;
@@ -142,7 +173,24 @@ interface TaskIndex {
 export interface TaskStoreOptions {
 	/** Writes `content` to `file` (the directory exists). A failure must throw. */
 	writeFile?: (file: string, content: string) => void;
+	/** The priorities the project allows, highest first. When given, any other priority is refused (UnknownPriorityError); absent = any text up to 50 characters. */
+	priorities?: readonly string[];
+	/** The project write lock (wait limit, warnings, clock): see projectLock.ts. The defaults wait up to 10 s and warn through `process.emitWarning`. */
+	lock?: WriteLockOptions;
 }
+
+/** What {@link TaskStore.claim} answers: the task as saved, how the claim went and who held the task before a takeover. */
+export interface ClaimChange extends ClaimDecision {
+	task: TaskRecord;
+}
+
+/** What {@link TaskStore.release} answers: the task as saved and who held it. */
+export interface ReleaseChange {
+	task: TaskRecord;
+	previousAssignee: string;
+}
+
+export type { ClaimOutcome, ClaimRequest };
 
 export class TaskStore {
 	/**
@@ -154,9 +202,22 @@ export class TaskStore {
 		options: TaskStoreOptions = {}
 	) {
 		this.writeFile = options.writeFile ?? ((file, content) => fs.writeFileSync(file, content, 'utf8'));
+		this.priorities = options.priorities;
+		this.writeLock = new ProjectWriteLock(path.join(path.dirname(tasksDir), '.write-lock'), options.lock);
 	}
 
 	private readonly writeFile: (file: string, content: string) => void;
+	private readonly priorities: readonly string[] | undefined;
+	private readonly writeLock: ProjectWriteLock;
+
+	/**
+	 * Runs `operation` holding the project write lock (`<data dir>/.write-lock`), so the read, the checks and the writes of a
+	 * mutation (task file and index) never interleave with another process. Reentrant: the outermost call takes it, a nested one
+	 * (a mutator that calls another) joins it. The backend wraps its revision check in it too.
+	 */
+	withWriteLock<T>(operation: () => T): T {
+		return this.writeLock.run(operation);
+	}
 
 	/**
 	 * @param description stored only when it differs from `title`.
@@ -169,35 +230,37 @@ export class TaskStore {
 		description?: string,
 		createdAt?: string
 	): TaskRecord {
-		if (parentId !== undefined) {
-			this.requireParent(parentId);
-		}
-		this.ensureDirectory();
+		return this.withWriteLock(() => {
+			if (parentId !== undefined) {
+				this.requireParent(parentId);
+			}
+			this.ensureDirectory();
 
-		const now = createdAt ?? new Date().toISOString();
-		const id = generateExecutionId();
+			const now = createdAt ?? new Date().toISOString();
+			const id = generateExecutionId();
 
-		const record: TaskRecord = {
-			id,
-			title,
-			...(description !== undefined && description !== title && { description }),
-			status: initialStatus,
-			...(parentId !== undefined && { parentId }),
-			createdAt: now,
-			updatedAt: now,
-			history: [{ status: initialStatus, timestamp: now }],
-		};
+			const record: TaskRecord = {
+				id,
+				title,
+				...(description !== undefined && description !== title && { description }),
+				status: initialStatus,
+				...(parentId !== undefined && { parentId }),
+				createdAt: now,
+				updatedAt: now,
+				history: [{ status: initialStatus, timestamp: now }],
+			};
 
-		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
-		this.addToIndex({
-			id,
-			title,
-			status: initialStatus,
-			createdAt: now,
-			...(parentId !== undefined && { parentId }),
+			this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+			this.addToIndex({
+				id,
+				title,
+				status: initialStatus,
+				createdAt: now,
+				...(parentId !== undefined && { parentId }),
+			});
+
+			return record;
 		});
-
-		return record;
 	}
 
 	/**
@@ -205,28 +268,32 @@ export class TaskStore {
 	 * parent, or if the parent is already a descendant of the task (which would create a cycle).
 	 */
 	setParent(id: string, parentId: string): TaskRecord {
-		const record = this.get(id);
-		if (id === parentId) {
-			throw new TaskConflictError(`Task "${id}" cannot be its own parent`);
-		}
-		this.requireParent(parentId);
-		const parentAncestors = this.ancestorIds(parentId);
-		if (parentAncestors.includes(id)) {
-			// Each arrow reads "has as parent": id -> parentId -> ... -> id.
-			const cyclePath = [id, parentId, ...parentAncestors.slice(0, parentAncestors.indexOf(id) + 1)];
-			throw new TaskConflictError(
-				`Cannot set parent of "${id}" to "${parentId}": it would create a cycle (${cyclePath.join(' -> ')}); "${parentId}" is a descendant of "${id}"`
-			);
-		}
-		return this.writeParent(record, parentId);
+		return this.withWriteLock(() => {
+			const record = this.get(id);
+			if (id === parentId) {
+				throw new TaskConflictError(`Task "${id}" cannot be its own parent`);
+			}
+			this.requireParent(parentId);
+			const parentAncestors = this.ancestorIds(parentId);
+			if (parentAncestors.includes(id)) {
+				// Each arrow reads "has as parent": id -> parentId -> ... -> id.
+				const cyclePath = [id, parentId, ...parentAncestors.slice(0, parentAncestors.indexOf(id) + 1)];
+				throw new TaskConflictError(
+					`Cannot set parent of "${id}" to "${parentId}": it would create a cycle (${cyclePath.join(' -> ')}); "${parentId}" is a descendant of "${id}"`
+				);
+			}
+			return this.writeParent(record, parentId);
+		});
 	}
 
 	removeParent(id: string, options: { mirror?: boolean } = {}): TaskRecord {
-		const record = this.get(id);
-		if (record.parentId === undefined) {
-			throw new TaskConflictError(`Task "${id}" has no parent`);
-		}
-		return this.writeParent(record, undefined, options.mirror !== false);
+		return this.withWriteLock(() => {
+			const record = this.get(id);
+			if (record.parentId === undefined) {
+				throw new TaskConflictError(`Task "${id}" has no parent`);
+			}
+			return this.writeParent(record, undefined, options.mirror !== false);
+		});
 	}
 
 	/**
@@ -235,52 +302,62 @@ export class TaskStore {
 	 * graph of that link type (checked transitively over the whole graph).
 	 */
 	addLink(id: string, type: LinkType, targetId: string): TaskRecord {
-		if (!(LINK_TYPES as readonly string[]).includes(type)) {
-			throw new Error(`Unknown link type "${type}". Valid types: ${LINK_TYPES.join(', ')}`);
-		}
-		const record = this.get(id);
-		if (id === targetId) {
-			throw new TaskConflictError(`Task "${id}" cannot be linked to itself`);
-		}
-		if (!fs.existsSync(this.taskFilePath(targetId))) {
-			throw new Error(`Target task not found: ${targetId}`);
-		}
-		const links = record.links ?? [];
-		if (links.some(l => l.type === type && l.target === targetId)) {
-			throw new TaskConflictError(`Task "${id}" is already ${type} "${targetId}"`);
-		}
-		const sameType = links.find(l => l.type === type);
-		if (SINGLE_TARGET_LINK_TYPES.has(type) && sameType) {
-			throw new TaskConflictError(
-				`Task "${id}" is already a ${type} of "${sameType.target}". Run: task unlink ${id} ${type} ${sameType.target} first`
+		return this.withWriteLock(() => {
+			if (!(LINK_TYPES as readonly string[]).includes(type)) {
+				throw new Error(`Unknown link type "${type}". Valid types: ${LINK_TYPES.join(', ')}`);
+			}
+			const record = this.get(id);
+			if (id === targetId) {
+				throw new TaskConflictError(`Task "${id}" cannot be linked to itself`);
+			}
+			if (!fs.existsSync(this.taskFilePath(targetId))) {
+				throw new Error(`Target task not found: ${targetId}`);
+			}
+			const links = record.links ?? [];
+			if (links.some(l => l.type === type && l.target === targetId)) {
+				throw new TaskConflictError(`Task "${id}" is already ${type} "${targetId}"`);
+			}
+			const sameType = links.find(l => l.type === type);
+			if (SINGLE_TARGET_LINK_TYPES.has(type) && sameType) {
+				throw new TaskConflictError(
+					`Task "${id}" is already a ${type} of "${sameType.target}". Run: task unlink ${id} ${type} ${sameType.target} first`
+				);
+			}
+			const cyclePath = this.findLinkPath(type, targetId, id);
+			if (cyclePath) {
+				throw new TaskConflictError(
+					`Cannot link "${id}" ${type} "${targetId}": it would create a cycle (${[id, ...cyclePath].join(' -> ')})`
+				);
+			}
+			const result = this.writeLinks(
+				record,
+				[...links, { type, target: targetId }],
+				'link-added',
+				type,
+				targetId
 			);
-		}
-		const cyclePath = this.findLinkPath(type, targetId, id);
-		if (cyclePath) {
-			throw new TaskConflictError(
-				`Cannot link "${id}" ${type} "${targetId}": it would create a cycle (${[id, ...cyclePath].join(' -> ')})`
-			);
-		}
-		const result = this.writeLinks(record, [...links, { type, target: targetId }], 'link-added', type, targetId);
-		this.logInverseLink(id, 'link-added', type, targetId);
-		return result;
+			this.logInverseLink(id, 'link-added', type, targetId);
+			return result;
+		});
 	}
 
 	removeLink(id: string, type: LinkType, targetId: string): TaskRecord {
-		const record = this.get(id);
-		const links = record.links ?? [];
-		if (!links.some(l => l.type === type && l.target === targetId)) {
-			throw new TaskConflictError(`Task "${id}" is not ${type} "${targetId}"`);
-		}
-		const result = this.writeLinks(
-			record,
-			links.filter(l => !(l.type === type && l.target === targetId)),
-			'link-removed',
-			type,
-			targetId
-		);
-		this.logInverseLink(id, 'link-removed', type, targetId);
-		return result;
+		return this.withWriteLock(() => {
+			const record = this.get(id);
+			const links = record.links ?? [];
+			if (!links.some(l => l.type === type && l.target === targetId)) {
+				throw new TaskConflictError(`Task "${id}" is not ${type} "${targetId}"`);
+			}
+			const result = this.writeLinks(
+				record,
+				links.filter(l => !(l.type === type && l.target === targetId)),
+				'link-removed',
+				type,
+				targetId
+			);
+			this.logInverseLink(id, 'link-removed', type, targetId);
+			return result;
+		});
 	}
 
 	/** Outgoing links (by type) and their derived inverses (blocks, duplicates, causes) as summaries. */
@@ -511,20 +588,22 @@ export class TaskStore {
 	}
 
 	updateStatus(id: string, status: TaskStatus, existing?: TaskRecord): TaskRecord {
-		const record = existing ?? this.get(id);
-		if (record.status === status) {
-			throw new TaskConflictError(`Task "${id}" is already in status "${status}"`);
-		}
-		const now = new Date().toISOString();
+		return this.withWriteLock(() => {
+			const record = existing ?? this.get(id);
+			if (record.status === status) {
+				throw new TaskConflictError(`Task "${id}" is already in status "${status}"`);
+			}
+			const now = new Date().toISOString();
 
-		record.status = status;
-		record.updatedAt = now;
-		record.history.push({ status, timestamp: now });
+			record.status = status;
+			record.updatedAt = now;
+			record.history.push({ status, timestamp: now });
 
-		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
-		this.updateIndexEntry(id, status);
+			this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+			this.updateIndexEntry(id, status);
 
-		return record;
+			return record;
+		});
 	}
 
 	list(): TaskSummary[] {
@@ -533,159 +612,180 @@ export class TaskStore {
 	}
 
 	setType(id: string, type: string): TaskRecord {
-		const record = this.get(id);
-		const oldType = record.type;
-		record.type = type;
-		record.updatedAt = new Date().toISOString();
-		if (oldType !== type) {
-			this.appendActivity(record, activityEntry(record.updatedAt, 'type', { oldValue: oldType, newValue: type }));
-		}
-		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
-		return record;
+		return this.withWriteLock(() => {
+			const record = this.get(id);
+			const oldType = record.type;
+			record.type = type;
+			record.updatedAt = new Date().toISOString();
+			if (oldType !== type) {
+				this.appendActivity(
+					record,
+					activityEntry(record.updatedAt, 'type', { oldValue: oldType, newValue: type })
+				);
+			}
+			this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+			return record;
+		});
 	}
 
 	addLabel(id: string, label: string): TaskRecord {
-		const record = this.get(id);
-		record.labels = record.labels ?? [];
-		record.updatedAt = new Date().toISOString();
-		if (!record.labels.includes(label)) {
-			record.labels.push(label);
-			this.appendActivity(record, activityEntry(record.updatedAt, 'label-added', { newValue: label }));
-		}
-		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
-		return record;
+		return this.withWriteLock(() => {
+			const record = this.get(id);
+			record.labels = record.labels ?? [];
+			record.updatedAt = new Date().toISOString();
+			if (!record.labels.includes(label)) {
+				record.labels.push(label);
+				this.appendActivity(record, activityEntry(record.updatedAt, 'label-added', { newValue: label }));
+			}
+			this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+			return record;
+		});
 	}
 
 	removeLabel(id: string, label: string): TaskRecord {
-		const record = this.get(id);
-		const had = (record.labels ?? []).includes(label);
-		record.labels = (record.labels ?? []).filter(l => l !== label);
-		record.updatedAt = new Date().toISOString();
-		if (had) {
-			this.appendActivity(record, activityEntry(record.updatedAt, 'label-removed', { oldValue: label }));
-		}
-		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
-		return record;
+		return this.withWriteLock(() => {
+			const record = this.get(id);
+			const had = (record.labels ?? []).includes(label);
+			record.labels = (record.labels ?? []).filter(l => l !== label);
+			record.updatedAt = new Date().toISOString();
+			if (had) {
+				this.appendActivity(record, activityEntry(record.updatedAt, 'label-removed', { oldValue: label }));
+			}
+			this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+			return record;
+		});
 	}
 
 	/** Replaces the title (file and index). A stored description that now equals it is dropped (it would be the title twice). */
 	setTitle(id: string, title: string): TaskRecord {
-		const record = this.get(id);
-		const oldTitle = record.title;
-		record.title = title;
-		if (record.description === title) {
-			delete record.description;
-		}
-		record.updatedAt = new Date().toISOString();
-		if (oldTitle !== title) {
-			this.appendActivity(
-				record,
-				activityEntry(record.updatedAt, 'title', {
-					oldValue: activityPreview(oldTitle),
-					newValue: activityPreview(title),
-				})
-			);
-		}
-		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
-		const index = this.readIndex();
-		const entry = index.tasks.find(t => t.id === id);
-		if (!entry) {
-			throw new Error(`Task index out of sync: entry for "${id}" not found. The index may be corrupted.`);
-		}
-		entry.title = title;
-		this.writeIndex(index);
-		return record;
+		return this.withWriteLock(() => {
+			const record = this.get(id);
+			const oldTitle = record.title;
+			record.title = title;
+			if (record.description === title) {
+				delete record.description;
+			}
+			record.updatedAt = new Date().toISOString();
+			if (oldTitle !== title) {
+				this.appendActivity(
+					record,
+					activityEntry(record.updatedAt, 'title', {
+						oldValue: activityPreview(oldTitle),
+						newValue: activityPreview(title),
+					})
+				);
+			}
+			this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+			const index = this.readIndex();
+			const entry = index.tasks.find(t => t.id === id);
+			if (!entry) {
+				throw new Error(`Task index out of sync: entry for "${id}" not found. The index may be corrupted.`);
+			}
+			entry.title = title;
+			this.writeIndex(index);
+			return record;
+		});
 	}
 
 	/** Replaces the description. An empty one, or one equal to the title, removes the key (the body is the title again). */
 	setDescription(id: string, description: string): TaskRecord {
-		const record = this.get(id);
-		const oldBody = record.description ?? record.title;
-		if (description === '' || description === record.title) {
-			delete record.description;
-		} else {
-			record.description = description;
-		}
-		record.updatedAt = new Date().toISOString();
-		const newBody = record.description ?? record.title;
-		if (oldBody !== newBody) {
-			this.appendActivity(
-				record,
-				activityEntry(record.updatedAt, 'description', {
-					oldValue: activityPreview(oldBody),
-					newValue: activityPreview(newBody),
-				})
-			);
-		}
-		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
-		return record;
+		return this.withWriteLock(() => {
+			const record = this.get(id);
+			const oldBody = record.description ?? record.title;
+			if (description === '' || description === record.title) {
+				delete record.description;
+			} else {
+				record.description = description;
+			}
+			record.updatedAt = new Date().toISOString();
+			const newBody = record.description ?? record.title;
+			if (oldBody !== newBody) {
+				this.appendActivity(
+					record,
+					activityEntry(record.updatedAt, 'description', {
+						oldValue: activityPreview(oldBody),
+						newValue: activityPreview(newBody),
+					})
+				);
+			}
+			this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+			return record;
+		});
 	}
 
 	/** Clears the type (the task has none afterwards). */
 	clearType(id: string): TaskRecord {
-		const record = this.get(id);
-		const oldType = record.type;
-		delete record.type;
-		record.updatedAt = new Date().toISOString();
-		if (oldType !== undefined) {
-			this.appendActivity(record, activityEntry(record.updatedAt, 'type', { oldValue: oldType }));
-		}
-		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
-		return record;
+		return this.withWriteLock(() => {
+			const record = this.get(id);
+			const oldType = record.type;
+			delete record.type;
+			record.updatedAt = new Date().toISOString();
+			if (oldType !== undefined) {
+				this.appendActivity(record, activityEntry(record.updatedAt, 'type', { oldValue: oldType }));
+			}
+			this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+			return record;
+		});
 	}
 
 	/** Removes a metadata key (an absent key changes nothing but `updatedAt`, like removeLabel); the object goes with its last key. */
 	removeMeta(id: string, key: string): TaskRecord {
-		const record = this.get(id);
-		record.updatedAt = new Date().toISOString();
-		if (record.meta !== undefined && Object.hasOwn(record.meta, key)) {
-			this.appendActivity(
-				record,
-				activityEntry(record.updatedAt, 'meta-removed', { field: key, oldValue: record.meta[key] })
-			);
-			delete record.meta[key];
-			if (Object.keys(record.meta).length === 0) {
-				delete record.meta;
+		return this.withWriteLock(() => {
+			const record = this.get(id);
+			record.updatedAt = new Date().toISOString();
+			if (record.meta !== undefined && Object.hasOwn(record.meta, key)) {
+				this.appendActivity(
+					record,
+					activityEntry(record.updatedAt, 'meta-removed', { field: key, oldValue: record.meta[key] })
+				);
+				delete record.meta[key];
+				if (Object.keys(record.meta).length === 0) {
+					delete record.meta;
+				}
 			}
-		}
-		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
-		return record;
+			this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+			return record;
+		});
 	}
 
 	setMeta(id: string, key: string, value: string): TaskRecord {
-		const record = this.get(id);
-		// Own property only: a key such as "constructor" must not read as already set.
-		const oldValue = Object.hasOwn(record.meta ?? {}, key) ? record.meta![key] : undefined;
-		record.meta = record.meta ?? {};
-		record.meta[key] = value;
-		record.updatedAt = new Date().toISOString();
-		if (oldValue !== value) {
-			this.appendActivity(
-				record,
-				activityEntry(record.updatedAt, 'meta-set', { field: key, oldValue, newValue: value })
-			);
-		}
-		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
-		return record;
+		return this.withWriteLock(() => {
+			const record = this.get(id);
+			// Own property only: a key such as "constructor" must not read as already set.
+			const oldValue = Object.hasOwn(record.meta ?? {}, key) ? record.meta![key] : undefined;
+			record.meta = record.meta ?? {};
+			record.meta[key] = value;
+			record.updatedAt = new Date().toISOString();
+			if (oldValue !== value) {
+				this.appendActivity(
+					record,
+					activityEntry(record.updatedAt, 'meta-set', { field: key, oldValue, newValue: value })
+				);
+			}
+			this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+			return record;
+		});
 	}
 
 	/** Appends a comment (text trimmed; blank or over the maximum refused, see taskComments.ts). Not logged in `activity`. */
 	addComment(id: string, text: string, author?: string): CommentChange {
-		const normalizedText = normalizeCommentText(text);
-		const normalizedAuthor = normalizeCommentAuthor(author);
-		const record = this.get(id);
-		const comments = record.comments ?? [];
-		const now = new Date().toISOString();
-		const comment: TaskComment = {
-			id: generateCommentId(comments.map(c => c.id)),
-			at: now,
-			text: normalizedText,
-			...(normalizedAuthor !== undefined && { author: normalizedAuthor }),
-		};
-		record.comments = [...comments, comment];
-		record.updatedAt = now;
-		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
-		return { task: record, comment };
+		return this.withWriteLock(() => {
+			const normalizedText = normalizeCommentText(text);
+			const normalizedAuthor = normalizeCommentAuthor(author);
+			const record = this.get(id);
+			const comments = record.comments ?? [];
+			const now = new Date().toISOString();
+			const comment: TaskComment = {
+				id: generateCommentId(comments.map(c => c.id)),
+				at: now,
+				text: normalizedText,
+				...(normalizedAuthor !== undefined && { author: normalizedAuthor }),
+			};
+			record.comments = [...comments, comment];
+			record.updatedAt = now;
+			this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+			return { task: record, comment };
+		});
 	}
 
 	/**
@@ -693,64 +793,199 @@ export class TaskStore {
 	 * nothing and answers `changed: false`.
 	 */
 	editComment(id: string, commentId: string, text: string): CommentEdit {
-		const normalizedText = normalizeCommentText(text);
-		const record = this.get(id);
-		const comments = record.comments ?? [];
-		const existing = comments.find(c => c.id === commentId);
-		if (existing === undefined) {
-			throw new CommentNotFoundError(
-				id,
-				commentId,
-				comments.map(c => c.id)
+		return this.withWriteLock(() => {
+			const normalizedText = normalizeCommentText(text);
+			const record = this.get(id);
+			const comments = record.comments ?? [];
+			const existing = comments.find(c => c.id === commentId);
+			if (existing === undefined) {
+				throw new CommentNotFoundError(
+					id,
+					commentId,
+					comments.map(c => c.id)
+				);
+			}
+			if (existing.text === normalizedText) {
+				return { task: record, comment: existing, oldText: existing.text, changed: false };
+			}
+			const now = new Date().toISOString();
+			const edited: TaskComment = { ...existing, text: normalizedText, editedAt: now };
+			record.comments = comments.map(c => (c.id === commentId ? edited : c));
+			record.updatedAt = now;
+			this.appendActivity(
+				record,
+				activityEntry(now, 'comment-edited', {
+					field: commentId,
+					oldValue: activityPreview(existing.text),
+					newValue: activityPreview(normalizedText),
+				})
 			);
-		}
-		if (existing.text === normalizedText) {
-			return { task: record, comment: existing, oldText: existing.text, changed: false };
-		}
-		const now = new Date().toISOString();
-		const edited: TaskComment = { ...existing, text: normalizedText, editedAt: now };
-		record.comments = comments.map(c => (c.id === commentId ? edited : c));
-		record.updatedAt = now;
-		this.appendActivity(
-			record,
-			activityEntry(now, 'comment-edited', {
-				field: commentId,
-				oldValue: activityPreview(existing.text),
-				newValue: activityPreview(normalizedText),
-			})
-		);
-		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
-		return { task: record, comment: edited, oldText: existing.text, changed: true };
+			this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+			return { task: record, comment: edited, oldText: existing.text, changed: true };
+		});
 	}
 
 	/** Removes a comment; the `comments` key goes with the last one. */
 	removeComment(id: string, commentId: string): CommentChange {
-		const record = this.get(id);
-		const comments = record.comments ?? [];
-		const existing = comments.find(c => c.id === commentId);
-		if (existing === undefined) {
-			throw new CommentNotFoundError(
-				id,
-				commentId,
-				comments.map(c => c.id)
+		return this.withWriteLock(() => {
+			const record = this.get(id);
+			const comments = record.comments ?? [];
+			const existing = comments.find(c => c.id === commentId);
+			if (existing === undefined) {
+				throw new CommentNotFoundError(
+					id,
+					commentId,
+					comments.map(c => c.id)
+				);
+			}
+			const remaining = comments.filter(c => c.id !== commentId);
+			if (remaining.length === 0) {
+				delete record.comments;
+			} else {
+				record.comments = remaining;
+			}
+			record.updatedAt = new Date().toISOString();
+			this.appendActivity(
+				record,
+				activityEntry(record.updatedAt, 'comment-removed', {
+					field: commentId,
+					oldValue: activityPreview(existing.text),
+				})
 			);
-		}
-		const remaining = comments.filter(c => c.id !== commentId);
-		if (remaining.length === 0) {
-			delete record.comments;
-		} else {
-			record.comments = remaining;
-		}
-		record.updatedAt = new Date().toISOString();
-		this.appendActivity(
-			record,
-			activityEntry(record.updatedAt, 'comment-removed', {
-				field: commentId,
-				oldValue: activityPreview(existing.text),
-			})
-		);
-		this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
-		return { task: record, comment: existing };
+			this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+			return { task: record, comment: existing };
+		});
+	}
+
+	/** Sets the priority (validated against the project's list when it has one). The same priority writes nothing. */
+	setPriority(id: string, priority: string): TaskRecord {
+		return this.withWriteLock(() => {
+			const record = this.get(id);
+			const normalized = normalizePriority(priority, this.priorities);
+			if (record.priority === normalized) {
+				return record;
+			}
+			const oldPriority = record.priority;
+			record.priority = normalized;
+			record.updatedAt = new Date().toISOString();
+			this.appendActivity(
+				record,
+				activityEntry(record.updatedAt, 'priority', { oldValue: oldPriority, newValue: normalized })
+			);
+			return this.saveWithIndexFields(record);
+		});
+	}
+
+	/** Clears the priority (the project's default applies again). A task without one writes nothing. */
+	clearPriority(id: string): TaskRecord {
+		return this.withWriteLock(() => {
+			const record = this.get(id);
+			const oldPriority = record.priority;
+			if (oldPriority === undefined) {
+				return record;
+			}
+			delete record.priority;
+			record.updatedAt = new Date().toISOString();
+			this.appendActivity(record, activityEntry(record.updatedAt, 'priority', { oldValue: oldPriority }));
+			return this.saveWithIndexFields(record);
+		});
+	}
+
+	/**
+	 * Gives the task to `assignee` by hand. The lease of a previous claim does not carry over to another holder: `claimedAt` and
+	 * `leaseUntil` are dropped when the assignee changes. The same assignee writes nothing.
+	 */
+	setAssignee(id: string, assignee: string): TaskRecord {
+		return this.withWriteLock(() => {
+			const record = this.get(id);
+			const normalized = normalizeAssignee(assignee);
+			if (record.assignee === normalized) {
+				return record;
+			}
+			const oldAssignee = record.assignee;
+			record.assignee = normalized;
+			delete record.claimedAt;
+			delete record.leaseUntil;
+			record.updatedAt = new Date().toISOString();
+			this.appendActivity(
+				record,
+				activityEntry(record.updatedAt, 'assignee', { oldValue: oldAssignee, newValue: normalized })
+			);
+			return this.saveWithIndexFields(record);
+		});
+	}
+
+	/** Removes the assignee and its lease. A task nobody holds writes nothing. */
+	clearAssignee(id: string): TaskRecord {
+		return this.withWriteLock(() => {
+			const record = this.get(id);
+			const oldAssignee = record.assignee;
+			if (oldAssignee === undefined) {
+				return record;
+			}
+			delete record.assignee;
+			delete record.claimedAt;
+			delete record.leaseUntil;
+			record.updatedAt = new Date().toISOString();
+			this.appendActivity(record, activityEntry(record.updatedAt, 'assignee', { oldValue: oldAssignee }));
+			return this.saveWithIndexFields(record);
+		});
+	}
+
+	/**
+	 * Claims a task for `request.assignee` under the rules of {@link decideClaim}, judged at `request.now` (the clock is the
+	 * caller's). The check and the write happen under the project write lock, so two processes claiming the same task never both win.
+	 */
+	claim(id: string, request: ClaimRequest): ClaimChange {
+		return this.withWriteLock(() => {
+			const record = this.get(id);
+			const normalized = normalizeClaimRequest(request);
+			const decision = decideClaim(id, record, normalized);
+			record.assignee = normalized.assignee;
+			if (decision.outcome !== 'renewed' || record.claimedAt === undefined) {
+				record.claimedAt = normalized.now;
+			}
+			record.leaseUntil = normalized.leaseUntil;
+			record.updatedAt = new Date().toISOString();
+			this.appendActivity(
+				record,
+				activityEntry(record.updatedAt, 'claim', {
+					field: normalized.leaseUntil,
+					// A renewal has the holder on both sides: the activity reads "Lease renewed by <holder>".
+					oldValue: decision.outcome === 'renewed' ? normalized.assignee : decision.previousAssignee,
+					newValue: normalized.assignee,
+				})
+			);
+			this.saveWithIndexFields(record);
+			return { task: record, ...decision };
+		});
+	}
+
+	/**
+	 * Gives the task up: clears the assignee, `claimedAt` and `leaseUntil`. A task nobody holds is a {@link TaskNotClaimedError}; with
+	 * `assignee`, a holder other than it needs `force` ({@link TaskReleaseRefusedError}).
+	 */
+	release(id: string, options: { assignee?: string; force?: boolean } = {}): ReleaseChange {
+		return this.withWriteLock(() => {
+			const record = this.get(id);
+			const holder = record.assignee;
+			if (holder === undefined) {
+				throw new TaskNotClaimedError(id);
+			}
+			if (options.assignee !== undefined && options.force !== true) {
+				const requestedBy = normalizeAssignee(options.assignee);
+				if (requestedBy !== holder) {
+					throw new TaskReleaseRefusedError(id, holder, requestedBy);
+				}
+			}
+			delete record.assignee;
+			delete record.claimedAt;
+			delete record.leaseUntil;
+			record.updatedAt = new Date().toISOString();
+			this.appendActivity(record, activityEntry(record.updatedAt, 'release', { oldValue: holder }));
+			this.saveWithIndexFields(record);
+			return { task: record, previousAssignee: holder };
+		});
 	}
 
 	/**
@@ -758,15 +993,17 @@ export class TaskStore {
 	 * Returns true if the task existed and was deleted, false if it was not found.
 	 */
 	deleteTask(id: string): boolean {
-		const filePath = this.taskFilePath(id);
-		if (!fs.existsSync(filePath)) {
-			return false;
-		}
-		fs.unlinkSync(filePath);
-		this.removeFromIndex(id);
-		this.orphanChildrenOf(id);
-		this.removeLinksTo(id);
-		return true;
+		return this.withWriteLock(() => {
+			const filePath = this.taskFilePath(id);
+			if (!fs.existsSync(filePath)) {
+				return false;
+			}
+			fs.unlinkSync(filePath);
+			this.removeFromIndex(id);
+			this.orphanChildrenOf(id);
+			this.removeLinksTo(id);
+			return true;
+		});
 	}
 
 	// Links pointing to a deleted task would dangle: drop them from the tasks that held them.
@@ -908,6 +1145,26 @@ export class TaskStore {
 			if (oldParentId !== undefined) this.logInverse(oldParentId, record.id, 'child-removed', 'Parent');
 			if (parentId !== undefined) this.logInverse(parentId, record.id, 'child-added', 'Parent');
 		}
+		return record;
+	}
+
+	// The task file, then the mirrored fields of its index entry (priority, assignee, leaseUntil; a field the record lacks leaves the entry).
+	private saveWithIndexFields(record: TaskRecord): TaskRecord {
+		this.writeFile(this.taskFilePath(record.id), JSON.stringify(record, null, 2));
+		const index = this.readIndex();
+		const entry = index.tasks.find(t => t.id === record.id);
+		if (!entry) {
+			throw new Error(`Task index out of sync: entry for "${record.id}" not found. The index may be corrupted.`);
+		}
+		for (const key of ['priority', 'assignee', 'leaseUntil'] as const) {
+			const value = record[key];
+			if (value === undefined) {
+				delete entry[key];
+			} else {
+				entry[key] = value;
+			}
+		}
+		this.writeIndex(index);
 		return record;
 	}
 

@@ -177,6 +177,20 @@ async function fillFields(
 			payload: { taskId: targetId, oldType: undefined, newType: mapped.type, ...env },
 		});
 	}
+	if (mapped.priority !== undefined && record.priority === undefined) {
+		record = await backend.setPriority!(targetId, mapped.priority);
+		run.emit({
+			name: 'onTaskPriorityChanged',
+			payload: { taskId: targetId, oldPriority: undefined, newPriority: mapped.priority, ...env },
+		});
+	}
+	if (mapped.assignee !== undefined && record.assignee === undefined) {
+		record = await backend.setAssignee!(targetId, mapped.assignee);
+		run.emit({
+			name: 'onTaskAssigneeChanged',
+			payload: { taskId: targetId, oldAssignee: undefined, newAssignee: mapped.assignee, ...env },
+		});
+	}
 	for (const label of mapped.labels) {
 		if ((record.labels ?? []).includes(label)) continue;
 		record = await backend.addLabel(targetId, label);

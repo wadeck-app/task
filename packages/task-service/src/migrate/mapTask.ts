@@ -38,6 +38,10 @@ export interface MappedTask {
 	/** Only when the target keeps the creation instant. */
 	createdAt?: string;
 	type?: string;
+	/** Only when the target carries priorities and lists this one. */
+	priority?: string;
+	/** Only when the target carries assignees. `claimedAt` and `leaseUntil` are never migrated: a lease belongs to the source system. */
+	assignee?: string;
 	labels: string[];
 	/** The metadata of the task (the marker is not in it). */
 	meta: Record<string, string>;
@@ -133,6 +137,31 @@ export function mapTask(record: VersionedRecord, ctx: MapContext): MappedTask {
 		else ledger.add('type', id, record.type);
 	}
 
+	// Priority: kept where the target carries priorities and its project lists this one (the same rule as a type).
+	let priority: string | undefined;
+	if (record.priority !== undefined) {
+		const listed = target.facts.priorities;
+		if (caps.priority !== true) ledger.add('priority', id, 'the target does not carry priorities');
+		else if (listed !== undefined && !listed.includes(record.priority)) {
+			ledger.add(
+				'priority',
+				id,
+				`"${record.priority}" is not one of the target priorities (${listed.join(', ')})`
+			);
+		} else priority = record.priority;
+	}
+
+	// Assignee: the name only. The claim (claimedAt, leaseUntil) is NOT migrated: a lease of the source system means nothing on the
+	// target, and a held task without lease can be claimed by anyone.
+	let assignee: string | undefined;
+	if (record.assignee !== undefined) {
+		if (caps.assignee === true) assignee = record.assignee;
+		else ledger.add('assignee', id, 'the target does not carry assignees');
+	}
+
+	// The lease is never migrated: reported for every task that holds one, whatever the target can store.
+	if (record.leaseUntil !== undefined) ledger.add('lease', id, 'a claim lease is never migrated');
+
 	// Labels.
 	const labels: string[] = [];
 	for (const label of record.labels ?? []) {
@@ -200,6 +229,8 @@ export function mapTask(record: VersionedRecord, ctx: MapContext): MappedTask {
 		status,
 		...(traits.keepsCreatedAt ? { createdAt: record.createdAt } : {}),
 		...(type === undefined ? {} : { type }),
+		...(priority === undefined ? {} : { priority }),
+		...(assignee === undefined ? {} : { assignee }),
 		labels,
 		meta,
 		links,

@@ -134,6 +134,33 @@ export interface TaskParentChangedEvent {
 	} & TaskProjectEnv;
 }
 
+export interface TaskPriorityChangedEvent {
+	name: 'onTaskPriorityChanged';
+	payload: {
+		taskId: string;
+		/** Absent when the task had no priority of its own (the project default applied). */
+		oldPriority: string | undefined;
+		/** Absent when the priority was cleared (the project default applies again). */
+		newPriority: string | undefined;
+	} & TaskProjectEnv;
+}
+
+/** How a claim or a release changed the assignee: see {@link TaskAssigneeChangedEvent}. */
+export type AssigneeChangeOutcome = 'claimed' | 'renewed' | 'takeover' | 'released';
+
+export interface TaskAssigneeChangedEvent {
+	name: 'onTaskAssigneeChanged';
+	payload: {
+		taskId: string;
+		/** Absent when nobody held the task. */
+		oldAssignee: string | undefined;
+		/** Absent when the task was released or unassigned. */
+		newAssignee: string | undefined;
+		/** Only for a claim or a release: `renewed` has oldAssignee = newAssignee; absent for an assignment by hand. */
+		outcome?: AssigneeChangeOutcome;
+	} & TaskProjectEnv;
+}
+
 export interface TaskDeletedEvent {
 	name: 'onTaskDeleted';
 	payload: {
@@ -196,6 +223,8 @@ export type TaskEvent =
 	| TaskCommentEditedEvent
 	| TaskCommentRemovedEvent
 	| TaskParentChangedEvent
+	| TaskPriorityChangedEvent
+	| TaskAssigneeChangedEvent
 	| TaskDeletedEvent;
 
 /**

@@ -52,6 +52,10 @@ const ICONS: Record<string, string> = {
 	'link-removed': 'unlink',
 	title: 'pencil',
 	description: 'file-text',
+	priority: 'flag',
+	assignee: 'user',
+	claim: 'user-check',
+	release: 'user-minus',
 	other: 'circle-dot',
 	comment: 'message-square',
 	'comment-edited': 'pencil',
@@ -113,6 +117,27 @@ function describeEntry(entry: ActivityEntry, label: TaskLabel): Pick<ActivityRow
 			}
 			if (newValue !== undefined) return { text: `Parent set to ${label(newValue)}` };
 			return { text: `Parent removed${oldValue === undefined ? '' : ` (was ${label(oldValue)})`}` };
+		case 'priority':
+			if (oldValue !== undefined && newValue !== undefined) {
+				return { text: `Priority changed from ${oldValue} to ${newValue}` };
+			}
+			return { text: newValue === undefined ? 'Priority cleared' : `Priority set to ${newValue}` };
+		case 'assignee':
+			if (oldValue !== undefined && newValue !== undefined) {
+				return { text: `Assignee changed from ${oldValue} to ${newValue}` };
+			}
+			return { text: newValue === undefined ? 'Unassigned' : `Assigned to ${newValue}` };
+		// `newValue` = the assignee, `field` = the end of the lease; `oldValue` = the previous holder of a takeover.
+		case 'claim': {
+			const until = entry.field === undefined ? '' : ` until ${entry.field}`;
+			const by = newValue ?? '?';
+			if (oldValue === undefined) return { text: `Claimed by ${by}${until}` };
+			// A renewal has the same name on both sides (a backend that records it so).
+			if (oldValue === newValue) return { text: `Lease renewed by ${by}${until}` };
+			return { text: `Taken over from ${oldValue} by ${by}${until}` };
+		}
+		case 'release':
+			return { text: oldValue === undefined ? 'Released' : `Released by ${oldValue}` };
 		case 'child-added':
 			return { text: `Sub-task ${label(entry.target ?? '?')} added` };
 		case 'child-removed':
@@ -181,7 +206,11 @@ export async function describeTaskActivity(ctx: TaskServiceContext, record: Task
 			source: 'activity',
 			at: entry.at,
 			kind: entry.kind,
-			icon: ICONS[entry.kind] ?? 'circle',
+			// Giving a task up (unassigned) has the minus icon of a release.
+			icon:
+				entry.kind === 'assignee' && entry.newValue === undefined
+					? 'user-minus'
+					: (ICONS[entry.kind] ?? 'circle'),
 			tone: entry.kind.startsWith('link') ? 'purple' : 'neutral',
 			...describeEntry(entry, label),
 			...(entry.inverse === true ? { inverse: true as const } : {}),

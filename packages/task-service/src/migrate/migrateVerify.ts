@@ -35,6 +35,13 @@ export function compare(expect: Expectation, actual: VersionedRecord): Migration
 	if (actual.status !== mapped.status) differ('status', mapped.status, actual.status);
 	if ((actual.type ?? '') !== (mapped.type ?? '')) differ('type', mapped.type ?? '(none)', actual.type ?? '(none)');
 
+	if (mapped.priority !== undefined && actual.priority !== mapped.priority) {
+		differ('priority', mapped.priority, actual.priority ?? '(none)');
+	}
+	if (mapped.assignee !== undefined && actual.assignee !== mapped.assignee) {
+		differ('assignee', mapped.assignee, actual.assignee ?? '(none)');
+	}
+
 	const labels = new Set((actual.labels ?? []).map(label => label.toLowerCase()));
 	const missingLabels = mapped.labels.filter(label => !labels.has(label.toLowerCase()));
 	if (missingLabels.length > 0)

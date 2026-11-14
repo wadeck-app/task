@@ -138,6 +138,8 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 			files: {
 				'packages/task-core/src/TaskStore.ts': 'the local backend: task files and the index',
 				'packages/task-core/src/TaskConfigLoader.ts': 'the global config file',
+				'packages/task-core/src/projectLock.ts':
+					'the write lock of a local project: one lock file in the data folder, held around every mutation of the local backend',
 			},
 		},
 	},

@@ -21,6 +21,12 @@ import type { BackendCapabilities } from '../backend/capabilities.js';
 import type { TaskBackend, VersionedRecord } from '../backend/TaskBackend.js';
 import { AmbiguousTaskPrefixError, TaskConflictError, TaskNotFoundError } from '../errors.js';
 import { CommentNotFoundError, InvalidCommentTextError } from '../taskComments.js';
+import {
+	InvalidTaskFieldError,
+	TaskClaimedError,
+	TaskNotClaimedError,
+	TaskReleaseRefusedError,
+} from '../taskFields.js';
 import { ACTIVITY_PREVIEW_MAX, INVERSE_LINK_NAMES, LINK_TYPES } from '../TaskStore.js';
 import type { ActivityEntry, LinkType, TaskSummary } from '../TaskStore.js';
 
@@ -87,6 +93,9 @@ const NEEDS = {
 	labels: need('labels', 'labels', c => c.labels),
 	meta: need('meta', 'meta', c => c.meta),
 	comments: need('comments', 'comments', c => c.comments),
+	priority: need('priority', 'priority', c => c.priority === true),
+	assignee: need('assignee', 'assignee', c => c.assignee === true),
+	claim: need('claim', 'claim', c => c.claim === true),
 	hierarchy: need('hierarchy', 'hierarchy', c => c.hierarchy !== 'none'),
 	delete: need('delete', 'delete', c => c.delete !== 'no'),
 	search: need('search', 'search', c => c.search !== 'none'),
@@ -115,6 +124,22 @@ async function rejectsWith<E extends Error>(promise: Promise<unknown>, type: new
 	return error as E;
 }
 
+type OptionalOperation = 'setPriority' | 'clearPriority' | 'setAssignee' | 'clearAssignee' | 'claim' | 'release';
+
+/**
+ * An optional operation of the port, bound to the backend. A backend that lacks the method fails the case loudly: every backend must
+ * implement these operations, answering UnsupportedByBackendError when it declares the capability away.
+ */
+function optionalOp<K extends OptionalOperation>(backend: TaskBackend, name: K): NonNullable<TaskBackend[K]> {
+	const operation = backend[name] as ((...args: never[]) => unknown) | undefined;
+	if (typeof operation !== 'function') {
+		throw new Error(
+			`The "${backend.kind}" backend does not implement ${name}: implement it (refusing with UnsupportedByBackendError when the capability is declared away) so that it passes the contract`
+		);
+	}
+	return operation.bind(backend) as NonNullable<TaskBackend[K]>;
+}
+
 const ids = (tasks: readonly { id: string }[]): string[] => tasks.map(t => t.id);
 
 /** Everything observable about some tasks: used to prove a refused write changed nothing. */
@@ -132,6 +157,12 @@ function entries(record: VersionedRecord, kind: ActivityEntry['kind']): Activity
 }
 
 const isIso = (value: string): boolean => !Number.isNaN(Date.parse(value)) && new Date(value).toISOString() === value;
+
+// The instants of the claim cases: a 30 minute lease judged at its start, halfway, and at its end.
+const CLAIM_NOW = '2026-11-14T10:00:00.000Z';
+const HALF_WAY = '2026-11-14T10:15:00.000Z';
+const LEASE_END = '2026-11-14T10:30:00.000Z';
+const LEASE_LATER = '2026-11-14T12:00:00.000Z';
 
 // ---- cases ----
 export const BACKEND_CONTRACT_CASES: readonly ContractCase[] = [
@@ -1067,6 +1098,356 @@ export const BACKEND_CONTRACT_CASES: readonly ContractCase[] = [
 		async attempt({ backend, task }) {
 			await task('Alpha');
 			return backend.listPage({ text: 'alpha' });
+		},
+	},
+
+	// ======== priority, assignee, claim ========
+	{
+		group: 'priority',
+		name: 'set, same value, change, clear: the record and the list agree, activity entries of the current shape',
+		needs: NEEDS.priority,
+		async run({ backend, task, caps }) {
+			const created = await task('Prioritized');
+			const summary = async () => (await backend.list()).find(t => t.id === created.id);
+
+			const high = await optionalOp(backend, 'setPriority')(created.id, 'high');
+			expect(high.priority).toBe('high');
+			expect((await summary())?.priority).toBe('high');
+			const same = await optionalOp(backend, 'setPriority')(created.id, 'high');
+			expect(same.priority).toBe('high');
+			// Nothing changed: nothing written, so the revision is the same.
+			expect(same.revision).toBe(high.revision);
+			const low = await optionalOp(backend, 'setPriority')(created.id, 'low');
+			expect(low.priority).toBe('low');
+			expect((await backend.get(created.id)).priority).toBe('low');
+			const cleared = await optionalOp(backend, 'clearPriority')(created.id);
+			expect(cleared.priority).toBeUndefined();
+			expect((await summary())?.priority).toBeUndefined();
+			const clearedAgain = await optionalOp(backend, 'clearPriority')(created.id);
+			expect(clearedAgain.revision).toBe(cleared.revision);
+
+			if (caps.activity === 'stored') {
+				expect(entries(cleared, 'priority')).toEqual([
+					{ at: expect.any(String), kind: 'priority', newValue: 'high' },
+					{ at: expect.any(String), kind: 'priority', oldValue: 'high', newValue: 'low' },
+					{ at: expect.any(String), kind: 'priority', oldValue: 'low' },
+				]);
+			} else if (caps.activity === 'none') {
+				expect(activityOf(cleared)).toEqual([]);
+			}
+		},
+		async attempt({ backend, task }) {
+			const created = await task('Prioritized');
+			return optionalOp(backend, 'setPriority')(created.id, 'high');
+		},
+	},
+	{
+		group: 'priority',
+		name: 'a blank priority is refused and writes nothing; an unknown task is not found',
+		needs: NEEDS.priority,
+		async run({ backend, task }) {
+			const created = await task('Blank');
+			const before = await stateOf(backend, [created.id]);
+			await rejectsWith(optionalOp(backend, 'setPriority')(created.id, '   '), InvalidTaskFieldError);
+			expect(await stateOf(backend, [created.id])).toEqual(before);
+			await rejectsWith(optionalOp(backend, 'setPriority')('missing-task', 'high'), TaskNotFoundError);
+			await rejectsWith(optionalOp(backend, 'clearPriority')('missing-task'), TaskNotFoundError);
+		},
+		async attempt({ backend, task }) {
+			const created = await task('Blank');
+			return optionalOp(backend, 'clearPriority')(created.id);
+		},
+	},
+	{
+		group: 'priority',
+		name: 'setPriority and clearPriority honour expectedRevision',
+		needs: NEEDS.priority,
+		async run({ backend, task, caps }) {
+			const created = await task('Revised');
+			if (caps.concurrency === 'none') {
+				await rejectsWith(
+					optionalOp(backend, 'setPriority')(created.id, 'high', { expectedRevision: created.revision }),
+					UnsupportedByBackendError
+				);
+				return;
+			}
+			const stale = { expectedRevision: 'definitely-not-the-revision' };
+			await rejectsWith(optionalOp(backend, 'setPriority')(created.id, 'high', stale), StaleRevisionError);
+			await rejectsWith(optionalOp(backend, 'clearPriority')(created.id, stale), StaleRevisionError);
+			expect((await backend.get(created.id)).priority).toBeUndefined();
+			const ok = await optionalOp(backend, 'setPriority')(created.id, 'high', {
+				expectedRevision: created.revision,
+			});
+			expect(ok.priority).toBe('high');
+		},
+		async attempt({ backend, task }) {
+			const created = await task('Revised');
+			return optionalOp(backend, 'setPriority')(created.id, 'high', { expectedRevision: created.revision });
+		},
+	},
+	{
+		group: 'assignee',
+		name: 'set, same value, change, clear: the record and the list agree, activity entries of the current shape',
+		needs: NEEDS.assignee,
+		async run({ backend, task, caps }) {
+			const created = await task('Assigned');
+			const summary = async () => (await backend.list()).find(t => t.id === created.id);
+
+			const first = await optionalOp(backend, 'setAssignee')(created.id, 'worker-1');
+			expect(first.assignee).toBe('worker-1');
+			expect((await summary())?.assignee).toBe('worker-1');
+			const same = await optionalOp(backend, 'setAssignee')(created.id, 'worker-1');
+			expect(same.revision).toBe(first.revision);
+			const second = await optionalOp(backend, 'setAssignee')(created.id, 'worker-2');
+			expect(second.assignee).toBe('worker-2');
+			const cleared = await optionalOp(backend, 'clearAssignee')(created.id);
+			expect(cleared.assignee).toBeUndefined();
+			expect((await summary())?.assignee).toBeUndefined();
+			expect((await optionalOp(backend, 'clearAssignee')(created.id)).revision).toBe(cleared.revision);
+
+			if (caps.activity === 'stored') {
+				expect(entries(cleared, 'assignee')).toEqual([
+					{ at: expect.any(String), kind: 'assignee', newValue: 'worker-1' },
+					{ at: expect.any(String), kind: 'assignee', oldValue: 'worker-1', newValue: 'worker-2' },
+					{ at: expect.any(String), kind: 'assignee', oldValue: 'worker-2' },
+				]);
+			} else if (caps.activity === 'none') {
+				expect(activityOf(cleared)).toEqual([]);
+			}
+		},
+		async attempt({ backend, task }) {
+			const created = await task('Assigned');
+			return optionalOp(backend, 'setAssignee')(created.id, 'worker-1');
+		},
+	},
+	{
+		group: 'assignee',
+		name: 'a blank or multi-line assignee is refused, a stale revision too, and nothing is written',
+		needs: NEEDS.assignee,
+		async run({ backend, task, caps }) {
+			const created = await task('Refused');
+			const before = await stateOf(backend, [created.id]);
+			await rejectsWith(optionalOp(backend, 'setAssignee')(created.id, ''), InvalidTaskFieldError);
+			await rejectsWith(optionalOp(backend, 'setAssignee')(created.id, 'a\nb'), InvalidTaskFieldError);
+			await rejectsWith(optionalOp(backend, 'setAssignee')('missing-task', 'w'), TaskNotFoundError);
+			if (caps.concurrency !== 'none') {
+				await rejectsWith(
+					optionalOp(backend, 'setAssignee')(created.id, 'w', {
+						expectedRevision: 'definitely-not-the-revision',
+					}),
+					StaleRevisionError
+				);
+			}
+			expect(await stateOf(backend, [created.id])).toEqual(before);
+		},
+		async attempt({ backend, task }) {
+			const created = await task('Refused');
+			return optionalOp(backend, 'clearAssignee')(created.id);
+		},
+	},
+	{
+		group: 'claim',
+		name: 'a free task is claimed: assignee, claimedAt and leaseUntil on the record, assignee and leaseUntil in the list',
+		needs: NEEDS.claim,
+		async run({ backend, task, caps }) {
+			const created = await task('Claimable');
+			const claim = optionalOp(backend, 'claim');
+			const result = await claim(created.id, { assignee: ' w1 ', leaseUntil: LEASE_END, now: CLAIM_NOW });
+			expect(result.outcome).toBe('claimed');
+			expect(result.previousAssignee).toBeUndefined();
+			expect(result.task).toMatchObject({ assignee: 'w1', claimedAt: CLAIM_NOW, leaseUntil: LEASE_END });
+			expect(result.task.revision).toEqual(expect.any(String));
+			expect(await backend.get(created.id)).toMatchObject({ assignee: 'w1', leaseUntil: LEASE_END });
+			expect((await backend.list()).find(t => t.id === created.id)).toMatchObject({
+				assignee: 'w1',
+				leaseUntil: LEASE_END,
+			});
+			if (caps.activity === 'stored') {
+				expect(entries(result.task, 'claim')).toEqual([
+					{ at: expect.any(String), kind: 'claim', field: LEASE_END, newValue: 'w1' },
+				]);
+			}
+		},
+		async attempt({ backend, task }) {
+			const created = await task('Claimable');
+			return optionalOp(backend, 'claim')(created.id, { assignee: 'w1', leaseUntil: LEASE_END, now: CLAIM_NOW });
+		},
+	},
+	{
+		group: 'claim',
+		name: 'a live lease held by someone else refuses the claim naming the holder and the time left; the task is untouched',
+		needs: NEEDS.claim,
+		async run({ backend, task }) {
+			const created = await task('Contended');
+			const claim = optionalOp(backend, 'claim');
+			await claim(created.id, { assignee: 'w1', leaseUntil: LEASE_END, now: CLAIM_NOW });
+			const before = await stateOf(backend, [created.id]);
+			const refusal = await rejectsWith(
+				claim(created.id, { assignee: 'w2', leaseUntil: LEASE_LATER, now: HALF_WAY }),
+				TaskClaimedError
+			);
+			expect(refusal).toBeInstanceOf(TaskConflictError);
+			expect(refusal.holder).toBe('w1');
+			expect(refusal.leaseUntil).toBe(LEASE_END);
+			expect(refusal.remainingMs).toBe(15 * 60 * 1000);
+			expect(refusal.message).toContain('"w1"');
+			expect(refusal.message).toContain('15m');
+			expect(refusal.hint).toContain('--force');
+			// A renew by another name is no renew.
+			await rejectsWith(
+				claim(created.id, { assignee: 'w2', leaseUntil: LEASE_LATER, now: HALF_WAY, renew: true }),
+				TaskClaimedError
+			);
+			expect(await stateOf(backend, [created.id])).toEqual(before);
+		},
+		async attempt({ backend, task }) {
+			const created = await task('Contended');
+			return optionalOp(backend, 'claim')(created.id, { assignee: 'w1', leaseUntil: LEASE_END, now: CLAIM_NOW });
+		},
+	},
+	{
+		group: 'claim',
+		name: 'the holder renews with renew (claimedAt kept) and is refused without it while the lease is live',
+		needs: NEEDS.claim,
+		async run({ backend, task }) {
+			const created = await task('Renewable');
+			const claim = optionalOp(backend, 'claim');
+			await claim(created.id, { assignee: 'w1', leaseUntil: LEASE_END, now: CLAIM_NOW });
+			const again = await rejectsWith(
+				claim(created.id, { assignee: 'w1', leaseUntil: LEASE_LATER, now: HALF_WAY }),
+				TaskClaimedError
+			);
+			expect(again.ownLease).toBe(true);
+			expect(again.hint).toContain('--renew');
+			const renewed = await claim(created.id, {
+				assignee: 'w1',
+				leaseUntil: LEASE_LATER,
+				now: HALF_WAY,
+				renew: true,
+			});
+			expect(renewed.outcome).toBe('renewed');
+			expect(renewed.task).toMatchObject({ assignee: 'w1', claimedAt: CLAIM_NOW, leaseUntil: LEASE_LATER });
+			expect((await backend.list()).find(t => t.id === created.id)?.leaseUntil).toBe(LEASE_LATER);
+		},
+		async attempt({ backend, task }) {
+			const created = await task('Renewable');
+			return optionalOp(backend, 'claim')(created.id, { assignee: 'w1', leaseUntil: LEASE_END, now: CLAIM_NOW });
+		},
+	},
+	{
+		group: 'claim',
+		name: 'an expired lease, an assignee without lease, and force are takeovers that name the previous holder',
+		needs: NEEDS.claim,
+		async run({ backend, task, caps }) {
+			const claim = optionalOp(backend, 'claim');
+
+			const expired = await task('Expired');
+			await claim(expired.id, { assignee: 'w1', leaseUntil: LEASE_END, now: CLAIM_NOW });
+			const taken = await claim(expired.id, { assignee: 'w2', leaseUntil: LEASE_LATER, now: LEASE_END });
+			expect(taken.outcome).toBe('takeover');
+			expect(taken.previousAssignee).toBe('w1');
+			expect(taken.task).toMatchObject({ assignee: 'w2', claimedAt: LEASE_END, leaseUntil: LEASE_LATER });
+			if (caps.activity === 'stored') {
+				expect(entries(taken.task, 'claim').at(-1)).toMatchObject({ oldValue: 'w1', newValue: 'w2' });
+			}
+
+			const bare = await task('No lease');
+			await optionalOp(backend, 'setAssignee')(bare.id, 'w1');
+			const bareTaken = await claim(bare.id, { assignee: 'w2', leaseUntil: LEASE_END, now: CLAIM_NOW });
+			expect(bareTaken.outcome).toBe('takeover');
+			expect(bareTaken.previousAssignee).toBe('w1');
+
+			const live = await task('Forced');
+			await claim(live.id, { assignee: 'w1', leaseUntil: LEASE_LATER, now: CLAIM_NOW });
+			const forced = await claim(live.id, {
+				assignee: 'w2',
+				leaseUntil: LEASE_LATER,
+				now: HALF_WAY,
+				force: true,
+			});
+			expect(forced.outcome).toBe('takeover');
+			expect(forced.previousAssignee).toBe('w1');
+			expect(forced.task.assignee).toBe('w2');
+		},
+		async attempt({ backend, task }) {
+			const created = await task('Expired');
+			return optionalOp(backend, 'claim')(created.id, { assignee: 'w1', leaseUntil: LEASE_END, now: CLAIM_NOW });
+		},
+	},
+	{
+		group: 'claim',
+		name: 'a lease that does not end after now, a blank assignee and a stale revision are refused before any write',
+		needs: NEEDS.claim,
+		async run({ backend, task, caps }) {
+			const created = await task('Invalid');
+			const claim = optionalOp(backend, 'claim');
+			const before = await stateOf(backend, [created.id]);
+			await rejectsWith(
+				claim(created.id, { assignee: 'w1', leaseUntil: CLAIM_NOW, now: CLAIM_NOW }),
+				InvalidTaskFieldError
+			);
+			await rejectsWith(
+				claim(created.id, { assignee: ' ', leaseUntil: LEASE_END, now: CLAIM_NOW }),
+				InvalidTaskFieldError
+			);
+			await rejectsWith(
+				claim('missing-task', { assignee: 'w1', leaseUntil: LEASE_END, now: CLAIM_NOW }),
+				TaskNotFoundError
+			);
+			if (caps.concurrency !== 'none') {
+				await rejectsWith(
+					claim(created.id, {
+						assignee: 'w1',
+						leaseUntil: LEASE_END,
+						now: CLAIM_NOW,
+						expectedRevision: 'definitely-not-the-revision',
+					}),
+					StaleRevisionError
+				);
+			}
+			expect(await stateOf(backend, [created.id])).toEqual(before);
+		},
+		async attempt({ backend, task }) {
+			const created = await task('Invalid');
+			return optionalOp(backend, 'claim')(created.id, { assignee: 'w1', leaseUntil: LEASE_END, now: CLAIM_NOW });
+		},
+	},
+	{
+		group: 'claim',
+		name: 'release clears the holder and the lease; a task nobody holds, or another holder without force, is refused',
+		needs: NEEDS.claim,
+		async run({ backend, task, caps }) {
+			const created = await task('Releasable');
+			const claim = optionalOp(backend, 'claim');
+			const release = optionalOp(backend, 'release');
+
+			const notHeld = await rejectsWith(release(created.id), TaskNotClaimedError);
+			expect(notHeld).toBeInstanceOf(TaskConflictError);
+
+			await claim(created.id, { assignee: 'w1', leaseUntil: LEASE_END, now: CLAIM_NOW });
+			const refusal = await rejectsWith(release(created.id, { assignee: 'w2' }), TaskReleaseRefusedError);
+			expect(refusal.holder).toBe('w1');
+			expect((await backend.get(created.id)).assignee).toBe('w1');
+
+			const released = await release(created.id, { assignee: 'w1' });
+			expect(released.previousAssignee).toBe('w1');
+			expect(released.task.assignee).toBeUndefined();
+			expect(released.task.claimedAt).toBeUndefined();
+			expect(released.task.leaseUntil).toBeUndefined();
+			expect((await backend.list()).find(t => t.id === created.id)?.assignee).toBeUndefined();
+			if (caps.activity === 'stored') {
+				expect(entries(released.task, 'release')).toEqual([
+					{ at: expect.any(String), kind: 'release', oldValue: 'w1' },
+				]);
+			}
+
+			await claim(created.id, { assignee: 'w1', leaseUntil: LEASE_END, now: CLAIM_NOW });
+			const forced = await release(created.id, { assignee: 'w2', force: true });
+			expect(forced.previousAssignee).toBe('w1');
+		},
+		async attempt({ backend, task }) {
+			const created = await task('Releasable');
+			return optionalOp(backend, 'release')(created.id);
 		},
 	},
 ];

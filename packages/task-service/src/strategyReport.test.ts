@@ -232,3 +232,32 @@ describe('describeCapabilities: what a plugin says is only partly true', () => {
 		expect(() => describeCapabilities(RESTRICTED, {}, { nonsense: 'x' })).toThrow(/nonsense/);
 	});
 });
+
+describe('describeCapabilities: priority, assignee and claim', () => {
+	it('are native for the local strategy', () => {
+		const rows = describeCapabilities(LOCAL_CAPABILITIES, {});
+
+		for (const name of ['priority', 'assignee', 'claim']) {
+			expect(rows.find(row => row.capability === name)).toEqual({
+				capability: name,
+				state: 'native',
+				detail: 'yes',
+			});
+		}
+	});
+
+	it('are unsupported for a backend that declares them false (github, gitlab, remote)', () => {
+		const rows = describeCapabilities(
+			{ ...LOCAL_CAPABILITIES, priority: false, assignee: false, claim: false },
+			{}
+		);
+
+		for (const name of ['priority', 'assignee', 'claim']) {
+			expect(rows.find(row => row.capability === name)).toEqual({
+				capability: name,
+				state: 'unsupported',
+				detail: 'no',
+			});
+		}
+	});
+});

@@ -3,7 +3,7 @@ import * as path from 'node:path';
 
 import { ConfigSchemaError, mergeLayers, validateLayer } from '@wadeck-app/project-sdk';
 import type { ConfigSchema, NamedLayer } from '@wadeck-app/project-sdk';
-import { statusOutcomeProblem, TaskConfigLoader } from '@wadeck-app/task-core';
+import { MAX_LEASE_MINUTES, normalizePriority, statusOutcomeProblem, TaskConfigLoader } from '@wadeck-app/task-core';
 import type { TaskProjectConfig, TaskResolvedConfig } from '@wadeck-app/task-core';
 
 import { createBuiltinRegistry } from './plugins/builtinPlugins.js';
@@ -26,6 +26,7 @@ export const TASK_CONFIG_SCHEMA: ConfigSchema = {
 	sections: {
 		statuses: { scope: 'local' },
 		types: { scope: 'local' },
+		priorities: { scope: 'local' },
 		fields: { scope: 'local' },
 		strategy: { scope: 'local' },
 		defaults: { scope: 'inherit', merge: 'deep' },
@@ -49,11 +50,85 @@ function checkStatusOutcomes(layer: NamedLayer): void {
 	}
 }
 
+function priorityProblem(layer: string, path: string, problem: string): ConfigSchemaError {
+	return new ConfigSchemaError(`${layer}: ${path}: ${problem}.`, { layer, key: 'priorities', path });
+}
+
+/**
+ * `priorities` is a non-empty list of distinct priorities (the rules of a priority: one line of text, at most 50 characters),
+ * highest first. A problem names the file and the entry.
+ */
+function checkPriorities(layer: NamedLayer): void {
+	const priorities = (layer.values as TaskProjectConfig).priorities as unknown;
+	if (priorities === undefined) return;
+	if (!Array.isArray(priorities) || priorities.length === 0) {
+		throw priorityProblem(
+			layer.name,
+			'priorities',
+			'must be a list of at least one priority, highest first (for example [urgent, high, medium, low])'
+		);
+	}
+	const seen = new Set<string>();
+	priorities.forEach((entry: unknown, index) => {
+		const path = `priorities[${index}]`;
+		if (typeof entry !== 'string') {
+			throw priorityProblem(layer.name, path, `must be text, found ${JSON.stringify(entry)}`);
+		}
+		// A blank entry is reported by normalizePriority below.
+		if (entry.trim() !== '' && entry !== entry.trim()) {
+			throw priorityProblem(
+				layer.name,
+				path,
+				`"${entry}" has a space at its start or end; write "${entry.trim()}"`
+			);
+		}
+		let normalized: string;
+		try {
+			normalized = normalizePriority(entry);
+		} catch (error) {
+			throw priorityProblem(layer.name, path, error instanceof Error ? error.message : String(error));
+		}
+		if (seen.has(normalized)) {
+			throw priorityProblem(layer.name, path, `"${normalized}" is listed twice`);
+		}
+		seen.add(normalized);
+	});
+}
+
+/** `defaults.leaseMinutes`: an integer of 1 to 10080 (one week), in any layer. */
+function checkLeaseMinutes(layerName: string, defaults: { leaseMinutes?: unknown } | undefined): void {
+	const minutes = defaults?.leaseMinutes;
+	if (minutes === undefined) return;
+	if (typeof minutes !== 'number' || !Number.isInteger(minutes) || minutes < 1 || minutes > MAX_LEASE_MINUTES) {
+		throw new ConfigSchemaError(
+			`${layerName}: defaults.leaseMinutes: must be a whole number of minutes, 1 to ${MAX_LEASE_MINUTES} (found ${JSON.stringify(minutes)}).`,
+			{ layer: layerName, key: 'defaults', path: 'defaults.leaseMinutes' }
+		);
+	}
+}
+
+/**
+ * A `defaults.priority` written by a PROJECT layer must be one of the project's priorities; the error names the nearest layer
+ * that writes it. The global config is never checked here: when no project layer writes the default, the config resolves it
+ * (the global value if listed, else `medium` if listed, else the last priority), so a global value outside the list is ignored.
+ */
+function checkDefaultPriority(config: TaskResolvedConfig, layers: readonly NamedLayer[]): void {
+	const writer = [...layers]
+		.reverse()
+		.find(layer => (layer.values as TaskProjectConfig).defaults?.priority !== undefined);
+	if (writer === undefined || config.priorities.includes(config.defaults.priority)) return;
+	throw new ConfigSchemaError(
+		`${writer.name}: defaults.priority: "${config.defaults.priority}" is not one of the priorities of this project (${config.priorities.join(', ')}). Set defaults.priority to one of them, or add it to priorities.`,
+		{ layer: writer.name, key: 'defaults', path: 'defaults.priority' }
+	);
+}
+
 /** The global config may not hold a strategy (a repo or a server belongs to one project) nor hooks. Names the global file. */
 function checkGlobalConfig(globalConfigDir: string | undefined): void {
 	const global = TaskConfigLoader.loadGlobal(globalConfigDir) as Record<string, unknown>;
 	const file = path.join(TaskConfigLoader.resolveGlobalConfigDir(globalConfigDir), 'config.yml');
 	assertNoHooks(file, global);
+	checkLeaseMinutes(file, global['defaults'] as { leaseMinutes?: unknown } | undefined);
 	if (global['strategy'] !== undefined) {
 		throw new StrategyConfigError(
 			file,
@@ -78,6 +153,8 @@ function readSetup(
 		assertNoHooks(layer.name, layer.values);
 		validateLayer(TASK_CONFIG_SCHEMA, layer.name, layer.values, 'project');
 		checkStatusOutcomes(layer);
+		checkPriorities(layer);
+		checkLeaseMinutes(layer.name, (layer.values as TaskProjectConfig).defaults);
 		// Every layer is checked for structure (a parent's section is valid in its own file); only the own layer is resolved.
 		parseStrategySection(layer.name, layer.values['strategy']);
 	}
@@ -88,6 +165,7 @@ function readSetup(
 		project: merged.values as TaskProjectConfig,
 		source: ownConfigFile(storage),
 	});
+	checkDefaultPriority(config, layers);
 	return { config, strategy: parseStrategySection(ownConfigFile(storage), merged.values['strategy']) };
 }
 
@@ -137,5 +215,6 @@ export function projectFactsOf(config: TaskResolvedConfig): ProjectFacts {
 					: 'positive',
 		})),
 		types: config.types,
+		priorities: config.priorities,
 	};
 }

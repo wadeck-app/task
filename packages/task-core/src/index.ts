@@ -7,7 +7,13 @@ export type {
 	TaskResolvedConfig,
 	StatusOutcome,
 } from './TaskConfigLoader.js';
-export { TaskConfigLoader, statusOutcomeProblem } from './TaskConfigLoader.js';
+export {
+	TaskConfigLoader,
+	statusOutcomeProblem,
+	DEFAULT_PRIORITIES,
+	DEFAULT_LEASE_MINUTES,
+	MAX_LEASE_MINUTES,
+} from './TaskConfigLoader.js';
 export type {
 	TaskStatus,
 	TaskSummary,
@@ -40,10 +46,32 @@ export {
 	InvalidCommentTextError,
 	normalizeCommentText,
 } from './taskComments.js';
+// Priority, assignee and claim (stage 1 of .claude/plans/2026-11-14_priority-assignee-claim.md).
+export type { ClaimDecision, ClaimOutcome, ClaimRequest, TaskFieldName } from './taskFields.js';
+export {
+	ASSIGNEE_MAX,
+	InvalidTaskFieldError,
+	PRIORITY_MAX,
+	TaskClaimedError,
+	TaskNotClaimedError,
+	TaskReleaseRefusedError,
+	UnknownPriorityError,
+	decideClaim,
+	normalizeAssignee,
+	normalizeClaimRequest,
+	normalizePriority,
+} from './taskFields.js';
+export type { LockHolder, WriteLockOptions } from './projectLock.js';
+export { ProjectWriteLock, WriteLockTimeoutError } from './projectLock.js';
+export { formatDuration } from './formatDuration.js';
 // The async port (stage 0 of the storage-strategies design): every caller reads and writes tasks through it.
 export type {
 	ActivitySupport,
 	BackendCapabilities,
+	BackendClaimInput,
+	BackendClaimResult,
+	BackendReleaseResult,
+	ReleaseOptions,
 	BackendCommentChange,
 	BackendCommentEdit,
 	BackendTraits,

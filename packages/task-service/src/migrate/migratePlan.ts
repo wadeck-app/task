@@ -126,7 +126,8 @@ function estimateWrites(
 		const { mapped } = task;
 		if (task.state === 'new') writes += 1;
 		if (caps.meta) writes += 1;
-		writes += (mapped.type === undefined ? 0 : 1) + mapped.labels.length + Object.keys(mapped.meta).length;
+		writes += (mapped.type === undefined ? 0 : 1) + (mapped.priority === undefined ? 0 : 1);
+		writes += (mapped.assignee === undefined ? 0 : 1) + mapped.labels.length + Object.keys(mapped.meta).length;
 		writes += mapped.links.length + mapped.comments.length;
 	}
 	const cost = target.traits.cost;

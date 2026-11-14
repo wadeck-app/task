@@ -1,5 +1,6 @@
 // The plugin kinds of task and their typed instances (design 3A.3): the one place where the generic host seam (../plugin-host)
 // meets task types. Built-in plugins import this file, the seam and task-core types only (architecture rule PLUGINS_IMPORT_SEAM_ONLY).
+import { UnsupportedByBackendError } from '@wadeck-app/task-core';
 import type { BackendCapabilities, BackendKind, BackendTraits, TaskBackend } from '@wadeck-app/task-core';
 
 import type { Plugin, PluginInstance, PluginRegistry } from '../plugin-host/index.js';
@@ -57,6 +58,8 @@ export interface ProjectFacts {
 	statuses: ProjectStatus[];
 	/** The valid task types; empty = any. */
 	types: string[];
+	/** The valid priorities, highest first. Absent (a hand-built fact list): any priority is accepted. */
+	priorities?: string[];
 }
 
 export interface StrategyContext {
@@ -65,6 +68,8 @@ export interface StrategyContext {
 	/** The statuses (config order) and types of the project. */
 	statuses: ProjectStatus[];
 	types: string[];
+	/** The priorities of the project, highest first (the merged config). A local backend refuses any other priority; absent = any text. */
+	priorities?: readonly string[];
 	project: { id?: string; name: string; path?: string };
 	/** The folder of the task files and the data folder of the project (local backends only; others ignore them). */
 	tasksDir: string;
@@ -169,4 +174,33 @@ export class PluginNotImplementedError extends Error {
 		super(`plugin "${ref}" is registered but not implemented in this version (it arrives in ${stage})`);
 		this.name = 'PluginNotImplementedError';
 	}
+}
+
+/** The operations of the port that carry priority, assignee and claim (capabilities `priority`, `assignee`, `claim`). */
+export type TaskFieldOperation =
+	'setPriority' | 'clearPriority' | 'setAssignee' | 'clearAssignee' | 'claim' | 'release';
+
+const FIELD_OPERATIONS: Record<TaskFieldOperation, { capability: 'priority' | 'assignee' | 'claim'; text: string }> = {
+	setPriority: { capability: 'priority', text: 'setting a priority' },
+	clearPriority: { capability: 'priority', text: 'clearing a priority' },
+	setAssignee: { capability: 'assignee', text: 'setting an assignee' },
+	clearAssignee: { capability: 'assignee', text: 'clearing an assignee' },
+	claim: { capability: 'claim', text: 'claiming a task' },
+	release: { capability: 'claim', text: 'releasing a task' },
+};
+
+/**
+ * The answer of a backend that does not carry priority, assignee and claim yet (every strategy but `local`): a rejected promise
+ * with an UnsupportedByBackendError that says so and what to do. The caller returns it from the operation.
+ */
+export function refuseTaskField(kind: BackendKind, operation: TaskFieldOperation): Promise<never> {
+	const { capability, text } = FIELD_OPERATIONS[operation];
+	return Promise.reject(
+		new UnsupportedByBackendError(
+			kind,
+			text,
+			capability,
+			`Priority, assignee and claim are not available on the ${kind} storage strategy yet. Use a project with the local strategy (no strategy section in its config.yml) to use them.`
+		)
+	);
 }

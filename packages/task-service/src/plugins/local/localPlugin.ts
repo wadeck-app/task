@@ -109,7 +109,10 @@ export const localPlugin: StrategyPlugin = {
 	},
 
 	create(_options, context: StrategyContext) {
-		const backend = createLocalBackend(context.tasksDir, { writeFile: context.writeFile });
+		const backend = createLocalBackend(context.tasksDir, {
+			writeFile: context.writeFile,
+			...(context.priorities === undefined ? {} : { priorities: context.priorities }),
+		});
 		const instance: StrategyInstance = {
 			backend,
 			describe: () => [`data: ${context.dataDir}`],

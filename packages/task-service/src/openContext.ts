@@ -64,6 +64,7 @@ export function openTaskContext(input: OpenTaskContextInput): TaskServiceContext
 				source: strategy.source,
 				statuses: facts.statuses,
 				types: facts.types,
+				priorities: config.priorities,
 				project,
 				tasksDir: tasksDirOf(storage),
 				dataDir: storage.dataDir,

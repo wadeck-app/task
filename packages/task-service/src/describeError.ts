@@ -17,13 +17,19 @@ import {
 	BackendUnreachableError,
 	CommentNotFoundError,
 	InvalidCommentTextError,
+	InvalidTaskFieldError,
 	PartialWriteError,
 	RateLimitedError,
 	RemoteIncompatibleError,
 	RemoteProjectMismatchError,
+	TaskClaimedError,
 	TaskConflictError,
+	TaskNotClaimedError,
 	TaskNotFoundError,
+	TaskReleaseRefusedError,
+	UnknownPriorityError,
 	UnsupportedByBackendError,
+	WriteLockTimeoutError,
 } from '@wadeck-app/task-core';
 
 import { MigrationRefusedError, MigrationStateError } from './migrate/migrateErrors.js';
@@ -31,6 +37,7 @@ import { PluginCreateError } from './plugin-host/index.js';
 import { PluginNotImplementedError } from './plugins/kinds.js';
 import { RemovedConfigKeyError } from './removedConfigKey.js';
 import { StrategyConfigError } from './strategyConfig.js';
+import { TaskClosedError } from './taskClosedError.js';
 import {
 	AmbiguousDeletePrefixError,
 	InvalidLinkTypeError,
@@ -88,6 +95,18 @@ export function describeError(error: unknown): ErrorDescription {
 		return describe('not-found', error, error.hint, { commentId: error.commentId, validIds: error.validIds });
 	}
 	if (error instanceof InvalidCommentTextError) return describe('invalid', error, error.hint);
+	// UnknownPriorityError is an InvalidTaskFieldError: its own branch first for the valid list.
+	if (error instanceof UnknownPriorityError) {
+		return describe('invalid', error, error.hint, { field: 'priority', validPriorities: error.validPriorities });
+	}
+	if (error instanceof InvalidTaskFieldError) return describe('invalid', error, error.hint, { field: error.field });
+	// Another task process holds the project write lock and did not let go in time: nothing was written, retrying is right.
+	if (error instanceof WriteLockTimeoutError) {
+		return describe('unavailable', error, error.hint, {
+			lockPath: error.lockPath,
+			...(error.holder === undefined ? {} : { holder: error.holder }),
+		});
+	}
 	if (error instanceof AmbiguousTaskPrefixError || error instanceof AmbiguousDeletePrefixError) {
 		return describe('ambiguous', error, undefined, { matches: error.matches });
 	}
@@ -129,6 +148,27 @@ export function describeError(error: unknown): ErrorDescription {
 	}
 	if (error instanceof BackendLimitError) {
 		return describe('conflict', error, error.hint, { limit: error.limitName, max: error.limit });
+	}
+	// The claim errors are conflicts that carry their own fix (wait, renew, release, --force).
+	if (error instanceof TaskClaimedError) {
+		return describe('conflict', error, error.hint, {
+			taskId: error.taskId,
+			holder: error.holder,
+			leaseUntil: error.leaseUntil,
+			remainingMs: error.remainingMs,
+			ownLease: error.ownLease,
+		});
+	}
+	if (error instanceof TaskClosedError) {
+		return describe('conflict', error, error.hint, { taskId: error.taskId, status: error.status });
+	}
+	if (error instanceof TaskNotClaimedError) return describe('conflict', error, error.hint, { taskId: error.taskId });
+	if (error instanceof TaskReleaseRefusedError) {
+		return describe('conflict', error, error.hint, {
+			taskId: error.taskId,
+			holder: error.holder,
+			requestedBy: error.requestedBy,
+		});
 	}
 	if (error instanceof TaskConflictError) return describe('conflict', error);
 	if (error instanceof DanglingParentError || error instanceof DanglingLinkError)

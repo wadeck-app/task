@@ -71,6 +71,48 @@ export class RestrictedBackend extends LocalFileBackend {
 		return super.clearType(id, options);
 	}
 
+	override async setPriority(
+		...[id, priority, options]: Parameters<NonNullable<TaskBackend['setPriority']>>
+	): Promise<VersionedRecord> {
+		this.requireNoRevision('setPriority', options);
+		return super.setPriority(id, priority, options);
+	}
+
+	override async clearPriority(
+		...[id, options]: Parameters<NonNullable<TaskBackend['clearPriority']>>
+	): Promise<VersionedRecord> {
+		this.requireNoRevision('clearPriority', options);
+		return super.clearPriority(id, options);
+	}
+
+	override async setAssignee(
+		...[id, assignee, options]: Parameters<NonNullable<TaskBackend['setAssignee']>>
+	): Promise<VersionedRecord> {
+		this.requireNoRevision('setAssignee', options);
+		return super.setAssignee(id, assignee, options);
+	}
+
+	override async clearAssignee(
+		...[id, options]: Parameters<NonNullable<TaskBackend['clearAssignee']>>
+	): Promise<VersionedRecord> {
+		this.requireNoRevision('clearAssignee', options);
+		return super.clearAssignee(id, options);
+	}
+
+	override async claim(
+		...[id, input]: Parameters<NonNullable<TaskBackend['claim']>>
+	): ReturnType<NonNullable<TaskBackend['claim']>> {
+		this.requireNoRevision('claim', input);
+		return super.claim(id, input);
+	}
+
+	override async release(
+		...[id, options]: Parameters<NonNullable<TaskBackend['release']>>
+	): ReturnType<NonNullable<TaskBackend['release']>> {
+		this.requireNoRevision('release', options);
+		return super.release(id, options);
+	}
+
 	// ---- labels, meta, comments: off ----
 	override async addLabel(..._args: Parameters<TaskBackend['addLabel']>): Promise<never> {
 		return refuse('addLabel', 'labels', NO_LABELS);

@@ -82,14 +82,17 @@ export const OWN_TEMP_PREFIXES: readonly string[] = [
 	'task-staging-',
 	'task-status-cmd-',
 	'task-store-',
+	'task-store-claim-',
 	'task-store-errors-',
 	'task-strategy-cmd-',
 	'task-text-cmd-',
+	'task-fields-cmd-',
 	'task-type-cmd-',
 	'task-type-ctx-',
 	'task-unknown-commands-',
 	'task-updatelog-',
 	'task-variants-',
+	'task-write-lock-',
 ];
 
 /**

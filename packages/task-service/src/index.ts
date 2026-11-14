@@ -23,6 +23,9 @@ export { syncLabels } from './syncLabels.js';
 export type {
 	TaskProjectEnv,
 	TaskEvent,
+	TaskPriorityChangedEvent,
+	TaskAssigneeChangedEvent,
+	AssigneeChangeOutcome,
 	EventSink,
 	EventDelivery,
 	UndeliveredEvent,
@@ -61,6 +64,12 @@ export type { TaskCommentResult, TaskComments } from './comments.js';
 export { addComment, editComment, listComments, removeComment } from './comments.js';
 export type { SetTaskTextInput } from './setTaskText.js';
 export { setTaskText } from './setTaskText.js';
+// Priority, assignee and claim (stage 1 of .claude/plans/2026-11-14_priority-assignee-claim.md).
+export { setTaskPriority, clearTaskPriority } from './taskPriority.js';
+export { setTaskAssignee, clearTaskAssignee } from './taskAssignee.js';
+export type { ClaimTaskInput, ClaimTaskResult, ClaimedTask, ReleaseTaskResult } from './taskClaim.js';
+export { claimTask, releaseTask } from './taskClaim.js';
+export { TaskClosedError } from './taskClosedError.js';
 export type { SplitText } from './taskText.js';
 export {
 	HEADLINE_MAX_LENGTH,

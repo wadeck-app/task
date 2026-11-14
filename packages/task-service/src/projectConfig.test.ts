@@ -45,10 +45,11 @@ async function single(): Promise<TaskStorage> {
 }
 
 describe('the schema of the task config', () => {
-	it('declares the five sections with their scope: statuses, types, fields and strategy local; defaults inherited deeply; no hooks', () => {
+	it('declares the six sections with their scope: statuses, types, priorities, fields and strategy local; defaults inherited deeply; no hooks', () => {
 		expect(TASK_CONFIG_SCHEMA.sections).toEqual({
 			statuses: { scope: 'local' },
 			types: { scope: 'local' },
+			priorities: { scope: 'local' },
 			fields: { scope: 'local' },
 			strategy: { scope: 'local' },
 			defaults: { scope: 'inherit', merge: 'deep' },
@@ -86,8 +87,8 @@ describe('loadTaskConfig: a project of the shared registry', () => {
 		write(parentFile, 'defaults:\n  priority: high\n');
 		expect(loadTaskConfig(storage, path.join(sandbox.root, 'global')).defaults.priority).toBe('high');
 
-		write(childFile, 'defaults:\n  priority: critical\n');
-		expect(loadTaskConfig(storage, path.join(sandbox.root, 'global')).defaults.priority).toBe('critical');
+		write(childFile, 'defaults:\n  priority: urgent\n');
+		expect(loadTaskConfig(storage, path.join(sandbox.root, 'global')).defaults.priority).toBe('urgent');
 	});
 
 	it('statuses and types are local: the parent values are valid there but never reach the child', async () => {
@@ -240,4 +241,142 @@ describe('loadTaskConfig: a project of the shared registry', () => {
 
 		expect(() => loadTaskConfig(storage, sandbox.root)).toThrow(ownConfigFile(storage));
 	});
+});
+
+describe('priorities and the claim lease in the config', () => {
+	function failureOf(storage: TaskStorage, globalDir = sandbox.root): ConfigSchemaError {
+		try {
+			loadTaskConfig(storage, globalDir);
+		} catch (error) {
+			expect(error).toBeInstanceOf(ConfigSchemaError);
+			return error as ConfigSchemaError;
+		}
+		throw new Error('the config should have been refused');
+	}
+
+	it('defaults to urgent, high, medium, low, default priority medium and a 30 minute lease', async () => {
+		const config = loadTaskConfig(await single(), sandbox.root);
+
+		expect(config.priorities).toEqual(['urgent', 'high', 'medium', 'low']);
+		expect(config.defaults.priority).toBe('medium');
+		expect(config.defaults.leaseMinutes).toBe(30);
+	});
+
+	it('reads a project list of priorities (highest first) and its default', async () => {
+		const storage = await single();
+		write(ownConfigFile(storage), 'priorities: [p0, p1, p2]\ndefaults:\n  priority: p1\n  leaseMinutes: 90\n');
+
+		const config = loadTaskConfig(storage, sandbox.root);
+
+		expect(config.priorities).toEqual(['p0', 'p1', 'p2']);
+		expect(config.defaults.priority).toBe('p1');
+		expect(config.defaults.leaseMinutes).toBe(90);
+	});
+
+	it('priorities are local: a parent list never reaches the child, but leaseMinutes is inherited', async () => {
+		const storage = await chain();
+		const [parentFile] = storage.configFiles as [string, string];
+		write(parentFile, 'priorities: [p0, p1]\ndefaults:\n  leaseMinutes: 5\n');
+
+		const config = loadTaskConfig(storage, sandbox.root);
+
+		expect(config.priorities).toEqual(['urgent', 'high', 'medium', 'low']);
+		expect(config.defaults.leaseMinutes).toBe(5);
+	});
+
+	it('a project default priority that is not in the list names the file, the key defaults.priority and the valid list', async () => {
+		const storage = await single();
+		write(ownConfigFile(storage), 'priorities: [p0, p1]\ndefaults:\n  priority: medium\n');
+
+		const error = failureOf(storage);
+
+		expect(error.layer).toBe(ownConfigFile(storage));
+		expect(error.key).toBe('defaults');
+		expect(error.path).toBe('defaults.priority');
+		expect(error.message).toContain(ownConfigFile(storage));
+		expect(error.message).toContain('"medium"');
+		expect(error.message).toContain('p0, p1');
+	});
+
+	it('a project declaring only its priorities loads, and its default is the last (lowest) entry', async () => {
+		const storage = await single();
+		write(ownConfigFile(storage), 'priorities: [p0, p1, p2]\n');
+
+		const config = loadTaskConfig(storage, sandbox.root);
+
+		expect(config.defaults.priority).toBe('p2');
+	});
+
+	it('without a project default, medium is the default when it is listed', async () => {
+		const storage = await single();
+		write(ownConfigFile(storage), 'priorities: [high, medium, low, none]\n');
+
+		expect(loadTaskConfig(storage, sandbox.root).defaults.priority).toBe('medium');
+	});
+
+	it('a global default priority that is in the project list is the default', async () => {
+		const storage = await single();
+		const globalDir = path.join(sandbox.root, 'global');
+		write(path.join(globalDir, 'config.yml'), 'defaults:\n  priority: high\n');
+
+		expect(loadTaskConfig(storage, globalDir).defaults.priority).toBe('high');
+	});
+
+	it('a global default priority outside the project list is ignored, never an error', async () => {
+		const storage = await single();
+		const globalDir = path.join(sandbox.root, 'global');
+		write(path.join(globalDir, 'config.yml'), 'defaults:\n  priority: normal\n');
+
+		expect(loadTaskConfig(storage, globalDir).defaults.priority).toBe('medium');
+
+		write(ownConfigFile(storage), 'priorities: [p0, p1]\n');
+
+		expect(loadTaskConfig(storage, globalDir).defaults.priority).toBe('p1');
+	});
+
+	it('a priority with a space at its start or end is refused, naming the value, the entry and the fix', async () => {
+		const storage = await single();
+		write(ownConfigFile(storage), 'priorities: [high, " low"]\n');
+
+		const error = failureOf(storage);
+
+		expect(error.layer).toBe(ownConfigFile(storage));
+		expect(error.key).toBe('priorities');
+		expect(error.path).toBe('priorities[1]');
+		expect(error.message).toContain('" low"');
+		expect(error.message).toContain('write "low"');
+	});
+
+	it.each([
+		['not a list', 'priorities: high\n', 'priorities'],
+		['an empty list', 'priorities: []\n', 'priorities'],
+		['a blank entry', 'priorities: [high, " "]\n', 'priorities[1]'],
+		['an entry that is not text', 'priorities: [high, 3]\n', 'priorities[1]'],
+		['a duplicate', 'priorities: [high, low, high]\n', 'priorities[2]'],
+	])('%s is a ConfigSchemaError naming the file and the key priorities', async (_label, yml, where) => {
+		const storage = await single();
+		write(ownConfigFile(storage), yml);
+
+		const error = failureOf(storage);
+
+		expect(error.layer).toBe(ownConfigFile(storage));
+		expect(error.key).toBe('priorities');
+		expect(error.path).toBe(where);
+		expect(error.message).toContain(ownConfigFile(storage));
+	});
+
+	it.each([['0'], ['10081'], ['1.5'], ['"30"'], ['-4']])(
+		'leaseMinutes %s is refused with the range, naming the file',
+		async value => {
+			const storage = await single();
+			write(ownConfigFile(storage), `defaults:\n  leaseMinutes: ${value}\n`);
+
+			const error = failureOf(storage);
+
+			expect(error.layer).toBe(ownConfigFile(storage));
+			expect(error.key).toBe('defaults');
+			expect(error.path).toBe('defaults.leaseMinutes');
+			expect(error.message).toContain('1 to 10080');
+		}
+	);
 });

@@ -32,6 +32,10 @@ export {
 	UnsupportedByBackendError,
 } from './backendErrors.js';
 export type {
+	BackendClaimInput,
+	BackendClaimResult,
+	BackendReleaseResult,
+	ReleaseOptions,
 	BackendCommentChange,
 	BackendCommentEdit,
 	LabelSyncEntry,

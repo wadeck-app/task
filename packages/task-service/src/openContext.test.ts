@@ -3,6 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { loadRegistry } from '@wadeck-app/project-sdk';
+import { UnknownPriorityError } from '@wadeck-app/task-core';
 
 import { openResolvedProject, openTaskContext } from './openContext.js';
 import { resolveProject } from './resolveProject.js';
@@ -63,6 +64,15 @@ describe('openTaskContext', () => {
 		expect(project).toEqual({ id: 'a1b2c3d4', name: 'shop', path: projectDir });
 		expect((await store.create({ title: 'x', status: 'todo' })).id).toBeTruthy();
 		expect(fs.readdirSync(path.join(projectDir, 'data', 'tasks'))).not.toEqual([]);
+	});
+
+	it('hands the priorities of the project config to the local backend', async () => {
+		const projectDir = initProject('priorities: [p0, p1]\ndefaults:\n  priority: p1\n');
+		const { store } = open(projectDir);
+		const task = await store.create({ title: 'x', status: 'backlog' });
+
+		expect((await store.setPriority!(task.id, 'p0')).priority).toBe('p0');
+		await expect(store.setPriority!(task.id, 'urgent')).rejects.toBeInstanceOf(UnknownPriorityError);
 	});
 
 	it('has no id key for a project that is not registered', () => {

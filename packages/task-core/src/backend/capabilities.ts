@@ -42,6 +42,15 @@ export interface BackendCapabilities {
 	labels: boolean;
 	meta: boolean;
 	comments: boolean;
+	/**
+	 * A priority field on the task (setPriority / clearPriority). Optional so that a backend written before it keeps compiling; absent
+	 * means false. A backend that declares it away still has to answer the operation with UnsupportedByBackendError.
+	 */
+	priority?: boolean;
+	/** An assignee field on the task (setAssignee / clearAssignee), same rule as `priority`. */
+	assignee?: boolean;
+	/** The atomic claim with a lease (claim / release), same rule as `priority`. Needs `assignee`. */
+	claim?: boolean;
 	/** Whether any write is accepted. `none`: reads only, each write throws UnsupportedByBackendError for this capability. */
 	writes: WriteSupport;
 	/** Parent and links are mirrored in the summaries of `list()` (graph and tree queries never read a task). */
@@ -64,6 +73,9 @@ export const LOCAL_CAPABILITIES: BackendCapabilities = Object.freeze({
 	labels: true,
 	meta: true,
 	comments: true,
+	priority: true,
+	assignee: true,
+	claim: true,
 	writes: 'full',
 	indexedGraph: true,
 	events: 'client',
@@ -87,11 +99,23 @@ export const BACKEND_CAPABILITY_NAMES: readonly (keyof BackendCapabilities)[] = 
 		labels: 0,
 		meta: 0,
 		comments: 0,
+		priority: 0,
+		assignee: 0,
+		claim: 0,
 		writes: 0,
 		indexedGraph: 0,
 		events: 0,
 	} satisfies Record<keyof BackendCapabilities, 0>) as (keyof BackendCapabilities)[]
 );
 
-/** A remote project (`task serve` over the local store): everything the local store does, with the queue events raised by the server. */
-export const REMOTE_CAPABILITIES: BackendCapabilities = Object.freeze({ ...LOCAL_CAPABILITIES, events: 'server' });
+/**
+ * A remote project (`task serve` over the local store): everything the local store does, with the queue events raised by the server.
+ * Priority, assignee and claim are NOT carried by protocol v1: the client refuses them (UnsupportedByBackendError) until protocol v2.
+ */
+export const REMOTE_CAPABILITIES: BackendCapabilities = Object.freeze({
+	...LOCAL_CAPABILITIES,
+	priority: false,
+	assignee: false,
+	claim: false,
+	events: 'server',
+});

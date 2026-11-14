@@ -4,7 +4,9 @@
 import { BackendDataError, BackendLimitError, TaskNotFoundError } from '@wadeck-app/task-core';
 import type {
 	BackendCapabilities,
+	BackendClaimResult,
 	BackendCommentChange,
+	BackendReleaseResult,
 	BackendCommentEdit,
 	CreateTaskInput,
 	LabelCount,
@@ -26,6 +28,7 @@ import type {
 
 import { GitHubHttpError } from './githubClient.js';
 import type { ClientResponse, GitHubClient } from './githubClient.js';
+import { refuseTaskField } from '../kinds.js';
 import type { DeclaredFills } from '../kinds.js';
 import type { GitHubSettings } from './githubOptions.js';
 import { revisionOf } from './githubRevision.js';
@@ -69,6 +72,10 @@ export const GITHUB_CAPABILITIES: BackendCapabilities = Object.freeze({
 	// With fills.meta: labels the labels `meta:key=value` are read as meta; the plugin reports it as emulated.
 	meta: false,
 	comments: true,
+	// Not carried yet (stage 3): the operations answer UnsupportedByBackendError.
+	priority: false,
+	assignee: false,
+	claim: false,
 	writes: 'full',
 	// The list carries the parent of each issue, not its links.
 	indexedGraph: false,
@@ -812,6 +819,31 @@ export class GitHubBackend implements TaskBackend {
 
 	removeComment(id: string, commentId: string, options?: WriteOptions): Promise<BackendCommentChange> {
 		return this.writer.removeComment(id, commentId, options);
+	}
+
+	// Priority, assignee and claim: not available on this storage strategy yet (stage 3 / 4 of the priority plan); each answers UnsupportedByBackendError.
+	setPriority(): Promise<VersionedRecord> {
+		return refuseTaskField('github', 'setPriority');
+	}
+
+	clearPriority(): Promise<VersionedRecord> {
+		return refuseTaskField('github', 'clearPriority');
+	}
+
+	setAssignee(): Promise<VersionedRecord> {
+		return refuseTaskField('github', 'setAssignee');
+	}
+
+	clearAssignee(): Promise<VersionedRecord> {
+		return refuseTaskField('github', 'clearAssignee');
+	}
+
+	claim(): Promise<BackendClaimResult> {
+		return refuseTaskField('github', 'claim');
+	}
+
+	release(): Promise<BackendReleaseResult> {
+		return refuseTaskField('github', 'release');
 	}
 
 	deleteTask(id: string, options?: WriteOptions): Promise<boolean> {
