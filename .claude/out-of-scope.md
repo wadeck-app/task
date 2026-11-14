@@ -43,15 +43,17 @@ Raising an item here is a change-of-scope conversation, not a design question. E
 
 ## Product surface
 
-| Item                                                                              | Decision                                                        | Source                                         |
-| --------------------------------------------------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------- |
-| Back links in the module pages ("All tasks", "Back to the task")                  | None; the breadcrumb carries the context                        | `CLAUDE.md` "app-module-task routes and pages" |
-| Registry project management in the module (register, move, remove, edit)          | None; the Projects page is a read-only list                     | same                                           |
-| A user / author model for comments                                                | None; `author` is a free string, never defaulted to the OS user | `CLAUDE.md` "Comments"                         |
-| Markdown, auto-links or HTML in comments                                          | Plain text only                                                 | `CLAUDE.md` "Comments"                         |
-| Links across projects                                                             | Not supported; listed as an open question                       | `CLAUDE.md` "Task links"                       |
-| Virtual projects in cross-project views and the module                            | Not listed; `?project=<virtual>` answers 409                    | `CLAUDE.md` "Shared project registry"          |
-| Silent fallbacks, in general (default version, null, skip when a file is missing) | Never; fail loudly with the fix                                 | owner rule (user CLAUDE.md); storage plan R3   |
+| Item                                                                              | Decision                                                                         | Source                                                |
+| --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| Back links in the module pages ("All tasks", "Back to the task")                  | None; the breadcrumb carries the context                                         | `CLAUDE.md` "app-module-task routes and pages"        |
+| Registry project management in the module (register, move, remove, edit)          | None; the Projects page is a read-only list                                      | same                                                  |
+| A user / author model for comments                                                | None; `author` is a free string, never defaulted to the OS user                  | `CLAUDE.md` "Comments"                                |
+| Markdown, auto-links or HTML in comments                                          | Plain text only                                                                  | `CLAUDE.md` "Comments"                                |
+| A user model or authentication for `assignee` and claims                          | None; `assignee` is free text and a claim is a lease, not an identity            | `CLAUDE.md` "Priority, assignee and claim"            |
+| Dispatching or running work (a scheduler) inside task                             | None; task offers the sorted list, `claim` and `next`; the dispatcher is outside | `.claude/plans/2026-11-14_priority-assignee-claim.md` |
+| Links across projects                                                             | Not supported; listed as an open question                                        | `CLAUDE.md` "Task links"                              |
+| Virtual projects in cross-project views and the module                            | Not listed; `?project=<virtual>` answers 409                                     | `CLAUDE.md` "Shared project registry"                 |
+| Silent fallbacks, in general (default version, null, skip when a file is missing) | Never; fail loudly with the fix                                                  | owner rule (user CLAUDE.md); storage plan R3          |
 
 ## How to challenge scope
 

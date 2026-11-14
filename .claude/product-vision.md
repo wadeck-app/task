@@ -34,6 +34,7 @@ From `.claude/plans/2026-10-25_todo.md` (2026-11-14) and `2026-11-13_remaining-w
 - Remote on a second real machine, then TLS and tunnels as `transport` plugins.
 - GitHub strategy gaps: page-level `expectedRevision`, `GET /projects` exposing `strategy` and `capabilities`, events for changes made on GitHub (R7: polling in v2).
 - Stage 0.7 (shared domain-rules layer) closed without doing it; reopen if two backends disagree (todo section 1).
+- Priority, assignee and claim (2026-11-14) are done on local, github, gitlab and remote (`CLAUDE.md` "Priority, assignee and claim"). Not done: the module views (priority, assignee and lease in the Tasks list and the task page), a plan-time check of GitHub issue-field options for `task migrate`, strict atomicity of a claim on github and gitlab (check-then-write).
 
 ## Known gaps
 
