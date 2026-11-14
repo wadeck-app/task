@@ -279,7 +279,7 @@ describe('starting and stopping', () => {
 		expect(answer?.status).toBe(200);
 		expect(text).toContain(`task serve: project ${project.name} (${project.id})`);
 		expect(text).toMatch(/listening\s+http:\/\/127\.0\.0\.1:\d+/);
-		expect(text).toMatch(/protocol\s+1/);
+		expect(text).toMatch(/protocol\s+2/);
 		expect(text).toMatch(/auth\s+bearer token from the environment variable TASK_SERVE_TOKEN/);
 		expect(text).toMatch(/events\s+raised by this server/);
 		expect(text).toMatch(/stop\s+Ctrl\+C/);
@@ -297,7 +297,7 @@ describe('starting and stopping', () => {
 			host: '127.0.0.1',
 			port: expect.any(Number),
 			lan: false,
-			protocol: 1,
+			protocol: 2,
 			project: { id: project.id, name: project.name },
 			auth: { kind: 'env', name: 'TASK_SERVE_TOKEN' },
 		});

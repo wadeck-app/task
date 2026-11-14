@@ -1,22 +1,24 @@
-// The wire protocol of `task serve` and the remote strategy (design 3, stage 4): version 1, HTTP + JSON, one route per operation of
-// the TaskBackend port. This file is the single source of the route table: the server matches requests with it and the client builds
+// The wire protocol of `task serve` and the remote strategy (design 3, stage 4): versions 1 and 2, HTTP + JSON, one route per operation of
+// the TaskBackend port. Version 2 only ADDS routes (priority, assignee, claim, release: `RouteSpec.since`); a request names the version
+// of the route it uses (the lowest one that has it), so a v1 peer keeps working with a v2 peer for everything v1 had. This file is the single source of the route table: the server matches requests with it and the client builds
 // them with it, so the two cannot drift. No Node module is imported (the port files must stay free of it; architecture.test.ts).
 //
 //   request headers   Authorization: Bearer <token>        always (401 otherwise)
-//                     X-Task-Protocol: 1                    always (426 when the server does not speak it)
+//                     X-Task-Protocol: <route.since>        always (426 when the server does not speak it): 1, or 2 for a route added by v2
 //                     If-Match: "<revision>"                a write that must not overwrite a newer task (412 = stale)
 //                     X-Task-Events: suppress               a write whose events the CALLER does not want raised (a migration)
 //                     Content-Type: application/json        when there is a body (JSON only)
-//   response headers  X-Task-Protocol: 1                    on every answer, errors included
+//   response headers  X-Task-Protocol: <negotiated>        on every answer, errors included: the version the request named
 //   answers           200 (201 for create) with the JSON result; a WRITE answers { result, events } (see WriteEnvelope);
 //                     an error answers { error: { type, message, hint?, ... } } (wireErrors.ts)
 import type { BackendCapabilities } from '../backend/capabilities.js';
 import type { TaskBackend } from '../backend/TaskBackend.js';
 
-export const PROTOCOL_VERSION = 1;
+/** The newest version this build speaks. */
+export const PROTOCOL_VERSION = 2;
 /** The versions this build speaks, inclusive. The server answers 426 with this range for any other. */
 export const PROTOCOL_MIN = 1;
-export const PROTOCOL_MAX = 1;
+export const PROTOCOL_MAX = 2;
 
 export const PROTOCOL_HEADER = 'X-Task-Protocol';
 export const EVENTS_HEADER = 'X-Task-Events';
@@ -58,6 +60,13 @@ export const PORT_OPERATIONS = [
 	'editComment',
 	'removeComment',
 	'deleteTask',
+	// protocol 2
+	'setPriority',
+	'clearPriority',
+	'setAssignee',
+	'clearAssignee',
+	'claim',
+	'release',
 ] as const satisfies readonly (keyof TaskBackend)[];
 
 export type PortOperation = (typeof PORT_OPERATIONS)[number];
@@ -71,6 +80,8 @@ export interface RouteSpec {
 	path: string;
 	/** True for an operation that changes a task: the server runs it alone in the write queue and answers a WriteEnvelope. */
 	write: boolean;
+	/** The first protocol version that has this route (1 unless a later version added it). */
+	since: number;
 }
 
 const read = (op: ProtocolOperation, method: HttpMethod, path: string): RouteSpec => ({
@@ -78,12 +89,14 @@ const read = (op: ProtocolOperation, method: HttpMethod, path: string): RouteSpe
 	method,
 	path,
 	write: false,
+	since: 1,
 });
-const write = (op: ProtocolOperation, method: HttpMethod, path: string): RouteSpec => ({
+const write = (op: ProtocolOperation, method: HttpMethod, path: string, since = 1): RouteSpec => ({
 	op,
 	method,
 	path,
 	write: true,
+	since,
 });
 
 export const ROUTES: readonly RouteSpec[] = Object.freeze([
@@ -122,6 +135,13 @@ export const ROUTES: readonly RouteSpec[] = Object.freeze([
 	write('editComment', 'PUT', '/v1/tasks/:id/comments/:commentId'),
 	write('removeComment', 'DELETE', '/v1/tasks/:id/comments/:commentId'),
 	write('deleteTask', 'DELETE', '/v1/tasks/:id'),
+	// ---- writes added by protocol 2 (priority, assignee, claim) ----
+	write('setPriority', 'PUT', '/v1/tasks/:id/priority', 2),
+	write('clearPriority', 'DELETE', '/v1/tasks/:id/priority', 2),
+	write('setAssignee', 'PUT', '/v1/tasks/:id/assignee', 2),
+	write('clearAssignee', 'DELETE', '/v1/tasks/:id/assignee', 2),
+	write('claim', 'POST', '/v1/tasks/:id/claim', 2),
+	write('release', 'POST', '/v1/tasks/:id/release', 2),
 ]);
 
 export function routeFor(op: ProtocolOperation): RouteSpec {
@@ -130,6 +150,11 @@ export function routeFor(op: ProtocolOperation): RouteSpec {
 		throw new Error(`No route for operation "${String(op)}" (operations: ${ROUTES.map(r => r.op).join(', ')})`);
 	}
 	return route;
+}
+
+/** The protocol version a request for `op` names in X-Task-Protocol: the lowest one that has the route. */
+export function requestVersion(op: ProtocolOperation): number {
+	return routeFor(op).since;
 }
 
 /** A path with a malformed percent sequence: a bad request, not a route that does not exist. */

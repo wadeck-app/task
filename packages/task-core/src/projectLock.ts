@@ -8,14 +8,11 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { formatDuration } from './formatDuration.js';
+import { WriteLockTimeoutError } from './writeLockError.js';
+import type { LockHolder } from './writeLockError.js';
 
-/** What the lock file tells about its holder. */
-export interface LockHolder {
-	pid: number;
-	host: string;
-	/** ISO instant the lock was taken. */
-	at: string;
-}
+export { WriteLockTimeoutError };
+export type { LockHolder };
 
 // `token` identifies the holder instance, so a release never removes somebody else's lock.
 interface LockFileContent extends LockHolder {
@@ -39,19 +36,6 @@ export interface WriteLockOptions {
 	onWarning?: (message: string) => void;
 	/** Test hook: called after a lock was judged dead and before the takeover starts (to simulate another contender). */
 	afterStaleRead?: () => void;
-}
-
-/** The lock could not be taken in time. `holder` is absent when the lock file cannot be read. */
-export class WriteLockTimeoutError extends Error {
-	constructor(
-		message: string,
-		readonly hint: string,
-		readonly lockPath: string,
-		readonly holder?: LockHolder
-	) {
-		super(message);
-		this.name = 'WriteLockTimeoutError';
-	}
 }
 
 const MAX_POLL_MS = 200;

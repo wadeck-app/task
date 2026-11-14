@@ -244,6 +244,95 @@ describe('local to remote', () => {
 	});
 });
 
+describe('priority and assignee (protocol 2)', () => {
+	async function seedFields(from: ResolvedProject): Promise<void> {
+		const ctx = openResolvedProject(from, global(), { env: { ...sandbox.env, [TOKEN_VARIABLE]: TOKEN } });
+		const urgent = await ctx.store.create({ title: 'Urgent one', status: 'backlog' });
+		await ctx.store.setPriority!(urgent.id, 'urgent');
+		await ctx.store.setAssignee!(urgent.id, 'ann');
+		const held = await ctx.store.create({ title: 'Held one', status: 'backlog' });
+		await ctx.store.claim!(held.id, {
+			assignee: 'bob',
+			now: new Date().toISOString(),
+			leaseUntil: new Date(Date.now() + 3_600_000).toISOString(),
+		});
+		await ctx.store.create({ title: 'Plain one', status: 'backlog' });
+		await ctx.dispose?.();
+	}
+
+	async function fieldsOf(
+		resolved: ResolvedProject
+	): Promise<Record<string, { priority?: string; assignee?: string; leaseUntil?: string }>> {
+		const ctx = openResolvedProject(resolved, global(), { env: { ...sandbox.env, [TOKEN_VARIABLE]: TOKEN } });
+		const tasks = await ctx.store.getMany((await ctx.store.list()).map(task => task.id));
+		await ctx.dispose?.();
+		return Object.fromEntries(
+			tasks.map(task => [
+				task.title,
+				{
+					...(task.priority === undefined ? {} : { priority: task.priority }),
+					...(task.assignee === undefined ? {} : { assignee: task.assignee }),
+					...(task.leaseUntil === undefined ? {} : { leaseUntil: task.leaseUntil }),
+				},
+			])
+		);
+	}
+
+	it('keeps priority and assignee from a local project to a remote one and back, and never a lease (the claim is not migrated)', async () => {
+		const { served, client } = await remotePair();
+		const from = await project('old');
+		await seedFields(from);
+
+		const dry = await migrate(from, client, { dryRun: true });
+		// The lease is the one field-related loss left: neither priority nor assignee is lost on a remote target any more.
+		expect(dry.losses.map(row => row.kind)).toContain('lease');
+		expect(dry.losses.map(row => row.kind)).not.toContain('priority');
+		expect(dry.losses.map(row => row.kind)).not.toContain('assignee');
+		const result = await migrate(from, client, { allowLoss: ['history', 'created-at', 'lease'] });
+
+		expect(result.status).toBe('completed');
+		expect(result.verification?.mismatches ?? []).toEqual([]);
+		expect(await fieldsOf(served)).toEqual({
+			'Urgent one': { priority: 'urgent', assignee: 'ann' },
+			'Held one': { assignee: 'bob' },
+			'Plain one': {},
+		});
+
+		const back = await project('mirror');
+		await migrate(client, back, { allowLoss: ['history', 'created-at'] });
+		expect(await fieldsOf(back)).toEqual({
+			'Urgent one': { priority: 'urgent', assignee: 'ann' },
+			'Held one': { assignee: 'bob' },
+			'Plain one': {},
+		});
+	});
+
+	it('asks the server to raise no event for the priority and assignee it writes (a migration), unless --emit-events', async () => {
+		const { client } = await remotePair();
+		const from = await project('old');
+		await seedFields(from);
+
+		await migrate(from, client, { allowLoss: ['history', 'created-at', 'lease'] });
+
+		expect(serverEvents.map(event => event.name)).not.toContain('onTaskPriorityChanged');
+		expect(serverEvents.map(event => event.name)).not.toContain('onTaskAssigneeChanged');
+		expect(serverEvents).toEqual([]);
+	});
+
+	it('with --emit-events the server raises them, and the client raises none of its own', async () => {
+		const { client } = await remotePair();
+		const from = await project('old');
+		await seedFields(from);
+
+		const result = await migrate(from, client, { allowLoss: ['history', 'created-at', 'lease'], emitEvents: true });
+
+		expect(serverEvents.map(event => event.name)).toEqual(
+			expect.arrayContaining(['onTaskPriorityChanged', 'onTaskAssigneeChanged'])
+		);
+		expect(result.events).toEqual([]);
+	});
+});
+
 describe('remote to local', () => {
 	it('reads every task from the server and copies it into a local project, then a second run changes nothing', async () => {
 		const { served, client } = await remotePair();

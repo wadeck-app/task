@@ -134,6 +134,28 @@ describe('createLazyBackend', () => {
 	});
 });
 
+describe('capabilities that become known once connected', () => {
+	it("answers the plugin's until the instance is open, then the ones the instance reports now", async () => {
+		const narrowed = { ...LOCAL_CAPABILITIES, claim: false };
+		let reported = LOCAL_CAPABILITIES;
+		const lazy = createLazyBackend(fakePlugin(), () =>
+			Promise.resolve({ ...instanceOver({}), currentCapabilities: () => reported })
+		);
+		expect(lazy.backend.capabilities).toBe(LOCAL_CAPABILITIES);
+
+		await lazy.backend.prepare!({});
+		reported = narrowed;
+
+		expect(lazy.backend.capabilities).toBe(narrowed);
+	});
+
+	it("keeps the plugin's when the instance reports none", async () => {
+		const lazy = createLazyBackend(fakePlugin(), () => Promise.resolve(instanceOver({})));
+		await lazy.backend.prepare!({});
+		expect(lazy.backend.capabilities).toBe(LOCAL_CAPABILITIES);
+	});
+});
+
 describe('the optional prepare member', () => {
 	it('is a no-op when the opened backend has none, and is forwarded when it has one', async () => {
 		const prepared: unknown[] = [];

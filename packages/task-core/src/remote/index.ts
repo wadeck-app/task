@@ -12,6 +12,7 @@ export {
 	ROUTES,
 	buildRequest,
 	matchRoute,
+	requestVersion,
 	routeFor,
 } from './protocol.js';
 export type {

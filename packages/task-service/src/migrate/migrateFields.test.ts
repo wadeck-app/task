@@ -53,7 +53,7 @@ async function byTitle(backend: TaskBackend): Promise<Map<string, VersionedRecor
 	return new Map(records.map(record => [record.title, record]));
 }
 
-/** The target backend as a strategy that carries neither priority, assignee nor claim (github, gitlab, remote today). */
+/** The target backend as a strategy that carries neither priority, assignee nor claim (a strategy without these fields). */
 const withoutFields = (backend: TaskBackend): TaskBackend =>
 	new Proxy(backend, {
 		get(target, property) {
@@ -182,7 +182,7 @@ describe('migrating priority and assignee', () => {
 		const priority = blocked.losses.find(row => row.kind === 'priority')!;
 		expect(priority.count).toBe(2);
 		expect(priority.taskIds).toHaveLength(2);
-		expect(priority.fix).toMatch(/local, github or gitlab strategy/);
+		expect(priority.fix).toMatch(/strategy that carries (priorities|assignees)/);
 		expect(blocked.losses.find(row => row.kind === 'assignee')!.count).toBe(1);
 		expect(target.log.writes).toEqual([]);
 

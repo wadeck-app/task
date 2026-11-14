@@ -110,12 +110,10 @@ export const BACKEND_CAPABILITY_NAMES: readonly (keyof BackendCapabilities)[] = 
 
 /**
  * A remote project (`task serve` over the local store): everything the local store does, with the queue events raised by the server.
- * Priority, assignee and claim are NOT carried by protocol v1: the client refuses them (UnsupportedByBackendError) until protocol v2.
+ * Priority, assignee and claim travel since protocol 2 (the server decides the time of a claim); against a server that only speaks
+ * protocol 1 the client answers a RemoteIncompatibleError naming the feature when one of them is used.
  */
 export const REMOTE_CAPABILITIES: BackendCapabilities = Object.freeze({
 	...LOCAL_CAPABILITIES,
-	priority: false,
-	assignee: false,
-	claim: false,
 	events: 'server',
 });

@@ -8,6 +8,9 @@ import { linkTasks, unlinkTasks } from '../links.js';
 import { startRemoteFixture } from '../plugins/remote/testHelpers.js';
 import type { RemoteFixture } from '../plugins/remote/testHelpers.js';
 import { setStatus } from '../setStatus.js';
+import { clearTaskAssignee, setTaskAssignee } from '../taskAssignee.js';
+import { claimTask, releaseTask } from '../taskClaim.js';
+import { clearTaskPriority, setTaskPriority } from '../taskPriority.js';
 import { addLabel, removeLabel, setMeta, setType, unsetMeta, unsetType } from '../taskFields.js';
 import { setTaskText } from '../setTaskText.js';
 import { createTestContext } from '../testHelpers.js';
@@ -151,6 +154,38 @@ async function scenario(ctx: TaskServiceContext): Promise<{ trace: Trace; names:
 	await step('remove comment', () => removeComment(ctx, { id: b, commentId }));
 	await step('refused: blank comment', () => addComment(ctx, { id: b, text: '  ' }));
 
+	// Priority, assignee and claim (protocol 2). No lease is left to run out: the server decides the time, a local run uses its own clock.
+	await step('priority high', () => setTaskPriority(ctx, { id: d, priority: 'high' }));
+	await step('priority high again', () => setTaskPriority(ctx, { id: d, priority: 'high' }));
+	await step('priority low', () => setTaskPriority(ctx, { id: d, priority: 'low' }));
+	await step('refused: unknown priority', () => setTaskPriority(ctx, { id: d, priority: 'asap' }));
+	await step('clear priority', () => clearTaskPriority(ctx, { id: d }));
+	await step('clear priority again', () => clearTaskPriority(ctx, { id: d }));
+
+	await step('assignee ann', () => setTaskAssignee(ctx, { id: d, assignee: ' ann ' }));
+	await step('assignee ann again', () => setTaskAssignee(ctx, { id: d, assignee: 'ann' }));
+	await step('refused: blank assignee', () => setTaskAssignee(ctx, { id: d, assignee: '  ' }));
+	await step('clear assignee', () => clearTaskAssignee(ctx, { id: d }));
+	await step('clear assignee again', () => clearTaskAssignee(ctx, { id: d }));
+
+	await step('claim by w1', () => claimTask(ctx, { id: d, assignee: 'w1', leaseMinutes: 30 }));
+	await step('refused: claim by w2 (live lease)', () => claimTask(ctx, { id: d, assignee: 'w2', leaseMinutes: 30 }));
+	await step('refused: claim by w1 without renew', () => claimTask(ctx, { id: d, assignee: 'w1', leaseMinutes: 30 }));
+	await step('renew by w1', () => claimTask(ctx, { id: d, assignee: 'w1', leaseMinutes: 60, renew: true }));
+	await step('takeover by w2 (force)', () =>
+		claimTask(ctx, { id: d, assignee: 'w2', leaseMinutes: 30, force: true })
+	);
+	await step('refused: release as w1', () => releaseTask(ctx, { id: d, assignee: 'w1' }));
+	await step('release as w2', () => releaseTask(ctx, { id: d, assignee: 'w2' }));
+	await step('refused: release of a free task', () => releaseTask(ctx, { id: d }));
+	await step('claim by w3, forced release', async () => {
+		const claimed = await claimTask(ctx, { id: d, assignee: 'w3', leaseMinutes: 30 });
+		const released = await releaseTask(ctx, { id: d, assignee: 'someone', force: true });
+		return { events: [...claimed.events, ...released.events] };
+	});
+	await step('refused: claim of a closed task', () => claimTask(ctx, { id: b, assignee: 'w1', force: true }));
+	await step('refused: invalid lease', () => claimTask(ctx, { id: d, assignee: 'w1', leaseMinutes: 0 }));
+
 	await step('delete B (E becomes a root task, C blocked)', async () => {
 		const plan = await planDelete(ctx, { selector: { kind: 'ids', ids: [b] } });
 		return executeDelete(ctx, plan);
@@ -209,6 +244,7 @@ describe('the events the server raises are the events a local project raises', (
 		expect([...names].sort()).toEqual(
 			[
 				'onStatusChange',
+				'onTaskAssigneeChanged',
 				'onTaskCommentAdded',
 				'onTaskCommentEdited',
 				'onTaskCommentRemoved',
@@ -219,12 +255,13 @@ describe('the events the server raises are the events a local project raises', (
 				'onTaskLinked',
 				'onTaskMetaChanged',
 				'onTaskParentChanged',
+				'onTaskPriorityChanged',
 				'onTaskTextChanged',
 				'onTaskTypeChanged',
 				'onTaskUnblocked',
 				'onTaskUnlinked',
 			].sort()
 		);
-		expect(onLocal.trace.filter(entry => entry.refused !== undefined).length).toBeGreaterThanOrEqual(5);
-	});
+		expect(onLocal.trace.filter(entry => entry.refused !== undefined).length).toBeGreaterThanOrEqual(10);
+	}, 30_000);
 });

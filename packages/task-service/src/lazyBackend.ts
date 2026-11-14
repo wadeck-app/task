@@ -32,7 +32,7 @@ export function createLazyBackend(
 	const backend = new Proxy({} as TaskBackend, {
 		get(_target, property) {
 			if (property === 'kind') return plugin.backendKind;
-			if (property === 'capabilities') return capabilities;
+			if (property === 'capabilities') return created?.currentCapabilities?.() ?? capabilities;
 			// A symbol or `then` must read as absent: the proxy is awaited and logged like any object.
 			if (typeof property === 'symbol' || property === 'then') return undefined;
 			return async (...args: unknown[]): Promise<unknown> => {

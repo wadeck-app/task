@@ -1,6 +1,6 @@
 # Threat Model - task
 
-Repo-level. The `task serve` / `remote` part lives in `docs/threat-model-task-serve.md` (T1 to T14); it is not repeated here. Facts cite `CLAUDE.md` sections; "(to validate)" marks an inference not stated in a source. Single-user, developer-machine trust model (confirmed by the owner, 2026-11-14).
+Repo-level. The `task serve` / `remote` part lives in `docs/threat-model-task-serve.md` (T1 to T17); it is not repeated here. Facts cite `CLAUDE.md` sections; "(to validate)" marks an inference not stated in a source. Single-user, developer-machine trust model (confirmed by the owner, 2026-11-14).
 
 ## Scope
 

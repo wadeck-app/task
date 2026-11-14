@@ -2,6 +2,7 @@ import * as yaml from 'js-yaml';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { LEASE_MS_MAX } from './taskFields.js';
 
 /**
  * A status entry in a project config.yml: either a bare name, or an object carrying
@@ -74,7 +75,7 @@ export const DEFAULT_PRIORITIES: readonly string[] = Object.freeze(['urgent', 'h
 /** The lease of a claim when neither the caller nor the config says. */
 export const DEFAULT_LEASE_MINUTES = 30;
 /** The longest lease a config or a caller may ask for: one week. */
-export const MAX_LEASE_MINUTES = 10080;
+export const MAX_LEASE_MINUTES = LEASE_MS_MAX / 60_000;
 
 const DEFAULT_STATUSES: TaskStatusEntry[] = ['backlog', 'in-progress', 'done'];
 const DEFAULT_PRIORITY = 'medium';

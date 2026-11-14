@@ -6,6 +6,7 @@
 import {
 	EVENTS_HEADER,
 	EVENTS_SUPPRESS,
+	PROTOCOL_HEADER,
 	PROTOCOL_MAX,
 	PROTOCOL_MIN,
 	PROTOCOL_VERSION,
@@ -16,10 +17,12 @@ import {
 	TaskNotFoundError,
 	buildRequest,
 	decodeWireError,
+	normalizeClaimRequest,
 	routeFor,
 } from '@wadeck-app/task-core';
 import type {
 	BackendCapabilities,
+	BackendClaimInput,
 	BackendClaimResult,
 	BackendCommentChange,
 	BackendCommentEdit,
@@ -30,6 +33,7 @@ import type {
 	LinkType,
 	ListQuery,
 	Page,
+	ReleaseOptions,
 	ProtocolOperation,
 	ServerInfo,
 	TaskBackend,
@@ -43,7 +47,6 @@ import type {
 	WriteOptions,
 } from '@wadeck-app/task-core';
 
-import { refuseTaskField } from '../kinds.js';
 import type { ReadNotice, TransportInstance } from '../kinds.js';
 
 export interface RemoteBackendOptions {
@@ -65,6 +68,16 @@ export function serverServes(expected: string, served: { id?: string; name: stri
 	const id = served.id?.toLowerCase();
 	return id !== undefined && (wanted === id || (wanted.length >= 4 && id.startsWith(wanted)));
 }
+
+/** What a call of each operation added by protocol 2 is called in the message of a server that lacks it. */
+const NEWER_FEATURES: Partial<Record<ProtocolOperation, string>> = {
+	setPriority: 'setting a priority',
+	clearPriority: 'clearing a priority',
+	setAssignee: 'setting an assignee',
+	clearAssignee: 'clearing an assignee',
+	claim: 'claiming a task',
+	release: 'releasing a task',
+};
 
 interface CallInput {
 	params?: Record<string, string>;
@@ -90,10 +103,27 @@ function isInfo(value: unknown): value is ServerInfo {
 
 export class RemoteBackend implements TaskBackend {
 	readonly kind = 'remote' as const;
-	readonly capabilities: BackendCapabilities = REMOTE_CAPABILITIES;
+	private carried: BackendCapabilities = REMOTE_CAPABILITIES;
 	private handshake: Promise<void> | undefined;
 
 	constructor(private readonly options: RemoteBackendOptions) {}
+
+	/**
+	 * What this project can do. Priority, assignee and claim are protocol 2: once the server has said (info, or the refusal of one of
+	 * them) that it speaks only protocol 1, they read as unsupported, so the callers that gate on capabilities fail early and clearly.
+	 */
+	get capabilities(): BackendCapabilities {
+		return this.carried;
+	}
+
+	/** Narrows the capabilities to what a server of this protocol range can carry. */
+	private learn(range: { min: number; max: number } | undefined): void {
+		if (range === undefined) return;
+		this.carried =
+			range.max < 2
+				? { ...REMOTE_CAPABILITIES, priority: false, assignee: false, claim: false }
+				: REMOTE_CAPABILITIES;
+	}
 
 	// ---- the one request path ----
 
@@ -107,7 +137,8 @@ export class RemoteBackend implements TaskBackend {
 		const { transport } = this.options;
 		const route = routeFor(op);
 		const { method, path } = buildRequest(op, input.params, input.query);
-		const headers: Record<string, string> = {};
+		// The version of the route: a server that only speaks 1 still answers every request that existed in 1.
+		const headers: Record<string, string> = { [PROTOCOL_HEADER]: String(route.since) };
 		if (input.body !== undefined) headers['Content-Type'] = 'application/json';
 		if (route.write && input.expectedRevision !== undefined) headers['If-Match'] = `"${input.expectedRevision}"`;
 		if (route.write && this.options.suppressEvents === true) headers[EVENTS_HEADER] = EVENTS_SUPPRESS;
@@ -125,7 +156,7 @@ export class RemoteBackend implements TaskBackend {
 			parsed = undefined;
 		}
 		if (!response.ok) {
-			throw decodeWireError(response.status, parsed, { url: transport.baseUrl, operation: op });
+			throw this.naming(decodeWireError(response.status, parsed, { url: transport.baseUrl, operation: op }), op);
 		}
 		const version = Number(response.headers.get('x-task-protocol'));
 		if (!Number.isInteger(version) || version < PROTOCOL_MIN || version > PROTOCOL_MAX) {
@@ -143,6 +174,14 @@ export class RemoteBackend implements TaskBackend {
 		}
 		this.relayEvents(envelope.events, op);
 		return envelope.result;
+	}
+
+	/** A server that does not know a route of protocol 2 says so by feature: what could not be done, and which machine to update. */
+	private naming(error: Error, op: ProtocolOperation): Error {
+		const feature = NEWER_FEATURES[op];
+		if (feature === undefined || !(error instanceof RemoteIncompatibleError)) return error;
+		this.learn(error.serverProtocol);
+		return new RemoteIncompatibleError(error.url, routeFor(op).since, error.serverProtocol, feature);
 	}
 
 	/** The server saved the change; an event it could not hand to its queue is the user's to know (and to replay on the server). */
@@ -168,6 +207,7 @@ export class RemoteBackend implements TaskBackend {
 		this.handshake ??= this.exchange<ServerInfo>('info', {}).then(info => {
 			if (!isInfo(info))
 				throw new RemoteIncompatibleError(this.options.transport.baseUrl, PROTOCOL_VERSION, undefined);
+			this.learn(info.protocol);
 			if (!serverServes(expected, info.project)) {
 				throw new RemoteProjectMismatchError(this.options.transport.baseUrl, expected, info.project);
 			}
@@ -185,6 +225,7 @@ export class RemoteBackend implements TaskBackend {
 		if (!isInfo(info)) {
 			throw new RemoteIncompatibleError(this.options.transport.baseUrl, PROTOCOL_VERSION, undefined);
 		}
+		this.learn(info.protocol);
 		return info;
 	}
 
@@ -369,32 +410,56 @@ export class RemoteBackend implements TaskBackend {
 		return this.call('removeComment', { params: { id, commentId }, ...revision(options) });
 	}
 
+	// ---- writes: priority, assignee, claim (protocol 2) ----
+	setPriority(id: string, priority: string, options?: WriteOptions): Promise<VersionedRecord> {
+		return this.call('setPriority', { params: { id }, body: { priority }, ...revision(options) });
+	}
+
+	clearPriority(id: string, options?: WriteOptions): Promise<VersionedRecord> {
+		return this.call('clearPriority', { params: { id }, ...revision(options) });
+	}
+
+	setAssignee(id: string, assignee: string, options?: WriteOptions): Promise<VersionedRecord> {
+		return this.call('setAssignee', { params: { id }, body: { assignee }, ...revision(options) });
+	}
+
+	clearAssignee(id: string, options?: WriteOptions): Promise<VersionedRecord> {
+		return this.call('clearAssignee', { params: { id }, ...revision(options) });
+	}
+
+	/**
+	 * The SERVER decides the time: only the length of the lease travels (`leaseUntil - now` of the caller), never an instant, so a client
+	 * whose clock is wrong still gives a right lease. The input is checked here first, with the rules of the store, so a bad request
+	 * fails with the same error and without a round trip. The answer is the server's record, outcome and previous holder.
+	 */
+	async claim(id: string, input: BackendClaimInput): Promise<BackendClaimResult> {
+		const { expectedRevision, ...request } = input;
+		const normalized = normalizeClaimRequest(request);
+		const leaseMs = Date.parse(normalized.leaseUntil) - Date.parse(normalized.now);
+		return this.call('claim', {
+			params: { id },
+			body: {
+				assignee: normalized.assignee,
+				leaseMs,
+				...(normalized.force === true ? { force: true } : {}),
+				...(normalized.renew === true ? { renew: true } : {}),
+			},
+			...revision({ expectedRevision }),
+		});
+	}
+
+	release(id: string, options: ReleaseOptions = {}): Promise<BackendReleaseResult> {
+		return this.call('release', {
+			params: { id },
+			body: {
+				...(options.assignee === undefined ? {} : { assignee: options.assignee }),
+				...(options.force === true ? { force: true } : {}),
+			},
+			...revision(options),
+		});
+	}
+
 	// ---- delete ----
-	// Priority, assignee and claim: not available on this storage strategy yet (stage 3 / 4 of the priority plan); each answers UnsupportedByBackendError.
-	setPriority(): Promise<VersionedRecord> {
-		return refuseTaskField('remote', 'setPriority');
-	}
-
-	clearPriority(): Promise<VersionedRecord> {
-		return refuseTaskField('remote', 'clearPriority');
-	}
-
-	setAssignee(): Promise<VersionedRecord> {
-		return refuseTaskField('remote', 'setAssignee');
-	}
-
-	clearAssignee(): Promise<VersionedRecord> {
-		return refuseTaskField('remote', 'clearAssignee');
-	}
-
-	claim(): Promise<BackendClaimResult> {
-		return refuseTaskField('remote', 'claim');
-	}
-
-	release(): Promise<BackendReleaseResult> {
-		return refuseTaskField('remote', 'release');
-	}
-
 	async deleteTask(id: string, options?: WriteOptions): Promise<boolean> {
 		return (await this.call<{ deleted: boolean }>('deleteTask', { params: { id }, ...revision(options) })).deleted;
 	}

@@ -9,6 +9,7 @@ import type { TaskBackend, TaskResolvedConfig, VersionedRecord } from '@wadeck-a
 import { TaskNotFoundError } from '@wadeck-app/task-core';
 
 import type { TaskEvent, TaskProjectEnv } from '../events.js';
+import { TaskClosedError } from '../taskClosedError.js';
 import { taskDescription } from '../taskText.js';
 import type { ValidInput } from './requestValidation.js';
 import type { PortOperation } from '@wadeck-app/task-core';
@@ -20,6 +21,11 @@ export interface OperationContext {
 	env: TaskProjectEnv;
 	/** The `If-Match` revision of a write, when the client sent one. */
 	expectedRevision?: string;
+	/**
+	 * The clock of the SERVER. A claim starts at this instant and its lease ends this instant plus the length the client asked for: a
+	 * client never sends a time (its clock may be wrong), only a duration.
+	 */
+	now: () => Date;
 }
 
 export interface OperationOutcome {
@@ -41,6 +47,20 @@ function parentChanged(
 	return oldParentId === newParentId
 		? []
 		: [{ name: 'onTaskParentChanged', payload: { taskId, oldParentId, newParentId, ...env } }];
+}
+
+/** An optional operation of the served backend, or a loud error: the server only serves local projects, which carry them all. */
+function required<K extends 'setPriority' | 'clearPriority' | 'setAssignee' | 'clearAssignee' | 'claim' | 'release'>(
+	backend: TaskBackend,
+	name: K
+): NonNullable<TaskBackend[K]> {
+	const operation = backend[name];
+	if (typeof operation !== 'function') {
+		throw new Error(
+			`The served project's backend (${backend.kind}) does not implement ${name}; task serve serves local projects, which do (this is a bug)`
+		);
+	}
+	return operation.bind(backend) as NonNullable<TaskBackend[K]>;
 }
 
 type Handler<K extends PortOperation> = (input: ValidInput[K], ctx: OperationContext) => Promise<OperationOutcome>;
@@ -339,6 +359,150 @@ const HANDLERS: { [K in PortOperation]: Handler<K> } = {
 		return {
 			result: { task, comment },
 			events: [{ name: 'onTaskCommentRemoved', payload: { taskId: task.id, commentId: comment.id, ...env } }],
+		};
+	},
+
+	// ---- writes: priority, assignee, claim (protocol 2): the events of taskPriority.ts, taskAssignee.ts and taskClaim.ts ----
+	setPriority: async ({ id, priority }, { backend, env, expectedRevision }) => {
+		const before = await backend.get(id);
+		const task = await required(backend, 'setPriority')(id, priority, writeOptions(expectedRevision));
+		return {
+			result: task,
+			events:
+				before.priority === priority
+					? []
+					: [
+							{
+								name: 'onTaskPriorityChanged',
+								payload: {
+									taskId: task.id,
+									oldPriority: before.priority,
+									newPriority: priority,
+									...env,
+								},
+							},
+						],
+		};
+	},
+
+	clearPriority: async ({ id }, { backend, env, expectedRevision }) => {
+		const before = await backend.get(id);
+		const task = await required(backend, 'clearPriority')(id, writeOptions(expectedRevision));
+		return {
+			result: task,
+			events:
+				before.priority === undefined
+					? []
+					: [
+							{
+								name: 'onTaskPriorityChanged',
+								payload: {
+									taskId: task.id,
+									oldPriority: before.priority,
+									newPriority: undefined,
+									...env,
+								},
+							},
+						],
+		};
+	},
+
+	setAssignee: async ({ id, assignee }, { backend, env, expectedRevision }) => {
+		const before = await backend.get(id);
+		const task = await required(backend, 'setAssignee')(id, assignee, writeOptions(expectedRevision));
+		return {
+			result: task,
+			events:
+				before.assignee === assignee
+					? []
+					: [
+							{
+								name: 'onTaskAssigneeChanged',
+								payload: {
+									taskId: task.id,
+									oldAssignee: before.assignee,
+									newAssignee: assignee,
+									...env,
+								},
+							},
+						],
+		};
+	},
+
+	clearAssignee: async ({ id }, { backend, env, expectedRevision }) => {
+		const before = await backend.get(id);
+		const task = await required(backend, 'clearAssignee')(id, writeOptions(expectedRevision));
+		return {
+			result: task,
+			events:
+				before.assignee === undefined
+					? []
+					: [
+							{
+								name: 'onTaskAssigneeChanged',
+								payload: {
+									taskId: task.id,
+									oldAssignee: before.assignee,
+									newAssignee: undefined,
+									...env,
+								},
+							},
+						],
+		};
+	},
+
+	claim: async ({ id, assignee, leaseMs, force, renew }, { backend, config, env, expectedRevision, now }) => {
+		const found = await backend.get(id);
+		// The store does not know statuses: a closed task is refused here, whatever force says (nothing written, no event).
+		if (config.terminalStatuses.includes(found.status)) throw new TaskClosedError(found.id, found.status);
+		const at = now();
+		const claimed = await required(backend, 'claim')(id, {
+			assignee,
+			leaseUntil: new Date(at.getTime() + leaseMs).toISOString(),
+			now: at.toISOString(),
+			...(force === true ? { force: true } : {}),
+			...(renew === true ? { renew: true } : {}),
+			...writeOptions(expectedRevision),
+		});
+		// A renewal reads "from the holder to the holder"; a claim of a task whose own lease was over has no previous holder.
+		const oldAssignee = claimed.outcome === 'renewed' ? claimed.task.assignee : claimed.previousAssignee;
+		return {
+			result: claimed,
+			events: [
+				{
+					name: 'onTaskAssigneeChanged',
+					payload: {
+						taskId: claimed.task.id,
+						oldAssignee,
+						newAssignee: claimed.task.assignee,
+						outcome: claimed.outcome,
+						...env,
+					},
+				},
+			],
+		};
+	},
+
+	release: async ({ id, assignee, force }, { backend, env, expectedRevision }) => {
+		const released = await required(backend, 'release')(id, {
+			...(assignee === undefined ? {} : { assignee }),
+			...(force === true ? { force: true } : {}),
+			...writeOptions(expectedRevision),
+		});
+		return {
+			result: released,
+			events: [
+				{
+					name: 'onTaskAssigneeChanged',
+					payload: {
+						taskId: released.task.id,
+						oldAssignee: released.previousAssignee,
+						newAssignee: undefined,
+						outcome: 'released',
+						...env,
+					},
+				},
+			],
 		};
 	},
 

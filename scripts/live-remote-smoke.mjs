@@ -4,7 +4,7 @@
 //   BUNDLE_VERSION=0.0.0-local npm run bundle
 //   node scripts/live-remote-smoke.mjs prepare              # isolated registry with A (served), B (client), C (local); prints the serve command
 //   <start the printed `serve` command in the background; it prints one JSON line with its url>
-//   node scripts/live-remote-smoke.mjs run <world> <url>    # drives the client commands against that url, asserts, prints a summary
+//   node scripts/live-remote-smoke.mjs run <world> <url>    # drives the client commands against that url (tasks, migrate, priority/claim/release/next), asserts, prints a summary
 //   node scripts/live-remote-smoke.mjs wrong-token <world> <url>   # a client with another token
 //   <stop the server by its PID>
 //   node scripts/live-remote-smoke.mjs after <world> <url>  # with the server stopped: the unreachable-server messages; then removes the world
@@ -273,6 +273,68 @@ if (mode === 'run') {
 		del.out + del.err
 	);
 	check('the client data dir is still empty', tasksIn(B).length === 0);
+
+	console.log('\npriority, assignee, claim, release and next (protocol 2), from B');
+	const worker = JSON.parse(task(B, ['new', 'Work item', '--json']).out).id;
+	JSON.parse(task(B, ['new', 'Other work item', '--json']).out);
+	const storedOf = id =>
+		JSON.parse(fs.readFileSync(path.join(world.projects[A].dataDir, 'tasks', `${id}.json`), 'utf8'));
+	const prio = task(B, ['set-priority', worker, 'urgent']);
+	check(
+		'set-priority exits 0 and the server file has it',
+		prio.code === 0 && storedOf(worker).priority === 'urgent',
+		prio.out + prio.err
+	);
+	const claim1 = task(B, ['claim', worker, '--as', 'w1', '--lease', '30m', '--json']);
+	check('claim exits 0', claim1.code === 0, claim1.out + claim1.err);
+	const claimed = claim1.code === 0 ? JSON.parse(claim1.out) : {};
+	check(
+		'the lease in the server file is the one the command printed, 30 minutes long (the SERVER timed it)',
+		claimed.outcome === 'claimed' &&
+			storedOf(worker).leaseUntil === claimed.leaseUntil &&
+			Date.parse(claimed.leaseUntil) - Date.parse(claimed.claimedAt) === 30 * 60_000,
+		claim1.out
+	);
+	const claim2 = task(B, ['claim', worker, '--as', 'w2']);
+	check(
+		'a second claim by another worker is exit 1 naming the holder, with the --force hint',
+		claim2.code === 1 && /claimed by "w1"/.test(claim2.out + claim2.err) && /--force/.test(claim2.out + claim2.err),
+		claim2.out + claim2.err
+	);
+	const mine = task(B, ['list', '--assignee', 'w1']);
+	check(
+		'list --assignee w1 shows the claimed task with its lease',
+		mine.code === 0 && JSON.parse(mine.out).some(t => t.id === worker && typeof t.leaseUntil === 'string'),
+		mine.out + mine.err
+	);
+	const available = task(B, ['list', '--available']);
+	check(
+		'list --available leaves the claimed task out',
+		available.code === 0 && !JSON.parse(available.out).some(t => t.id === worker),
+		available.out + available.err
+	);
+	const next = task(B, ['next', '--as', 'w3', '--status', 'backlog', '--json']);
+	const nextTask = next.code === 0 ? JSON.parse(next.out) : {};
+	check(
+		'next --as claims an available task on the server (never the one w1 holds)',
+		next.code === 0 && nextTask.taskId !== undefined && nextTask.taskId !== worker && nextTask.assignee === 'w3',
+		next.out + next.err
+	);
+	const rel = task(B, ['release', worker, '--as', 'w1', '--json']);
+	check(
+		'release exits 0 and the server file has no assignee and no lease',
+		rel.code === 0 && storedOf(worker).assignee === undefined && storedOf(worker).leaseUntil === undefined,
+		rel.out + rel.err
+	);
+	const relayedFields = [prio, claim1, rel].flatMap(r => r.err.split('\n').filter(line => /event/i.test(line)));
+	check(
+		'the events of these commands were raised by the server (relayed warnings), none by the client',
+		relayedFields.length === 3 &&
+			relayedFields.every(line => /but the server could not deliver the event/.test(line)) &&
+			/onTaskPriorityChanged/.test(relayedFields[0]) &&
+			relayedFields.slice(1).every(line => /onTaskAssigneeChanged/.test(line)),
+		relayedFields.join('\n')
+	);
 
 	console.log(`\n${passed} passed, ${failed} failed`);
 	process.exit(failed === 0 ? 0 : 1);

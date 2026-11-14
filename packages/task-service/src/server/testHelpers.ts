@@ -1,7 +1,7 @@
 // Test fixture of the task server: a real server on a free loopback port over a disposable local project, plus a raw HTTP caller that
 // speaks the protocol. Shared by the server tests, the remote backend tests (the contract suite runs through it) and the CLI tests.
 // Nothing shipped imports this file.
-import { PROTOCOL_HEADER, buildRequest } from '@wadeck-app/task-core';
+import { PROTOCOL_HEADER, buildRequest, requestVersion } from '@wadeck-app/task-core';
 import type { ProtocolOperation, TaskResolvedConfig } from '@wadeck-app/task-core';
 
 import type { TaskServiceContext } from '../context.js';
@@ -97,6 +97,8 @@ export async function startServerFixture(options: FixtureOptions = {}): Promise<
 			const response = await fetch(`${server.url}${path}`, {
 				method,
 				headers: headers({
+					// The version of the route, as a client names it: 1, or 2 for a route protocol 2 added.
+					[PROTOCOL_HEADER]: String(requestVersion(op)),
 					...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
 					...callOptions.headers,
 				}),

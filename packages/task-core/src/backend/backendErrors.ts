@@ -252,18 +252,32 @@ export class RemoteUnauthorizedError extends BackendAuthError {
 export class RemoteIncompatibleError extends Error {
 	readonly hint: string;
 
+	/**
+	 * `feature` names what this machine tried to do and the server cannot (a route a newer protocol added): the message then says
+	 * so, instead of a bare version mismatch.
+	 */
 	constructor(
 		readonly url: string,
 		readonly clientProtocol: number,
-		readonly serverProtocol: { min: number; max: number } | undefined
+		readonly serverProtocol: { min: number; max: number } | undefined,
+		readonly feature?: string
 	) {
 		super(
-			serverProtocol === undefined
-				? `The task server at ${url} does not speak protocol ${clientProtocol} and does not say which protocols it supports`
-				: `The task server at ${url} does not speak protocol ${clientProtocol} (it supports ${serverProtocol.min}..${serverProtocol.max})`
+			feature !== undefined
+				? `The task server at ${url} does not support ${feature}: it needs protocol ${clientProtocol}, and ${
+						serverProtocol === undefined
+							? 'the server does not say which protocols it supports'
+							: `the server supports ${serverProtocol.min}..${serverProtocol.max}`
+					}. Nothing was changed`
+				: serverProtocol === undefined
+					? `The task server at ${url} does not speak protocol ${clientProtocol} and does not say which protocols it supports`
+					: `The task server at ${url} does not speak protocol ${clientProtocol} (it supports ${serverProtocol.min}..${serverProtocol.max})`
 		);
 		this.name = 'RemoteIncompatibleError';
-		if (serverProtocol === undefined) {
+		if (feature !== undefined) {
+			this.hint =
+				'Update task on the machine that runs task serve to the same version as this machine (both should run the same task version), restart task serve, then run: task strategy check';
+		} else if (serverProtocol === undefined) {
 			this.hint =
 				'Update task on both machines (the one that runs task serve and this one) to the same version, then run: task strategy check';
 		} else {

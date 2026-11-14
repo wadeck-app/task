@@ -118,7 +118,7 @@ Usage:
   task strategy show [--json]                Strategy of the project (type, fidelity, fills, tokens, capabilities native/emulated/unsupported); opens nothing
   task strategy check [--json]               Validate the strategy: config, tokens, backend; exit 1 with the fix of each problem
   task serve [--port N] [--host H] [--allow-lan] [--token-env NAME | --token-file PATH] [--json]
-                                             Serve this project's tasks to other computers (HTTP/JSON, protocol 1, bearer token, single writer), in the
+                                             Serve this project's tasks to other computers (HTTP/JSON, protocol 2, bearer token, single writer), in the
                                              foreground until Ctrl+C. Loopback only unless --allow-lan. Another computer reaches it with strategy type remote.
                                              See: task serve --help
   task cli self-check                        Validate installation
@@ -362,7 +362,7 @@ Usage:
   task serve [-p <project>] [--port <n>] [--host <address>] [--allow-lan] [--token-env <NAME> | --token-file <path>] [--json]
   task serve --help
 
-What it does: serves the tasks of ONE project (the one -p, TASK_PROJECT or the cwd selects; its strategy must be local) over HTTP/JSON, protocol 1,
+What it does: serves the tasks of ONE project (the one -p, TASK_PROJECT or the cwd selects; its strategy must be local) over HTTP/JSON, protocol 2 (clients on protocol 1 keep working),
 to computers whose project says 'strategy: type: remote' (task strategy --help). This server is the single writer of the project: it runs the
 writes one at a time and raises the queue events of the changes itself (the computers that connect raise none). It runs in the foreground until
 Ctrl+C or SIGTERM, finishing the writes in flight; task has no daemon manager and this does not detach: use the means of your shell or service manager.

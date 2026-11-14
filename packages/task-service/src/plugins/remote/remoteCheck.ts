@@ -2,6 +2,8 @@
 // a line with its fix; a failure that makes the other lines meaningless (unreachable, refused token, another protocol) stops the list.
 import {
 	LOCAL_CAPABILITIES,
+	PROTOCOL_MAX,
+	PROTOCOL_MIN,
 	PROTOCOL_VERSION,
 	RemoteIncompatibleError,
 	RemoteTimeoutError,
@@ -55,15 +57,18 @@ function disabled(row: RemoteRequirement, why: string, error: unknown): CheckLin
 	};
 }
 
+/** A capability as `strategy check` prints it: `false` reads as unsupported. */
+function shown(value: unknown): string {
+	return value === false ? 'unsupported' : (JSON.stringify(value) ?? String(value));
+}
+
 function differences(served: BackendCapabilities): string[] {
 	const found: string[] = [];
 	for (const key of Object.keys(LOCAL_CAPABILITIES) as Array<keyof BackendCapabilities>) {
 		// The queue events are raised by the server on purpose: that is what a remote project is.
 		if (key === 'events') continue;
 		if (JSON.stringify(served[key]) !== JSON.stringify(LOCAL_CAPABILITIES[key])) {
-			found.push(
-				`${key}: ${JSON.stringify(served[key])} (a local project has ${JSON.stringify(LOCAL_CAPABILITIES[key])})`
-			);
+			found.push(`${key}: ${shown(served[key])} (a local project has ${shown(LOCAL_CAPABILITIES[key])})`);
 		}
 	}
 	return found;
@@ -89,7 +94,7 @@ export async function checkRemote(input: RemoteCheckInput): Promise<CheckLine[]>
 					remoteRequirementFor('protocol'),
 					error.serverProtocol === undefined
 						? 'the server does not know this request'
-						: `server speaks ${rangeText(error.serverProtocol)}, this task speaks ${PROTOCOL_VERSION}`,
+						: `server speaks ${rangeText(error.serverProtocol)}, this task speaks ${rangeText({ min: PROTOCOL_MIN, max: PROTOCOL_MAX })}`,
 					error
 				),
 			];
@@ -117,18 +122,31 @@ export async function checkRemote(input: RemoteCheckInput): Promise<CheckLine[]>
 
 	const { min, max } = info.protocol;
 	const protocol = remoteRequirementFor('protocol');
-	lines.push(
-		min <= PROTOCOL_VERSION && PROTOCOL_VERSION <= max
-			? enabled(
-					protocol,
-					` (server speaks ${rangeText(info.protocol)}, this task speaks ${PROTOCOL_VERSION}; task-serve ${info.server.version})`
-				)
-			: disabled(
-					protocol,
-					`server speaks ${rangeText(info.protocol)}, this task speaks ${PROTOCOL_VERSION}`,
-					new RemoteIncompatibleError(input.url, PROTOCOL_VERSION, { min, max })
-				)
-	);
+	const mineRange = rangeText({ min: PROTOCOL_MIN, max: PROTOCOL_MAX });
+	if (min > PROTOCOL_MAX || max < PROTOCOL_MIN) {
+		lines.push(
+			disabled(
+				protocol,
+				`server speaks ${rangeText(info.protocol)}, this task speaks ${mineRange}`,
+				new RemoteIncompatibleError(input.url, PROTOCOL_VERSION, { min, max })
+			)
+		);
+	} else if (max < PROTOCOL_VERSION) {
+		// Compatible for everything protocol 1 had; what protocol 2 added (priority, assignee, claim) is refused by name when used.
+		lines.push({
+			name: protocol.key,
+			status: 'warn',
+			text: `server speaks ${rangeText(info.protocol)}, this task speaks ${mineRange}; task-serve ${info.server.version} does not carry priority, assignee, claim and release`,
+			fix: 'Update task on the machine that runs task serve to the same version as this machine and restart task serve; until then these commands fail with a message naming the missing feature',
+		});
+	} else {
+		lines.push(
+			enabled(
+				protocol,
+				` (server speaks ${rangeText(info.protocol)}, this task speaks ${mineRange}; task-serve ${info.server.version})`
+			)
+		);
+	}
 
 	const served = `"${info.project.name}"${info.project.id === undefined ? '' : ` (${info.project.id})`}`;
 	const project = remoteRequirementFor('project');
@@ -150,7 +168,11 @@ export async function checkRemote(input: RemoteCheckInput): Promise<CheckLine[]>
 		});
 	}
 
-	const capabilityDifferences = differences(info.capabilities);
+	// The server's store has priority, assignee and claim, but a server that speaks only protocol 1 cannot carry them: unsupported.
+	const olderProtocol = info.protocol.max < PROTOCOL_VERSION;
+	const capabilityDifferences = differences(
+		olderProtocol ? { ...info.capabilities, priority: false, assignee: false, claim: false } : info.capabilities
+	);
 	lines.push(
 		capabilityDifferences.length === 0
 			? {
@@ -162,7 +184,9 @@ export async function checkRemote(input: RemoteCheckInput): Promise<CheckLine[]>
 					name: 'capabilities',
 					status: 'warn',
 					text: `the server differs from a local project: ${capabilityDifferences.join('; ')}`,
-					fix: 'Update task on both machines to the same version',
+					fix: olderProtocol
+						? 'Update task on the machine that runs task serve to the same version as this machine, restart task serve, then run: task strategy check'
+						: 'Update task on both machines to the same version',
 				}
 	);
 

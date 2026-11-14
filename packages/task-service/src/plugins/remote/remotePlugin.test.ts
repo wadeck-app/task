@@ -63,15 +63,12 @@ async function server(options: Parameters<typeof startServerFixture>[0] = {}): P
 const line = (lines: CheckLine[], name: string): CheckLine | undefined => lines.find(l => l.name === name);
 
 describe('the remote plugin: declaration', () => {
-	it('is the remote kind, declares the local capabilities with the events raised by the server and no priority, assignee or claim yet, and needs no fill', () => {
+	it('is the remote kind, declares the local capabilities (priority, assignee and claim included, since protocol 2) with the events raised by the server, and needs no fill', () => {
 		expect(remotePlugin.extensionPoint).toBe('strategy');
 		expect(remotePlugin.backendKind).toBe('remote');
 		expect(remotePlugin.capabilities).toBe(REMOTE_CAPABILITIES);
 		expect(remotePlugin.capabilities).toEqual({
 			...createBuiltinRegistry().lookup('local', 'strategy').capabilities,
-			priority: false,
-			assignee: false,
-			claim: false,
 			events: 'server',
 		});
 		expect(remotePlugin.fillTechniques).toEqual({});
@@ -332,7 +329,7 @@ describe('checkRemote: the lines that need a scripted server', () => {
 
 	function info(overrides: Partial<ServerInfo> = {}): ServerInfo {
 		return {
-			protocol: { version: 1, min: 1, max: 1 },
+			protocol: { version: 2, min: 1, max: 2 },
 			server: { name: 'task-serve', version: '1.2.3' },
 			project: { id: 'ab12cd34', name: 'served' },
 			capabilities: REMOTE_CAPABILITIES,
@@ -386,12 +383,30 @@ describe('checkRemote: the lines that need a scripted server', () => {
 		expect(line(withTypes, 'types')!.text).toContain('epic');
 	});
 
+	it('is happy with a server that speaks protocol 2, and only warns (naming what is missing) about one that speaks 1: everything protocol 1 had keeps working', async () => {
+		const current = await run(info());
+		expect(line(current, 'protocol')).toMatchObject({ status: 'ok' });
+		expect(line(current, 'protocol')!.text).toContain('this task speaks 1..2');
+
+		const older = await run(info({ protocol: { version: 1, min: 1, max: 1 } }));
+		expect(line(older, 'protocol')).toMatchObject({ status: 'warn' });
+		expect(line(older, 'protocol')!.text).toContain('does not carry priority, assignee, claim and release');
+		expect(line(older, 'protocol')!.fix).toContain('Update task on the machine that runs task serve');
+		// The server's store has them, its protocol cannot carry them: the capability line says unsupported and what to update.
+		expect(line(older, 'capabilities')).toMatchObject({ status: 'warn' });
+		expect(line(older, 'capabilities')!.text).toContain('priority: unsupported');
+		expect(line(older, 'capabilities')!.text).toContain('claim: unsupported');
+		expect(line(older, 'capabilities')!.fix).toContain('machine that runs task serve');
+		// A protocol 2 server's line stays equal to a local project's.
+		expect(line(current, 'capabilities')).toMatchObject({ status: 'ok' });
+	});
+
 	it('errors when the server speaks only other protocols, naming both ranges and the machine to update', async () => {
-		const lines = await run(info({ protocol: { version: 2, min: 2, max: 3 } }));
+		const lines = await run(info({ protocol: { version: 4, min: 3, max: 4 } }));
 
 		expect(line(lines, 'protocol')).toMatchObject({ status: 'error' });
-		expect(line(lines, 'protocol')!.text).toContain('2..3');
-		expect(line(lines, 'protocol')!.text).toMatch(/^disabled \(server speaks 2..3, this task speaks 1\): /);
+		expect(line(lines, 'protocol')!.text).toContain('3..4');
+		expect(line(lines, 'protocol')!.text).toMatch(/^disabled \(server speaks 3..4, this task speaks 1..2\): /);
 		expect(line(lines, 'protocol')!.fix).toContain('Update task on this machine');
 	});
 });

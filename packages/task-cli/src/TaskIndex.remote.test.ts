@@ -274,35 +274,118 @@ describe('task strategy show and check on a remote project', () => {
 	});
 });
 
-describe('priority, assignee and claim on a remote project', () => {
-	const commands: string[][] = [
-		['set-priority', 'ID', 'high'],
-		['unset-priority', 'ID'],
-		['set-assignee', 'ID', 'bob'],
-		['unset-assignee', 'ID'],
-		['claim', 'ID', '--as', 'w1'],
-		['release', 'ID'],
-	];
+describe('priority, assignee and claim on a remote project (protocol 2)', () => {
+	const readServed = (id: string): { priority?: string; assignee?: string } =>
+		JSON.parse(fs.readFileSync(path.join(served.tasksDir, `${id}.json`), 'utf8')) as {
+			priority?: string;
+			assignee?: string;
+		};
+	const names = (): string[] => serverEvents.map(event => event.name);
 
-	it.each(commands)(
-		'%s is refused with exit 1 naming the remote strategy, and nothing is raised',
-		async (...args) => {
-			const id = json((await run('new', 'First task')).output).id as string;
-			serverEvents.length = 0;
-			const withId = args.map(arg => (arg === 'ID' ? id : arg));
+	it('set-priority, unset-priority, set-assignee and unset-assignee write on the server, which raises the events; this process raises none', async () => {
+		const id = json((await run('new', 'First task')).output).id as string;
+		serverEvents.length = 0;
 
-			const text = await run(...withId);
-			const asJson = await run(...withId, '--json');
+		const set = await run('set-priority', id, 'high');
+		expect(set.exitCode, set.output).toBe(0);
+		expect(json(set.output)).toMatchObject({ id, priority: 'high' });
+		expect((await run('set-assignee', id, 'ann')).exitCode).toBe(0);
+		expect((await run('unset-assignee', id)).exitCode).toBe(0);
+		expect((await run('unset-priority', id)).exitCode).toBe(0);
 
-			expect(text.exitCode).toBe(1);
-			expect(text.output).toContain('remote');
-			expect(asJson.exitCode).toBe(1);
-			expect(json(asJson.output)).toMatchObject({
-				error: expect.stringContaining('remote'),
-				hint: expect.any(String),
-			});
-			expect(serverEvents).toEqual([]);
-			expect(publishMock).not.toHaveBeenCalled();
-		}
-	);
+		expect(names()).toEqual([
+			'onTaskPriorityChanged',
+			'onTaskAssigneeChanged',
+			'onTaskAssigneeChanged',
+			'onTaskPriorityChanged',
+		]);
+		expect(readServed(id).priority).toBeUndefined();
+		expect(publishMock).not.toHaveBeenCalled();
+	});
+
+	it('a priority the config does not list is refused with the valid ones, exit 1, before the server is asked', async () => {
+		const id = json((await run('new', 'First task')).output).id as string;
+		serverEvents.length = 0;
+
+		const refused = await run('set-priority', id, 'asap', '--json');
+
+		expect(refused.exitCode).toBe(1);
+		expect(json(refused.output).error).toContain('urgent, high, medium, low');
+		expect(serverEvents).toEqual([]);
+	});
+
+	it('claim, a second claim by someone else, renew, release: the same answers and texts as a local project, the lease timed by the server', async () => {
+		const id = json((await run('new', 'First task')).output).id as string;
+		serverEvents.length = 0;
+
+		const before = Date.now();
+		const first = await run('claim', id, '--as', 'w1', '--lease', '30m', '--json');
+		const after = Date.now();
+		expect(first.exitCode, first.output).toBe(0);
+		const claimed = json(first.output);
+		expect(claimed).toMatchObject({ taskId: id, outcome: 'claimed', assignee: 'w1', revision: expect.any(String) });
+		// The server and this test share a clock here; what matters is that the lease is a duration from ITS now.
+		const lease = Date.parse(claimed.leaseUntil as string) - Date.parse(claimed.claimedAt as string);
+		expect(lease).toBe(30 * 60_000);
+		expect(Date.parse(claimed.claimedAt as string)).toBeGreaterThanOrEqual(before - 1000);
+		expect(Date.parse(claimed.claimedAt as string)).toBeLessThanOrEqual(after + 1000);
+
+		const second = await run('claim', id, '--as', 'w2');
+		expect(second.exitCode).toBe(1);
+		expect(second.output).toContain('claimed by "w1"');
+		const secondJson = await run('claim', id, '--as', 'w2', '--json');
+		expect(json(secondJson.output)).toMatchObject({
+			error: expect.stringContaining('"w1"'),
+			hint: expect.stringContaining('--force'),
+		});
+
+		const renewed = await run('claim', id, '--as', 'w1', '--renew', '--json');
+		expect(json(renewed.output).outcome).toBe('renewed');
+		const refusedRelease = await run('release', id, '--as', 'w2');
+		expect(refusedRelease.exitCode).toBe(1);
+		expect(refusedRelease.output).toContain('held by "w1"');
+		const released = await run('release', id, '--as', 'w1', '--json');
+		expect(json(released.output)).toMatchObject({ taskId: id, previousAssignee: 'w1' });
+		expect((await run('release', id)).exitCode).toBe(1);
+
+		expect(serverEvents.map(event => (event.payload as { outcome?: string }).outcome)).toEqual([
+			'claimed',
+			'renewed',
+			'released',
+		]);
+		expect(publishMock).not.toHaveBeenCalled();
+	});
+
+	it('a claim of a closed task prints the text a local project prints (class, message and hint come back from the server)', async () => {
+		const id = json((await run('new', 'Closed task')).output).id as string;
+		await run('set-status', id, 'done');
+
+		const refused = await run('claim', id, '--as', 'w1', '--json');
+
+		expect(refused.exitCode).toBe(1);
+		expect(json(refused.output)).toMatchObject({
+			error: `Task "${id}" is closed (status "done") and cannot be claimed; nothing was written`,
+			hint: expect.stringContaining('task set-status'),
+		});
+	});
+
+	it('list filters and next work on the summaries the server sends (assignee, lease, priority), and next claims on the server', async () => {
+		const a = json((await run('new', 'Low one')).output).id as string;
+		const b = json((await run('new', 'Urgent one')).output).id as string;
+		await run('set-priority', a, 'low');
+		await run('set-priority', b, 'urgent');
+		await run('claim', a, '--as', 'w1');
+
+		const mine = json((await run('list', '--assignee', 'w1')).output) as Array<{ id: string; leaseUntil?: string }>;
+		expect(mine.map(task => task.id)).toEqual([a]);
+		expect(mine[0]!.leaseUntil).toEqual(expect.any(String));
+		const available = json((await run('list', '--available')).output) as Array<{ id: string }>;
+		expect(available.map(task => task.id)).toEqual([b]);
+
+		const next = json((await run('next', '--as', 'w2', '--json')).output);
+		expect(next).toMatchObject({ taskId: b, outcome: 'claimed', assignee: 'w2' });
+		expect(readServed(b).assignee).toBe('w2');
+		const none = await run('next', '--as', 'w3', '--json');
+		expect(json(none.output)).toMatchObject({ task: null });
+	});
 });

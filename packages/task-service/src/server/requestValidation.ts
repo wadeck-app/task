@@ -2,7 +2,13 @@
 // against a strict pattern (the local store builds a file name from an id, so a `..` or a separator would leave the data folder),
 // bodies must hold exactly the keys of their operation with the right types, and statuses / types / link types are checked against
 // the SERVED project's config. Every refusal is a WireProtocolError `invalid-request` (HTTP 400) that names the field and the fix.
-import { LINK_TYPES, resolveTypeValidationStrategy } from '@wadeck-app/task-core';
+import {
+	LINK_TYPES,
+	assertLeaseLength,
+	normalizeAssignee,
+	normalizePriority,
+	resolveTypeValidationStrategy,
+} from '@wadeck-app/task-core';
 import type { LinkType, ListQuery, PortOperation, TaskResolvedConfig } from '@wadeck-app/task-core';
 import { WireProtocolError } from '@wadeck-app/task-core';
 
@@ -140,6 +146,12 @@ export type ValidInput = {
 	editComment: { id: string; commentId: string; text: string };
 	removeComment: { id: string; commentId: string };
 	deleteTask: { id: string };
+	setPriority: { id: string; priority: string };
+	clearPriority: { id: string };
+	setAssignee: { id: string; assignee: string };
+	clearAssignee: { id: string };
+	claim: { id: string; assignee: string; leaseMs: number; force?: boolean; renew?: boolean };
+	release: { id: string; assignee?: string; force?: boolean };
 };
 
 export interface RequestParts {
@@ -150,6 +162,19 @@ export interface RequestParts {
 }
 
 type Validator<K extends PortOperation> = (parts: RequestParts, config: TaskResolvedConfig) => ValidInput[K];
+
+/** An optional boolean of a body: a string "true" or a number is a mistake, not a silent false. */
+function flag(source: Record<string, unknown>, key: string, operation: string): boolean | undefined {
+	const value = source[key];
+	if (value === undefined) return undefined;
+	if (typeof value !== 'boolean') {
+		return refuse(
+			`${operation}: "${key}" must be true or false, found ${describe(value)}`,
+			`Send "${key}" as a JSON boolean, or leave it out.`
+		);
+	}
+	return value;
+}
 
 const noInput = (): Record<string, never> => ({});
 const idOnly = (parts: RequestParts): { id: string } => ({ id: validId(parts.params['id'], 'id') });
@@ -166,6 +191,8 @@ const VALIDATORS: { [K in PortOperation]: Validator<K> } = {
 	getFullTree: idOnly,
 	getAncestors: idOnly,
 	clearType: idOnly,
+	clearPriority: idOnly,
+	clearAssignee: idOnly,
 	removeParent: idOnly,
 	deleteTask: idOnly,
 	findByPrefix: parts => ({ prefix: validId(parts.params['prefix'], 'prefix') }),
@@ -320,6 +347,51 @@ const VALIDATORS: { [K in PortOperation]: Validator<K> } = {
 		id: validId(parts.params['id'], 'id'),
 		commentId: name(parts.params['commentId'], 'removeComment: commentId'),
 	}),
+	// The value rules are the store's (task-core/taskFields): the same errors, with the same hints, cross the wire as the same classes.
+	setPriority: (parts, config) => {
+		const source = exactObject(parts.body, 'setPriority', ['priority']);
+		const priority = required(text(source, 'priority', 'setPriority', { allowEmpty: true }));
+		return { id: validId(parts.params['id'], 'id'), priority: normalizePriority(priority, config.priorities) };
+	},
+	setAssignee: parts => {
+		const source = exactObject(parts.body, 'setAssignee', ['assignee']);
+		const assignee = required(text(source, 'assignee', 'setAssignee', { allowEmpty: true }));
+		return { id: validId(parts.params['id'], 'id'), assignee: normalizeAssignee(assignee) };
+	},
+	claim: parts => {
+		const source = exactObject(parts.body, 'claim', ['assignee', 'leaseMs', 'force', 'renew']);
+		const assignee = normalizeAssignee(required(text(source, 'assignee', 'claim', { allowEmpty: true })));
+		const leaseMs = source['leaseMs'];
+		if (typeof leaseMs !== 'number' || !Number.isInteger(leaseMs)) {
+			return refuse(
+				`claim: "leaseMs" must be a whole number of milliseconds, found ${describe(leaseMs)}`,
+				'Send the length of the lease in milliseconds: the server decides when it starts (its own clock).'
+			);
+		}
+		// The one lease rule of every backend (task-core), the same text as a local refusal.
+		assertLeaseLength(leaseMs);
+		const force = flag(source, 'force', 'claim');
+		const renew = flag(source, 'renew', 'claim');
+		return {
+			id: validId(parts.params['id'], 'id'),
+			assignee,
+			leaseMs,
+			...(force === undefined ? {} : { force }),
+			...(renew === undefined ? {} : { renew }),
+		};
+	},
+	release: parts => {
+		// An empty body is a release by whoever holds the task, as locally.
+		const source = parts.body === undefined ? {} : exactObject(parts.body, 'release', ['assignee', 'force']);
+		const force = flag(source, 'force', 'release');
+		const assignee = text(source, 'assignee', 'release', { optional: true, allowEmpty: true });
+		return {
+			id: validId(parts.params['id'], 'id'),
+			// The store judges the name only without force (a forced release ignores it): same here, so a blank name behaves alike.
+			...(assignee === undefined || force === true ? {} : { assignee: normalizeAssignee(assignee) }),
+			...(force === undefined ? {} : { force }),
+		};
+	},
 };
 
 /** The checked input of an operation. Throws WireProtocolError `invalid-request` for anything the operation does not accept. */

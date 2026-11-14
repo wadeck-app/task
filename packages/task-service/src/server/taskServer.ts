@@ -59,6 +59,11 @@ export interface TaskServerOptions {
 	log?: (level: 'info' | 'warn' | 'error', message: string) => void;
 	/** Test seam: how the failed-authentication delay waits. */
 	sleep?: (ms: number) => Promise<void>;
+	/**
+	 * The clock of this server, the one authority on time: a claim starts now and its lease ends now plus the length the client asked
+	 * for (protocol 2; the client sends a duration, never an instant). Default: the system clock.
+	 */
+	now?: () => Date;
 }
 
 export interface RunningTaskServer {
@@ -120,6 +125,9 @@ export async function startTaskServer(options: TaskServerOptions): Promise<Runni
 	const log = options.log ?? ((): void => undefined);
 	const sleep = options.sleep ?? ((ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms)));
 	const sink = options.eventSink;
+	const now = options.now ?? ((): Date => new Date());
+	// The protocol version each request named (and its answer repeats): a v1 client reads its own version back.
+	const negotiated = new WeakMap<http.ServerResponse, number>();
 	const tokenCheck = createTokenCheck(token);
 	const limiter = createFailureLimiter(options.failedAuthDelayMs ?? DEFAULTS.failedAuthDelayMs);
 	const queue = createWriteQueue();
@@ -231,7 +239,7 @@ export async function startTaskServer(options: TaskServerOptions): Promise<Runni
 		);
 	};
 
-	const checkProtocol = (req: http.IncomingMessage): void => {
+	const checkProtocol = (req: http.IncomingMessage, res: http.ServerResponse): number => {
 		const raw = headerValue(req.headers[PROTOCOL_HEADER.toLowerCase()]);
 		const version = raw === undefined ? NaN : Number(raw);
 		if (!Number.isInteger(version) || version < PROTOCOL_MIN || version > PROTOCOL_MAX) {
@@ -244,6 +252,8 @@ export async function startTaskServer(options: TaskServerOptions): Promise<Runni
 				{ supported: { min: PROTOCOL_MIN, max: PROTOCOL_MAX } }
 			);
 		}
+		negotiated.set(res, version);
+		return version;
 	};
 
 	const expectedRevisionOf = (req: http.IncomingMessage): string | undefined => {
@@ -277,7 +287,7 @@ export async function startTaskServer(options: TaskServerOptions): Promise<Runni
 		res.writeHead(status, {
 			'Content-Type': 'application/json; charset=utf-8',
 			'Content-Length': Buffer.byteLength(text),
-			[PROTOCOL_HEADER]: String(PROTOCOL_VERSION),
+			[PROTOCOL_HEADER]: String(negotiated.get(res) ?? PROTOCOL_MIN),
 			'Cache-Control': 'no-store',
 			'X-Content-Type-Options': 'nosniff',
 			...extra,
@@ -293,7 +303,7 @@ export async function startTaskServer(options: TaskServerOptions): Promise<Runni
 			if (closing)
 				throw new WireProtocolError('unavailable', 'the server is shutting down', 'Retry in a moment.');
 			await authenticate(req);
-			checkProtocol(req);
+			const version = checkProtocol(req, res);
 			let match: RouteMatch | { methodNotAllowed: string[] } | undefined;
 			try {
 				match = matchRoute(req.method ?? 'GET', req.url ?? '/');
@@ -332,6 +342,16 @@ export async function startTaskServer(options: TaskServerOptions): Promise<Runni
 				return;
 			}
 			label = `${match.spec.method} ${match.spec.path}`;
+			// A route a later protocol added is only served to a request that names that version: a peer that sends the older one has
+			// no code for it, and a request made by hand must say which dialect it speaks.
+			if (version < match.spec.since) {
+				throw new WireProtocolError(
+					'incompatible',
+					`${label} needs protocol ${match.spec.since}, the request names protocol ${version}`,
+					`Send ${PROTOCOL_HEADER}: ${match.spec.since} for this route (this server speaks ${PROTOCOL_MIN}..${PROTOCOL_MAX}).`,
+					{ supported: { min: PROTOCOL_MIN, max: PROTOCOL_MAX } }
+				);
+			}
 			const body = await readBody(req);
 			if (match.op === 'info') {
 				status = 200;
@@ -342,7 +362,7 @@ export async function startTaskServer(options: TaskServerOptions): Promise<Runni
 			const input = validateInput(op, { params: match.params, query: match.query, body }, ctx.config);
 			const env = projectEnv(ctx);
 			if (!match.spec.write) {
-				const { result } = await runOperation(op, input, { backend: ctx.store, config: ctx.config, env });
+				const { result } = await runOperation(op, input, { backend: ctx.store, config: ctx.config, env, now });
 				status = 200;
 				send(res, 200, result);
 				return;
@@ -354,6 +374,7 @@ export async function startTaskServer(options: TaskServerOptions): Promise<Runni
 					backend: ctx.store,
 					config: ctx.config,
 					env,
+					now,
 					...(expectedRevision === undefined ? {} : { expectedRevision }),
 				});
 				// Registered while the write still holds the queue, so the events leave in the order the changes were made.

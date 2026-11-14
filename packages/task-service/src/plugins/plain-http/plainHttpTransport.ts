@@ -1,7 +1,7 @@
 // The instance of the plain-http transport: one request = one exchange, bounded by the time limit from the first byte sent to the last
 // byte received (the body is read here, so a server that stalls after its headers also times out). Redirects are never followed (the
 // bearer token must not go to another address). Network failures become the typed errors of the remote strategy.
-import { PROTOCOL_HEADER, PROTOCOL_VERSION, RemoteTimeoutError, RemoteUnreachableError } from '@wadeck-app/task-core';
+import { PROTOCOL_HEADER, PROTOCOL_MIN, RemoteTimeoutError, RemoteUnreachableError } from '@wadeck-app/task-core';
 
 import type { TransportContext, TransportInstance } from '../kinds.js';
 import type { PlainHttpSettings } from './plainHttpPlugin.js';
@@ -36,7 +36,8 @@ export function createPlainHttpTransport(
 
 	const headers = (): Record<string, string> => ({
 		Authorization: `Bearer ${token}`,
-		[PROTOCOL_HEADER]: String(PROTOCOL_VERSION),
+		// The base dialect: the caller names a newer version (init.headers) for a route that only exists there.
+		[PROTOCOL_HEADER]: String(PROTOCOL_MIN),
 		Accept: 'application/json',
 	});
 

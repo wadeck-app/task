@@ -56,7 +56,7 @@ describe('GET /v1/info', () => {
 
 		expect(status).toBe(200);
 		expect(headers.get('x-task-protocol')).toBe('1');
-		expect(body.protocol).toEqual({ version: 1, min: 1, max: 1 });
+		expect(body.protocol).toEqual({ version: 2, min: 1, max: 2 });
 		expect(body.server).toEqual({ name: 'task-serve', version: '2026.11.09-001' });
 		expect(body.project).toEqual({ id: 'ab12cd34', name: 'served' });
 		expect(body.statuses).toEqual(['backlog', 'in-progress', 'done']);
@@ -148,7 +148,7 @@ describe('the protocol header', () => {
 			expect(result.headers.get('x-task-protocol')).toBe('1');
 			expect(JSON.parse(result.text).error).toMatchObject({
 				type: 'incompatible',
-				supported: { min: 1, max: 1 },
+				supported: { min: 1, max: 2 },
 			});
 		}
 	});

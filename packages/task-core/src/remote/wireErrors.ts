@@ -12,6 +12,16 @@ import {
 import type { BackendCapabilities } from '../backend/capabilities.js';
 import { AmbiguousTaskPrefixError, TaskConflictError, TaskNotFoundError } from '../errors.js';
 import { CommentNotFoundError, InvalidCommentTextError } from '../taskComments.js';
+import {
+	InvalidTaskFieldError,
+	TaskClaimedError,
+	TaskNotClaimedError,
+	TaskReleaseRefusedError,
+	UnknownPriorityError,
+} from '../taskFields.js';
+import { TaskClosedError } from '../taskClosedError.js';
+import { WriteLockTimeoutError } from '../writeLockError.js';
+import type { LockHolder } from '../writeLockError.js';
 import { PROTOCOL_VERSION } from './protocol.js';
 
 /** Failures of the protocol itself (not of a task operation): raised by the server, never by a backend. */
@@ -33,6 +43,13 @@ export type WireErrorType =
 	| 'conflict'
 	| 'comment-not-found'
 	| 'invalid-comment'
+	| 'claimed'
+	| 'closed'
+	| 'not-claimed'
+	| 'release-refused'
+	| 'invalid-field'
+	| 'unknown-priority'
+	| 'lock-timeout'
 	| 'unsupported'
 	| 'rejected'
 	| 'internal';
@@ -56,6 +73,14 @@ const STATUS: Record<WireErrorType, number> = {
 	conflict: 409,
 	'comment-not-found': 404,
 	'invalid-comment': 400,
+	// Protocol 2 (priority, assignee, claim)
+	claimed: 409,
+	closed: 409,
+	'not-claimed': 409,
+	'release-refused': 409,
+	'invalid-field': 400,
+	'unknown-priority': 400,
+	'lock-timeout': 503,
 	unsupported: 422,
 	rejected: 400,
 	internal: 500,
@@ -107,7 +132,56 @@ function classify(error: unknown): { type: WireErrorType; extras: Record<string,
 	if (error instanceof AmbiguousTaskPrefixError) {
 		return { type: 'ambiguous', extras: { prefix: error.prefix, matches: error.matches } };
 	}
-	if (error instanceof TaskConflictError) return { type: 'conflict', extras: {} };
+	// The claim errors are TaskConflictErrors: their own types first, so the class and the hint survive.
+	if (error instanceof TaskClaimedError) {
+		return {
+			type: 'claimed',
+			hint: error.hint,
+			extras: {
+				taskId: error.taskId,
+				holder: error.holder,
+				leaseUntil: error.leaseUntil,
+				remainingMs: error.remainingMs,
+				ownLease: error.ownLease,
+			},
+		};
+	}
+	if (error instanceof TaskClosedError) {
+		return { type: 'closed', hint: error.hint, extras: { taskId: error.taskId, status: error.status } };
+	}
+	if (error instanceof TaskNotClaimedError) {
+		return { type: 'not-claimed', hint: error.hint, extras: { taskId: error.taskId } };
+	}
+	if (error instanceof TaskReleaseRefusedError) {
+		return {
+			type: 'release-refused',
+			hint: error.hint,
+			extras: { taskId: error.taskId, holder: error.holder, requestedBy: error.requestedBy },
+		};
+	}
+	if (error instanceof TaskConflictError) {
+		const hint = (error as { hint?: unknown }).hint;
+		return { type: 'conflict', ...(typeof hint === 'string' ? { hint } : {}), extras: {} };
+	}
+	// UnknownPriorityError is an InvalidTaskFieldError: its own type first, for the valid list.
+	if (error instanceof UnknownPriorityError) {
+		return {
+			type: 'unknown-priority',
+			hint: error.hint,
+			extras: { priority: error.priority, validPriorities: error.validPriorities },
+		};
+	}
+	if (error instanceof InvalidTaskFieldError) {
+		return { type: 'invalid-field', hint: error.hint, extras: { field: error.field } };
+	}
+	if (error instanceof WriteLockTimeoutError) {
+		// The path of the lock is the server's own: it stays there (the holder says who and since when).
+		return {
+			type: 'lock-timeout',
+			hint: error.hint,
+			extras: error.holder === undefined ? {} : { holder: error.holder },
+		};
+	}
 	if (error instanceof CommentNotFoundError) {
 		return {
 			type: 'comment-not-found',
@@ -163,10 +237,28 @@ function textOf(value: unknown, fallback = ''): string {
 	return typeof value === 'string' ? value : fallback;
 }
 
+function numberOf(value: unknown, fallback = 0): number {
+	return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function holderOf(value: unknown): LockHolder | undefined {
+	if (typeof value !== 'object' || value === null) return undefined;
+	const { pid, host, at } = value as { pid?: unknown; host?: unknown; at?: unknown };
+	return typeof pid === 'number' && typeof host === 'string' && typeof at === 'string'
+		? { pid, host, at }
+		: undefined;
+}
+
 function rangeOf(value: unknown): { min: number; max: number } | undefined {
 	if (typeof value !== 'object' || value === null) return undefined;
 	const { min, max } = value as { min?: unknown; max?: unknown };
 	return typeof min === 'number' && typeof max === 'number' ? { min, max } : undefined;
+}
+
+/** The conflict as it was thrown: its hint is a property of the class the other conflicts have. */
+function withHint(error: TaskConflictError, hint: string | undefined): TaskConflictError {
+	if (hint !== undefined) Object.defineProperty(error, 'hint', { value: hint, enumerable: false });
+	return error;
 }
 
 /** The error an answer with status `status` and parsed body `body` stands for, as the class the local backend would have thrown. */
@@ -191,7 +283,7 @@ export function decodeWireError(status: number, body: unknown, context: DecodeCo
 				textOf(extras['actualRevision'])
 			);
 		case 'conflict':
-			return new TaskConflictError(message);
+			return withHint(new TaskConflictError(message), hintText);
 		case 'comment-not-found':
 			return new CommentNotFoundError(
 				textOf(extras['taskId']),
@@ -200,6 +292,42 @@ export function decodeWireError(status: number, body: unknown, context: DecodeCo
 			);
 		case 'invalid-comment':
 			return new InvalidCommentTextError(message, hintText ?? 'Check the text of the comment.');
+		case 'claimed':
+			return new TaskClaimedError(
+				textOf(extras['taskId']),
+				textOf(extras['holder']),
+				textOf(extras['leaseUntil']),
+				numberOf(extras['remainingMs']),
+				extras['ownLease'] === true
+			);
+		case 'closed':
+			return new TaskClosedError(textOf(extras['taskId']), textOf(extras['status']));
+		case 'not-claimed':
+			return new TaskNotClaimedError(textOf(extras['taskId']));
+		case 'release-refused':
+			return new TaskReleaseRefusedError(
+				textOf(extras['taskId']),
+				textOf(extras['holder']),
+				textOf(extras['requestedBy'])
+			);
+		case 'unknown-priority':
+			return new UnknownPriorityError(textOf(extras['priority']), strings(extras['validPriorities']));
+		case 'invalid-field': {
+			// The field name is the server's, verbatim; without one the refusal is a rejection that keeps the server's text.
+			const field = extras['field'];
+			const fallback = hintText ?? 'Check the value and try again.';
+			return typeof field === 'string' && field !== ''
+				? new InvalidTaskFieldError(field, message, fallback)
+				: new BackendRejectedError('remote', textOf(extras['operation'], context.operation), message, fallback);
+		}
+		case 'lock-timeout':
+			return new WriteLockTimeoutError(
+				message,
+				hintText ?? 'Retry in a moment.',
+				// The lock is a file of the SERVER: a path here would read as one of this machine.
+				'',
+				holderOf(extras['holder'])
+			);
 		case 'unsupported':
 			return new UnsupportedByBackendError(
 				'remote',

@@ -58,11 +58,15 @@ export {
 	UnknownPriorityError,
 	decideClaim,
 	normalizeAssignee,
+	LEASE_MS_MAX,
+	LEASE_MS_MIN,
+	assertLeaseLength,
 	normalizeClaimRequest,
 	normalizePriority,
 } from './taskFields.js';
 export type { LockHolder, WriteLockOptions } from './projectLock.js';
 export { ProjectWriteLock, WriteLockTimeoutError } from './projectLock.js';
+export { TaskClosedError } from './taskClosedError.js';
 export { formatDuration } from './formatDuration.js';
 // The async port (stage 0 of the storage-strategies design): every caller reads and writes tasks through it.
 export type {
@@ -139,6 +143,7 @@ export {
 	decodeWireError,
 	encodeWireError,
 	matchRoute,
+	requestVersion,
 	routeFor,
 } from './remote/index.js';
 export type {

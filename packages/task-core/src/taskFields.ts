@@ -13,8 +13,12 @@ export type TaskFieldName = 'priority' | 'assignee' | 'lease';
 
 /** A priority, assignee or lease the caller gave is not acceptable. Nothing was written. */
 export class InvalidTaskFieldError extends Error {
+	/**
+	 * `field` is a {@link TaskFieldName} for every error this build raises; it is a plain string because the one decoded from the wire
+	 * keeps the name a newer server sent, verbatim.
+	 */
 	constructor(
-		readonly field: TaskFieldName,
+		readonly field: TaskFieldName | (string & {}),
 		message: string,
 		readonly hint: string
 	) {
@@ -134,6 +138,22 @@ export function normalizeAssignee(value: string): string {
 	return normalizeText('assignee', value, ASSIGNEE_MAX);
 }
 
+/** The shortest lease of a claim: one second. */
+export const LEASE_MS_MIN = 1000;
+/** The longest lease of a claim: one week. The config limit (MAX_LEASE_MINUTES) is derived from it. */
+export const LEASE_MS_MAX = 7 * 24 * 60 * 60_000;
+
+/** Refuses a lease length (ms) outside {@link LEASE_MS_MIN}..{@link LEASE_MS_MAX}. The one rule of every backend and of the task server. */
+export function assertLeaseLength(leaseMs: number): void {
+	if (leaseMs < LEASE_MS_MIN || leaseMs > LEASE_MS_MAX) {
+		throw new InvalidTaskFieldError(
+			'lease',
+			`a lease is 1 second to ${LEASE_MS_MAX / 60_000} minutes (7 days), found ${leaseMs} ms`,
+			'Give a lease of at least a second and at most 7 days (for example --lease 30m).'
+		);
+	}
+}
+
 /** Epoch ms of an ISO instant; throws {@link InvalidTaskFieldError} naming `what` when it is not one. */
 export function parseInstant(value: string, what: string): number {
 	const time = Date.parse(value);
@@ -211,6 +231,7 @@ export function normalizeClaimRequest(request: ClaimRequest): ClaimRequest {
 			'Give a lease that ends in the future (for example --lease 30m).'
 		);
 	}
+	assertLeaseLength(leaseUntil - now);
 	return {
 		...request,
 		assignee,

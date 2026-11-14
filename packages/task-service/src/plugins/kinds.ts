@@ -38,6 +38,11 @@ export interface StrategyInstance extends PluginInstance {
 	check(): Promise<CheckLine[]>;
 	/** The notices of the reads since the last call, oldest first (the instance forgets them). Absent: this strategy has none. */
 	takeNotices?(): ReadNotice[];
+	/**
+	 * The capabilities as of now, for a strategy that only learns them by talking to its server (a remote one that speaks an older
+	 * protocol). Absent: the plugin's own, which never change.
+	 */
+	currentCapabilities?(): BackendCapabilities;
 }
 
 /** The fills (design 2A) as declared in the project config: capability -> technique, with its own fidelity when it has one. */

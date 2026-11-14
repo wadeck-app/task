@@ -5,6 +5,7 @@ import {
 	PROTOCOL_MAX,
 	PROTOCOL_MIN,
 	PROTOCOL_VERSION,
+	requestVersion,
 	ProtocolPathError,
 	ROUTES,
 	buildRequest,
@@ -30,16 +31,34 @@ function paramsOf(path: string): Record<string, string> {
 }
 
 describe('the protocol constants', () => {
-	it('speaks version 1, and the supported range is exactly that version', () => {
-		expect(PROTOCOL_VERSION).toBe(1);
+	it('speaks versions 1 and 2 (2 only adds routes), the newest being PROTOCOL_VERSION', () => {
+		expect(PROTOCOL_VERSION).toBe(2);
 		expect(PROTOCOL_MIN).toBe(1);
-		expect(PROTOCOL_MAX).toBe(1);
+		expect(PROTOCOL_MAX).toBe(2);
 		expect(PROTOCOL_HEADER).toBe('X-Task-Protocol');
 		expect(API_PREFIX).toBe('/v1');
 	});
 });
 
 describe('the route table', () => {
+	it('adds exactly the priority, assignee and claim routes in version 2; everything else is version 1', () => {
+		const since2 = ROUTES.filter(route => route.since === 2).map(route => `${route.method} ${route.path}`);
+		expect(since2.sort()).toEqual(
+			[
+				'PUT /v1/tasks/:id/priority',
+				'DELETE /v1/tasks/:id/priority',
+				'PUT /v1/tasks/:id/assignee',
+				'DELETE /v1/tasks/:id/assignee',
+				'POST /v1/tasks/:id/claim',
+				'POST /v1/tasks/:id/release',
+			].sort()
+		);
+		expect(ROUTES.filter(route => route.since !== 1 && route.since !== 2)).toEqual([]);
+		expect(requestVersion('claim')).toBe(2);
+		expect(requestVersion('updateStatus')).toBe(1);
+		expect(requestVersion('info')).toBe(1);
+	});
+
 	it('has one route for every operation of the TaskBackend port, and one for info', () => {
 		const ops = ROUTES.map(route => route.op).sort();
 		expect(ops).toEqual([...PORT_OPERATIONS, 'info'].sort());
@@ -74,6 +93,12 @@ describe('the route table', () => {
 				'editComment',
 				'removeComment',
 				'deleteTask',
+				'setPriority',
+				'clearPriority',
+				'setAssignee',
+				'clearAssignee',
+				'claim',
+				'release',
 			].sort()
 		);
 		for (const route of ROUTES.filter(r => r.method === 'GET')) expect(route.write).toBe(false);

@@ -7,6 +7,15 @@ import {
 } from '../backend/backendErrors';
 import { AmbiguousTaskPrefixError, TaskConflictError, TaskNotFoundError } from '../errors';
 import { CommentNotFoundError, InvalidCommentTextError } from '../taskComments';
+import {
+	InvalidTaskFieldError,
+	TaskClaimedError,
+	TaskNotClaimedError,
+	TaskReleaseRefusedError,
+	UnknownPriorityError,
+} from '../taskFields';
+import { TaskClosedError } from '../taskClosedError';
+import { WriteLockTimeoutError } from '../writeLockError';
 import { RemoteIncompatibleError, RemoteUnauthorizedError, RemoteUnreachableError } from '../backend/backendErrors';
 import { WireProtocolError, decodeWireError, encodeWireError } from './wireErrors';
 
@@ -17,6 +26,145 @@ function overTheWire(error: unknown, redact: string[] = []): Error {
 	const { status, body } = encodeWireError(error, { redact });
 	return decodeWireError(status, JSON.parse(JSON.stringify(body)) as unknown, CONTEXT);
 }
+
+describe('the errors of priority, assignee and claim cross the wire as the same classes', () => {
+	it('a claim refused by a live lease is a 409 TaskClaimedError with the holder, the lease, the time left and the same text and hint', () => {
+		const original = new TaskClaimedError('t1', 'w1', '2026-11-14T10:30:00.000Z', 900_000, false);
+		const { status, body } = encodeWireError(original);
+		expect(status).toBe(409);
+		expect(body.error.type).toBe('claimed');
+
+		const back = overTheWire(original);
+		expect(back).toBeInstanceOf(TaskClaimedError);
+		expect(back).toBeInstanceOf(TaskConflictError);
+		const claimed = back as TaskClaimedError;
+		expect([claimed.taskId, claimed.holder, claimed.leaseUntil, claimed.remainingMs, claimed.ownLease]).toEqual([
+			't1',
+			'w1',
+			'2026-11-14T10:30:00.000Z',
+			900_000,
+			false,
+		]);
+		expect(claimed.message).toBe(original.message);
+		expect(claimed.hint).toBe(original.hint);
+		expect(
+			(overTheWire(new TaskClaimedError('t1', 'w1', '2026-11-14T10:30:00.000Z', 1, true)) as TaskClaimedError)
+				.ownLease
+		).toBe(true);
+	});
+
+	it('a claim of a closed task is a 409 TaskClosedError with the id, the status and the hint', () => {
+		const original = new TaskClosedError('t1', 'done');
+		const { status, body } = encodeWireError(original);
+		expect(status).toBe(409);
+		expect(body.error.type).toBe('closed');
+		const back = overTheWire(original) as TaskClosedError;
+		expect(back).toBeInstanceOf(TaskClosedError);
+		expect(back).toBeInstanceOf(TaskConflictError);
+		expect([back.taskId, back.status]).toEqual(['t1', 'done']);
+		expect(back.message).toBe(original.message);
+		expect(back.hint).toBe(original.hint);
+	});
+
+	it('a release of a task nobody holds is a 409 TaskNotClaimedError', () => {
+		const { status, body } = encodeWireError(new TaskNotClaimedError('t1'));
+		expect(status).toBe(409);
+		expect(body.error.type).toBe('not-claimed');
+		const back = overTheWire(new TaskNotClaimedError('t1'));
+		expect(back).toBeInstanceOf(TaskNotClaimedError);
+		expect((back as TaskNotClaimedError).taskId).toBe('t1');
+		expect((back as TaskNotClaimedError).hint).toBe(new TaskNotClaimedError('t1').hint);
+	});
+
+	it('a release on behalf of another holder is a 409 TaskReleaseRefusedError with both names', () => {
+		const original = new TaskReleaseRefusedError('t1', 'w1', 'w2');
+		const { status, body } = encodeWireError(original);
+		expect(status).toBe(409);
+		expect(body.error.type).toBe('release-refused');
+		const back = overTheWire(original) as TaskReleaseRefusedError;
+		expect(back).toBeInstanceOf(TaskReleaseRefusedError);
+		expect([back.taskId, back.holder, back.requestedBy]).toEqual(['t1', 'w1', 'w2']);
+		expect(back.message).toBe(original.message);
+		expect(back.hint).toBe(original.hint);
+	});
+
+	it('an invalid field is a 400 InvalidTaskFieldError that keeps the field, the message and the hint', () => {
+		const original = new InvalidTaskFieldError('assignee', 'a assignee cannot be blank', 'Give the assignee.');
+		const { status, body } = encodeWireError(original);
+		expect(status).toBe(400);
+		expect(body.error.type).toBe('invalid-field');
+		const back = overTheWire(original) as InvalidTaskFieldError;
+		expect(back).toBeInstanceOf(InvalidTaskFieldError);
+		expect(back).not.toBeInstanceOf(UnknownPriorityError);
+		expect([back.field, back.message, back.hint]).toEqual(['assignee', original.message, original.hint]);
+	});
+
+	it('an invalid-field answer of a newer server keeps its field name and text verbatim; without a field it is a rejection that keeps the text', () => {
+		const wire = (error: Record<string, unknown>): Error =>
+			decodeWireError(400, { error: { type: 'invalid-field', ...error } }, CONTEXT);
+
+		const due = wire({
+			message: 'a due date cannot be in the past',
+			hint: 'Pick a later date.',
+			field: 'due',
+		}) as InvalidTaskFieldError;
+		expect(due).toBeInstanceOf(InvalidTaskFieldError);
+		expect([due.field, due.message, due.hint]).toEqual([
+			'due',
+			'a due date cannot be in the past',
+			'Pick a later date.',
+		]);
+
+		for (const extras of [{}, { field: 7 }, { field: '' }]) {
+			const rejected = wire({ message: 'the server refused a field', hint: 'Fix it.', ...extras });
+			expect(rejected).toBeInstanceOf(BackendRejectedError);
+			expect(rejected).not.toBeInstanceOf(InvalidTaskFieldError);
+			expect(rejected.message).toBe('the server refused a field');
+			expect((rejected as BackendRejectedError).hint).toBe('Fix it.');
+		}
+	});
+
+	it('an unknown priority is a 400 UnknownPriorityError that lists the valid ones', () => {
+		const original = new UnknownPriorityError('asap', ['urgent', 'high']);
+		const { status, body } = encodeWireError(original);
+		expect(status).toBe(400);
+		expect(body.error.type).toBe('unknown-priority');
+		const back = overTheWire(original) as UnknownPriorityError;
+		expect(back).toBeInstanceOf(UnknownPriorityError);
+		expect(back).toBeInstanceOf(InvalidTaskFieldError);
+		expect([back.priority, back.validPriorities]).toEqual(['asap', ['urgent', 'high']]);
+		expect(back.message).toBe(original.message);
+		expect(back.hint).toBe(original.hint);
+	});
+
+	it('a write lock held by another process on the server is a 503 WriteLockTimeoutError; the lock path never travels', () => {
+		const original = new WriteLockTimeoutError(
+			'Another task process holds the write lock of this project: pid 42 on box. Nothing was written.',
+			'Retry in a moment.',
+			'/srv/data/.write-lock',
+			{ pid: 42, host: 'box', at: '2026-11-14T10:00:00.000Z' }
+		);
+		const { status, body } = encodeWireError(original);
+		expect(status).toBe(503);
+		expect(body.error.type).toBe('lock-timeout');
+		expect(JSON.stringify(body)).not.toContain('/srv/data');
+		const back = overTheWire(original) as WriteLockTimeoutError;
+		expect(back).toBeInstanceOf(WriteLockTimeoutError);
+		expect(back.message).toBe(original.message);
+		expect(back.hint).toBe(original.hint);
+		expect(back.holder).toEqual({ pid: 42, host: 'box', at: '2026-11-14T10:00:00.000Z' });
+		// The lock path is the server's own: never a path of this machine.
+		expect(back.lockPath).toBe('');
+	});
+
+	it('a RemoteIncompatibleError naming a feature says what is missing and which machine to update', () => {
+		const error = new RemoteIncompatibleError('http://nas.lan:7788', 2, { min: 1, max: 1 }, 'claiming a task');
+		expect(error.message).toContain('does not support claiming a task');
+		expect(error.message).toContain('protocol 2');
+		expect(error.message).toContain('1..1');
+		expect(error.hint).toContain('machine that runs task serve');
+	});
+});
 
 describe('the error mapping, class by class', () => {
 	it('a task that does not exist is a 404 and comes back as the same class with its id', () => {

@@ -63,7 +63,7 @@ export const remotePlugin: StrategyPlugin = {
 	describe() {
 		return {
 			summary:
-				'The tasks live on another computer: a task serve there stores them (single writer) and raises the queue events; this machine speaks HTTP/JSON to it (protocol 1, bearer token). Plain HTTP: trusted LAN only.',
+				'The tasks live on another computer: a task serve there stores them (single writer) and raises the queue events; this machine speaks HTTP/JSON to it (protocol 1 and 2, bearer token). Plain HTTP: trusted LAN only.',
 			options: {
 				project:
 					'id (or unique id prefix) or name of the project the server serves; checked at the first call, so a wrong address cannot write to another project (optional)',
@@ -114,7 +114,7 @@ export const remotePlugin: StrategyPlugin = {
 				`project: ${expectedProject === undefined ? 'whatever the server serves (strategy.options.project is not set)' : expectedProject}`,
 				...transport.describe(),
 				'events: raised by the server, none by this machine',
-				'mode: read and write (the server is the single writer, one write at a time)',
+				'mode: read and write (the server is the single writer, one write at a time; the server clock decides the lease of a claim)',
 			],
 			check: () =>
 				checkRemote({
@@ -125,6 +125,7 @@ export const remotePlugin: StrategyPlugin = {
 					now: Date.now,
 				}),
 			takeNotices: () => notices.splice(0, notices.length),
+			currentCapabilities: () => backend.capabilities,
 			dispose: () => transport.dispose(),
 		};
 		return instance;
