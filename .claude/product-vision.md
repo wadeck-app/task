@@ -4,7 +4,7 @@ Facts come from `CLAUDE.md` and `.claude/plans/` (cited). Anything inferred is m
 
 ## Purpose
 
-A per-project task tracker for a developer machine: the `task` CLI and an app-core dashboard module over one shared service layer. Tasks belong to projects of the `project` registry; where they are stored is a per-project choice (`local` files, `github`, `gitlab`, or `remote` behind `task serve`). Tasks emit queue events after each saved change. (Single-user, developer-machine positioning: to validate.)
+A per-project task tracker for a developer machine: the `task` CLI and an app-core dashboard module over one shared service layer. Tasks belong to projects of the `project` registry; where they are stored is a per-project choice (`local` files, `github`, `gitlab`, or `remote` behind `task serve`). Tasks emit queue events after each saved change. (Single-user, developer-machine positioning: confirmed by the owner, 2026-11-14.)
 
 ## Architecture
 

@@ -1,10 +1,10 @@
 # Threat Model - task
 
-Repo-level. The `task serve` / `remote` part lives in `docs/threat-model-task-serve.md` (T1 to T14); it is not repeated here. Facts cite `CLAUDE.md` sections; "(to validate)" marks an inference not stated in a source. Single-user, developer-machine trust model is assumed (to validate).
+Repo-level. The `task serve` / `remote` part lives in `docs/threat-model-task-serve.md` (T1 to T14); it is not repeated here. Facts cite `CLAUDE.md` sections; "(to validate)" marks an inference not stated in a source. Single-user, developer-machine trust model (confirmed by the owner, 2026-11-14).
 
 ## Scope
 
-The `task` CLI, the app-core module `app-module-task`, the storage strategies (`local`, `github`, `gitlab`, `remote` client), the updater and the published packages. Out of scope: attacks on the forges themselves, hostile external plugin code (none is loaded, see P1), supply-chain attacks on npm dependencies (not covered by any source: to validate).
+The `task` CLI, the app-core module `app-module-task`, the storage strategies (`local`, `github`, `gitlab`, `remote` client), the updater and the published packages. Out of scope: attacks on the forges themselves, hostile external plugin code (none is loaded, see P1), supply-chain attacks on npm dependencies (owner decision 2026-11-14: only the owner has access to the GitHub account and publishes; a compromised laptop compromises everything, so it is not a threat task defends against).
 
 ## Assets
 
