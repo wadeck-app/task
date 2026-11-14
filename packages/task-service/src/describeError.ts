@@ -41,7 +41,9 @@ import { TaskClosedError } from './taskClosedError.js';
 import {
 	AmbiguousDeletePrefixError,
 	InvalidLinkTypeError,
+	InvalidListQueryError,
 	InvalidStatusError,
+	NextTaskContentionError,
 	InvalidDeleteFilterError,
 	InvalidTaskTextError,
 	InvalidTaskTypeError,
@@ -173,6 +175,10 @@ export function describeError(error: unknown): ErrorDescription {
 	if (error instanceof TaskConflictError) return describe('conflict', error);
 	if (error instanceof DanglingParentError || error instanceof DanglingLinkError)
 		return describe('conflict', error, error.hint);
+	if (error instanceof NextTaskContentionError) {
+		return describe('conflict', error, error.hint, { attempts: error.attempts, lastTaskId: error.lastTaskId });
+	}
+	if (error instanceof InvalidListQueryError) return describe('invalid', error, error.hint);
 	if (error instanceof InvalidStatusError) {
 		return describe('invalid', error, error.hint, {
 			validStatuses: error.validStatuses,

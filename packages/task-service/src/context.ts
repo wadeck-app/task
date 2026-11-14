@@ -1,7 +1,7 @@
 import type { TaskBackend, TaskResolvedConfig } from '@wadeck-app/task-core';
 
 import type { TaskProjectEnv } from './events.js';
-import type { ReadNotice } from './plugins/kinds.js';
+import type { ReadNotice, TaskPluginRegistry } from './plugins/kinds.js';
 import type { ResolvedStrategy } from './strategyResolve.js';
 import type { TaskStorage } from './storage.js';
 
@@ -35,6 +35,15 @@ export interface TaskServiceContext {
 	 * them as warnings, the module adds them to its answers. Forgets them; empty for the local store and on a hand-built context.
 	 */
 	takeNotices?: () => ReadNotice[];
+	/**
+	 * The plugin registry the project was opened with (orderings are looked up in it). Absent on a hand-built context: the built-ins.
+	 */
+	registry?: TaskPluginRegistry;
+	/**
+	 * Opens the same project again with every read answered by the system itself, never from a cache (`fresh` list). The caller
+	 * disposes the answer; its read notices reach `takeNotices` of this context when it is disposed. Absent on a hand-built context.
+	 */
+	openFresh?: () => TaskServiceContext;
 }
 
 /**

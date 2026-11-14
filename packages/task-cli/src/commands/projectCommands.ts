@@ -21,6 +21,7 @@ import {
 	runUnsetAssignee,
 	runUnsetPriority,
 } from './PriorityAssigneeCommands.js';
+import { runNext } from './NextCommand.js';
 import { runStatus } from './StatusCommand.js';
 import { runType } from './TypeCommand.js';
 import {
@@ -70,6 +71,7 @@ export const PROJECT_COMMANDS: ReadonlyMap<string, ProjectCommand> = new Map<str
 	['set-assignee', runSetAssignee],
 	['unset-assignee', runUnsetAssignee],
 	['claim', runClaim],
+	['next', runNext],
 	['release', runRelease],
 	['find', runFind],
 	['labels', runLabels],
@@ -80,4 +82,4 @@ export const PROJECT_COMMANDS: ReadonlyMap<string, ProjectCommand> = new Map<str
 
 /** Shown for an unknown command: every command word, including the ones that need no project. */
 export const VALID_COMMANDS_HINT =
-	'Valid commands: new, list, show, history, set-status, set-type, set-parent, remove-parent, children, parents, tree, link, unlink, links, add-label, remove-label, set-meta, unset-meta, unset-type, set-title, set-description, comment, comments, comment-edit, comment-rm, set-priority, unset-priority, set-assignee, unset-assignee, claim, release, find, labels, delete, type, status, strategy, serve, projects, migrate';
+	'Valid commands: new, list, show, history, set-status, set-type, set-parent, remove-parent, children, parents, tree, link, unlink, links, add-label, remove-label, set-meta, unset-meta, unset-type, set-title, set-description, comment, comments, comment-edit, comment-rm, set-priority, unset-priority, set-assignee, unset-assignee, claim, release, next, find, labels, delete, type, status, strategy, serve, projects, migrate';

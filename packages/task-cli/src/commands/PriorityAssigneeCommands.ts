@@ -10,7 +10,7 @@ import {
 	setTaskPriority,
 	withDescription,
 } from '@wadeck-app/task-service';
-import type { EventSink, TaskChangeResult } from '@wadeck-app/task-service';
+import type { ClaimTaskResult, EventSink, TaskChangeResult } from '@wadeck-app/task-service';
 import { MAX_LEASE_MINUTES, formatDuration } from '@wadeck-app/task-core';
 
 import type { ProjectCommand } from '../cli/env.js';
@@ -89,12 +89,12 @@ async function changeOutput(
 	return jsonResult(withDescription(result.task));
 }
 
-const LEASE_GRAMMAR =
+export const LEASE_GRAMMAR =
 	'A lease is a whole number and a unit: <n>m minutes, <n>h hours or <n>d days (for example 30m, 2h, 1d).';
 const LEASE_UNIT_MINUTES: Record<string, number> = { m: 1, h: 60, d: 1440 };
 
 /** `30m`, `2h`, `1d` to minutes. Anything else (seconds, decimals, a bare number, a sign, blanks) is an error naming the grammar. */
-function parseLease(text: string): number | string {
+export function parseLease(text: string): number | string {
 	const match = /^(\d+)([mhd])$/.exec(text);
 	if (match === null) {
 		return `--lease ${JSON.stringify(text)} is not a duration. ${LEASE_GRAMMAR}`;
@@ -158,7 +158,7 @@ export const runClaim: ProjectCommand = async (rest, { jsonMode, ctx, eventSink 
 	if (!id) return errorOutput(jsonMode, 'missing id', CLAIM_USAGE);
 	if (extra !== undefined) return errorOutput(jsonMode, `unexpected argument: ${extra}`, CLAIM_USAGE);
 	// A blank --as or TASK_WORKER counts as unset: a blank name would claim as nobody.
-	const assignee = [flags.as, process.env['TASK_WORKER']].map(value => value?.trim()).find(value => value);
+	const assignee = workerName(flags.as);
 	if (assignee === undefined) {
 		return errorOutput(
 			jsonMode,
@@ -187,6 +187,11 @@ export const runClaim: ProjectCommand = async (rest, { jsonMode, ctx, eventSink 
 		return failure(jsonMode, error);
 	}
 	await deliverEvents(eventSink, result.events);
+	return claimOutput(jsonMode, result, assignee, now);
+};
+
+/** What `claim` and `next` print for a claimed task: the JSON answer, or one line with the lease. */
+export function claimOutput(jsonMode: boolean, result: ClaimTaskResult, assignee: string, now: Date): CommandResult {
 	const { task, outcome, previousAssignee, leaseUntil } = result;
 	if (jsonMode) {
 		return jsonResult({
@@ -207,7 +212,12 @@ export const runClaim: ProjectCommand = async (rest, { jsonMode, ctx, eventSink 
 			? `took over ${task.id} from ${previousAssignee ?? 'nobody'} as ${who}`
 			: `${outcome === 'renewed' ? 'renewed' : 'claimed'} ${task.id} as ${who}`;
 	return { exitCode: 0, output: `${line} until ${leaseUntil} (${lease})` };
-};
+}
+
+/** The worker name: `--as`, else TASK_WORKER; a blank one counts as unset (a blank name would claim as nobody). */
+export function workerName(asFlag: string | undefined): string | undefined {
+	return [asFlag, process.env['TASK_WORKER']].map(value => value?.trim()).find(value => value);
+}
 
 export const runRelease: ProjectCommand = async (rest, { jsonMode, ctx, eventSink }) => {
 	const flags = parseClaimFlags(rest, RELEASE_USAGE, new Set(['--as', '--force']), jsonMode);

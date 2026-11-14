@@ -156,10 +156,39 @@ export interface TransportContext {
 
 export type TransportPlugin = Plugin<'transport', TransportInstance, TransportContext>;
 
+/** What an ordering plugin compares: the facts a list summary carries, with the priority already resolved to the effective one. */
+export interface OrderingRow {
+	id: string;
+	status: string;
+	/** ISO instant. */
+	createdAt: string;
+	/** The EFFECTIVE priority: the stored one, else the project default. */
+	priority: string;
+	assignee?: string;
+}
+
+/** What the project says that an ordering needs. */
+export interface OrderingFacts {
+	/** The valid priorities, highest first: the index of a priority is its rank (lower = more urgent). */
+	priorities: readonly string[];
+}
+
+/** What an ordering plugin builds (stage 2 of priority/assignee/claim): a total order over list rows. */
+export interface OrderingInstance extends PluginInstance {
+	/** Negative when `a` comes first, positive when `b` does, 0 only for the same row. Pure, no I/O. */
+	compare(a: OrderingRow, b: OrderingRow, facts: OrderingFacts): number;
+}
+
+/** Nothing is handed to an ordering plugin at creation (reserved for options). */
+export type OrderingContext = Record<string, never>;
+
+export type OrderingPlugin = Plugin<'ordering', OrderingInstance, OrderingContext>;
+
 /** The kinds of plugin a task host knows. A new kind needs its instance interface here and a slot in the config schema. */
 export type TaskPluginKinds = {
 	strategy: StrategyPlugin;
 	transport: TransportPlugin;
+	ordering: OrderingPlugin;
 };
 
 export type TaskPluginRegistry = PluginRegistry<TaskPluginKinds>;

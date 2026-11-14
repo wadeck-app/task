@@ -3,7 +3,8 @@ import { writeFileAtomic } from '@wadeck-app/project-sdk';
 import type { TaskServiceContext } from './context.js';
 import { createLazyBackend } from './lazyBackend.js';
 import { createInstance } from './plugin-host/index.js';
-import type { TaskPluginRegistry } from './plugins/kinds.js';
+import { createBuiltinRegistry } from './plugins/builtinPlugins.js';
+import type { ReadNotice, TaskPluginRegistry } from './plugins/kinds.js';
 import { loadProjectSetup, projectFactsOf } from './projectConfig.js';
 import type { ResolvedProject } from './resolveProject.js';
 import { taskLogWriter } from './strategyLog.js';
@@ -46,9 +47,10 @@ function writeAtomically(file: string, content: string): void {
 export function openTaskContext(input: OpenTaskContextInput): TaskServiceContext {
 	const { storage } = input;
 	const { id, name, path: projectPath } = input.project;
+	const registry = input.registry ?? createBuiltinRegistry();
 	const { config, strategy } = loadProjectSetup(storage, {
 		globalConfigDir: input.globalConfigDir,
-		registry: input.registry,
+		registry,
 	});
 	const project = {
 		...(id === undefined ? {} : { id }),
@@ -79,14 +81,27 @@ export function openTaskContext(input: OpenTaskContextInput): TaskServiceContext
 			}),
 		strategy.plugin.capabilitiesFor?.(strategy.fills, strategy.options) ?? strategy.plugin.capabilities
 	);
+	// Notices of the fresh contexts opened for one call: kept here until the caller asks, so a stale answer is never lost with them.
+	const forwarded: ReadNotice[] = [];
 	return {
 		store: lazy.backend,
 		config,
 		storage,
 		project,
 		strategy,
+		registry,
 		dispose: lazy.dispose,
-		takeNotices: () => lazy.opened()?.takeNotices?.() ?? [],
+		takeNotices: () => [...forwarded.splice(0), ...(lazy.opened()?.takeNotices?.() ?? [])],
+		openFresh: () => {
+			const fresh = openTaskContext({ ...input, registry, freshReads: true });
+			return {
+				...fresh,
+				dispose: async () => {
+					forwarded.push(...(fresh.takeNotices?.() ?? []));
+					await fresh.dispose?.();
+				},
+			};
+		},
 	};
 }
 

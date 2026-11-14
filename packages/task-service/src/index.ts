@@ -6,6 +6,8 @@ export { openResolvedProject, openTaskContext } from './openContext.js';
 export {
 	TaskServiceError,
 	InvalidStatusError,
+	InvalidListQueryError,
+	NextTaskContentionError,
 	InvalidLinkTypeError,
 	InvalidTaskTypeError,
 	InvalidTaskTextError,
@@ -48,8 +50,11 @@ export type { DeclareEventsOutcome } from './declareTaskEvents.js';
 export { appendTaskLog } from './taskLog.js';
 export type { CreateTaskInput, CreateTaskResult } from './createTask.js';
 export { createTask } from './createTask.js';
-export type { ListTasksInput } from './listTasks.js';
-export { listTasks, listForest, createStatusFilter } from './listTasks.js';
+export type { ListTasksInput, ListedTask } from './listTasks.js';
+export { listTasks, listForest, createStatusFilter, DEFAULT_ORDER, LIST_LIMIT_MAX } from './listTasks.js';
+export type { NextTaskInput, NextTaskResult } from './nextTask.js';
+export { nextTask, NEXT_MAX_ATTEMPTS } from './nextTask.js';
+export { withFreshReads } from './freshReads.js';
 export type { ShowTaskInput, TaskHistory, TaskWithRelations } from './showTask.js';
 export { showTask, showTaskWithRelations, getTaskHistory } from './showTask.js';
 export type { ActivityRow, ActivityRowKind, ActivityTone, TaskActivity } from './taskActivity.js';

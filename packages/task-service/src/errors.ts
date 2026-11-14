@@ -68,6 +68,22 @@ export class InvalidDeleteFilterError extends TaskServiceError {
 	}
 }
 
+/** A list query that cannot be answered: contradictory or unknown filters, an unknown ordering, a limit out of range. */
+export class InvalidListQueryError extends TaskServiceError {}
+
+/** `task next` lost the race for every candidate it tried: other workers claimed them first. */
+export class NextTaskContentionError extends TaskServiceError {
+	constructor(
+		readonly attempts: number,
+		readonly lastTaskId: string
+	) {
+		super(
+			`could not claim any task: ${attempts} candidates were claimed by other workers first (last: ${lastTaskId}); nothing else was tried`,
+			'Other workers are claiming faster than this one lists. Run the command again, or narrow the candidates with --status / --priority.'
+		);
+	}
+}
+
 /** A delete id prefix matches several tasks. */
 export class AmbiguousDeletePrefixError extends TaskServiceError {
 	constructor(

@@ -57,6 +57,13 @@ Usage:
                                              Give a claimed task up (assignee, claimedAt and leaseUntil are cleared). With --as, another holder needs
                                              --force; TASK_WORKER is not read here. Text: "released <id> (was held by <name>)";
                                              --json: {taskId, previousAssignee, task}
+  task next --as <name> [--status a,b] [--priority a,b] [--order <name>] [--lease <n>m|<n>h|<n>d] [--include-blocked] [--fresh] [--json]
+                                             Claim the first available task (held by nobody or lease over) in order: default statuses = every
+                                             non-terminal status, default order priority-then-oldest, TASK_WORKER stands in for --as. When another
+                                             worker takes the candidate first it tries the next one (10 attempts at most, then an error naming the
+                                             count). A task with an open blockedBy link is skipped (not an attempt) unless --include-blocked. Same output as claim (--json adds
+                                             skippedBlocked); nothing available: exit 0 and "no available task", or "no available task: N candidate(s) were claimed
+                                             by other workers meanwhile, retry" after lost races (--json: {"task": null, "lost": N, "skippedBlocked": M})
   task find <query> [--limit N] [--json]     Find tasks by id prefix or title text, best match first (id prefix, title word prefix, substring);
                                              N from 1 to 20 (default 8); text lines "id  headline  [status]", --json: [{id, headline, status}]
   task labels [--json]                       Labels in use with the number of tasks carrying each, most used first
@@ -64,6 +71,16 @@ Usage:
                                              and description included); never deletes or changes a label. --dry-run lists what it would create
   task list [--json] [--all] [--follow|-f]   List tasks as JSON array (hides terminal statuses unless --all)
   task list --parent <id>                    List only the direct children of a task
+  task list [--status a,b] [--assignee <name> | --unassigned | --available] [--priority a,b] [--order <name>] [--limit <n>] [--fresh]
+                                             A dispatcher's list in one call (JSON array; works with --parent and --all, not with --tree, --follow or
+                                             --all-projects). --status: only these statuses (replaces the hiding of terminal ones); --assignee: held by
+                                             that name; --unassigned: held by nobody; --available: held by nobody or lease over (these three exclude
+                                             each other); --priority: only these priorities (a task without one has the project default); --order:
+                                             an ordering plugin, priority-then-oldest = highest priority first, then oldest, then id (without --order the
+                                             order of the storage is kept); --limit: the first n (1 to 1000) AFTER filter and order; --fresh: github and
+                                             gitlab read from the server, not from the cache (no effect on local and remote). With any of the filters,
+                                             --order or --limit each row also has priority (the effective one, never absent) and, when a lease is set,
+                                             leaseUntil and leaseExpired (a stored leaseUntil that is not a date gives leaseProblem instead and a warning on stderr; the task is never available), next to id, title, status, createdAt, assignee, links, parentId
   task list --tree                           List tasks as a nested forest (kept: matching tasks + the ancestors leading to them)
   task list --all-projects [--all] [--json]  List the tasks of every registered project (Project column; text table, --json: tasks tagged with their project);
                                              needs no project; unreadable projects on stderr; exit 1 only if none can be read;
@@ -173,7 +190,7 @@ Exit codes:
 Environment variables:
   TASK_CONFIG       Override global config directory (default: ~/.task)
   TASK_PROJECT      Project of the shared registry (name, alias or id), below -p; refused by 'task list --all-projects'
-  TASK_WORKER       Name of the worker for 'task claim' when --as is not given (a blank value counts as unset); not read by any other command`;
+  TASK_WORKER       Name of the worker for 'task claim' and 'task next' when --as is not given (a blank value counts as unset); not read by any other command`;
 }
 
 /** `task migrate --help`. */

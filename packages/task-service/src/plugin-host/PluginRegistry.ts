@@ -106,7 +106,7 @@ export function createPluginRegistry<TByKind extends Record<string, AnyPlugin>>(
 			if (entry !== undefined && entry.plugin.extensionPoint !== kind) {
 				const actual = entry.plugin.extensionPoint;
 				throw new PluginLookupError(
-					`"${refOrAlias}" is a ${actual} plugin, not ${article(kind)} ${kind} one: use it where ${article(actual)} ${actual} plugin is expected`,
+					`"${refOrAlias}" is ${article(actual)} ${actual} plugin, not ${article(kind)} ${kind} one: use it where ${article(actual)} ${actual} plugin is expected`,
 					sameKind.map(label),
 					listing(kind, sameKind)
 				);

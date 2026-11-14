@@ -20,8 +20,11 @@ import type { ActivityRow, TaskHistory, TaskLinksReport } from '@wadeck-app/task
 import type { ProjectCommand } from '../cli/env.js';
 import { runTaskHistoryFollow, runTaskListFollow } from '../cli/follow.js';
 import { errorOutput, failure, jsonResult, runJson, taskLine } from '../cli/output.js';
+import { dispatchFlagsUsed, readListOnlyFlag, readSelectionFlag } from './ListFlags.js';
+import type { ListFlags } from './ListFlags.js';
 
-const LIST_USAGE = 'Usage: task list [--all] [--parent <id>] [--tree] [--follow|-f]';
+const LIST_USAGE =
+	'Usage: task list [--all] [--parent <id>] [--tree] [--follow|-f] [--status a,b] [--assignee <name> | --unassigned | --available] [--priority a,b] [--order <name>] [--limit <n>] [--fresh]';
 const SHOW_USAGE = 'Usage: task show <id> [--with-parent] [--with-children]';
 
 /** One stderr line per link to a vanished task, with its fix (stdout stays the JSON answer; the exit code stays 0). */
@@ -34,6 +37,7 @@ export const runList: ProjectCommand = async (rest, { jsonMode, ctx }) => {
 	let follow = false;
 	let tree = false;
 	let parentArg: string | undefined;
+	const flags: ListFlags = { unassigned: false, available: false, fresh: false };
 	for (let i = 0; i < rest.length; i++) {
 		const arg = rest[i]!;
 		if (arg === '--all') {
@@ -49,7 +53,10 @@ export const runList: ProjectCommand = async (rest, { jsonMode, ctx }) => {
 			}
 			i++;
 		} else if (arg.startsWith('-')) {
-			return errorOutput(jsonMode, `unknown flag: ${arg}`, LIST_USAGE);
+			const read = readSelectionFlag(rest, i, flags) ?? readListOnlyFlag(rest, i, flags);
+			if (read === undefined) return errorOutput(jsonMode, `unknown flag: ${arg}`, LIST_USAGE);
+			if ('problem' in read) return errorOutput(jsonMode, read.problem, LIST_USAGE);
+			i += read.consumed;
 		}
 	}
 	if (follow && (tree || parentArg !== undefined)) {
@@ -60,12 +67,45 @@ export const runList: ProjectCommand = async (rest, { jsonMode, ctx }) => {
 			'--follow streams new/changed tasks as flat JSON lines; run the list again without --follow to see the hierarchy.'
 		);
 	}
+	const used = dispatchFlagsUsed(flags);
+	if (used.length > 0 && (follow || tree)) {
+		return errorOutput(
+			jsonMode,
+			`${used[0]} cannot be combined with ${follow ? '--follow' : '--tree'}`,
+			follow
+				? '--follow streams every new or changed task; filter and order a plain list instead.'
+				: 'The filters, the order and the limit apply to the flat list; run it without --tree.'
+		);
+	}
 	if (follow) {
 		await runTaskListFollow(ctx.store, createStatusFilter(ctx.config, showAll));
 		return { exitCode: 0, output: '' };
 	}
-	const input = { showAll, parent: parentArg };
-	return runJson(jsonMode, () => (tree ? listForest(ctx, input) : listTasks(ctx, input)));
+	const input = {
+		showAll,
+		parent: parentArg,
+		...(flags.statuses === undefined ? {} : { statuses: flags.statuses }),
+		...(flags.assignee === undefined ? {} : { assignee: flags.assignee }),
+		...(flags.unassigned ? { unassigned: true } : {}),
+		...(flags.available ? { available: true } : {}),
+		...(flags.priorities === undefined ? {} : { priorities: flags.priorities }),
+		...(flags.order === undefined ? {} : { order: flags.order }),
+		...(flags.limit === undefined ? {} : { limit: flags.limit }),
+		...(flags.fresh ? { fresh: true } : {}),
+	};
+	return runJson(jsonMode, async () => {
+		if (tree) return listForest(ctx, input);
+		const rows = await listTasks(ctx, input);
+		// A stored lease that is not a date is in the row (leaseProblem); the person running the command is told once per task, with the fix.
+		for (const row of rows) {
+			const problem = (row as { leaseProblem?: string }).leaseProblem;
+			if (problem !== undefined) {
+				process.stderr.write(`warning: task ${row.id}: ${problem}; fix with: task release ${row.id} --force
+`);
+			}
+		}
+		return rows;
+	});
 };
 
 export const runShow: ProjectCommand = (rest, { jsonMode, ctx }) => {

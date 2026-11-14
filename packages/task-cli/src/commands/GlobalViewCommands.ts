@@ -17,6 +17,14 @@ const INCOMPATIBLE_FLAGS: ReadonlyMap<string, string> = new Map([
 	['-f', 'a live view across projects is not supported'],
 	['--tree', 'the hierarchy of one project cannot be drawn across projects'],
 	['--parent', 'a task id belongs to one project'],
+	['--status', 'statuses belong to one project'],
+	['--assignee', 'the filters and the order of one project are not merged across projects'],
+	['--unassigned', 'the filters and the order of one project are not merged across projects'],
+	['--available', 'the filters and the order of one project are not merged across projects'],
+	['--priority', 'priorities belong to one project'],
+	['--order', 'the filters and the order of one project are not merged across projects'],
+	['--limit', 'the filters and the order of one project are not merged across projects'],
+	['--fresh', 'it applies to the one project whose storage keeps a cache'],
 ]);
 
 /** What chose a single project for this run: an explicit choice contradicts `--all-projects`. */

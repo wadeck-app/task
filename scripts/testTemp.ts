@@ -87,6 +87,7 @@ export const OWN_TEMP_PREFIXES: readonly string[] = [
 	'task-strategy-cmd-',
 	'task-text-cmd-',
 	'task-fields-cmd-',
+	'task-list-cmd-',
 	'task-type-cmd-',
 	'task-type-ctx-',
 	'task-unknown-commands-',
