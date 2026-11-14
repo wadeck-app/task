@@ -92,7 +92,12 @@ function describe(
  * map the {@link ErrorKind} to their own conventions.
  */
 export function describeError(error: unknown): ErrorDescription {
-	if (error instanceof TaskNotFoundError) return describe('not-found', error);
+	if (error instanceof TaskNotFoundError)
+		return describe(
+			'not-found',
+			error,
+			'list the ids of the project with: task list --all (an id prefix is accepted when it is unique)'
+		);
 	if (error instanceof CommentNotFoundError) {
 		return describe('not-found', error, error.hint, { commentId: error.commentId, validIds: error.validIds });
 	}

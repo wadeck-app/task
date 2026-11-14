@@ -1219,6 +1219,13 @@ export class TaskStore {
 	}
 
 	private taskFilePath(id: string): string {
+		// Defense in depth: every public path resolves the id through the index first, but a file name built from an id must
+		// never leave the tasks folder, whatever a future caller does.
+		if (id === '' || id === '.' || id === '..' || /[\\/\0]/.test(id)) {
+			throw new Error(
+				`invalid task id ${JSON.stringify(id)}: an id is a file name and cannot contain a path separator or a NUL byte (list the ids with: task list)`
+			);
+		}
 		return path.join(this.tasksDir, `${id}.json`);
 	}
 

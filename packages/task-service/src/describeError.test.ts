@@ -41,10 +41,11 @@ import {
 } from './errors.js';
 
 describe('describeError', () => {
-	it('a missing task is "not-found", without hint', () => {
+	it('a missing task is "not-found", with the listing hint', () => {
 		expect(describeError(new TaskNotFoundError('abc'))).toEqual({
 			kind: 'not-found',
 			message: 'Task not found: abc',
+			hint: 'list the ids of the project with: task list --all (an id prefix is accepted when it is unique)',
 			details: {},
 		});
 	});

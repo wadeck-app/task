@@ -31,7 +31,10 @@ describe('toHttpError', () => {
 	it('TaskNotFoundError => 404', () => {
 		expect(toHttpError(new TaskNotFoundError('abc'))).toEqual({
 			status: 404,
-			body: { error: 'Task not found: abc' },
+			body: {
+				error: 'Task not found: abc',
+				hint: 'list the ids of the project with: task list --all (an id prefix is accepted when it is unique)',
+			},
 		});
 	});
 

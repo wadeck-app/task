@@ -36,22 +36,31 @@ describe('pollUntilAborted', () => {
 	});
 
 	it('waits the interval after a poll ENDED before the next one (self-scheduling, not a fixed rate)', async () => {
-		const controller = new AbortController();
-		const starts: number[] = [];
+		// Fake timers: the clock only moves when the test moves it, so the gaps are exact, not subject to scheduler jitter.
+		vi.useFakeTimers();
+		try {
+			const controller = new AbortController();
+			const starts: number[] = [];
 
-		await pollUntilAborted(
-			async () => {
-				starts.push(Date.now());
-				await sleep(30);
-				if (starts.length === 3) controller.abort();
-			},
-			40,
-			controller.signal
-		);
+			const loop = pollUntilAborted(
+				async () => {
+					starts.push(Date.now());
+					await sleep(30);
+					if (starts.length === 3) controller.abort();
+				},
+				40,
+				controller.signal
+			);
+			await vi.advanceTimersByTimeAsync(1000);
+			await loop;
 
-		// Start-to-start is at least poll duration + interval (about 70 ms); a fixed 40 ms timer would give about 40.
-		expect(starts[1]! - starts[0]!).toBeGreaterThanOrEqual(60);
-		expect(starts[2]! - starts[1]!).toBeGreaterThanOrEqual(60);
+			// Start-to-start is poll duration + interval = 70 ms exactly; a fixed 40 ms timer would give 40.
+			expect(starts).toHaveLength(3);
+			expect(starts[1]! - starts[0]!).toBe(70);
+			expect(starts[2]! - starts[1]!).toBe(70);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it('returns at once when aborted during the pause, without polling again', async () => {
@@ -70,21 +79,25 @@ describe('pollUntilAborted', () => {
 		const unhandled = vi.fn();
 		process.on('unhandledRejection', unhandled);
 		try {
+			// The poll stays blocked on this gate until the test opens it, AFTER the loop has returned: if the loop waited for
+			// the poll, `await loop` would never finish (the test times out), with no wall-clock threshold involved.
+			let failLate: (error: Error) => void = () => undefined;
+			const gate = new Promise<void>((_resolve, reject) => {
+				failLate = reject;
+			});
 			const loop = pollUntilAborted(
 				async () => {
-					setTimeout(() => controller.abort(), 5);
-					await sleep(60);
-					throw new Error('late failure');
+					controller.abort();
+					await gate;
 				},
 				1,
 				controller.signal
 			);
 
-			const started = Date.now();
 			await loop;
-
-			expect(Date.now() - started).toBeLessThan(55);
-			await sleep(80);
+			failLate(new Error('late failure'));
+			// Negative assertion: an unhandled rejection is reported within a few event-loop turns.
+			await sleep(50);
 			expect(unhandled).not.toHaveBeenCalled();
 		} finally {
 			process.off('unhandledRejection', unhandled);
@@ -138,11 +151,13 @@ describe('the follow commands over a backend', () => {
 		const controller = new AbortController();
 		const follow = runTaskListFollow(backend, () => true, { intervalMs: 5, signal: controller.signal });
 
-		await sleep(30);
+		// Wait for each line instead of sleeping a fixed time: a stalled poll cannot merge two changes into one batch
+		// (line order) nor let the abort come before the poll that would have seen the last change.
+		await vi.waitFor(() => expect(lines()).toHaveLength(1));
 		const second = await backend.create({ title: 'second', status: 'todo' });
-		await sleep(30);
+		await vi.waitFor(() => expect(lines()).toHaveLength(2));
 		await backend.updateStatus(first.id, 'done');
-		await sleep(30);
+		await vi.waitFor(() => expect(lines()).toHaveLength(3));
 		controller.abort();
 		await follow;
 
@@ -161,6 +176,7 @@ describe('the follow commands over a backend', () => {
 		await backend.create({ title: 'only', status: 'todo' });
 		let inFlight = 0;
 		let maxInFlight = 0;
+		let listCalls = 0;
 		const slow = new Proxy(backend, {
 			get(target, prop) {
 				if (prop !== 'list') {
@@ -168,6 +184,7 @@ describe('the follow commands over a backend', () => {
 					return typeof value === 'function' ? (value as (...a: unknown[]) => unknown).bind(target) : value;
 				}
 				return async () => {
+					listCalls++;
 					inFlight++;
 					maxInFlight = Math.max(maxInFlight, inFlight);
 					await sleep(20);
@@ -179,7 +196,8 @@ describe('the follow commands over a backend', () => {
 		const controller = new AbortController();
 		const follow = runTaskListFollow(slow, () => true, { intervalMs: 1, signal: controller.signal });
 
-		await sleep(150);
+		// Enough reads for an overlap to have shown up (the initial read plus three polls).
+		await vi.waitFor(() => expect(listCalls).toBeGreaterThanOrEqual(4));
 		controller.abort();
 		await follow;
 
@@ -195,9 +213,9 @@ describe('the follow commands over a backend', () => {
 			signal: controller.signal,
 		});
 
-		await sleep(30);
+		await vi.waitFor(() => expect(lines()).toHaveLength(1));
 		await backend.updateStatus(task.id, 'done');
-		await sleep(30);
+		await vi.waitFor(() => expect(lines()).toHaveLength(2));
 		controller.abort();
 		await follow;
 
