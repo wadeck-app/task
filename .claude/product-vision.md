@@ -46,4 +46,4 @@ From `.claude/plans/2026-10-25_todo.md` (2026-11-14) and `2026-11-13_remaining-w
 | Virtual projects (no path): undelivered events, absent from cross-project views and the module                                         | `CLAUDE.md` registry   |
 | `listLabels` and `/meta-keys` read every task file (128-190 ms at 1000 tasks); Tree "last added" = creation date                       | todo section 1         |
 | No `--follow` for `--all-projects`                                                                                                     | `CLAUDE.md` CLI parity |
-| shared-updater swap window: `task` unusable for a few seconds during a background self-update; no owner                                | todo sections 1 and 3  |
+| shared-updater swap window: closed by the staged install (shared-updater >= 2026.11.14-022); measured window after the first update that used it: see todo #3 | todo sections 1 and 3  |
