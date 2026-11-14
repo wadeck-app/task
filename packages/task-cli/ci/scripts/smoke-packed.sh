@@ -120,9 +120,10 @@ run_all() {
   local label="$1"
   check "$label" "$VERSION" --version
   # task-specific (not in the ci-templates copy): `cli version` goes through the CLI's own command tree.
-  # The registry is unreachable on purpose here, so shared-cli prints only "Failed to fetch latest version for <package>"
-  # on stderr (exit 0, nothing on stdout): what is checked is that the command runs and answers something naming the package.
-  COMBINE=1 check "$label" "@wadeck-app/${CLI}-cli" cli version
+  # The registry is unreachable on purpose here: shared-cli (>= 2026.11.14-047) still prints the INSTALLED version on stdout
+  # ("<package>: current=<version> latest=unknown ...") and the warning on stderr, exit 0. Judged on stdout alone: the
+  # installed version must be there even offline.
+  check "$label" "$VERSION" cli version
   check "$label" "" --help
 }
 
