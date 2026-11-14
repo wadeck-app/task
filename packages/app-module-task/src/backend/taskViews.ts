@@ -55,6 +55,8 @@ import { ALL_LINK_NAMES, bodyAddsInfo, headlineOf, taskDescription } from '@wade
 import type { ActivityRow, BlockerSummary, ChildrenSummary, DanglingLink } from '@wadeck-app/task-service';
 
 import { shortUtcTime } from './display.js';
+import type { PriorityConfig } from './taskFieldViews.js';
+import { taskFieldFacts, taskFieldForms, withFieldTexts } from './taskFieldViews.js';
 import { labelKey } from './labelKey.js';
 import { metaKey } from './metaKey.js';
 import { detailHref, encodedProject, pageHrefs, pageLink, projectText, showAllToggle } from './hrefs.js';
@@ -87,6 +89,8 @@ export function tasksListBody(
 	data: {
 		showAll: boolean;
 		parent: string | undefined;
+		/** The project's priorities and defaults: rows show the EFFECTIVE priority. */
+		config: PriorityConfig;
 		tasks: TaskSummary[];
 		/** Open tasks, to pick a parent from (the create page). */
 		openTasks: TaskSummary[];
@@ -103,14 +107,19 @@ export function tasksListBody(
 		parentFilterText: parent === undefined ? null : `Only the direct children of ${parent}.`,
 		clearParentHref: parent === undefined ? null : pageLink(project, 'tasks', showAll ? { showAll: 'true' } : {}),
 		parentOptions: data.openTasks.map(task => ({ value: task.id, label: `${task.id} ${task.title}` })),
-		tasks: withRowLinks(project, data.tasks),
+		tasks: withRowLinks(project, withFieldTexts(data.config, data.tasks, new Date())),
 	};
 }
 
 /** Initial data of the forms of the detail page: each carries the encoded project (see {@link encodedProject}). */
-function detailForms(project: Project, task: TaskRecord): Record<string, Record<string, unknown>> {
+function detailForms(
+	project: Project,
+	config: OpenedProject['config'],
+	task: TaskRecord
+): Record<string, Record<string, unknown>> {
 	const base = { projectParam: encodedProject(project) };
 	return {
+		...taskFieldForms(config, task, base.projectParam),
 		status: { ...base, status: task.status },
 		type: { ...base, type: task.type ?? '' },
 		label: { ...base, label: '' },
@@ -262,7 +271,17 @@ export function taskDetailBody(
 			deleteTasks: pageHrefs(project)['deleteTasks'],
 		},
 		projectParam: encodedProject(project),
-		forms: detailForms(project, record),
+		forms: detailForms(project, config, record),
+		...taskFieldFacts(
+			config,
+			record,
+			{
+				priority: ctx.store.capabilities.priority === true,
+				assignee: ctx.store.capabilities.assignee === true,
+				claim: ctx.store.capabilities.claim === true,
+			},
+			new Date()
+		),
 		parent,
 		// A dangling parentId resolves to no `parent`, yet the task must stay detachable from the page.
 		canDetach: record.parentId !== undefined,

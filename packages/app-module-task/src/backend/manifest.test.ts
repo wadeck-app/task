@@ -815,6 +815,17 @@ describe('views: feedback and refresh conventions found by driving the pages in 
 		expect(view('tasks-page.yaml')).toContain("key: 'created'");
 	});
 
+	it('the project list has a Priority and an Assignee column (one line each, the lease as the tooltip), the global list has none', () => {
+		const page = view('tasks-page.yaml');
+		expect(page).toContain("{ key: 'priorityText', label: 'Priority', nowrap: true }");
+		expect(page).toContain(
+			"{ key: 'assignee', label: 'Assignee', nowrap: true, truncate: true, title: '{leaseText}' }"
+		);
+		// Once: the per-project table (the global one has the Project column and no priority set).
+		expect(page.match(/key: 'priorityText'/g)).toHaveLength(1);
+		expect(page.match(/key: 'assignee'/g)).toHaveLength(1);
+	});
+
 	it('the delete page clears the preview and the confirm button once the delete ran (both answers share the plan state)', () => {
 		const page = view('delete-page.yaml');
 		expect(page).toMatch(/deleteTasks:\n {8}url: .*\n {8}resultKey: plan\b/);
@@ -1125,10 +1136,12 @@ describe('views: every mutating action that produces queue events shows what the
 			'task-page.yaml:addComment',
 			'task-page.yaml:addLabel',
 			'task-page.yaml:addLink',
+			'task-page.yaml:claimTask',
 			'task-page.yaml:createSubtask',
 			'task-page.yaml:deleteTask',
 			'task-page.yaml:detachChild',
 			'task-page.yaml:editComment',
+			'task-page.yaml:releaseTask',
 			'task-page.yaml:removeComment',
 			'task-page.yaml:removeLabelChip',
 			'task-page.yaml:removeLinkRow',
@@ -1137,6 +1150,7 @@ describe('views: every mutating action that produces queue events shows what the
 			'task-page.yaml:setChildStatus',
 			'task-page.yaml:setMeta',
 			'task-page.yaml:setParent',
+			'task-page.yaml:setPriority',
 			'task-page.yaml:setStatus',
 			'task-page.yaml:setText',
 			'task-page.yaml:setType',

@@ -154,6 +154,9 @@ describe('every fact is shown once (single source of truth)', () => {
 		{ fact: 'title', bindings: ['$sources.detail.headline'], exactlyOnce: true },
 		{ fact: 'status', bindings: ['$sources.detail.task.status'], exactlyOnce: true },
 		{ fact: 'labels', bindings: ['$sources.detail.labelList'], exactlyOnce: true },
+		{ fact: 'priority', bindings: ['$sources.detail.priority'], exactlyOnce: true },
+		{ fact: 'assignee', bindings: ['$sources.detail.assignee'], exactlyOnce: true },
+		{ fact: 'lease', bindings: ['$sources.detail.leaseText'], exactlyOnce: true },
 		{
 			fact: 'parent',
 			bindings: ['$sources.detail.parentRow.titleText', '$sources.detail.parentRow'],
@@ -478,12 +481,81 @@ describe.each(designs)('page %s keeps every control of the task page', (name, vi
 	});
 });
 
+describe('priority, assignee and claim', () => {
+	const nodes = nodesOf(base);
+
+	it('the priority is ONE tinted pill with the project priorities (None clears), in a row guarded by the capability', () => {
+		const rows = nodes.filter(n => n.$type === 'task:PropertyRow' && n.label === 'Priority');
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toMatchObject({ $if: '$sources.detail.supportsPriority', align: 'control' });
+		const pills = nodes.filter(n => n.$type === 'task:PropertyPopover' && n.action === 'setPriority');
+		expect(pills).toHaveLength(1);
+		expect(pills[0]).toMatchObject({
+			label: 'Priority',
+			appearance: 'pill',
+			tone: '$sources.detail.priorityTone',
+			valueText: '$sources.detail.priority',
+			options: '$sources.detail.priorityOptions',
+			value: '$sources.detail.forms.priority.priority',
+			bodyKey: 'priority',
+		});
+	});
+
+	it('the assignee is ONE popover (value, lease sentence, forms) in a row guarded by the capability', () => {
+		const rows = nodes.filter(n => n.$type === 'task:PropertyRow' && n.label === 'Assignee');
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toMatchObject({ $if: '$sources.detail.supportsClaim', align: 'control' });
+		const popovers = nodes.filter(n => n.$type === 'task:PropertyPopover' && n.label === 'Assignee');
+		expect(popovers).toHaveLength(1);
+		expect(popovers[0]).toMatchObject({
+			appearance: 'field',
+			valueText: '$sources.detail.assignee',
+			empty: 'Unassigned',
+			closeOnActions: ['claimTask', 'releaseTask'],
+		});
+		expect(nodesOf(popovers[0]).filter(n => n.text === '$sources.detail.leaseText')).toHaveLength(1);
+	});
+
+	it('claim, renew and take over are forms of the claimTask action, each with its own data; release runs releaseTask', () => {
+		const forms = nodes.filter(n => n.$type === 'Form' && typeof n.onSubmit === 'string');
+		const by = (data: string): Node[] => forms.filter(n => n.initialData === data);
+		for (const [data, action, guard] of [
+			['$sources.detail.forms.claim', '$ctx.claimTask', '$sources.detail.claimOpen'],
+			['$sources.detail.forms.renew', '$ctx.claimTask', '$sources.detail.leaseHeld'],
+			['$sources.detail.forms.takeOver', '$ctx.claimTask', '$sources.detail.leaseHeld'],
+			['$sources.detail.forms.release', '$ctx.releaseTask', '$sources.detail.hasAssignee'],
+		] as const) {
+			expect(by(data), data).toHaveLength(1);
+			expect(by(data)[0], data).toMatchObject({ onSubmit: action, $if: guard });
+		}
+	});
+
+	it('taking over a live lease is a confirmation: only the dialog posts the form with force, and it names the holder', () => {
+		const dialog = nodes.find(n => n.$type === 'Dialog' && n.title === 'Take this task over?')!;
+		expect(dialog.$if).toBe('$sources.detail.leaseHeld');
+		const inner = nodesOf(dialog);
+		expect(inner.find(n => n.$type === 'task:Notice')).toMatchObject({
+			label: '$sources.detail.takeOverText',
+			variant: 'warning',
+		});
+		expect(
+			inner.filter(n => n.$type === 'Form' && n.initialData === '$sources.detail.forms.takeOver')
+		).toHaveLength(1);
+		// No other form of the page can send force: the plain claim and the renewal are not the take over.
+		expect(JSON.stringify(nodes.filter(n => n.initialData === '$sources.detail.forms.claim'))).not.toContain(
+			'takeOver'
+		);
+		expect(inner.find(n => n.$type === 'ButtonAction')).toMatchObject({ label: 'Take over', variant: 'danger' });
+	});
+});
+
 describe('the delete: a direct button with the existing confirmation dialog', () => {
 	it.each(designs)(
 		'%s: a danger task:ControlButton opens a dialog with the consequences, the cascade only with descendants, no id to retype',
 		(name, view) => {
 			const nodes = nodesOf(view);
-			const dialog = nodes.filter(n => n.$type === 'Dialog');
+			// The delete dialog; the Assignee popover has one more (take over), tested with the assignee.
+			const dialog = nodes.filter(n => n.$type === 'Dialog' && n.title === 'Delete this task?');
 			expect(dialog, name).toHaveLength(1);
 			const [trigger] = dialog[0]!.trigger as Node[];
 			expect(trigger, name).toMatchObject({
@@ -558,19 +630,20 @@ describe('the sidebar: GitHub look without card, Jira rows (label left, value ri
 		);
 	});
 
-	it('is a divider under the pills, then a divided list of inline rows: Parent, Labels, Metadata, Updated', () => {
+	it('is a divider under the pills, then a divided list of inline rows: Priority, Assignee, Parent, Labels, Metadata, Updated', () => {
 		expect(side.filter(n => n.$type === 'Divider')).toHaveLength(1);
 		const list = side.find(n => n.$type === 'task:PropertyList')!;
 		expect(list).toMatchObject({ labelPlacement: 'inline', dividers: true });
 		const rows = (list.items as Node[]).map(n => n.label);
-		expect(rows).toEqual(['Parent', 'Labels', 'Metadata', 'Updated']);
-		// The first three rows hold a 32px control: the label lines up with its text.
-		for (const row of (list.items as Node[]).slice(0, 3)) expect(row.align).toBe('control');
+		expect(rows).toEqual(['Priority', 'Assignee', 'Parent', 'Labels', 'Metadata', 'Updated']);
+		// Every row but the last holds a 32px control: the label lines up with its text.
+		for (const row of (list.items as Node[]).slice(0, 5)) expect(row.align).toBe('control');
 	});
 
 	it('shows no label text above a value (no stacked rows, no section titles)', () => {
 		expect(side.filter(n => n.labelPlacement === 'stacked')).toEqual([]);
-		expect(side.filter(n => typeof n.title === 'string')).toEqual([]);
+		// A Dialog (take over) has a title of its own: it is not a section title above a value.
+		expect(side.filter(n => typeof n.title === 'string' && n.$type !== 'Dialog')).toEqual([]);
 	});
 });
 
@@ -623,6 +696,8 @@ describe('feedback: the error and the undelivered events of every action are sho
 		'statusResult',
 		'typeResult',
 		'labelResult',
+		'priorityResult',
+		'assigneeResult',
 		'metaResult',
 		'parentResult',
 		'linkResult',
@@ -664,7 +739,8 @@ describe('feedback: the error and the undelivered events of every action are sho
 				name
 			).toHaveLength(1);
 			expect(
-				nodesOf(split.side).filter(n => n.$type === 'task:Notice'),
+				// The answers are in the main column; the only Notice of the sidebar is the take-over warning inside its dialog.
+				nodesOf(split.side).filter(n => n.$type === 'task:Notice' && String(n.label).startsWith('$ctx.')),
 				name
 			).toEqual([]);
 		}
@@ -714,7 +790,7 @@ describe('actions', () => {
 		}
 		for (const s of stringsOf(tree)) {
 			const m = /^\$ctx\.([A-Za-z]+)$/.exec(s);
-			if (m && /^(set|add|remove|create|delete|detach)[A-Z]/.test(m[1]!)) used.add(m[1]!);
+			if (m && /^(set|add|remove|create|delete|detach|claim|release)[A-Z]/.test(m[1]!)) used.add(m[1]!);
 		}
 	}
 	// removeLinkRow is run by the rows the links route builds (grouped option) and by the flat list; both are in `used` already.
@@ -740,6 +816,21 @@ describe('actions', () => {
 			'statusResult',
 		],
 		['setType', 'POST /api/modules/task/tasks/{id}/type?project={projectParam}&inlineErrors=true', 'typeResult'],
+		[
+			'setPriority',
+			'POST /api/modules/task/tasks/{id}/priority?project={projectParam}&inlineErrors=true',
+			'priorityResult',
+		],
+		[
+			'claimTask',
+			'POST /api/modules/task/tasks/{id}/claim?project={projectParam}&inlineErrors=true',
+			'assigneeResult',
+		],
+		[
+			'releaseTask',
+			'POST /api/modules/task/tasks/{id}/release?project={projectParam}&inlineErrors=true',
+			'assigneeResult',
+		],
 		[
 			'addLabel',
 			'POST /api/modules/task/tasks/{id}/labels?project={projectParam}&inlineErrors=true',

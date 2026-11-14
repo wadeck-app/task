@@ -125,4 +125,8 @@ sections:
           - { key: 'id', label: 'ID', mono: true, nowrap: true }
           - { key: 'titleText', label: 'Title', truncate: true, title: '{title}' }
           - { key: 'status', label: 'Status', nowrap: true }
+          # The EFFECTIVE priority ("medium (default)" when none is stored) and the holder, whose lease is the tooltip. Per project only:
+          # the global list has no single set of priorities.
+          - { key: 'priorityText', label: 'Priority', nowrap: true }
+          - { key: 'assignee', label: 'Assignee', nowrap: true, truncate: true, title: '{leaseText}' }
           - { key: 'created', label: 'Created (UTC)', nowrap: true }

@@ -54,6 +54,8 @@ beforeEach(async () => {
 		body: { text: 'first' },
 	});
 	commentId = comment.body['comment'].id as string;
+	// Held by hand (no lease): the task a release can succeed on.
+	await h.call('POST /tasks/:id/assignee', { params: { id: child }, query: { project }, body: { assignee: 'w1' } });
 });
 afterEach(() => h.world.cleanup());
 
@@ -85,6 +87,10 @@ const successes: Array<[route: string, request: () => Call]> = [
 	['PATCH /tasks/:id', () => ({ params: { id: a }, body: { title: 'renamed' } })],
 	['POST /tasks/:id/links', () => ({ params: { id: b }, body: { type: 'duplicateOf', target: a } })],
 	['DELETE /tasks/:id/links', () => ({ params: { id: a }, body: { type: 'blockedBy', target: b } })],
+	['POST /tasks/:id/priority', () => ({ params: { id: a }, body: { priority: 'high' } })],
+	['POST /tasks/:id/assignee', () => ({ params: { id: a }, body: { assignee: 'w2' } })],
+	['POST /tasks/:id/claim', () => ({ params: { id: a }, body: { assignee: 'w2', leaseMinutes: '45' } })],
+	['POST /tasks/:id/release', () => ({ params: { id: child } })],
 	['POST /tasks/:id/comments', () => ({ params: { id: a }, body: { text: 'second' } })],
 	['PATCH /tasks/:id/comments/:commentId', () => ({ params: { id: a, commentId }, body: { text: 'edited' } })],
 	['DELETE /tasks/:id/comments/:commentId', () => ({ params: { id: a, commentId } })],
@@ -125,6 +131,12 @@ const failures: Array<[label: string, route: string, request: () => Call]> = [
 		() => ({ params: { id: a }, body: { type: 'blockedBy', target: 'zzzzzzzz' } }),
 	],
 	['no query', 'DELETE /tasks/:id/links', () => ({ params: { id: a } })],
+	['no body', 'POST /tasks/:id/priority', () => ({ params: { id: a } })],
+	['unknown priority', 'POST /tasks/:id/priority', () => ({ params: { id: a }, body: { priority: 'huge' } })],
+	['no body', 'POST /tasks/:id/assignee', () => ({ params: { id: a } })],
+	['no body', 'POST /tasks/:id/claim', () => ({ params: { id: a } })],
+	['unknown task', 'POST /tasks/:id/claim', () => ({ params: { id: 'zzzzzzzz' }, body: { assignee: 'w2' } })],
+	['held by nobody', 'POST /tasks/:id/release', () => ({ params: { id: a } })],
 	['no body', 'POST /tasks/:id/comments', () => ({ params: { id: a } })],
 	[
 		'unknown comment',

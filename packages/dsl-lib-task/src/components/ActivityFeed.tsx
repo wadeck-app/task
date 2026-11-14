@@ -2,6 +2,7 @@ import {
 	ArrowRight,
 	ArrowRightLeft,
 	FileText,
+	Flag,
 	GitBranch,
 	Link2,
 	LockOpen,
@@ -14,6 +15,9 @@ import {
 	Tag,
 	Trash2,
 	Unlink,
+	User,
+	UserCheck,
+	UserMinus,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import React, { useId, useState } from 'react';
@@ -102,6 +106,10 @@ export const HISTORY_KINDS: readonly string[] = [
 	'label',
 	'meta',
 	'unblocked',
+	'priority',
+	'assignee',
+	'claim',
+	'release',
 ];
 
 // @formatter:off
@@ -123,6 +131,10 @@ const KIND_ICON: Record<string, LucideIcon> = {
 	comment: MessageSquare,
 	'comment-edited': Pencil,
 	'comment-removed': MessageSquareX,
+	priority: Flag,
+	assignee: User,
+	claim: UserCheck,
+	release: UserMinus,
 	deleted: Trash2,
 };
 
@@ -144,6 +156,10 @@ const KIND_TONE: Record<string, Tone> = {
 	comment: 'neutral',
 	'comment-edited': 'neutral',
 	'comment-removed': 'neutral',
+	priority: 'neutral',
+	assignee: 'neutral',
+	claim: 'info',
+	release: 'neutral',
 	deleted: 'danger',
 };
 

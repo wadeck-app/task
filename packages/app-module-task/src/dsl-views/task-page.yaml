@@ -89,6 +89,21 @@ $actions:
         url: POST /api/modules/task/tasks/{id}/type?project={projectParam}&inlineErrors=true
         resultKey: typeResult
         reloadSources: true
+    # An empty priority (the "None" choice) clears it: the project default applies again.
+    setPriority:
+        url: POST /api/modules/task/tasks/{id}/priority?project={projectParam}&inlineErrors=true
+        resultKey: priorityResult
+        reloadSources: true
+    # The forms of the Assignee popover: claim / renew / take over (body { assignee, leaseMinutes, renew, force }) and release. {id}
+    # comes from the form data (forms.claim ...). One result key: the page shows one answer for the assignee at a time.
+    claimTask:
+        url: POST /api/modules/task/tasks/{id}/claim?project={projectParam}&inlineErrors=true
+        resultKey: assigneeResult
+        reloadSources: true
+    releaseTask:
+        url: POST /api/modules/task/tasks/{id}/release?project={projectParam}&inlineErrors=true
+        resultKey: assigneeResult
+        reloadSources: true
     addLabel:
         url: POST /api/modules/task/tasks/{id}/labels?project={projectParam}&inlineErrors=true
         resultKey: labelResult
@@ -323,6 +338,22 @@ sections:
                             label: $ctx.typeResult.undeliveredText
                             variant: warning
                           - $type: task:Notice
+                            $if: $ctx.priorityResult.errorText
+                            label: $ctx.priorityResult.errorText
+                            variant: danger
+                          - $type: task:Notice
+                            $if: $ctx.priorityResult.undeliveredText
+                            label: $ctx.priorityResult.undeliveredText
+                            variant: warning
+                          - $type: task:Notice
+                            $if: $ctx.assigneeResult.errorText
+                            label: $ctx.assigneeResult.errorText
+                            variant: danger
+                          - $type: task:Notice
+                            $if: $ctx.assigneeResult.undeliveredText
+                            label: $ctx.assigneeResult.undeliveredText
+                            variant: warning
+                          - $type: task:Notice
                             $if: $ctx.labelResult.errorText
                             label: $ctx.labelResult.errorText
                             variant: danger
@@ -551,6 +582,120 @@ sections:
                         dividers: true
                         hideTipsOnNarrow: true
                         items:
+                          - $type: task:PropertyRow
+                            $if: $sources.detail.supportsPriority
+                            label: Priority
+                            align: control
+                            items:
+                              - $type: task:PropertyPopover
+                                label: Priority
+                                appearance: pill
+                                tone: $sources.detail.priorityTone
+                                valueText: $sources.detail.priority
+                                options: $sources.detail.priorityOptions
+                                value: $sources.detail.forms.priority.priority
+                                action: setPriority
+                                bodyKey: priority
+                                params:
+                                  id: $route.id
+                                  projectParam: $sources.detail.projectParam
+                          - $type: task:PropertyRow
+                            $if: $sources.detail.supportsClaim
+                            label: Assignee
+                            align: control
+                            items:
+                              - $type: task:PropertyPopover
+                                label: Assignee
+                                appearance: field
+                                align: end
+                                valueText: $sources.detail.assignee
+                                empty: Unassigned
+                                closeOnActions:
+                                  - claimTask
+                                  - releaseTask
+                                params:
+                                  id: $route.id
+                                  projectParam: $sources.detail.projectParam
+                                items:
+                                  - $type: VerticalStack
+                                    gap: gap-3
+                                    items:
+                                      - $type: task:Caption
+                                        $if: $sources.detail.leaseText
+                                        text: $sources.detail.leaseText
+                                      - $type: Form
+                                        $if: $sources.detail.claimOpen
+                                        onSubmit: $ctx.claimTask
+                                        initialData: $sources.detail.forms.claim
+                                        fields:
+                                          - $type: FieldText
+                                            label: Name
+                                            bind: assignee
+                                          - $type: FieldSelect
+                                            label: Lease
+                                            bind: leaseMinutes
+                                            options: $sources.detail.leaseOptions
+                                        actions:
+                                          - $type: ButtonAction
+                                            label: Claim
+                                            variant: primary
+                                            type: submit
+                                      - $type: Form
+                                        $if: $sources.detail.leaseHeld
+                                        onSubmit: $ctx.claimTask
+                                        initialData: $sources.detail.forms.renew
+                                        fields:
+                                          - $type: FieldSelect
+                                            label: Lease
+                                            bind: leaseMinutes
+                                            options: $sources.detail.leaseOptions
+                                        actions:
+                                          - $type: ButtonAction
+                                            label: Renew the lease
+                                            variant: secondary
+                                            type: submit
+                                      - $type: Dialog
+                                        $if: $sources.detail.leaseHeld
+                                        title: Take this task over?
+                                        trigger:
+                                          - $type: task:ControlButton
+                                            label: Take over
+                                            variant: danger
+                                            hint: Take the task over from its holder
+                                        items:
+                                          - $type: VerticalStack
+                                            gap: gap-4
+                                            items:
+                                              - $type: task:Notice
+                                                label: $sources.detail.takeOverText
+                                                variant: warning
+                                              - $type: Form
+                                                $if: $sources.detail.leaseHeld
+                                                onSubmit: $ctx.claimTask
+                                                initialData: $sources.detail.forms.takeOver
+                                                fields:
+                                                  - $type: FieldText
+                                                    label: Your name
+                                                    bind: assignee
+                                                  - $type: FieldSelect
+                                                    label: Lease
+                                                    bind: leaseMinutes
+                                                    options: $sources.detail.leaseOptions
+                                                actions:
+                                                  - $type: ButtonAction
+                                                    label: Take over
+                                                    variant: danger
+                                                    type: submit
+                                      - $type: Form
+                                        $if: $sources.detail.hasAssignee
+                                        onSubmit: $ctx.releaseTask
+                                        initialData: $sources.detail.forms.release
+                                        fields: []
+                                        actions:
+                                          - $type: ButtonAction
+                                            label: Release
+                                            variant: danger-outline
+                                            type: submit
                           - $type: task:PropertyRow
                             label: Parent
                             align: control

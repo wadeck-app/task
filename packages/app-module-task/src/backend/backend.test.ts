@@ -62,6 +62,10 @@ const EXPECTED_ROUTES = [
 	'DELETE /tasks/:id/type',
 	'GET /tasks/:id/comments',
 	'POST /tasks/:id/comments',
+	'POST /tasks/:id/priority',
+	'POST /tasks/:id/assignee',
+	'POST /tasks/:id/claim',
+	'POST /tasks/:id/release',
 	'PATCH /tasks/:id/comments/:commentId',
 	'DELETE /tasks/:id/comments/:commentId',
 	'POST /types',
@@ -2852,6 +2856,12 @@ describe('view data: page links, filters and form defaults', () => {
 				delete: { ...base, ids: id, cascade: false, confirm: true },
 				deleteCascade: { ...base, ids: id, cascade: true, confirm: true },
 				empty: base,
+				// Priority, assignee and claim (fieldRoutes.test.ts has the detail): each form carries the id of its action url.
+				priority: { ...base, priority: '' },
+				claim: { ...base, id, assignee: '', leaseMinutes: '30', renew: true, force: false },
+				takeOver: { ...base, id, assignee: '', leaseMinutes: '30', renew: false, force: true },
+				renew: { ...base, id, assignee: '', leaseMinutes: '30', renew: true, force: false },
+				release: { ...base, id },
 			});
 			expect(answer.body['hasTypes']).toBe(true);
 			expect(answer.body['noTypes']).toBe(false);

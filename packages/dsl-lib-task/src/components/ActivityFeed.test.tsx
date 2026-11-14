@@ -165,7 +165,20 @@ describe('ActivityFeed filters', () => {
 			'label',
 		]);
 		expect(HISTORY_KINDS).toEqual(
-			expect.arrayContaining(['status', 'type', 'parent', 'link', 'unlink', 'label', 'meta', 'unblocked'])
+			expect.arrayContaining([
+				'status',
+				'type',
+				'parent',
+				'link',
+				'unlink',
+				'label',
+				'meta',
+				'unblocked',
+				'priority',
+				'assignee',
+				'claim',
+				'release',
+			])
 		);
 		for (const kind of ['created', 'description', 'title', 'text', 'mystery']) {
 			expect(HISTORY_KINDS).not.toContain(kind);

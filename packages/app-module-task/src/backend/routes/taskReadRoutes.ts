@@ -39,6 +39,7 @@ import {
 import { withRowLinks } from '../rowViews.js';
 import { activityRowView, linkGroupSections, linkGroups, linkRowViews, statusTone } from '../taskPresentation.js';
 import { childrenBody, forestBody, taskDetailBody, taskTreeBody, tasksListBody } from '../taskViews.js';
+import { listQueryFromRequest } from './listQuery.js';
 import { taskId } from './routeKit.js';
 import type { RouteKit } from './routeKit.js';
 
@@ -57,16 +58,20 @@ export function registerTaskReadRoutes(kit: RouteKit): void {
 		if (isBlankRequest(req.query)) return BLANK_ANSWER;
 		const showAll = showAllFlag(req.query);
 		if (allProjectsFlag(req.query, 'the tasks')) {
+			// A filter names the priorities of ONE project's config: it cannot narrow the lists of all of them.
+			listQueryFromRequest(req.query, 'allProjects');
 			return { status: 200, body: allTasksBody(await listTasksAcrossProjects({ showAll }), showAll) };
 		}
 		const ctx = open(req);
 		const parent = optionalQueryValue(req.query, 'parent');
+		const query = listQueryFromRequest(req.query);
 		return {
 			status: 200,
 			body: tasksListBody(ctx.project, {
 				showAll,
 				parent,
-				tasks: await listTasks(ctx, { showAll, parent }),
+				config: ctx.config,
+				tasks: await listTasks(ctx, { showAll, parent, ...query }),
 				openTasks: await listTasks(ctx, {}),
 			}),
 		};

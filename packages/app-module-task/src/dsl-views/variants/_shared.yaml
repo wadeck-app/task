@@ -31,6 +31,23 @@ feedback.all:
           label: $ctx.typeResult.undeliveredText
           variant: warning
         - $type: task:Notice
+          $if: $ctx.priorityResult.errorText
+          label: $ctx.priorityResult.errorText
+          variant: danger
+        - $type: task:Notice
+          $if: $ctx.priorityResult.undeliveredText
+          label: $ctx.priorityResult.undeliveredText
+          variant: warning
+        # claimTask and releaseTask share one key: the forms of the Assignee popover.
+        - $type: task:Notice
+          $if: $ctx.assigneeResult.errorText
+          label: $ctx.assigneeResult.errorText
+          variant: danger
+        - $type: task:Notice
+          $if: $ctx.assigneeResult.undeliveredText
+          label: $ctx.assigneeResult.undeliveredText
+          variant: warning
+        - $type: task:Notice
           $if: $ctx.labelResult.errorText
           label: $ctx.labelResult.errorText
           variant: danger
@@ -261,6 +278,139 @@ prop.type.free:
           valueParam: type
           params:
               $use: params.task
+# ---- priority and assignee: two rows of the sidebar list, only when the storage of the project carries the field -----------
+# The priority: a tinted pill (danger for the first priority of the project, warning for the second, neutral for the rest), the
+# list opens on click; "None" clears it and the project default applies again (valueText then shows that default).
+row.priority:
+    $type: task:PropertyRow
+    $if: $sources.detail.supportsPriority
+    label: Priority
+    align: control
+    items:
+        - $type: task:PropertyPopover
+          label: Priority
+          appearance: pill
+          tone: $sources.detail.priorityTone
+          valueText: $sources.detail.priority
+          options: $sources.detail.priorityOptions
+          value: $sources.detail.forms.priority.priority
+          action: setPriority
+          bodyKey: priority
+          params:
+              $use: params.task
+# The assignee and its lease: the value is the holder (or "Unassigned"); the popover says how long the lease lasts and holds the
+# controls. A free task or a lease that ran out: name + lease + Claim. A live lease: the holder renews it, anyone else takes it over
+# through a confirmation dialog (that button alone sends force), and Release gives it up. The page has no user: the name is typed.
+row.assignee:
+    $type: task:PropertyRow
+    $if: $sources.detail.supportsClaim
+    label: Assignee
+    align: control
+    items:
+        - $type: task:PropertyPopover
+          label: Assignee
+          appearance: field
+          # The sidebar is the right column: a panel anchored at its left edge ran 43 px past the viewport at 1440 px.
+          align: end
+          valueText: $sources.detail.assignee
+          empty: Unassigned
+          closeOnActions:
+              - claimTask
+              - releaseTask
+          params:
+              $use: params.task
+          items:
+              - $type: VerticalStack
+                gap: gap-3
+                items:
+                    - $type: task:Caption
+                      $if: $sources.detail.leaseText
+                      text: $sources.detail.leaseText
+                    - $use: assignee.claim
+                    - $use: assignee.renew
+                    - $use: assignee.takeover
+                    - $use: assignee.release
+assignee.claim:
+    $type: Form
+    $if: $sources.detail.claimOpen
+    onSubmit: $ctx.claimTask
+    initialData: $sources.detail.forms.claim
+    fields:
+        - $type: FieldText
+          label: Name
+          bind: assignee
+        - $type: FieldSelect
+          label: Lease
+          bind: leaseMinutes
+          options: $sources.detail.leaseOptions
+    actions:
+        - $type: ButtonAction
+          label: Claim
+          variant: primary
+          type: submit
+# The holder extends its own lease (renew: true, the name of the holder is in the form).
+assignee.renew:
+    $type: Form
+    $if: $sources.detail.leaseHeld
+    onSubmit: $ctx.claimTask
+    initialData: $sources.detail.forms.renew
+    fields:
+        - $type: FieldSelect
+          label: Lease
+          bind: leaseMinutes
+          options: $sources.detail.leaseOptions
+    actions:
+        - $type: ButtonAction
+          label: Renew the lease
+          variant: secondary
+          type: submit
+# A live lease of someone else: taking the task over is a confirmation, like the delete. The dialog's own button sends force.
+assignee.takeover:
+    $type: Dialog
+    $if: $sources.detail.leaseHeld
+    title: Take this task over?
+    trigger:
+        - $type: task:ControlButton
+          label: Take over
+          variant: danger
+          hint: Take the task over from its holder
+    items:
+        - $type: VerticalStack
+          gap: gap-4
+          items:
+              - $type: task:Notice
+                label: $sources.detail.takeOverText
+                variant: warning
+              - $type: Form
+                # FieldSelect needs a guard like everywhere (the shell crashes until its options exist).
+                $if: $sources.detail.leaseHeld
+                onSubmit: $ctx.claimTask
+                initialData: $sources.detail.forms.takeOver
+                fields:
+                    - $type: FieldText
+                      label: Your name
+                      bind: assignee
+                    - $type: FieldSelect
+                      label: Lease
+                      bind: leaseMinutes
+                      options: $sources.detail.leaseOptions
+                actions:
+                    - $type: ButtonAction
+                      label: Take over
+                      variant: danger
+                      type: submit
+# Gives the task up (assignee and lease cleared), whoever holds it: the page has no identity to check against.
+assignee.release:
+    $type: Form
+    $if: $sources.detail.hasAssignee
+    onSubmit: $ctx.releaseTask
+    initialData: $sources.detail.forms.release
+    fields: []
+    actions:
+        - $type: ButtonAction
+          label: Release
+          variant: danger-outline
+          type: submit
 prop.labels:
     $type: task:LabelCombobox
     labels: $sources.detail.labelList

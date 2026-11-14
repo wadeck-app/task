@@ -153,3 +153,27 @@ describe('ActivityFeed defaultFilter, slots', () => {
 		expect(root.firstElementChild).toBe(screen.getByTestId('composer'));
 	});
 });
+
+describe('ActivityFeed priority, assignee and claim kinds', () => {
+	const KINDS: Array<[string, string]> = [
+		['priority', 'lucide-flag'],
+		['assignee', 'lucide-user'],
+		['claim', 'lucide-user-check'],
+		['release', 'lucide-user-minus'],
+	];
+
+	it.each(KINDS)(
+		'%s has its own icon (never the neutral dot of an unknown kind) and is History',
+		async (kind, icon) => {
+			const user = userEvent.setup();
+			render(<ActivityFeed rows={[r(kind, 1), r('comment', 2)]} now={NOW} />);
+
+			const svg = screen.getAllByTestId('activity-row')[0]!.querySelector('[data-testid="activity-icon"] svg');
+			expect(svg, kind).not.toBeNull();
+			expect(svg!.getAttribute('class')).toContain(icon);
+
+			await user.click(screen.getByRole('tab', { name: /History/ }));
+			expect(screen.getAllByTestId('activity-row').map(i => i.getAttribute('data-kind'))).toEqual([kind]);
+		}
+	);
+});
