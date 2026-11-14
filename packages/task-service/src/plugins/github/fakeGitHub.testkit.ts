@@ -120,6 +120,11 @@ export interface FakeGitHubOptions {
 	 * value for this many reads of the issue (measured on the real API: 1 to 2 s; the dependency lists themselves are immediate).
 	 */
 	dependencySummaryLagReads?: number;
+	/**
+	 * After a sub-issue is attached or detached, the sub-issue counts (`sub_issues_summary`) of the parents concerned keep their old
+	 * value for this many reads of the issue (measured on the real API: 1 to 2 s; the `/sub_issues` list itself is immediate).
+	 */
+	subIssueSummaryLagReads?: number;
 	/** Value of `github-authentication-token-expiration`. */
 	tokenExpiration?: string;
 	hasIssues?: boolean;
@@ -207,6 +212,7 @@ export class FakeGitHub {
 	private searchCount = 0;
 	private listCount = 0;
 	private readonly frozenDependencySummary = new Map<number, { value: Record<string, number>; reads: number }>();
+	private readonly frozenSubIssueSummary = new Map<number, { value: Record<string, number>; reads: number }>();
 	private core: { limit: number; remaining: number; resetAt: number };
 	private search = { limit: 30, remaining: 30, resetAt: Math.floor(BASE_TIME / 1000) + 3600 };
 	private readonly faults: Fault[] = [];
@@ -416,8 +422,37 @@ export class FakeGitHub {
 		issue.updatedAt = comment.updatedAt;
 	}
 
+	private freezeSubIssueSummary(...numbers: Array<number | null>): void {
+		const reads = this.options.subIssueSummaryLagReads ?? 0;
+		if (reads <= 0) return;
+		for (const number of numbers) {
+			if (number === null) continue;
+			this.frozenSubIssueSummary.set(number, { value: this.subIssueSummary(this.require(number)), reads });
+		}
+	}
+
+	private subIssueSummary(issue: FakeIssue): Record<string, number> {
+		const children = [...this.issues.values()].filter(other => other.parent === issue.number && !other.deleted);
+		const completed = children.filter(child => child.state === 'closed').length;
+		return {
+			total: children.length,
+			completed,
+			percent_completed: children.length === 0 ? 0 : Math.round((100 * completed) / children.length),
+		};
+	}
+
+	private servedSubIssueSummary(issue: FakeIssue): Record<string, number> {
+		const frozen = this.frozenSubIssueSummary.get(issue.number);
+		if (frozen !== undefined && frozen.reads > 0) {
+			frozen.reads -= 1;
+			return frozen.value;
+		}
+		return this.subIssueSummary(issue);
+	}
+
 	setParent(child: number, parent: number | null): void {
 		const c = this.require(child);
+		this.freezeSubIssueSummary(c.parent, parent);
 		if (c.parent !== null) {
 			const old = this.require(c.parent);
 			this.event(old, 'sub_issue_removed', { sub_issue: this.refJson(c) });
@@ -552,7 +587,6 @@ export class FakeGitHub {
 	}
 
 	private issueJson(issue: FakeIssue): Record<string, unknown> {
-		const children = [...this.issues.values()].filter(other => other.parent === issue.number && !other.deleted);
 		return {
 			url: this.issueUrl(issue),
 			repository_url: `${this.baseUrl}/repos/${this.repo}`,
@@ -573,16 +607,7 @@ export class FakeGitHub {
 			body: issue.body,
 			author_association: 'MEMBER',
 			type: issue.type === null ? null : this.typeJson(issue.type),
-			sub_issues_summary: {
-				total: children.length,
-				completed: children.filter(child => child.state === 'closed').length,
-				percent_completed:
-					children.length === 0
-						? 0
-						: Math.round(
-								(100 * children.filter(child => child.state === 'closed').length) / children.length
-							),
-			},
+			sub_issues_summary: this.servedSubIssueSummary(issue),
 			issue_dependencies_summary: this.servedDependencySummary(issue),
 			...(issue.parent === null ? {} : { parent_issue_url: this.issueUrl(this.require(issue.parent)) }),
 			...(issue.pull

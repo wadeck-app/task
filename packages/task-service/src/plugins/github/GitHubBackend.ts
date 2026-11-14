@@ -88,8 +88,11 @@ export function githubCapabilities(fills: DeclaredFills): BackendCapabilities {
 	});
 }
 
-/** The dependency counts of an issue lag a change by 1 to 2 s (measured): for this long the lists are read whatever the counts say. */
-const DEPENDENCY_MEMORY_MS = 10_000;
+/**
+ * The dependency counts and the sub-issue counts of an issue lag a change by 1 to 2 s (measured): for this long the lists are read
+ * whatever the counts say.
+ */
+const COUNT_MEMORY_MS = 10_000;
 
 /** GitHub allows 8 levels of sub-issues. */
 export const MAX_DEPTH = 8;
@@ -173,6 +176,7 @@ export class GitHubBackend implements TaskBackend {
 			loadIssue: (id, options) => this.issue(id, options),
 			readRecord: id => this.get(id),
 			related: path => this.related(path),
+			mayHaveChildren: issue => this.mayHaveChildren(issue),
 		});
 	}
 
@@ -529,7 +533,7 @@ export class GitHubBackend implements TaskBackend {
 	}
 
 	private async childrenOf(issue: ApiIssue): Promise<ApiIssue[]> {
-		if ((issue.sub_issues_summary?.total ?? 0) === 0) return [];
+		if (!this.mayHaveChildren(issue)) return [];
 		const children = await this.related(`${this.repoPath}/issues/${issue.number}/sub_issues`);
 		if (children.length > MAX_CHILDREN) {
 			throw new BackendLimitError(
@@ -676,7 +680,18 @@ export class GitHubBackend implements TaskBackend {
 	}
 
 	private touchedDependencies(issue: ApiIssue): boolean {
-		return this.client.recently('dependencies', DEPENDENCY_MEMORY_MS).includes(issue.number);
+		return this.client.recently('dependencies', COUNT_MEMORY_MS).includes(issue.number);
+	}
+
+	/**
+	 * Whether the sub-issue list of an issue is worth reading: its count says it has some, or task attached a sub-issue to it a moment
+	 * ago and GitHub has not counted it yet (the count lags; the list does not).
+	 */
+	private mayHaveChildren(issue: ApiIssue): boolean {
+		return (
+			(issue.sub_issues_summary?.total ?? 0) > 0 ||
+			this.client.recently('subIssues', COUNT_MEMORY_MS).includes(issue.number)
+		);
 	}
 
 	/** The issues whose managed block says they duplicate this one (fills.linkTypes.duplicateOf: duplicate-marker only). */

@@ -24,15 +24,17 @@ export interface ResponseCache {
 	expiredAt(): string | undefined;
 	/**
 	 * Remembers that task changed issue `number` at `at` (ISO), for the things GitHub shows late (measured): `created` -- the issue
-	 * LIST lacks a new issue for about 4 s -- and `dependencies` -- the dependency counts of an issue lag 1 to 2 s. The reads add what
-	 * they know is missing; the memory is shared by the processes of the project.
+	 * LIST lacks a new issue for about 4 s --, `dependencies` -- the dependency counts of an issue lag 1 to 2 s -- and `subIssues` --
+	 * the sub-issue counts of a parent lag the same way. The reads add what they know is missing; the memory is shared by the processes
+	 * of the project.
 	 */
 	remember(kind: RecentKind, number: number, at: string): void;
 	/** The numbers remembered under `kind` at or after `since` (ISO), oldest first. */
 	recent(kind: RecentKind, since: string): number[];
 }
 
-export type RecentKind = 'created' | 'dependencies';
+export const RECENT_KINDS = ['created', 'dependencies', 'subIssues'] as const;
+export type RecentKind = (typeof RECENT_KINDS)[number];
 
 /** How long a creation is remembered: the list lags about 4 s (measured), this leaves a wide margin. */
 export const CREATION_MEMORY_MS = 30_000;
@@ -168,7 +170,7 @@ export class DiskResponseCache implements ResponseCache {
 				(entry): entry is Recent =>
 					typeof entry === 'object' &&
 					entry !== null &&
-					((entry as Recent).k === 'created' || (entry as Recent).k === 'dependencies') &&
+					(RECENT_KINDS as readonly unknown[]).includes((entry as Recent).k) &&
 					Number.isInteger((entry as Recent).n) &&
 					typeof (entry as Recent).at === 'string'
 			);

@@ -5,6 +5,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import { BackendLimitError } from '@wadeck-app/task-core';
+
 import { FakeGitHub } from './fakeGitHub.testkit.js';
 import { WRITE_STATUS_MAP, WRITE_STATUSES, makeGitHubBackend } from './githubBackend.testkit.js';
 import type { TestBackend } from './githubBackend.testkit.js';
@@ -242,6 +244,127 @@ describe('a dependency written through task reads back at once although GitHub c
 			lagging.requests.length = 0;
 			await reader.backend.getLinks('3');
 			expect(lagging.requests.map(request => request.path)).toEqual(['/repos/acme/shop/issues/3']);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe('a sub-issue written through task reads back at once although GitHub counts it late', () => {
+	let lagging: FakeGitHub;
+
+	beforeEach(async () => {
+		lagging = await FakeGitHub.start({ repo: 'acme/shop', subIssueSummaryLagReads: 40 });
+		for (const title of ['Parent', 'Child', 'Other']) lagging.addIssue({ title });
+	});
+
+	afterEach(async () => {
+		await lagging.stop();
+	});
+
+	const own = (extra: Parameters<typeof makeGitHubBackend>[1] = {}): TestBackend =>
+		makeGitHubBackend(lagging, { statuses: WRITE_STATUSES, ...extra, options: { statusMap: WRITE_STATUS_MAP } });
+
+	it('getChildren, getTree and getDescendants show a child attached with setParent', async () => {
+		const t = own();
+
+		await t.backend.setParent('2', '1');
+
+		expect(ids(await t.backend.getChildren('1'))).toEqual(['2']);
+		expect(ids((await t.backend.getTree('1')).children)).toEqual(['2']);
+		expect(ids(await t.backend.getDescendants('1'))).toEqual(['2']);
+		const full = await t.backend.getFullTree('2');
+		expect(full.id).toBe('1');
+		expect(ids(full.children)).toEqual(['2']);
+	});
+
+	it('shows a child created with a parent', async () => {
+		const t = own();
+
+		const created = await t.backend.create({ title: 'Sub', status: 'backlog', parentId: '1' });
+
+		expect(ids(await t.backend.getChildren('1'))).toEqual([created.id]);
+		expect(ids(await t.backend.getDescendants('1'))).toEqual([created.id]);
+	});
+
+	it('a child detached through task is gone from the children at once', async () => {
+		const t = own();
+		await t.backend.setParent('2', '1');
+
+		await t.backend.removeParent('2');
+
+		expect(ids(await t.backend.getChildren('1'))).toEqual([]);
+	});
+
+	it('the tombstone deletion of a parent detaches a child attached a moment ago', async () => {
+		const t = own({ fidelity: 'degrade', fills: { delete: { use: 'tombstone', fidelity: 'degrade' } } });
+		await t.backend.setParent('2', '1');
+
+		await t.backend.deleteTask('1');
+
+		expect((await t.backend.get('2')).parentId).toBeUndefined();
+	});
+
+	it('the limit of 100 sub-issues counts a child attached a moment ago', async () => {
+		for (let i = 0; i < 100; i++) lagging.addIssue({ title: `Leaf ${i}` });
+		// Issues 1..3 exist; 4..103 are the leaves. 99 of them are already children of the parent (set by hand, before task runs).
+		for (let n = 4; n < 103; n++) lagging.setParent(n, 1);
+		const t = own();
+
+		await t.backend.setParent('103', '1');
+		const writesBefore = lagging.writes().length;
+		const error = await t.backend.setParent('2', '1').catch((caught: unknown) => caught);
+
+		expect(error).toBeInstanceOf(BackendLimitError);
+		expect((error as BackendLimitError).limitName).toBe('sub-issues per parent');
+		// Refused before any request: GitHub itself would also refuse, but the check must not depend on it.
+		expect(lagging.writes().length).toBe(writesBefore);
+	});
+
+	it('another process sees it too, and after the window the counts are trusted again (no extra request)', async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-github-lag-'));
+		try {
+			const disk = (): DiskResponseCache =>
+				new DiskResponseCache(
+					dir,
+					(file, content) => fs.writeFileSync(file, content),
+					() => undefined
+				);
+			const writer = own({ client: { cache: disk() } });
+			await writer.backend.setParent('2', '1');
+
+			const reader = own({ client: { cache: disk() } });
+			reader.clock.ms = writer.clock.ms + 1000;
+			expect(ids(await reader.backend.getChildren('1'))).toEqual(['2']);
+
+			reader.clock.ms = writer.clock.ms + 12_000;
+			lagging.requests.length = 0;
+			await reader.backend.getChildren('3');
+			expect(lagging.requests.map(request => request.path)).toEqual(['/repos/acme/shop/issues/3']);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe('the memory of recent sub-issue changes', () => {
+	it('is kept apart from the other kinds, in memory and on disk', () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-github-lag-'));
+		try {
+			for (const cache of [
+				new MemoryResponseCache(),
+				new DiskResponseCache(
+					dir,
+					(file, content) => fs.writeFileSync(file, content),
+					() => undefined
+				),
+			]) {
+				cache.remember('subIssues', 4, '2026-11-08T12:00:00.000Z');
+				cache.remember('dependencies', 5, '2026-11-08T12:00:00.000Z');
+
+				expect(cache.recent('subIssues', '2026-11-08T11:00:00.000Z')).toEqual([4]);
+				expect(cache.recent('dependencies', '2026-11-08T11:00:00.000Z')).toEqual([5]);
+			}
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true });
 		}

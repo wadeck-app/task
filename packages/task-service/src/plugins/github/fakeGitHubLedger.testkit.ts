@@ -502,7 +502,7 @@ export const MOCK_LEDGER: readonly LedgerEntry[] = [
 	unverifiable(
 		'sub-issues',
 		'sub_issues_summary and issue_dependencies_summary in the answers of the sub-issue and dependency routes are exact',
-		'they lag one to two seconds on GitHub (recorded: the steps that read them right after a change differ); the steps that carry them are compared without those two keys (ignoreKeys), and the fake can lag them on request (dependencySummaryLagReads)'
+		'they lag one to two seconds on GitHub (recorded: the steps that read them right after a change differ); the steps that carry them are compared without those two keys (ignoreKeys), and the fake can lag them on request (dependencySummaryLagReads, subIssueSummaryLagReads)'
 	),
 	// ---- dependencies
 	live(
@@ -678,5 +678,12 @@ export const MOCK_LEDGER: readonly LedgerEntry[] = [
 		'hooks',
 		'the methods a test calls to change state the way a person would (addIssue, updateIssue, addComment, setParent, addBlockedBy, deleteIssue, ...) and the fake clock (clockStepMs, 5 s by default)',
 		'they are not HTTP behaviour: they build the state the HTTP routes are then asked about; the instants GitHub gives have the resolution of a second, the fake moves 5 s per change so that two changes differ'
+	),
+	// ---- added with the sub-issue count lag (after the ledger was numbered: appended so that no id moves)
+	live(
+		'sub-issues',
+		'the sub_issues_summary of a parent lags a sub-issue change: the answer of the removal of a sub-issue still carries the counts of before it (total 2, completed 1 with one child left), while a read made 5 s after the previous change shows them settled; the /sub_issues list is exact at once, so the strategy reads it, not the count, for 10 s after it attached a sub-issue (fake: subIssueSummaryLagReads)',
+		'GET the parent after a child closed',
+		'DELETE sub-issue'
 	),
 ];

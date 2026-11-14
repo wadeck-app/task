@@ -85,6 +85,8 @@ export interface WriteHost {
 	readRecord(id: string): Promise<VersionedRecord>;
 	/** The issues on the other end of a relation list of this repository. */
 	related(path: string): Promise<ApiIssue[]>;
+	/** Whether the sub-issue list of the issue is worth reading: its count is above 0, or task attached a sub-issue to it a moment ago (the count lags). */
+	mayHaveChildren(issue: ApiIssue): boolean;
 }
 
 type LabelKind = 'status' | 'type' | 'meta' | 'user' | 'deleted';
@@ -590,7 +592,7 @@ export class GitHubWriter {
 		let parent: ApiIssue | undefined;
 		if (input.parentId !== undefined) {
 			parent = (await this.host.loadIssue(input.parentId, { revalidate: false })).issue;
-			if ((parent.sub_issues_summary?.total ?? 0) >= MAX_CHILDREN) throw this.childrenLimit(parent.number);
+			await this.requireRoomForChild(parent);
 		}
 		const text = input.description?.trim() ?? '';
 		const body = text === '' || text === input.title.trim() ? undefined : input.description!;
@@ -606,6 +608,7 @@ export class GitHubWriter {
 		const number = created.number;
 		// The issue list shows it seconds late: remember it for the reads of the list.
 		this.host.client.note('created', number);
+		if (parent !== undefined) this.noteSubIssues(parent.number);
 		const steps: Step[] = [];
 		// Measured: GitHub ignores state and state_reason in the body of a create, so a closed task is created, then closed.
 		if (rep.state === 'closed') {
@@ -898,6 +901,20 @@ export class GitHubWriter {
 		);
 	}
 
+	/** The count of GitHub lags a change: with a sub-issue attached a moment ago the list is the truth. */
+	private async requireRoomForChild(parent: ApiIssue): Promise<void> {
+		let count = parent.sub_issues_summary?.total ?? 0;
+		if (count < MAX_CHILDREN && this.host.mayHaveChildren(parent)) {
+			count = Math.max(count, (await this.host.related(this.path(parent.number, '/sub_issues'))).length);
+		}
+		if (count >= MAX_CHILDREN) throw this.childrenLimit(parent.number);
+	}
+
+	/** The sub-issue count of the parent will lag the change (measured: 1 to 2 s): the reads that follow read the list. */
+	private noteSubIssues(parent: number): void {
+		this.host.client.note('subIssues', parent);
+	}
+
 	async setParent(id: string, parentId: string, options?: WriteOptions): Promise<VersionedRecord> {
 		const { issue: child } = await this.prepare(id, options, ['parent']);
 		const parent = (await this.host.loadIssue(parentId, { revalidate: false })).issue;
@@ -918,7 +935,8 @@ export class GitHubWriter {
 			if (chain.length > MAX_DEPTH) break;
 			up = parentNumber((await this.host.loadIssue(String(up), { revalidate: false })).issue, this.map);
 		}
-		if ((parent.sub_issues_summary?.total ?? 0) >= MAX_CHILDREN) throw this.childrenLimit(parent.number);
+		await this.requireRoomForChild(parent);
+		this.noteSubIssues(parent.number);
 		await this.runSteps('setParent', child.number, [
 			{
 				description: `attached the issue to #${parent.number}`,
@@ -1339,8 +1357,9 @@ export class GitHubWriter {
 		const rep: StatusRepresentation = { state: 'closed', reason: 'not_planned', label: undefined };
 		await this.ensureLabel(TOMBSTONE_LABEL, 'deleted');
 		const steps: Step[] = [];
-		const children =
-			(issue.sub_issues_summary?.total ?? 0) > 0 ? await this.host.related(this.path(number, '/sub_issues')) : [];
+		const children = this.host.mayHaveChildren(issue)
+			? await this.host.related(this.path(number, '/sub_issues'))
+			: [];
 		for (const child of children) {
 			steps.push({
 				description: `detached the sub-issue #${child.number}`,
