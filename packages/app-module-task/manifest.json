@@ -1,5 +1,8 @@
 {
 	"id": "task",
+	"optionalRequires": {
+		"project": "*"
+	},
 	"dslLib": {
 		"shared": {
 			"react": "^19",
@@ -119,6 +122,21 @@
 		{
 			"kind": "page",
 			"slot": "route",
+			"label": "Board",
+			"path": "/tasks/p/:project/board",
+			"tab": {
+				"group": "project",
+				"label": "Board",
+				"order": 15
+			},
+			"view": {
+				"type": "path",
+				"value": "./src/dsl-views/board-page.yaml"
+			}
+		},
+		{
+			"kind": "page",
+			"slot": "route",
 			"label": "Task",
 			"path": "/tasks/p/:project/:id",
 			"view": {
@@ -180,6 +198,15 @@
 			"view": {
 				"type": "path",
 				"value": "./src/dsl-views/types-page.yaml"
+			}
+		},
+		{
+			"kind": "widget",
+			"slot": "project:project-panels",
+			"label": "Board",
+			"view": {
+				"type": "path",
+				"value": "./src/dsl-views/project-board-panel.yaml"
 			}
 		}
 	]

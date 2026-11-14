@@ -141,6 +141,7 @@ describe('manifest.json count (figures next to entries)', () => {
 		const tabs = manifest.extensionPoints.filter(point => point.tab?.group === 'project');
 		expect(tabs.map(point => `${point.tab?.label}:${point.tab?.count === undefined ? 'no' : 'count'}`)).toEqual([
 			'Tasks:count',
+			'Board:no',
 			'Tree:no',
 			'Types:count',
 		]);

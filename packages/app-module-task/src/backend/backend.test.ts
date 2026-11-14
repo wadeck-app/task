@@ -22,6 +22,8 @@ import { collectRoutes, setup, STATUSES_YML, writeLegacyTitleIn, type Answer, ty
 import { createTestWorld, type TestWorld } from './testHelpers.js';
 
 const EXPECTED_ROUTES = [
+	'GET /board/events',
+	'GET /tasks/board',
 	'GET /projects',
 	'GET /summary',
 	'GET /tasks/open/count',

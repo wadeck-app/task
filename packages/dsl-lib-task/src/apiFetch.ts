@@ -94,3 +94,54 @@ export async function getJson(
 		);
 	}
 }
+
+/**
+ * POST a JSON body to the module's API (`apiBase` + path, which the caller has already encoded). Resolves with the parsed
+ * answer, or undefined when the success answer has no body; rejects with the cancellation untouched (see `isAbort`), else
+ * with an `ApiProblem` carrying the route's message and hint.
+ */
+export async function postJson(
+	path: string,
+	query: Record<string, string | number | undefined>,
+	body: unknown,
+	options: GetJsonOptions = {}
+): Promise<unknown> {
+	const params = new URLSearchParams();
+	for (const [key, value] of Object.entries(query)) {
+		if (value !== undefined) {
+			params.set(key, String(value));
+		}
+	}
+	const search = params.toString();
+	const url = `${options.apiBase ?? getApiBase()}${path}${search ? `?${search}` : ''}`;
+	let response: Response;
+	try {
+		response = await fetch(url, {
+			method: 'POST',
+			signal: options.signal,
+			headers: { accept: 'application/json', 'content-type': 'application/json' },
+			body: JSON.stringify(body),
+		});
+	} catch (error) {
+		if (isAbort(error)) {
+			throw error;
+		}
+		throw new ApiProblem(
+			`Could not reach the task module (${error instanceof Error ? error.message : String(error)})`,
+			'Check that app-core is running, then reload the page.'
+		);
+	}
+	if (!response.ok) {
+		throw await failureOf(response);
+	}
+	const text = await response.text().catch(() => '');
+	if (text.trim() === '') {
+		return undefined;
+	}
+	try {
+		return JSON.parse(text) as unknown;
+	} catch {
+		// The change was accepted (2xx); only its answer is unreadable.
+		return undefined;
+	}
+}

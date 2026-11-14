@@ -8,5 +8,7 @@ import type { TaskModuleInstance } from './routes.js';
  * Lets the queue SDK finish the pushes it has in flight, so a mutation made just before is not lost with the process.
  */
 export default async function teardown(ctx: ModuleTeardownContext<TaskModuleInstance | undefined>): Promise<void> {
+	// The open board streams first: a client of a closed stream reconnects to the module that replaces this one.
+	ctx.instance?.closeStreams();
 	await ctx.instance?.flush();
 }

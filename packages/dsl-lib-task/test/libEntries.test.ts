@@ -20,6 +20,7 @@ const EXPECTED = [
 	'CommentThread',
 	'ControlButton',
 	'InlineText',
+	'KanbanBoard',
 	'KeyValueList',
 	'LabelChips',
 	'LabelCombobox',

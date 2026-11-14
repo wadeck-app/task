@@ -1,0 +1,86 @@
+# Kanban board of one project (route /tasks/p/:project/board, tab "Board" of the project group). The project is the path segment
+# `:project` ($route.project). There is no global board: a board is per project.
+# `task:KanbanBoard` draws the columns of the project config with the cards of the project. A card is moved (drag, or the
+# "Move to" menu of the card) with the action `moveCard`: the existing POST /tasks/:id/status, so events and `undeliveredText`
+# are those of every status change. The component also watches GET /board/events (Server-Sent Events: the shell has no push bus)
+# and re-reads the board (boardPath) when the version changes, so a change made from the CLI shows without a reload; without
+# the stream it polls. The source below gives the first paint and is reloaded by the action.
+# The variant switcher is shown only when the module runs with TASK_KANBAN_AB=1 (dev server): `abSwitcher` of the answer.
+# The `board` source is fed by `projectQuery`: the project, else `blank=true` (an empty answer that replaces the board of a
+# previous project instead of leaving it on screen), see tasks-page.yaml.
+# inlineErrors on every source: one failing source discards the answers of all the others (the page stays blank), so a
+# failure is answered as data (`errorText`) and shown by a badge.
+$sources:
+    projects:
+        url: GET /api/modules/task/projects
+        params:
+            project: $route.project
+    board:
+        url: GET /api/modules/task/tasks/board?{query}&inlineErrors=true
+        params:
+            query: $source.projects.projectQuery
+            reload: $urlParam.reload
+    # The contributions of other modules to the slot task:project-header (declared in manifest.json `expose`).
+    projectHeader:
+        url: GET /api/slots/task:project-header
+
+$actions:
+    moveCard:
+        url: POST /api/modules/task/tasks/{cardId}/status?project={projectParam}&inlineErrors=true
+        resultKey: boardResult
+        reloadSources: true
+
+$type: PageContent
+
+sections:
+    - $type: PageHeader
+      title: Board
+    # Extension point task:project-header (see tasks-page.yaml): empty slot draws nothing.
+    - $type: task:ChipRow
+      $if: $route.project
+      items:
+          - $type: ExtensionSlot
+            $if: $sources.projectHeader
+            items: $sources.projectHeader
+    # Nothing registered yet: the welcome text of the route (the exact next step) instead of a blank page.
+    - $type: Badge
+      $if: $sources.projects.noProjects
+      label: $sources.projects.noProjectsText
+      variant: info
+    # The selected project cannot be read (invalid config, broken parent chain...): the reason and the fix, not a blank page.
+    - $type: Badge
+      $if: $sources.projects.selectedProblem
+      label: $sources.projects.selectedProblem
+      variant: danger
+    # The address names a project the registry does not know: said, with the next step, not a blank page.
+    - $type: Badge
+      $if: $sources.projects.unknownProjectText
+      label: $sources.projects.unknownProjectText
+      variant: danger
+    - $type: Badge
+      $if: $sources.board.errorText
+      label: $sources.board.errorText
+      variant: danger
+    # Tasks in a status the config does not list: they are not on the board, and this says which and how to fix it.
+    - $type: task:Notice
+      $if: $sources.board.warning
+      label: $sources.board.warning
+      variant: warning
+    # The answer of a move: the failure with its fix, and the queue events that were not delivered.
+    - $type: task:Notice
+      $if: $ctx.boardResult.errorText
+      label: $ctx.boardResult.errorText
+      variant: danger
+    - $type: task:Notice
+      $if: $ctx.boardResult.undeliveredText
+      label: $ctx.boardResult.undeliveredText
+      variant: warning
+    - $type: task:KanbanBoard
+      $if: $sources.board.columns
+      columns: $sources.board.columns
+      version: $sources.board.version
+      projectParam: $sources.board.projectParam
+      moveAction: moveCard
+      variantSwitcher: $sources.board.abSwitcher
+      defaultVariant: columns
+      emptyText: $sources.board.emptyText

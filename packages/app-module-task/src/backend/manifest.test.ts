@@ -50,11 +50,13 @@ describe('manifest.json (source manifest of the app-core-cli layout)', () => {
 			'page:route:/tasks/new',
 			'page:route:/tasks/delete',
 			'page:route:/tasks/p/:project',
+			'page:route:/tasks/p/:project/board',
 			'page:route:/tasks/p/:project/:id',
 			'page:route:/tasks/p/:project/new',
 			'page:route:/tasks/p/:project/delete',
 			'page:route:/tree/p/:project',
 			'page:route:/types/p/:project',
+			'widget:project:project-panels:',
 		]);
 	});
 
@@ -229,7 +231,9 @@ describe('task detail page (src/dsl-views/task-page.yaml)', () => {
 
 /** The views as text: structure checks that catch what the renderer would only show as a blank page. */
 const viewsDir = join(packageDir, 'src/dsl-views');
-const viewNames = readdirSync(viewsDir).filter(name => name.endsWith('.yaml'));
+// A contribution to another module's slot is not a page: it has no sources, no actions and no welcome text of its own (see its own tests below).
+const CONTRIBUTION_VIEWS = ['project-board-panel.yaml'];
+const viewNames = readdirSync(viewsDir).filter(name => name.endsWith('.yaml') && !CONTRIBUTION_VIEWS.includes(name));
 const view = (name: string): string => readFileSync(join(viewsDir, name), 'utf8');
 /** The source of the extension point `task:project-header` (app-core's endpoint, not a route of this module). */
 const SLOT_URL = '/api/slots/task:project-header';
@@ -857,6 +861,7 @@ describe('views: a failing source blanks the whole page', () => {
 	it.each([
 		['tasks-page.yaml', 'tasks'],
 		['tree-page.yaml', 'tree'],
+		['board-page.yaml', 'board'],
 		['types-page.yaml', 'types'],
 		['new-task-page.yaml', 'tasks'],
 		['task-page.yaml', 'detail'],
@@ -961,6 +966,7 @@ describe('views: no link whose purpose is going back (the breadcrumb carries the
 		// History is the Activity block of the page, Children is the checklist, Delete is the dialog of the "Actions" menu. The
 		// one link left goes to the parent (a task has no ancestors in the crumb), from inside the Parent picker.
 		'task-page.yaml': [{ label: 'Open parent', to: '$sources.detail.parentRow.href' }],
+		'board-page.yaml': [],
 		'tasks-page.yaml': [
 			{ label: 'New task', to: '$sources.tasks.hrefs.newTask' },
 			{ label: '$sources.tasks.showAllToggle.label', to: '$sources.tasks.showAllToggle.href' },
@@ -1013,7 +1019,7 @@ describe('manifest: tabs of a page', () => {
 
 	// The Activity block (All / Comments / History) lives in the task page: a "task" group with a History page would repeat it,
 	// and a group needs at least two pages anyway.
-	it('has exactly one group: project (Tasks, Tree, Types); the task page and its removed History page are in none', () => {
+	it('has exactly one group: project (Tasks, Board, Tree, Types); the task page and its removed History page are in none', () => {
 		const summary = (group: string): Array<[string | undefined, string, number | undefined]> =>
 			tabbed.filter(p => p.tab!.group === group).map(p => [p.path, p.tab!.label, p.tab!.order]);
 		expect(groups.sort()).toEqual(['project']);
@@ -1021,6 +1027,7 @@ describe('manifest: tabs of a page', () => {
 		expect(pages.find(p => p.path === '/tasks/p/:project/:id/history')).toBeUndefined();
 		expect(summary('project')).toEqual([
 			['/tasks/p/:project', 'Tasks', 10],
+			['/tasks/p/:project/board', 'Board', 15],
 			['/tree/p/:project', 'Tree', 20],
 			['/types/p/:project', 'Types', 30],
 		]);
@@ -1131,6 +1138,7 @@ describe('views: every mutating action that produces queue events shows what the
 
 	it('finds the mutating actions of the task, create and delete pages', () => {
 		expect(mutating.map(action => `${action.page}:${action.name}`).sort()).toEqual([
+			'board-page.yaml:moveCard',
 			'delete-page.yaml:deleteTasks',
 			'new-task-page.yaml:createTask',
 			'task-page.yaml:addComment',
@@ -1205,7 +1213,7 @@ describe('extension point task:project-header', () => {
 	});
 
 	// The pages whose address names the project ($route.project) and that keep the slot: the list and the tree.
-	it.each(['tasks-page.yaml', 'tree-page.yaml'])(
+	it.each(['tasks-page.yaml', 'tree-page.yaml', 'board-page.yaml'])(
 		'%s embeds the slot once, from the app-core endpoint, only when the address names a project',
 		name => {
 			const text = view(name);
@@ -1226,6 +1234,84 @@ describe('extension point task:project-header', () => {
 			.filter(p => p.path?.includes(':project') === true)
 			.filter(p => view(p.view.value.replace('./src/dsl-views/', '')).includes('/api/slots/task:project-header'))
 			.map(p => p.path);
-		expect(owners).toEqual(['/tasks/p/:project', '/tree/p/:project']);
+		expect(owners).toEqual(['/tasks/p/:project', '/tasks/p/:project/board', '/tree/p/:project']);
+	});
+});
+
+// The Kanban board: a page of the project group and a panel contributed to the project module (optional dependency).
+describe('board: page and project-module contribution', () => {
+	const m = manifest as unknown as {
+		optionalRequires?: Record<string, string>;
+		requires?: Record<string, string>;
+		extensionPoints: Array<{ kind: string; slot: string; label?: string; path?: string; view: { value: string } }>;
+	};
+
+	it('lists the project module as an OPTIONAL requirement (the module loads without it), never a hard one', () => {
+		expect(m.optionalRequires).toEqual({ project: '*' });
+		expect(m.requires).toBeUndefined();
+	});
+
+	it('contributes one widget to project:project-panels, a view whose root is a Section (the type the slot accepts)', () => {
+		const contributions = m.extensionPoints.filter(p => p.slot === 'project:project-panels');
+		expect(contributions).toHaveLength(1);
+		expect(contributions[0]).toMatchObject({
+			kind: 'widget',
+			view: { value: './src/dsl-views/project-board-panel.yaml' },
+		});
+		const root = load(readFileSync(join(viewsDir, 'project-board-panel.yaml'), 'utf8')) as {
+			$type: string;
+			title: string;
+			items: Array<Record<string, unknown>>;
+		};
+		expect(root.$type).toBe('Section');
+		expect(root.title).toBe('Board');
+		expect(root.items).toHaveLength(1);
+	});
+
+	it('the contribution declares no $sources or $actions (ignored there) and scopes the component by the host $route.project', () => {
+		const text = readFileSync(join(viewsDir, 'project-board-panel.yaml'), 'utf8');
+		expect(text).not.toMatch(/^\$(sources|actions):/m);
+		const board = (load(text) as { items: Array<Record<string, string>> }).items[0]!;
+		expect(board).toMatchObject({
+			$type: 'task:KanbanBoard',
+			projectParam: '$route.project',
+		});
+		// No moveAction: the host page has no such action, the component posts movePath itself.
+		expect(board).not.toHaveProperty('moveAction');
+	});
+
+	it('the board page binds the component to the board source and to the moveCard action (the status route)', () => {
+		const page = readFileSync(join(viewsDir, 'board-page.yaml'), 'utf8');
+		const tree = load(page) as {
+			$sources: Record<string, { url: string; params: Record<string, string> }>;
+			$actions: Record<string, { url: string; resultKey: string }>;
+			sections: Array<Record<string, unknown>>;
+		};
+		expect(tree.$sources['board']!.url).toBe('GET /api/modules/task/tasks/board?{query}&inlineErrors=true');
+		// Never an empty query: the project, else blank=true (see tasks-page.yaml).
+		expect(tree.$sources['board']!.params['query']).toBe('$source.projects.projectQuery');
+		expect(tree.$actions['moveCard']).toEqual({
+			url: 'POST /api/modules/task/tasks/{cardId}/status?project={projectParam}&inlineErrors=true',
+			resultKey: 'boardResult',
+			reloadSources: true,
+		});
+		const component = tree.sections.find(section => section['$type'] === 'task:KanbanBoard')!;
+		expect(component).toMatchObject({
+			columns: '$sources.board.columns',
+			version: '$sources.board.version',
+			projectParam: '$sources.board.projectParam',
+			moveAction: 'moveCard',
+			variantSwitcher: '$sources.board.abSwitcher',
+			defaultVariant: 'columns',
+		});
+		// The component waits for data: with the blank answer there is no `columns`.
+		expect(component['$if']).toBe('$sources.board.columns');
+	});
+
+	it('the board page shows the failure of a move and the unread status warning as notices', () => {
+		const page = readFileSync(join(viewsDir, 'board-page.yaml'), 'utf8');
+		for (const bound of ['$ctx.boardResult.undeliveredText', '$sources.board.warning']) {
+			expect(page).toContain(`label: ${bound}`);
+		}
 	});
 });

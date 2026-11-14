@@ -221,6 +221,8 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 		fsAllowlist: {
 			why: FS_WHY,
 			files: {
+				'packages/app-module-task/src/backend/boardEvents.ts':
+					'the board stream stats the task index of a local project (mtime and size) to see a change made by another process; no content is read',
 				'packages/app-module-task/src/backend/lastProject.ts': 'the last created-in project file of the module',
 				'packages/app-module-task/src/backend/projects.ts': 'existence of the registered folders',
 				'packages/app-module-task/src/backend/routeHarness.ts': 'the route test harness',

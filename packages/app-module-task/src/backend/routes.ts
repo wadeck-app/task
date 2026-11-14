@@ -2,6 +2,8 @@ import type { ModuleContext } from '@wadeck-app/app-core-sdk';
 import { createQueueEventSink, getTaskConfigDir, getTaskLogDir } from '@wadeck-app/task-service';
 import type { EventSink } from '@wadeck-app/task-service';
 
+import { createBoardHub, registerBoardEventRoutes } from './boardEvents.js';
+import { registerBoardRoutes } from './routes/boardRoutes.js';
 import { registerFieldRoutes } from './routes/fieldRoutes.js';
 import { registerFigureRoutes } from './routes/figureRoutes.js';
 import { registerCommentRoutes } from './routes/commentRoutes.js';
@@ -19,6 +21,8 @@ export type { TaskRoutesOptions } from './routes/routeKit.js';
 export interface TaskModuleInstance {
 	/** Waits for the queue pushes still in flight. */
 	flush(): Promise<void>;
+	/** Ends every open board event stream (and its timer); the teardown calls it before the module goes. */
+	closeStreams(): void;
 }
 
 /**
@@ -43,8 +47,12 @@ export function registerTaskRoutes(ctx: ModuleContext, options: TaskRoutesOption
 	// queue that is slow or absent, and the module must load whatever happens (declareEvents never throws and reports
 	// its outcome in the task log; the teardown's flush() waits for it).
 	void queueSink?.declareEvents();
-	const kit = createRouteKit(ctx, { logDir, writeStderr, eventSink });
+	// The open board streams: a write of this process notifies them, the teardown closes them.
+	const boardHub = createBoardHub();
+	const kit = createRouteKit(ctx, { logDir, writeStderr, eventSink, onChange: () => boardHub.notify() });
 	registerProjectRoutes(kit);
+	registerBoardRoutes(kit);
+	registerBoardEventRoutes(kit, ctx, boardHub, text => writeStderr(`warning: ${text}`));
 	registerFigureRoutes(kit);
 	registerRelatedRoutes(kit);
 	registerTaskReadRoutes(kit);
@@ -53,5 +61,5 @@ export function registerTaskRoutes(ctx: ModuleContext, options: TaskRoutesOption
 	registerFieldRoutes(kit);
 	registerTypeRoutes(kit);
 	registerDeleteRoutes(kit);
-	return { flush: () => eventSink.flush?.() ?? Promise.resolve() };
+	return { flush: () => eventSink.flush?.() ?? Promise.resolve(), closeStreams: () => boardHub.closeAll() };
 }
