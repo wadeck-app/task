@@ -98,7 +98,7 @@ describe('publish workflow', () => {
 		const step = (build.steps ?? []).find(s => s.run?.includes('generate-platform-packages.sh'));
 		expect(step, 'generate step').toBeDefined();
 		expect(step?.env?.PLATFORMS).toBe(PLATFORMS);
-		// A prerelease build version does not satisfy the generator's default ">=0.0.0-0" range: without the pin npm installs no platform package.
+		// Without the pin the generator's range is "latest", which may resolve to another build than the dist package.
 		expect(step?.env?.PKG_VERSION).toBe('${{ steps.version.outputs.version }}');
 		expect(step?.run).toContain('generate-platform-packages.sh task:app-module/');
 	});

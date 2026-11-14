@@ -78,8 +78,8 @@ npm install -g --prefix "$PREFIX" --omit=optional --no-audit --no-fund "$TGZ"/wa
 BIN="$PREFIX/bin/$CLI"
 [ -e "$BIN" ] || { echo "smoke-packed: $BIN was not created by the install" >&2; exit 1; }
 # task-specific (not in the ci-templates copy): --omit=optional above hides a dependency problem a real install has. A
-# prerelease version (edge builds YYYY.MM.DD-NNN-sha8) does not satisfy a range such as ">=0.0.0-0", so npm would install
-# NO platform package: every optionalDependency of the dist package must be pinned to the exact build version.
+# range such as "latest" may resolve to another build than this dist package: every optionalDependency of the dist
+# package must be pinned to the exact build version.
 DIST_JSON="$PREFIX/lib/node_modules/@wadeck-app/${CLI}-cli/package.json"
 [ -f "$DIST_JSON" ] || { echo "smoke-packed: $DIST_JSON not found" >&2; exit 1; }
 if ! grep -q "\"@wadeck-app/${CLI}-cli-$PLATFORM\": \"$VERSION\"" "$DIST_JSON"; then
