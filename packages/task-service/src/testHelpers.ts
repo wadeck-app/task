@@ -22,8 +22,6 @@ const DEFAULT_TEST_CONFIG: TaskResolvedConfig = {
 	negativeStatuses: [],
 	types: [],
 	defaults: { priority: 'medium' },
-	globalHooks: {},
-	projectHooks: {},
 };
 
 /** Builds a context over a disposable `<tmp>/data/tasks` store (index lives next to it, inside the tmp root): a plain folder standing in for a registry data dir. */

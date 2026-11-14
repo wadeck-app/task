@@ -125,6 +125,7 @@ export type { CapabilityRow, FillRow, StrategyReport, StrategyTarget, TokenRow }
 export { showStrategy } from './strategyReport.js';
 export type { CheckLine, ReadNotice } from './plugins/kinds.js';
 export { StrategyConfigError } from './strategyConfig.js';
+export { RemovedConfigKeyError, HOOKS_REMOVED_HINT } from './removedConfigKey.js';
 // task migrate (design 1.8): the engine over any two backends, and the entry over two registered projects.
 export type { MigrateProjectsInput } from './migrate/migrateProjects.js';
 export { migrateProjects } from './migrate/migrateProjects.js';

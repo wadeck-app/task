@@ -11,9 +11,10 @@ Concepts:
   link        Typed, directional, acyclic relation between two tasks: blockedBy, duplicateOf, causedBy (inverses blocks, duplicates, causes are derived)
   project     A project of the shared project registry (managed by the 'project' CLI): id (8 hex), name, aliases, paths. Selected with -p, TASK_PROJECT or the cwd.
               Its tasks live in the registry (<registry>/projects/<id>/task/data), not in the project folder; a project may have no folder (virtual)
-  config      Project config: <registry>/projects/<id>/task/config/config.yml, merged along the parent chain of the project (statuses, types, fields, hooks,
-              strategy: the project's own; defaults: inherited). Defines valid statuses (default: backlog, in-progress, done). An unknown key is an error naming the file.
-              The global config (~/.task/config.yml: defaults, hooks) stays task's own file
+  config      Project config: <registry>/projects/<id>/task/config/config.yml, merged along the parent chain of the project (statuses, types, fields,
+              strategy: the project's own; defaults: inherited). Defines valid statuses (default: backlog, in-progress, done). An unknown key is an error naming the file
+              ('hooks' too: task runs no commands from the config, react to task events with queue subscribers: <project>/.queue/subscribers.yml).
+              The global config (~/.task/config.yml: defaults) stays task's own file
   strategy    Where the tasks of a project are stored: the 'strategy' section of the project config ({type, fidelity, options}). Without it the project uses
               the local files of the registry (type: local), silently. type: github keeps the tasks as the issues of a GitHub repository, read and written through
               the official REST API; type: gitlab keeps them as the issues of a GitLab project (REST API v4, Free tier; verified live on gitlab.com Free only); type: remote keeps

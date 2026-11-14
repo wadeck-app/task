@@ -3,7 +3,7 @@ import * as path from 'node:path';
 
 import { createLocalBackend } from '@wadeck-app/task-core';
 
-import { RequestError } from './errors.js';
+import { RequestError, toHttpError } from './errors.js';
 import { listProjects, openProject, readProjects } from './projects.js';
 import { createTestWorld, type TestWorld } from './testHelpers.js';
 
@@ -98,6 +98,20 @@ describe('openProject', () => {
 		expect(error.hint).toContain('id, name or alias');
 		expect(error.hint).not.toContain('slug');
 		expect(error.hint).not.toContain('no longer accepted');
+	});
+
+	it('400 for a project whose config.yml still has hooks: the file and key in the message, the fix in the hint', async () => {
+		const id = await world.createProject('alpha', { configYml: 'hooks:\n  onTaskCreated: echo hi\n' });
+		let thrown: unknown;
+		try {
+			openProject(id);
+		} catch (error) {
+			thrown = error;
+		}
+		const answer = toHttpError(thrown);
+		expect(answer.status).toBe(400);
+		expect(answer.body['error']).toContain('config.yml: hooks: not supported');
+		expect(answer.body['hint']).toContain('.queue/subscribers.yml');
 	});
 
 	it('a registered project with no data yet opens an empty store: its data is in the registry', async () => {

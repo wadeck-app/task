@@ -3,9 +3,6 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-// Task hook value: simple string "command arg1 arg2" or object for advanced options.
-export type TaskHookValue = string | { command: string; debug?: boolean };
-
 /**
  * A status entry in a project config.yml: either a bare name, or an object carrying
  * `terminal` (hidden from `task list` by default, e.g. "done") and/or `default`
@@ -36,7 +33,6 @@ export interface TaskGlobalConfig {
 	defaults?: {
 		priority?: string;
 	};
-	hooks?: Record<string, TaskHookValue>;
 }
 
 export interface TaskProjectConfig {
@@ -46,7 +42,6 @@ export interface TaskProjectConfig {
 	defaults?: {
 		priority?: string;
 	};
-	hooks?: Record<string, TaskHookValue>;
 }
 
 export interface TaskResolvedConfig {
@@ -62,8 +57,6 @@ export interface TaskResolvedConfig {
 	defaults: {
 		priority: string;
 	};
-	globalHooks: Record<string, TaskHookValue>;
-	projectHooks: Record<string, TaskHookValue>;
 }
 
 const DEFAULT_STATUSES: TaskStatusEntry[] = ['backlog', 'in-progress', 'done'];
@@ -158,7 +151,7 @@ export class TaskConfigLoader {
 		return loadYamlFile<T>(filePath);
 	}
 
-	/** The global config (`config.yml` of the global config dir): defaults and hooks; empty when absent. */
+	/** The global config (`config.yml` of the global config dir): defaults; empty when absent. A `hooks` key is refused by task-service (`RemovedConfigKeyError`), which reads this file for every project. */
 	static loadGlobal(configDirOverride?: string): TaskGlobalConfig {
 		const dir = TaskConfigLoader.resolveGlobalConfigDir(configDirOverride);
 		return loadYamlFile<TaskGlobalConfig>(path.join(dir, 'config.yml')) ?? {};
@@ -189,12 +182,10 @@ export class TaskConfigLoader {
 			defaults: {
 				priority: projectConfig.defaults?.priority ?? globalConfig.defaults?.priority ?? DEFAULT_PRIORITY,
 			},
-			globalHooks: globalConfig.hooks ?? {},
-			projectHooks: projectConfig.hooks ?? {},
 		};
 	}
 
-	/** The global config alone (the default statuses, the global defaults and hooks): the project part comes from {@link TaskConfigLoader.resolve}. */
+	/** The global config alone (the default statuses and the global defaults): the project part comes from {@link TaskConfigLoader.resolve}. */
 	static load(options?: { configDir?: string }): TaskResolvedConfig {
 		return TaskConfigLoader.resolve({
 			global: TaskConfigLoader.loadGlobal(options?.configDir),

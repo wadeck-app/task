@@ -22,6 +22,7 @@ import {
 import { describeError, isRemoteFailure } from './describeError.js';
 import { PluginCreateError } from './plugin-host/index.js';
 import { PluginNotImplementedError } from './plugins/kinds.js';
+import { HOOKS_REMOVED_HINT, RemovedConfigKeyError } from './removedConfigKey.js';
 import { StrategyConfigError } from './strategyConfig.js';
 import {
 	AmbiguousDeletePrefixError,
@@ -119,6 +120,19 @@ describe('describeError: the shared registry', () => {
 		expect(description.kind).toBe('invalid');
 		expect(description.message).toContain('/cfg/config.yml');
 		expect(description.hint).toContain('config.yml');
+	});
+});
+
+describe('describeError: a removed config key', () => {
+	it('hooks is "invalid", names the file and the key, and the hint points to queue subscribers', () => {
+		const description = describeError(
+			new RemovedConfigKeyError('/cfg/config.yml', 'hooks', 'not supported', HOOKS_REMOVED_HINT)
+		);
+
+		expect(description.kind).toBe('invalid');
+		expect(description.message).toBe('/cfg/config.yml: hooks: not supported');
+		expect(description.hint).toContain('queue subscribers');
+		expect(description.hint).toContain('.queue/subscribers.yml');
 	});
 });
 

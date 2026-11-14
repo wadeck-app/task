@@ -130,11 +130,21 @@ export const githubPlugin: StrategyPlugin = {
 			notices.push(next);
 		};
 		const cacheDir = path.join(context.dataDir, 'cache', 'github');
-		const cache = new DiskResponseCache(cacheDir, context.writeFile, (error, file) =>
-			context.log(
-				'warn',
-				`github cache: ${file} could not be written (${error instanceof Error ? error.message : String(error)})`
-			)
+		const cache = new DiskResponseCache(
+			cacheDir,
+			context.writeFile,
+			(error, file) =>
+				context.log(
+					'warn',
+					`github cache: ${file} could not be written (${error instanceof Error ? error.message : String(error)})`
+				),
+			{
+				onPurgeError: (error, file) =>
+					context.log(
+						'warn',
+						`github cache: ${file} could not be purged (entries older than 30 days are deleted at the first access; ${error instanceof Error ? error.message : String(error)}). Delete it by hand if this keeps happening.`
+					),
+			}
 		);
 		const debug = context.env['TASK_DEBUG'] === '1';
 		const client = new GitHubClient({

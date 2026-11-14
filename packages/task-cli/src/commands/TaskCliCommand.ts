@@ -1,5 +1,5 @@
 // task cli <subcommand> -- meta-commands for managing the task CLI itself.
-import { ConfigDir, HookDispatcher, runSelfCheck } from '@wadeck-app/shared-cli';
+import { ConfigDir, runSelfCheck } from '@wadeck-app/shared-cli';
 import { readChannelFromConfig } from '@wadeck-app/shared-cli/ChannelConfig';
 import {
 	cliLogsCommand,
@@ -236,17 +236,7 @@ export async function runTaskCliSelfCheck(): Promise<void> {
 				}
 			}
 		},
-		// Check 5: HookDispatcher -- instantiate with empty config and dispatch a no-op event
-		async () => {
-			try {
-				const dispatcher = new HookDispatcher({});
-				await dispatcher.dispatch('onTaskCreated', { taskId: 'test' }, () => {});
-				return { name: 'HookDispatcher', ok: true };
-			} catch (err) {
-				return { name: 'HookDispatcher', ok: false, detail: String(err) };
-			}
-		},
-		// Check 6: Task config schema -- verify default statuses and priority are present
+		// Check 5: Task config schema -- verify default statuses and priority are present
 		async () => {
 			try {
 				const config = TaskConfigLoader.load({ configDir: os.tmpdir() });

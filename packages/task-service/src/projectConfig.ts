@@ -8,6 +8,7 @@ import type { TaskProjectConfig, TaskResolvedConfig } from '@wadeck-app/task-cor
 
 import { createBuiltinRegistry } from './plugins/builtinPlugins.js';
 import type { ProjectFacts, TaskPluginRegistry } from './plugins/kinds.js';
+import { assertNoHooks } from './removedConfigKey.js';
 import { parseStrategySection, StrategyConfigError } from './strategyConfig.js';
 import type { StrategySection } from './strategyConfig.js';
 import { resolveStrategy } from './strategyResolve.js';
@@ -16,16 +17,16 @@ import { ownConfigFile } from './storage.js';
 import type { TaskStorage } from './storage.js';
 
 /**
- * Which keys of a `config.yml` mean what in a project chain. `statuses`, `types`, `fields` and `hooks` belong to the project
+ * Which keys of a `config.yml` mean what in a project chain. `statuses`, `types`, `fields` and `strategy` belong to the project
  * alone (a parent's values are valid there and never reach the child); `defaults` is inherited, the child's keys win.
- * The task GLOBAL config (`~/.task/config.yml`: defaults and hooks) is task's own file, merged separately, as before.
+ * The task GLOBAL config (`~/.task/config.yml`: defaults) is task's own file, merged separately, as before.
+ * `hooks` is no longer a key: it is a `RemovedConfigKeyError` in the global file and in every layer.
  */
 export const TASK_CONFIG_SCHEMA: ConfigSchema = {
 	sections: {
 		statuses: { scope: 'local' },
 		types: { scope: 'local' },
 		fields: { scope: 'local' },
-		hooks: { scope: 'local' },
 		strategy: { scope: 'local' },
 		defaults: { scope: 'inherit', merge: 'deep' },
 	},
@@ -48,14 +49,16 @@ function checkStatusOutcomes(layer: NamedLayer): void {
 	}
 }
 
-/** The global config may not hold a strategy: a repo or a server belongs to one project. Names the global file. */
-function checkGlobalHasNoStrategy(globalConfigDir: string | undefined): void {
+/** The global config may not hold a strategy (a repo or a server belongs to one project) nor hooks. Names the global file. */
+function checkGlobalConfig(globalConfigDir: string | undefined): void {
 	const global = TaskConfigLoader.loadGlobal(globalConfigDir) as Record<string, unknown>;
+	const file = path.join(TaskConfigLoader.resolveGlobalConfigDir(globalConfigDir), 'config.yml');
+	assertNoHooks(file, global);
 	if (global['strategy'] !== undefined) {
 		throw new StrategyConfigError(
-			path.join(TaskConfigLoader.resolveGlobalConfigDir(globalConfigDir), 'config.yml'),
+			file,
 			'strategy',
-			'not allowed in the global config (it holds defaults and hooks only)',
+			'not allowed in the global config (it holds defaults only)',
 			'A strategy belongs to one project: write it in the config.yml of the project (the registry folder of the project, task/config/config.yml), and remove it here.'
 		);
 	}
@@ -71,12 +74,14 @@ function readSetup(
 		values: TaskConfigLoader.readConfigFile(file) ?? {},
 	}));
 	for (const layer of layers) {
+		// Before the schema check: its generic "unknown key" message would not say what replaces hooks.
+		assertNoHooks(layer.name, layer.values);
 		validateLayer(TASK_CONFIG_SCHEMA, layer.name, layer.values, 'project');
 		checkStatusOutcomes(layer);
 		// Every layer is checked for structure (a parent's section is valid in its own file); only the own layer is resolved.
 		parseStrategySection(layer.name, layer.values['strategy']);
 	}
-	checkGlobalHasNoStrategy(globalConfigDir);
+	checkGlobalConfig(globalConfigDir);
 	const merged = mergeLayers(TASK_CONFIG_SCHEMA, layers);
 	const config = TaskConfigLoader.resolve({
 		global: TaskConfigLoader.loadGlobal(globalConfigDir),

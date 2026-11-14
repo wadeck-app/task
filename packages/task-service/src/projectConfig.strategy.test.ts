@@ -179,7 +179,7 @@ describe('the global config', () => {
 
 		expect(failure).toBeInstanceOf(StrategyConfigError);
 		expect((failure as StrategyConfigError).message).toBe(
-			`${globalFile}: strategy: not allowed in the global config (it holds defaults and hooks only)`
+			`${globalFile}: strategy: not allowed in the global config (it holds defaults only)`
 		);
 		expect((failure as StrategyConfigError).hint).toMatch(/config\.yml of the project/);
 	});

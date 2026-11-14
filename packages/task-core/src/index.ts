@@ -1,7 +1,6 @@
 // Public barrel for @wadeck-app/task-core.
 // Exposes the symbols consumed across the package boundary by task-cli.
 export type {
-	TaskHookValue,
 	TaskStatusEntry,
 	TaskGlobalConfig,
 	TaskProjectConfig,

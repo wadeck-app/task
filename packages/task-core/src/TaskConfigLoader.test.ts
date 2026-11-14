@@ -51,18 +51,15 @@ describe('TaskConfigLoader', () => {
 	});
 
 	describe('TaskConfigLoader.load()', () => {
-		it('is the global config alone: the default statuses, the global defaults and hooks, no project file', () => {
-			fs.writeFileSync(
-				path.join(tmpDir, 'config.yml'),
-				'defaults:\n  priority: high\nhooks:\n  onTaskCreated: echo global\n'
-			);
+		it('is the global config alone: the default statuses and the global defaults, no project file', () => {
+			fs.writeFileSync(path.join(tmpDir, 'config.yml'), 'defaults:\n  priority: high\n');
 
 			const config = TaskConfigLoader.load({ configDir: tmpDir });
 
 			expect(config.statuses).toEqual(['backlog', 'in-progress', 'done']);
 			expect(config.defaults.priority).toBe('high');
-			expect(config.globalHooks['onTaskCreated']).toBe('echo global');
-			expect(config.projectHooks).toEqual({});
+			expect(Object.keys(config)).not.toContain('globalHooks');
+			expect(Object.keys(config)).not.toContain('projectHooks');
 		});
 	});
 
@@ -80,8 +77,6 @@ describe('TaskConfigLoader', () => {
 			expect(config.defaultStatus).toBe('backlog');
 			expect(config.terminalStatuses).toEqual([]);
 			expect(config.defaults.priority).toBe('medium');
-			expect(config.globalHooks).toEqual({});
-			expect(config.projectHooks).toEqual({});
 		});
 
 		it('loads global defaults', () => {
@@ -144,22 +139,6 @@ describe('TaskConfigLoader', () => {
 				/Multiple statuses marked "default: true"/
 			);
 		});
-
-		it('loads global hooks', () => {
-			fs.writeFileSync(path.join(tmpDir, 'config.yml'), 'hooks:\n  onTaskCreated: echo created\n');
-			const config = loadWithProject(tmpDir, path.join(tmpDir, 'project', 'config.yml'));
-			expect(config.globalHooks['onTaskCreated']).toBe('echo created');
-		});
-
-		it('keeps global and project hooks separate', () => {
-			fs.writeFileSync(path.join(tmpDir, 'config.yml'), 'hooks:\n  onTaskCreated: echo global\n');
-			fs.mkdirSync(path.join(tmpDir, 'project'), { recursive: true });
-			fs.writeFileSync(path.join(tmpDir, 'project', 'config.yml'), 'hooks:\n  onStatusChange: node notify.js\n');
-			const config = loadWithProject(tmpDir, path.join(tmpDir, 'project', 'config.yml'));
-			expect(config.globalHooks['onTaskCreated']).toBe('echo global');
-			expect(config.projectHooks['onStatusChange']).toBe('node notify.js');
-			expect(config.globalHooks['onStatusChange']).toBeUndefined();
-		});
 	});
 
 	describe('readConfigFile()', () => {
@@ -188,13 +167,12 @@ describe('TaskConfigLoader', () => {
 	});
 
 	describe('resolve()', () => {
-		it('builds the resolved config from already merged parts, global hooks and project hooks apart', () => {
+		it('builds the resolved config from already merged parts', () => {
 			const config = TaskConfigLoader.resolve({
-				global: { defaults: { priority: 'low' }, hooks: { onTaskCreated: 'echo g' } },
+				global: { defaults: { priority: 'low' } },
 				project: {
 					statuses: ['todo', { name: 'done', terminal: true }],
 					types: ['bug'],
-					hooks: { onStatusChange: 'p' },
 				},
 				source: '/x/config.yml',
 			});
@@ -202,8 +180,6 @@ describe('TaskConfigLoader', () => {
 			expect(config.terminalStatuses).toEqual(['done']);
 			expect(config.types).toEqual(['bug']);
 			expect(config.defaults.priority).toBe('low');
-			expect(config.globalHooks).toEqual({ onTaskCreated: 'echo g' });
-			expect(config.projectHooks).toEqual({ onStatusChange: 'p' });
 		});
 
 		it('a terminal status is positive unless it says outcome: negative', () => {

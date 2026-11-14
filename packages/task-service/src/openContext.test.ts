@@ -85,14 +85,20 @@ describe('openTaskContext', () => {
 		expect(fs.readdirSync(path.join(projectDir, 'data', 'tasks')).some(file => file.includes(task.id))).toBe(true);
 	});
 
-	it('reads the global hooks from the given global config dir', () => {
+	it('reads the global defaults from the given global config dir', () => {
+		const projectDir = initProject('statuses:\n  - todo\n');
+		const globalDir = path.join(root, 'global');
+		fs.mkdirSync(globalDir);
+		fs.writeFileSync(path.join(globalDir, 'config.yml'), 'defaults:\n  priority: high\n', 'utf8');
+		expect(open(projectDir, globalDir).config.defaults.priority).toBe('high');
+	});
+
+	it('refuses a hooks key in the global config dir, naming the file', () => {
 		const projectDir = initProject('statuses:\n  - todo\n');
 		const globalDir = path.join(root, 'global');
 		fs.mkdirSync(globalDir);
 		fs.writeFileSync(path.join(globalDir, 'config.yml'), 'hooks:\n  onTaskCreated: echo hi\n', 'utf8');
-		expect(open(projectDir, globalDir).config.globalHooks).toEqual({
-			onTaskCreated: 'echo hi',
-		});
+		expect(() => open(projectDir, globalDir)).toThrow(path.join(globalDir, 'config.yml'));
 	});
 
 	it('fails loudly on an invalid config.yml instead of falling back to defaults', () => {

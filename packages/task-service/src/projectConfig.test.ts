@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { ConfigSchemaError, loadRegistry, setParent } from '@wadeck-app/project-sdk';
 
 import { loadTaskConfig, TASK_CONFIG_SCHEMA } from './projectConfig.js';
+import { RemovedConfigKeyError } from './removedConfigKey.js';
 import { ownConfigFile, registryStorage } from './storage.js';
 import type { TaskStorage } from './storage.js';
 import { createSharedRegistrySandbox } from './testHelpers.js';
@@ -44,12 +45,11 @@ async function single(): Promise<TaskStorage> {
 }
 
 describe('the schema of the task config', () => {
-	it('declares the six sections with their scope: statuses, types, fields, hooks and strategy local; defaults inherited deeply', () => {
+	it('declares the five sections with their scope: statuses, types, fields and strategy local; defaults inherited deeply; no hooks', () => {
 		expect(TASK_CONFIG_SCHEMA.sections).toEqual({
 			statuses: { scope: 'local' },
 			types: { scope: 'local' },
 			fields: { scope: 'local' },
-			hooks: { scope: 'local' },
 			strategy: { scope: 'local' },
 			defaults: { scope: 'inherit', merge: 'deep' },
 		});
@@ -90,30 +90,75 @@ describe('loadTaskConfig: a project of the shared registry', () => {
 		expect(loadTaskConfig(storage, path.join(sandbox.root, 'global')).defaults.priority).toBe('critical');
 	});
 
-	it('statuses, types and hooks are local: the parent values are valid there but never reach the child', async () => {
+	it('statuses and types are local: the parent values are valid there but never reach the child', async () => {
 		const storage = await chain();
 		const [parentFile] = storage.configFiles as [string, string];
-		write(
-			parentFile,
-			'statuses:\n  - only-parent\ntypes:\n  - parent-type\nhooks:\n  onTaskCreated: echo parent\n'
-		);
+		write(parentFile, 'statuses:\n  - only-parent\ntypes:\n  - parent-type\n');
 
 		const config = loadTaskConfig(storage, sandbox.root);
 
 		expect(config.statuses).toEqual(['backlog', 'in-progress', 'done']);
 		expect(config.types).toEqual([]);
-		expect(config.projectHooks).toEqual({});
 	});
 
-	it('keeps the global hooks of the task global config apart from the project hooks', async () => {
-		const storage = await single();
-		write(path.join(sandbox.root, 'global', 'config.yml'), 'hooks:\n  onTaskCreated: echo global\n');
-		write(ownConfigFile(storage), 'hooks:\n  onStatusChange: echo project\n');
+	describe('hooks is not a config key any more', () => {
+		const HINT =
+			"task does not run commands from the config. React to task events with queue subscribers: see CLAUDE.md 'Queue events' (`<project>/.queue/subscribers.yml`, `when:` filters).";
 
-		const config = loadTaskConfig(storage, path.join(sandbox.root, 'global'));
+		function capture(run: () => unknown): RemovedConfigKeyError {
+			try {
+				run();
+			} catch (error) {
+				expect(error).toBeInstanceOf(RemovedConfigKeyError);
+				return error as RemovedConfigKeyError;
+			}
+			throw new Error('expected a RemovedConfigKeyError, nothing was thrown');
+		}
 
-		expect(config.globalHooks).toEqual({ onTaskCreated: 'echo global' });
-		expect(config.projectHooks).toEqual({ onStatusChange: 'echo project' });
+		it('in the own layer of the project: ConfigSchemaError naming the file and the key, with the fix', async () => {
+			const storage = await single();
+			write(ownConfigFile(storage), 'hooks:\n  onTaskCreated: echo project\n');
+
+			const failure = capture(() => loadTaskConfig(storage, sandbox.root));
+
+			expect(failure).toBeInstanceOf(ConfigSchemaError);
+			expect(failure.layer).toBe(ownConfigFile(storage));
+			expect(failure.key).toBe('hooks');
+			expect(failure.hint).toBe(HINT);
+			expect(failure.message).toBe(
+				`${ownConfigFile(storage)}: hooks: not supported, remove it (task never runs commands from the config)`
+			);
+		});
+
+		it('in a parent layer: the file of the PARENT is named', async () => {
+			const storage = await chain();
+			const [parentFile] = storage.configFiles as [string, string];
+			write(parentFile, 'hooks:\n  onTaskCreated: echo parent\n');
+
+			const failure = capture(() => loadTaskConfig(storage, sandbox.root));
+
+			expect(failure.layer).toBe(parentFile);
+			expect(failure.key).toBe('hooks');
+		});
+
+		it('in the global config: the global file is named', async () => {
+			const storage = await single();
+			const globalFile = path.join(sandbox.root, 'global', 'config.yml');
+			write(globalFile, 'hooks:\n  onTaskCreated: echo global\n');
+
+			const failure = capture(() => loadTaskConfig(storage, path.join(sandbox.root, 'global')));
+
+			expect(failure.layer).toBe(globalFile);
+			expect(failure.key).toBe('hooks');
+			expect(failure.hint).toBe(HINT);
+		});
+
+		it('the resolved config has no hooks fields', async () => {
+			const config = loadTaskConfig(await single(), sandbox.root);
+
+			expect(Object.keys(config)).not.toContain('globalHooks');
+			expect(Object.keys(config)).not.toContain('projectHooks');
+		});
 	});
 
 	it('an unknown or misplaced key is an error naming the FILE and the key', async () => {

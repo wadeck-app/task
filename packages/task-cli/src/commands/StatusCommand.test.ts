@@ -173,6 +173,40 @@ describe('task status list', () => {
 		expect((JSON.parse(json.output) as { error: string }).error).toContain('config.yml');
 	});
 
+	it('refuses a hooks key of the project config: the file, the key and the queue subscribers fix (text and --json)', async () => {
+		const dir = await project('hooked', 'hooks:\n  onTaskCreated: echo hi\n');
+
+		const text = await runTaskCommand(['status', 'list'], dir);
+		const json = await runTaskCommand(['status', 'list', '--json'], dir);
+
+		expect(text.exitCode).toBe(1);
+		expect(text.output).toContain('config.yml: hooks: not supported');
+		expect(text.output).toContain('queue subscribers');
+		expect(json.exitCode).toBe(1);
+		const body = JSON.parse(json.output) as { error: string; hint: string };
+		expect(body.error).toContain('hooks');
+		expect(body.hint).toContain('.queue/subscribers.yml');
+	});
+
+	it('refuses a hooks key of the global config (~/.task/config.yml) naming that file', async () => {
+		const dir = await project('shop', CUSTOM_CONFIG);
+		const globalDir = path.join(root, 'global-config');
+		fs.mkdirSync(globalDir);
+		fs.writeFileSync(path.join(globalDir, 'config.yml'), 'hooks:\n  onTaskCreated: echo hi\n');
+		const previous = process.env['TASK_CONFIG'];
+		process.env['TASK_CONFIG'] = globalDir;
+		try {
+			const result = await runTaskCommand(['status', 'list'], dir);
+
+			expect(result.exitCode).toBe(1);
+			expect(result.output).toContain(path.join(globalDir, 'config.yml'));
+			expect(result.output).toContain('hooks');
+		} finally {
+			if (previous === undefined) delete process.env['TASK_CONFIG'];
+			else process.env['TASK_CONFIG'] = previous;
+		}
+	});
+
 	it('rejects an unknown subcommand and an extra argument with the usage', async () => {
 		const dir = await project('shop', CUSTOM_CONFIG);
 
