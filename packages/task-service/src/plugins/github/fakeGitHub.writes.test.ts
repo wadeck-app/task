@@ -82,14 +82,20 @@ describe('create an issue', () => {
 		const answer = await call('POST', `${R}/issues`, { body: 'no title' });
 
 		expect(answer.status).toBe(422);
-		expect(answer.body.errors[0]).toMatchObject({ resource: 'Issue', field: 'title', code: 'missing_field' });
+		// Measured: no `errors`, the schema message.
+		expect(answer.body.message).toBe('Invalid request.\n\n"title" wasn\'t supplied.');
 	});
 
 	it('refuses a label of 51 characters with the field error (no message) and creates nothing', async () => {
 		const answer = await call('POST', `${R}/issues`, { title: 'Long', labels: ['x'.repeat(51)] });
 
 		expect(answer.status).toBe(422);
-		expect(answer.body.errors[0]).toEqual({ resource: 'Label', field: 'name', code: 'invalid' });
+		expect(answer.body.errors[0]).toEqual({
+			value: 'x'.repeat(51),
+			resource: 'Label',
+			field: 'name',
+			code: 'invalid',
+		});
 		expect(fake.issues.size).toBe(0);
 	});
 
@@ -257,9 +263,10 @@ describe('edit an issue (PATCH)', () => {
 	it('refuses conditional request headers on a write: If-Match and If-Unmodified-Since are 400, If-None-Match: * is 412', async () => {
 		const match = await call('PATCH', `${R}/issues/1`, { title: 'x' }, { 'if-match': '"abc"' });
 		expect(match.status).toBe(400);
-		expect(match.body.message).toBe(
-			'Conditional request headers are not allowed in unsafe requests unless supported by the endpoint'
-		);
+		expect(match.body.message).toBe('Bad Request');
+		expect(match.body.errors).toEqual([
+			'Conditional request headers are not allowed in unsafe requests unless supported by the endpoint',
+		]);
 
 		const since = await call(
 			'PATCH',
@@ -419,13 +426,14 @@ describe('comments', () => {
 		expect((await call('DELETE', `${R}/issues/comments/${created.body.id}`)).status).toBe(404);
 	});
 
-	it('a comment bumps the updated_at of the issue and refuses a body over 65536 characters', async () => {
+	it('a comment bumps the updated_at of the issue and refuses a body over 262144 characters (accepted up to there, measured)', async () => {
 		const before = (await call('GET', `${R}/issues/1`)).body.updated_at as string;
 
 		await call('POST', `${R}/issues/1/comments`, { body: 'note' });
 		expect((await call('GET', `${R}/issues/1`)).body.updated_at).not.toBe(before);
 
-		const big = await call('POST', `${R}/issues/1/comments`, { body: 'x'.repeat(65537) });
+		expect((await call('POST', `${R}/issues/1/comments`, { body: 'x'.repeat(65537) })).status).toBe(201);
+		const big = await call('POST', `${R}/issues/1/comments`, { body: 'x'.repeat(262145) });
 		expect(big.status).toBe(422);
 		expect(JSON.stringify(big.body)).toContain('Body is too long (maximum is 65536 characters)');
 	});
@@ -489,7 +497,7 @@ describe('sub-issues', () => {
 		const refused = await call('POST', `${R}/issues/${previous}/sub_issues`, { sub_issue_id: idOf(deeper) });
 
 		expect(refused.status).toBe(422);
-		expect(JSON.stringify(refused.body)).toContain("You can't add more than 7 layers of sub-issues");
+		expect(JSON.stringify(refused.body)).toContain('more than 7 layers of sub-issues');
 	});
 
 	it('DELETE with a body removes the sub-issue (200)', async () => {
@@ -569,7 +577,7 @@ describe('GraphQL deleteIssue', () => {
 		fake.addIssue({ title: 'Child' });
 		fake.setParent(2, 1);
 
-		const answer = await call('POST', '/graphql', mutation(`I_${fake.issues.get(1)!.id}`));
+		const answer = await call('POST', '/graphql', mutation(`I_kwDOfake${fake.issues.get(1)!.id}`));
 
 		expect(answer.status).toBe(200);
 		expect(answer.body.errors).toBeUndefined();
@@ -584,7 +592,7 @@ describe('GraphQL deleteIssue', () => {
 			const response = await fetch(`${restricted.baseUrl}/graphql`, {
 				method: 'POST',
 				headers: { authorization: `Bearer ${restricted.token}`, 'content-type': 'application/json' },
-				body: JSON.stringify(mutation(`I_${restricted.issues.get(1)!.id}`)),
+				body: JSON.stringify(mutation(`I_kwDOfake${restricted.issues.get(1)!.id}`)),
 			});
 			const body = (await response.json()) as { errors: Array<{ type: string; message: string }> };
 

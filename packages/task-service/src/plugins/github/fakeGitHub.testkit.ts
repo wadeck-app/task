@@ -103,6 +103,11 @@ export interface FakeGitHubOptions {
 	rateLimit?: { limit: number; remaining: number; resetAt: number };
 	/** Added to every answer. */
 	latencyMs?: number;
+	/**
+	 * The native issue types of the organization (names, case-sensitive). A create or an update with another type is a 422 (measured on
+	 * an organization repository). Absent: every type name is accepted (a repository whose types are not known).
+	 */
+	issueTypes?: string[];
 	/** An issue is visible to search only after this many search requests (the real index lags about 7 s). Default 0. */
 	searchLagRequests?: number;
 	/**
@@ -142,7 +147,32 @@ export interface ForcedResponse {
 	skip?: number;
 }
 
-type WriteAnswer = { status: number; body: unknown; headers?: Record<string, string> };
+type WriteAnswer = {
+	status: number;
+	body: unknown;
+	headers?: Record<string, string>;
+	noRoute?: boolean;
+	/** A refusal GitHub makes before it looks at the token: no expiration header. */
+	early?: boolean;
+};
+
+const DOCS = 'https://docs.github.com/rest';
+
+/** Events that leave `updated_at` alone (measured: the answer of the sub-issue and dependency routes show it equal to `created_at`). */
+const NO_BUMP_EVENTS: ReadonlySet<string> = new Set([
+	'sub_issue_added',
+	'sub_issue_removed',
+	'parent_issue_added',
+	'parent_issue_removed',
+	'blocked_by_added',
+	'blocked_by_removed',
+	'blocking_added',
+	'blocking_removed',
+	'marked_as_duplicate',
+]);
+
+/** The longest comment known to be accepted (measured: 262144 characters; 1000000 are refused). */
+const COMMENT_MAX_ACCEPTED = 262144;
 
 type Fault = { kind: 'respond'; response: ForcedResponse } | { kind: 'drop' } | { kind: 'hang' };
 
@@ -232,7 +262,8 @@ export class FakeGitHub {
 		at?: string
 	): void {
 		issue.events.push({ id: this.nextId++, event, createdAt: at ?? this.stamp(), actor, extra });
-		issue.updatedAt = issue.events.at(-1)!.createdAt;
+		// Measured: relations (sub-issues, dependencies, duplicates) do not move `updated_at`; labels, titles, types and states do.
+		if (!NO_BUMP_EVENTS.has(event)) issue.updatedAt = issue.events.at(-1)!.createdAt;
 	}
 
 	addIssue(input: NewIssue): number {
@@ -272,6 +303,8 @@ export class FakeGitHub {
 		if (input.type !== undefined) {
 			this.event(issue, 'issue_type_added', { issue_type: this.typeJson(input.type) }, 'octocat', creationEvents);
 		}
+		// Measured: the events of a creation do not move `updated_at` (equal to `created_at` on a new issue).
+		issue.updatedAt = createdAt;
 		if (input.state === 'closed')
 			this.updateIssue(issue.number, { state: 'closed', stateReason: input.stateReason });
 		return issue.number;
@@ -315,7 +348,10 @@ export class FakeGitHub {
 			this.event(
 				issue,
 				patch.type === null ? 'issue_type_removed' : had === null ? 'issue_type_added' : 'issue_type_changed',
-				patch.type === null ? {} : { issue_type: this.typeJson(patch.type) }
+				{
+					...(patch.type === null ? {} : { issue_type: this.typeJson(patch.type) }),
+					...(had === null ? {} : { prev_issue_type: this.typeJson(had) }),
+				}
 			);
 		}
 		if (
@@ -326,14 +362,15 @@ export class FakeGitHub {
 		) {
 			// Measured: `state: closed` with a reason on an issue that is already closed changes the reason (a reason alone is ignored).
 			issue.stateReason = patch.stateReason;
-			if (patch.duplicateIssueId !== undefined) issue.duplicateTarget = patch.duplicateIssueId;
-			issue.updatedAt = this.stamp();
+			if (patch.duplicateIssueId !== undefined) this.markDuplicate(issue, patch.duplicateIssueId);
+			// Measured: a new reason is a new `closed` event.
+			this.event(issue, 'closed', { state_reason: issue.stateReason === 'completed' ? null : issue.stateReason });
 		}
 		if (patch.state !== undefined && patch.state !== issue.state) {
 			if (patch.state === 'closed') {
 				issue.state = 'closed';
 				issue.stateReason = patch.stateReason ?? 'completed';
-				if (patch.duplicateIssueId !== undefined) issue.duplicateTarget = patch.duplicateIssueId;
+				if (patch.duplicateIssueId !== undefined) this.markDuplicate(issue, patch.duplicateIssueId);
 				// Measured: a `completed` close shows `state_reason: null` in the events, the others show their value.
 				this.event(issue, 'closed', {
 					state_reason: issue.stateReason === 'completed' ? null : issue.stateReason,
@@ -346,6 +383,13 @@ export class FakeGitHub {
 				issue.closedAt = null;
 			}
 		}
+	}
+
+	/** `duplicate_issue_id`: kept with the issue, never served; the target gets a `marked_as_duplicate` event (measured). */
+	private markDuplicate(issue: FakeIssue, targetId: number): void {
+		issue.duplicateTarget = targetId;
+		const target = [...this.issues.values()].find(other => other.id === targetId);
+		if (target !== undefined) this.event(target, 'marked_as_duplicate');
 	}
 
 	addComment(number: number, body: string, user = 'octocat'): number {
@@ -485,7 +529,22 @@ export class FakeGitHub {
 	}
 
 	private refJson(issue: FakeIssue): Record<string, unknown> {
-		return { number: issue.number, title: issue.title, state: issue.state, repository: this.repoJson() };
+		return {
+			number: issue.number,
+			title: issue.title,
+			state: issue.state,
+			state_reason: issue.stateReason === 'completed' ? null : issue.stateReason,
+			repository: this.repoJson(),
+		};
+	}
+
+	/** An event that refers to another issue shows that issue as it is when read, not when the event happened (measured). */
+	private currentRef(value: unknown): unknown {
+		if (value === null || typeof value !== 'object') return value;
+		const record = value as Record<string, unknown>;
+		if (typeof record['number'] !== 'number' || record['repository'] === undefined) return value;
+		const issue = this.issues.get(record['number']);
+		return issue === undefined ? value : this.refJson(issue);
 	}
 
 	private issueUrl(issue: FakeIssue): string {
@@ -499,7 +558,7 @@ export class FakeGitHub {
 			repository_url: `${this.baseUrl}/repos/${this.repo}`,
 			html_url: `https://github.com/${this.repo}/issues/${issue.number}`,
 			id: issue.id,
-			node_id: `I_${issue.id}`,
+			node_id: `I_kwDOfake${issue.id}`,
 			number: issue.number,
 			title: issue.title,
 			user: { login: issue.user },
@@ -533,6 +592,12 @@ export class FakeGitHub {
 	}
 
 	private eventJson(issue: FakeIssue, event: FakeEvent): Record<string, unknown> {
+		if (event.event === 'commented') {
+			// Measured: a comment in the timeline is the comment itself (its current text and dates) with `event` and `actor`.
+			const comment = issue.comments.find(candidate => candidate.id === event.id);
+			if (comment !== undefined)
+				return { ...this.commentJson(issue, comment), event: 'commented', actor: { login: event.actor } };
+		}
 		return {
 			id: event.id,
 			url: `${this.baseUrl}/repos/${this.repo}/issues/events/${event.id}`,
@@ -542,7 +607,7 @@ export class FakeGitHub {
 			commit_id: null,
 			commit_url: null,
 			...(event.event === 'commented' ? { issue_url: this.issueUrl(issue) } : {}),
-			...event.extra,
+			...Object.fromEntries(Object.entries(event.extra).map(([key, value]) => [key, this.currentRef(value)])),
 		};
 	}
 
@@ -600,7 +665,9 @@ export class FakeGitHub {
 		const finish = (status: number, body: unknown, headers: Record<string, string> = {}): void => {
 			record.status = status;
 			const text = body === undefined ? '' : JSON.stringify(body);
-			res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', ...headers });
+			// Measured: a 204 and a 304 carry no content type.
+			const typed = status === 204 || status === 304 ? {} : { 'content-type': 'application/json; charset=utf-8' };
+			res.writeHead(status, { ...typed, ...headers });
 			res.end(status === 304 ? undefined : text);
 		};
 		if (fault?.kind === 'respond') {
@@ -613,40 +680,78 @@ export class FakeGitHub {
 
 		const authorization = req.headers['authorization'];
 		if (authorization === undefined) {
-			finish(401, { message: 'Requires authentication', status: '401' });
+			// Measured: without credentials a private repository does not exist (404, the quota of an anonymous caller: 60 an hour),
+			// GraphQL is a 403 naming the anonymous rate limit, the rest asks for authentication.
+			record.auth = 'missing';
+			const anonymous = {
+				'x-ratelimit-limit': '60',
+				'x-ratelimit-remaining': '59',
+				'x-ratelimit-reset': String(Math.floor(BASE_TIME / 1000) + 3600),
+				'x-ratelimit-used': '1',
+			};
+			if (url.pathname.startsWith('/repos/')) {
+				finish(
+					404,
+					{ message: 'Not Found', documentation_url: DOCS, status: '404' },
+					{ ...anonymous, 'x-ratelimit-resource': 'core' }
+				);
+			} else if (url.pathname === '/graphql') {
+				finish(
+					403,
+					{
+						message:
+							"API rate limit exceeded for 127.0.0.1. (But here's the good news: Authenticated requests get a higher rate limit. Check out the documentation for more details.)",
+						documentation_url:
+							'https://docs.github.com/rest/overview/resources-in-the-rest-api#rate-limiting',
+					},
+					{ ...anonymous, 'x-ratelimit-limit': '0', 'x-ratelimit-resource': 'graphql' }
+				);
+			} else finish(401, { message: 'Requires authentication', documentation_url: DOCS, status: '401' });
 			return;
 		}
 		if (authorization !== `Bearer ${this.token}`) {
 			record.auth = 'bad';
-			finish(401, { message: 'Bad credentials', status: '401' });
+			// Measured: a refused token gets no rate-limit header.
+			finish(401, { message: 'Bad credentials', documentation_url: DOCS, status: '401' });
 			return;
 		}
 		record.auth = 'ok';
 		const isWrite = req.method !== 'GET';
-		if (isWrite && this.options.readOnlyToken === true) {
-			finish(
-				403,
-				{ message: 'Resource not accessible by personal access token', status: '403' },
-				{ 'x-accepted-github-permissions': 'issues=write' }
-			);
-			return;
-		}
-		if (isWrite && badJson) {
-			finish(400, { message: 'Problems parsing JSON', status: '400' });
-			return;
-		}
 
 		const isSearch = url.pathname === '/search/issues';
+		const isGraphql = url.pathname === '/graphql';
 		const bucket = isSearch ? this.search : this.core;
-		const resource = isSearch ? 'search' : 'core';
+		const resource = isSearch ? 'search' : isGraphql ? 'graphql' : 'core';
+		const expiration: Record<string, string> =
+			this.options.tokenExpiration === undefined
+				? {}
+				: { 'github-authentication-token-expiration': this.options.tokenExpiration };
 		const headers: Record<string, string> = {
 			'x-ratelimit-limit': String(bucket.limit),
 			'x-ratelimit-reset': String(bucket.resetAt),
 			'x-ratelimit-resource': resource,
-			...(this.options.tokenExpiration === undefined
-				? {}
-				: { 'github-authentication-token-expiration': this.options.tokenExpiration }),
+			...expiration,
 		};
+		if (isWrite && this.options.readOnlyToken === true) {
+			finish(
+				403,
+				{ message: 'Resource not accessible by personal access token', documentation_url: DOCS, status: '403' },
+				{ ...headers, 'x-accepted-github-permissions': 'issues=write' }
+			);
+			return;
+		}
+		if (isWrite && badJson) {
+			finish(
+				400,
+				{ message: 'Problems parsing JSON', documentation_url: DOCS, status: '400' },
+				{
+					...headers,
+					'x-ratelimit-remaining': String(bucket.remaining),
+					'x-ratelimit-used': String(bucket.limit - bucket.remaining),
+				}
+			);
+			return;
+		}
 		if (url.pathname !== '/rate_limit') {
 			if (bucket.remaining <= 0) {
 				finish(
@@ -660,18 +765,31 @@ export class FakeGitHub {
 
 		if (isWrite) {
 			const written = this.routeWrite(req.method ?? '', url, parsedBody, req.headers);
+			if (written.noRoute === true) {
+				finish(written.status, written.body);
+				return;
+			}
 			// A write spends the quota like a read.
 			bucket.remaining -= 1;
+			// Measured: every JSON answer of a write carries an ETag, a refusal does not (except the 412 and the gateway error).
+			const hashed = [200, 201, 412, 502].includes(written.status) && !isGraphql;
+			const { 'github-authentication-token-expiration': _expires, ...withoutExpiration } = headers;
+			void _expires;
 			finish(written.status, written.body, {
-				...headers,
+				...(written.early === true ? withoutExpiration : headers),
 				'x-ratelimit-remaining': String(bucket.remaining),
 				'x-ratelimit-used': String(bucket.limit - bucket.remaining),
+				...(hashed ? { etag: `"${sha(JSON.stringify(written.body ?? ''))}"` } : {}),
 				...written.headers,
 			});
 			return;
 		}
 
 		const answer = this.route(url, req);
+		if (answer.noRoute === true) {
+			finish(answer.status, answer.body);
+			return;
+		}
 		const etagged = answer.status === 200 && answer.etag !== false;
 		const body = answer.body;
 		const etag = etagged ? `"${sha(JSON.stringify(body))}"` : undefined;
@@ -695,7 +813,10 @@ export class FakeGitHub {
 			return;
 		}
 		if (notModified) {
-			finish(304, undefined, base);
+			// Measured: a 304 carries no token-expiration header.
+			const { 'github-authentication-token-expiration': _expiration, ...lean } = base;
+			void _expiration;
+			finish(304, undefined, lean);
 			return;
 		}
 		finish(answer.status, body, base);
@@ -720,12 +841,14 @@ export class FakeGitHub {
 	private route(
 		url: URL,
 		_req: http.IncomingMessage
-	): { status: number; body: unknown; headers?: Record<string, string>; etag?: boolean } {
+	): { status: number; body: unknown; headers?: Record<string, string>; etag?: boolean; noRoute?: boolean } {
 		const path = url.pathname;
-		const notFound = (message = 'Not Found'): { status: number; body: unknown } => ({
+		const notFound = (message = 'Not Found'): { status: number; body: unknown; noRoute?: boolean } => ({
 			status: 404,
-			body: { message, documentation_url: 'https://docs.github.com/rest', status: '404' },
+			body: { message, documentation_url: DOCS, status: '404' },
 		});
+		// A path no route serves: GitHub answers it before it looks at the caller, so no rate-limit header (measured).
+		const noRoute = (): { status: number; body: unknown; noRoute: boolean } => ({ ...notFound(), noRoute: true });
 
 		if (path === '/user') return { status: 200, body: { login: 'fake-user', id: 1 } };
 		if (path === '/rate_limit') {
@@ -744,7 +867,7 @@ export class FakeGitHub {
 		if (path === '/search/issues') return this.searchIssues(url);
 
 		const repoMatch = /^\/repos\/([^/]+)\/([^/]+)(\/.*)?$/.exec(path);
-		if (repoMatch === null) return notFound();
+		if (repoMatch === null) return noRoute();
 		if (`${repoMatch[1]}/${repoMatch[2]}`.toLowerCase() !== this.repo.toLowerCase()) return notFound();
 		const rest = repoMatch[3] ?? '';
 		if (rest === '') {
@@ -773,7 +896,7 @@ export class FakeGitHub {
 			const known = [...this.repoLabels.keys()].find(label => label.toLowerCase() === wanted);
 			return known === undefined ? notFound() : { status: 200, body: this.labelJson(known) };
 		}
-		if (!ISSUE_BASE_PATH.test(path)) return notFound();
+		if (!ISSUE_BASE_PATH.test(path)) return noRoute();
 		if (!this.options.hasIssues) {
 			return { status: 410, body: { message: 'Issues are disabled for this repo', status: '410' } };
 		}
@@ -785,9 +908,15 @@ export class FakeGitHub {
 		if (!Number.isInteger(number)) return notFound();
 		const issue = this.issues.get(number);
 		if (issue === undefined) return notFound();
-		if (issue.deleted) return { status: 410, body: { message: 'This issue was deleted', status: '410' } };
 		const tail = more.join('/');
+		if (issue.deleted) {
+			// Measured: the issue itself is 410, everything under it is a plain 404.
+			return tail === ''
+				? { status: 410, body: { message: 'This issue was deleted', documentation_url: DOCS, status: '410' } }
+				: notFound();
+		}
 		if (tail === '') return { status: 200, body: this.issueJson(issue) };
+		if (tail === 'labels') return this.paged(url, issue.labels, name => this.labelJson(name));
 		if (tail === 'comments') {
 			return this.paged(url, issue.comments, comment => this.commentJson(issue, comment));
 		}
@@ -814,7 +943,7 @@ export class FakeGitHub {
 			const blocked = [...this.issues.values()].filter(other => other.blockedBy.includes(issue.number));
 			return this.paged(url, blocked, item => this.issueJson(item));
 		}
-		return notFound();
+		return noRoute();
 	}
 
 	// ---------------------------------------------------------------- writes over HTTP
@@ -853,18 +982,82 @@ export class FakeGitHub {
 		return this.invalid422([{ resource, code: 'custom', field, message }]);
 	}
 
-	private notFound404(message = 'Not Found'): WriteAnswer {
-		return { status: 404, body: { message, documentation_url: 'https://docs.github.com/rest', status: '404' } };
+	/** The 422 of a body the schema refuses (measured): one text, no `errors`. */
+	private invalidRequest(text: string): WriteAnswer {
+		return this.message422(`Invalid request.\n\n${text}`);
 	}
 
-	/** The problem GitHub reports for a label name given to an issue endpoint (no message, only the field), or undefined. */
-	private issueLabelProblem(names: unknown): WriteAnswer | undefined {
-		if (!Array.isArray(names)) return this.invalid422([{ resource: 'Issue', field: 'labels', code: 'invalid' }]);
+	private suppliedRequired(name: string): WriteAnswer {
+		return this.invalidRequest(`"${name}" wasn't supplied.`);
+	}
+
+	private notFound404(message = 'Not Found'): WriteAnswer {
+		return { status: 404, body: { message, documentation_url: DOCS, status: '404' } };
+	}
+
+	/** Runs a change whose events all carry one instant (measured: the events one request produces share a second). */
+	private atOneInstant(change: () => void): void {
+		this.frozenAt = this.stamp();
+		try {
+			change();
+		} finally {
+			this.frozenAt = undefined;
+		}
+	}
+
+	/** The gateway timeout of a request that does too much (measured): no token-expiration header, a bare content type. */
+	private gatewayError(): WriteAnswer {
+		return {
+			status: 502,
+			body: { message: 'Server Error' },
+			early: true,
+			headers: { 'content-type': 'application/json' },
+		};
+	}
+
+	/** A path no route serves: no rate-limit header (measured). */
+	private noRoute404(): WriteAnswer {
+		return { ...this.notFound404(), noRoute: true };
+	}
+
+	/**
+	 * The problem GitHub reports for the labels given to an issue endpoint, or undefined. `add` is the POST of labels (its schema has two
+	 * shapes and asks for one label at least); the others (create, update, replace) take an array.
+	 */
+	private issueLabelProblem(names: unknown, add = false): WriteAnswer | undefined {
+		if (!Array.isArray(names)) {
+			const shown = JSON.stringify(names);
+			return add
+				? this.invalidRequest(
+						`No subschema in "anyOf" matched.\nFor 'anyOf/0', {"labels" => ${shown}} is not an array.\nFor 'anyOf/1', {"labels" => ${shown}} is not an array.\nFor 'properties/labels', ${shown} is not an array.`
+					)
+				: this.invalidRequest(`For 'properties/labels', ${shown} is not an array.`);
+		}
+		if (add && names.length === 0) {
+			return this.invalidRequest(
+				`No subschema in "anyOf" matched.\nFor 'anyOf/0', {"labels" => []} is not an array.\nFor 'anyOf/1', {"labels" => []} is not an array.\n1 item required; only 0 were supplied.`
+			);
+		}
 		for (const entry of names) {
 			const name = typeof entry === 'string' ? entry : (entry as { name?: unknown })?.name;
 			if (typeof name !== 'string' || name.trim() === '' || name.includes(',') || name.length > 50) {
-				return this.invalid422([{ resource: 'Label', field: 'name', code: 'invalid' }]);
+				return this.invalid422([{ value: name, resource: 'Label', field: 'name', code: 'invalid' }]);
 			}
+		}
+		return undefined;
+	}
+
+	/** Measured: a name given twice (any case) is refused on a create and an update, with the second one as the value. */
+	private duplicateLabelProblem(names: unknown[]): WriteAnswer | undefined {
+		const seen = new Set<string>();
+		for (const entry of names) {
+			const name = (typeof entry === 'string' ? entry : String((entry as { name: unknown }).name)).replace(
+				/^\s+/,
+				''
+			);
+			if (seen.has(name.toLowerCase()))
+				return this.invalid422([{ value: name, resource: 'Label', field: 'name', code: 'invalid' }]);
+			seen.add(name.toLowerCase());
 		}
 		return undefined;
 	}
@@ -901,7 +1094,6 @@ export class FakeGitHub {
 		const number = Number(text);
 		const issue = Number.isInteger(number) ? this.issues.get(number) : undefined;
 		if (issue === undefined) return this.notFound404();
-		if (issue.deleted) return { status: 410, body: { message: 'This issue was deleted', status: '410' } };
 		return issue;
 	}
 
@@ -926,6 +1118,16 @@ export class FakeGitHub {
 		issue.comments = issue.comments.filter(comment => comment.id !== commentId);
 		issue.events = issue.events.filter(event => !(event.event === 'commented' && event.id === commentId));
 		issue.updatedAt = this.stamp();
+	}
+
+	/** A native type the organization does not have is a 422 naming it (measured); without `issueTypes` every name passes. */
+	private issueTypeProblem(type: unknown): WriteAnswer | undefined {
+		if (type === undefined || type === null) return undefined;
+		const known = this.options.issueTypes;
+		if (typeof type !== 'string' || (known !== undefined && !known.includes(type))) {
+			return this.invalid422([{ value: type, resource: 'Issue', field: 'type', code: 'invalid' }]);
+		}
+		return undefined;
 	}
 
 	private levelOf(issue: FakeIssue): number {
@@ -978,19 +1180,36 @@ export class FakeGitHub {
 			return {
 				status: 400,
 				body: {
-					message:
+					message: 'Bad Request',
+					documentation_url:
+						'https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api#use-conditional-requests-if-appropriate',
+					errors: [
 						'Conditional request headers are not allowed in unsafe requests unless supported by the endpoint',
+					],
 					status: '400',
 				},
+				early: true,
+				headers: { 'content-type': 'application/json' },
 			};
 		}
-		if (headers['if-none-match'] === '*') return { status: 412, body: undefined };
+		if (headers['if-none-match'] === '*') {
+			// Measured: the write is APPLIED and the answer is a 412 with an empty body all the same.
+			const { 'if-none-match': _star, ...others } = headers;
+			void _star;
+			this.routeWrite(method, url, body, others);
+			return {
+				status: 412,
+				body: undefined,
+				early: true,
+				headers: { 'content-type': 'text/html;charset=utf-8' },
+			};
+		}
 
 		if (path === '/graphql' && method === 'POST') return this.graphql(input);
 
 		const repoMatch = /^\/repos\/([^/]+)\/([^/]+)(\/.*)?$/.exec(path);
 		if (repoMatch === null || `${repoMatch[1]}/${repoMatch[2]}`.toLowerCase() !== this.repo.toLowerCase()) {
-			return this.notFound404();
+			return this.noRoute404();
 		}
 		const rest = repoMatch[3] ?? '';
 
@@ -1017,13 +1236,20 @@ export class FakeGitHub {
 		if (commentMatch !== null) return this.writeComment(method, Number(commentMatch[1]), input);
 
 		const issueMatch = /^\/issues\/(\d+)(?:\/(.*))?$/.exec(rest);
-		if (issueMatch === null) return this.notFound404();
+		if (issueMatch === null) return this.noRoute404();
 		const found = this.issueByNumber(issueMatch[1]);
 		if (!('number' in found)) return found;
 		const issue = found;
 		const tail = issueMatch[2] ?? '';
+		if (issue.deleted) {
+			// Measured: updating the deleted issue is a 410, anything under it a plain 404.
+			return tail === '' && method === 'PATCH'
+				? { status: 410, body: { message: 'This issue was deleted', documentation_url: DOCS, status: '410' } }
+				: this.notFound404();
+		}
 
-		if (tail === '' && method === 'PATCH') return this.patchIssue(issue, input);
+		// Measured: POST on the issue is the same call as PATCH.
+		if (tail === '' && (method === 'PATCH' || method === 'POST')) return this.patchIssue(issue, input);
 		if (tail === 'comments' && method === 'POST') return this.createComment(issue, input);
 		if (tail === 'labels') return this.writeIssueLabels(method, issue, input);
 		const oneLabel = /^labels\/(.+)$/.exec(tail);
@@ -1051,24 +1277,35 @@ export class FakeGitHub {
 			if (issue.blockedBy.includes(blocker.number)) this.removeBlockedBy(issue.number, blocker.number);
 			return { status: 200, body: this.issueJson(issue) };
 		}
-		return this.notFound404();
+		return this.noRoute404();
 	}
 
 	private graphql(input: Record<string, unknown>): WriteAnswer {
 		const query = typeof input['query'] === 'string' ? input['query'] : '';
 		const variables = (input['variables'] ?? {}) as Record<string, unknown>;
 		if (!/deleteIssue/.test(query)) {
-			return { status: 200, body: { errors: [{ message: 'The fake GraphQL endpoint only knows deleteIssue' }] } };
+			return {
+				status: 200,
+				body: { errors: [{ message: 'mock: not modelled: the fake GraphQL endpoint only knows deleteIssue' }] },
+			};
 		}
 		const nodeId = String(variables['id'] ?? '');
-		const issue = [...this.issues.values()].find(candidate => `I_${candidate.id}` === nodeId && !candidate.deleted);
+		const issue = [...this.issues.values()].find(
+			candidate => `I_kwDOfake${candidate.id}` === nodeId && !candidate.deleted
+		);
 		if (issue === undefined) {
 			return {
 				status: 200,
 				body: {
 					data: { deleteIssue: null },
 					errors: [
-						{ type: 'NOT_FOUND', message: `Could not resolve to an Issue with the id of '${nodeId}'.` },
+						{
+							type: 'NOT_FOUND',
+							path: ['deleteIssue'],
+							locations: [{ line: 1, column: 1 }],
+							// Measured: the id of an issue that existed ends the sentence with a full stop, an id GitHub never issued does not.
+							message: `Could not resolve to a node with the global id of '${nodeId}'${/^I_kwDOfake\d+$/.test(nodeId) ? '.' : ''}`,
+						},
 					],
 				},
 			};
@@ -1092,6 +1329,7 @@ export class FakeGitHub {
 	}
 
 	private createRepoLabel(input: Record<string, unknown>): WriteAnswer {
+		if (input['name'] === undefined) return this.suppliedRequired('name');
 		const name = typeof input['name'] === 'string' ? input['name'].replace(/^\s+/, '') : '';
 		if (name === '') return this.invalid422([{ resource: 'Label', code: 'missing_field', field: 'name' }]);
 		if (name.length > 50) return this.custom422('Label', 'name', 'name is too long (maximum is 50 characters)');
@@ -1114,17 +1352,34 @@ export class FakeGitHub {
 
 	private createIssue(input: Record<string, unknown>): WriteAnswer {
 		const title = input['title'];
+		if (title === undefined) return this.suppliedRequired('title');
 		if (typeof title !== 'string' || title.trim() === '') {
-			return this.invalid422([{ resource: 'Issue', code: 'missing_field', field: 'title' }]);
+			return this.invalid422([
+				{ message: "title can't be blank", value: null, resource: 'Issue', field: 'title', code: 'invalid' },
+			]);
 		}
 		const text = input['body'];
+		// Measured: 65537 characters are refused on a create and accepted on an update.
 		if (typeof text === 'string' && text.length > 65536) {
-			return this.custom422('Issue', 'body', 'body is too long (maximum is 65536 characters)');
+			return this.invalid422([
+				{
+					message: 'body is too long (maximum is 65536 characters)',
+					value: null,
+					resource: 'Issue',
+					field: 'body',
+					code: 'invalid',
+				},
+			]);
 		}
+		const typeProblem = this.issueTypeProblem(input['type']);
+		if (typeProblem !== undefined) return typeProblem;
 		let labels: string[] = [];
 		if (input['labels'] !== undefined) {
 			const problem = this.issueLabelProblem(input['labels']);
 			if (problem !== undefined) return problem;
+			const duplicate = this.duplicateLabelProblem(input['labels'] as unknown[]);
+			if (duplicate !== undefined) return duplicate;
+
 			labels = this.labelNamesOf(input['labels'] as unknown[]);
 			if (labels.length > 100)
 				return this.custom422('Issue', 'labels', 'Issues cannot have more than 100 labels');
@@ -1146,50 +1401,47 @@ export class FakeGitHub {
 		const patch: IssuePatch = {};
 		if (input['title'] !== undefined) {
 			if (typeof input['title'] !== 'string' || input['title'].trim() === '') {
-				return this.invalid422([{ resource: 'Issue', code: 'invalid', field: 'title' }]);
+				return this.invalid422([{ resource: 'Issue', code: 'missing_field', field: 'title' }]);
 			}
 			patch.title = input['title'];
 		}
 		if (input['body'] !== undefined) {
+			// Measured: no limit at 65537 characters on an update (the exact limit is not known; the strategy refuses over 65536 itself).
 			const text = input['body'];
-			if (typeof text === 'string' && text.length > 65536) {
-				return this.custom422('Issue', 'body', 'body is too long (maximum is 65536 characters)');
-			}
 			patch.body = typeof text === 'string' ? text : null;
 		}
 		if (input['state'] !== undefined) {
-			if (input['state'] !== 'open' && input['state'] !== 'closed') {
-				return this.invalid422([{ resource: 'Issue', code: 'invalid', field: 'state' }]);
-			}
-			patch.state = input['state'];
+			// Measured: a state that is neither is ignored without a word.
+			if (input['state'] === 'open' || input['state'] === 'closed') patch.state = input['state'];
 		}
 		const reason = input['state_reason'];
 		if (reason !== undefined && reason !== null) {
 			if (!['completed', 'not_planned', 'duplicate', 'reopened'].includes(String(reason))) {
-				return this.custom422('Issue', 'state_reason', 'Please specify a valid state reason.');
+				return this.message422('Please specify a valid state reason.');
 			}
 			if (reason !== 'reopened') patch.stateReason = reason as 'completed' | 'not_planned' | 'duplicate';
 		}
 		if (input['duplicate_issue_id'] !== undefined) {
 			const target = this.issueById(input['duplicate_issue_id']);
 			if (target === undefined) {
-				return this.invalid422([{ resource: 'Issue', code: 'invalid', field: 'duplicate_issue_id' }]);
+				return this.message422('Issue not found for duplicate_issue_id.');
 			}
 			patch.duplicateIssueId = target.id;
 		}
 		if (input['labels'] !== undefined) {
 			const problem = this.issueLabelProblem(input['labels']);
 			if (problem !== undefined) return problem;
+			const duplicate = this.duplicateLabelProblem(input['labels'] as unknown[]);
+			if (duplicate !== undefined) return duplicate;
 			patch.labels = this.labelNamesOf(input['labels'] as unknown[]);
 			if (patch.labels.length > 100) {
 				return this.custom422('Issue', 'labels', 'Issues cannot have more than 100 labels');
 			}
 		}
 		if (input['type'] !== undefined) {
-			if (input['type'] !== null && typeof input['type'] !== 'string') {
-				return this.invalid422([{ resource: 'Issue', code: 'invalid', field: 'type' }]);
-			}
-			patch.type = input['type'];
+			const typeProblem = this.issueTypeProblem(input['type']);
+			if (typeProblem !== undefined) return typeProblem;
+			patch.type = input['type'] as string | null;
 		}
 		this.frozenAt = this.stamp();
 		try {
@@ -1201,14 +1453,21 @@ export class FakeGitHub {
 	}
 
 	private writeIssueLabels(method: string, issue: FakeIssue, input: Record<string, unknown>): WriteAnswer {
-		if (method !== 'POST' && method !== 'PUT') return this.notFound404();
+		if (method === 'DELETE') {
+			// Measured: DELETE on the collection removes every label (204).
+			this.atOneInstant(() => this.updateIssue(issue.number, { labels: [] }));
+			return { status: 204, body: undefined };
+		}
+		if (method !== 'POST' && method !== 'PUT') return this.noRoute404();
 		const given = input['labels'];
-		const problem = this.issueLabelProblem(given);
+		const problem = this.issueLabelProblem(given, method === 'POST');
 		if (problem !== undefined) return problem;
 		const names = this.labelNamesOf(given as unknown[]);
 		if (method === 'PUT') {
+			// Measured: a name given twice to PUT is a 500 with an empty body, nothing applied.
+			if (this.duplicateLabelProblem(given as unknown[]) !== undefined) return { status: 500, body: undefined };
 			if (names.length > 100) return this.custom422('Issue', 'labels', 'Issues cannot have more than 100 labels');
-			this.updateIssue(issue.number, { labels: names });
+			this.atOneInstant(() => this.updateIssue(issue.number, { labels: names }));
 			return { status: 200, body: this.labelsJson(issue) };
 		}
 		const fresh = names.filter(name => !issue.labels.some(held => held.toLowerCase() === name.toLowerCase()));
@@ -1218,20 +1477,41 @@ export class FakeGitHub {
 		const created = fresh.filter(
 			name => ![...this.repoLabels.keys()].some(known => known.toLowerCase() === name.toLowerCase())
 		);
+		// Measured: the labels of one POST are added at the same instant.
+		this.frozenAt = this.stamp();
 		// Measured: one POST that creates 100 labels times out and applies nothing; one that creates 50 times out with all applied.
-		if (created.length >= 100) return { status: 502, body: { message: 'Server Error' } };
-		this.addLabelsTo(issue, names);
-		if (created.length >= 50) return { status: 502, body: { message: 'Server Error' } };
+		if (created.length >= 100) {
+			this.frozenAt = undefined;
+			return this.gatewayError();
+		}
+		try {
+			this.addLabelsTo(issue, names);
+		} finally {
+			this.frozenAt = undefined;
+		}
+		if (created.length >= 50) return this.gatewayError();
 		return { status: 200, body: this.labelsJson(issue) };
 	}
 
 	private createComment(issue: FakeIssue, input: Record<string, unknown>): WriteAnswer {
 		const text = input['body'];
+		if (text === undefined) return this.suppliedRequired('body');
 		if (typeof text !== 'string' || text === '') {
-			return this.invalid422([{ resource: 'IssueComment', code: 'missing_field', field: 'body' }]);
+			return this.invalid422([
+				{ resource: 'IssueComment', code: 'unprocessable', field: 'data', message: 'Body cannot be blank' },
+			]);
 		}
-		if (text.length > 65536)
-			return this.custom422('IssueComment', 'body', 'Body is too long (maximum is 65536 characters)');
+		// Measured: 262144 characters are accepted, 1000000 refused (the exact limit between them is not known).
+		if (text.length > COMMENT_MAX_ACCEPTED) {
+			return this.invalid422([
+				{
+					resource: 'IssueComment',
+					code: 'unprocessable',
+					field: 'data',
+					message: 'Body is too long (maximum is 65536 characters)',
+				},
+			]);
+		}
 		const id = this.addComment(issue.number, text, 'fake-user');
 		return {
 			status: 201,
@@ -1251,11 +1531,20 @@ export class FakeGitHub {
 		}
 		if (method !== 'PATCH') return this.notFound404();
 		const text = input['body'];
+		if (text === undefined) return this.suppliedRequired('body');
 		if (typeof text !== 'string' || text === '') {
-			return this.invalid422([{ resource: 'IssueComment', code: 'missing_field', field: 'body' }]);
+			return this.custom422('IssueComment', 'body', 'body cannot be blank');
 		}
-		if (text.length > 65536)
-			return this.custom422('IssueComment', 'body', 'Body is too long (maximum is 65536 characters)');
+		if (text.length > COMMENT_MAX_ACCEPTED) {
+			return this.invalid422([
+				{
+					resource: 'IssueComment',
+					code: 'unprocessable',
+					field: 'data',
+					message: 'Body is too long (maximum is 65536 characters)',
+				},
+			]);
+		}
 		this.editComment(owner.number, id, text);
 		return {
 			status: 200,
@@ -1268,12 +1557,11 @@ export class FakeGitHub {
 
 	private addSubIssue(parent: FakeIssue, input: Record<string, unknown>): WriteAnswer {
 		const child = this.issueById(input['sub_issue_id']);
-		// Measured: the body takes the numeric id; a number is no id, so 404.
+		// Measured: the body takes the numeric id; a number is no id, so 404. (Once, a number that happened to be the id of an issue of
+		// somebody else was a 403 "Resource not accessible"; the fake cannot know which small ids exist.)
 		if (child === undefined) return this.notFound404();
 		const replace = input['replace_parent'] === true;
-		if (child.number === parent.number) {
-			return this.subIssue422('Sub issue may not create a circular dependency');
-		}
+		if (child.number === parent.number) return this.subIssue422('Sub issue cannot be the same as the parent issue');
 		if (child.parent !== null && !replace) {
 			return this.subIssue422(
 				child.parent === parent.number
@@ -1288,7 +1576,10 @@ export class FakeGitHub {
 			current = current.parent === null ? undefined : this.require(current.parent);
 		}
 		if (this.levelOf(parent) + this.heightOf(child) > 8) {
-			return this.subIssue422("You can't add more than 7 layers of sub-issues");
+			// Measured: no prefix, and a typographic apostrophe.
+			return this.message422(
+				'You can\u2019t add more than 7 layers of sub-issues. To add a sub-issue, remove a parent issue at any level.'
+			);
 		}
 		// Not measured live (needs 100 creates): the message is a guess, the limit is the documented one.
 		if ([...this.issues.values()].filter(other => other.parent === parent.number).length >= 100) {
@@ -1332,7 +1623,10 @@ export class FakeGitHub {
 			next.searchParams.set('page', String(target));
 			return `<${next.toString()}>; rel="${rel}"`;
 		};
+		// Measured: prev, next, last, first (those that apply).
+		if (page > 1) links.push(link(page - 1, 'prev'));
 		if (page < last) links.push(link(page + 1, 'next'), link(last, 'last'));
+		if (page > 1) links.push(link(1, 'first'));
 		return { status: 200, body: slice.map(map), headers: links.length === 0 ? {} : { link: links.join(', ') } };
 	}
 
@@ -1340,6 +1634,17 @@ export class FakeGitHub {
 	private listIssues(url: URL): { status: number; body: unknown; headers?: Record<string, string> } {
 		this.listCount += 1;
 		const state = url.searchParams.get('state') ?? 'open';
+		if (!['open', 'closed', 'all'].includes(state)) {
+			return {
+				status: 422,
+				body: {
+					message: 'Validation Failed',
+					errors: [{ value: state, resource: 'Issue', field: 'state', code: 'invalid' }],
+					documentation_url: DOCS,
+					status: '422',
+				},
+			};
+		}
 		const direction = url.searchParams.get('direction') ?? 'desc';
 		const labels = (url.searchParams.get('labels') ?? '')
 			.split(',')
@@ -1354,16 +1659,30 @@ export class FakeGitHub {
 				(state === 'all' || issue.state === state) &&
 				labels.every(label => issue.labels.some(held => held.toLowerCase() === label))
 		);
-		list.sort((a, b) => a.number - b.number);
+		// Measured: `sort=created` (the default) orders by creation, `sort=updated` by the last change; `direction` flips both.
+		if (url.searchParams.get('sort') === 'updated')
+			list.sort((a, b) => Date.parse(a.updatedAt) - Date.parse(b.updatedAt) || a.number - b.number);
+		else list.sort((a, b) => a.number - b.number);
 		if (direction === 'desc') list = list.reverse();
 		const slice = list.slice(after, after + perPage);
 		const headers: Record<string, string> = {};
+		// Measured: `next` carries `after=<cursor>&page=<n>`, `prev` carries `page=<n>&before=<cursor>`; next first when both.
+		const base = new URL(url.toString().replace(/^http:\/\/fake/, this.baseUrl));
+		for (const name of ['after', 'before', 'page']) base.searchParams.delete(name);
+		const links: string[] = [];
 		if (after + perPage < list.length) {
-			const next = new URL(url.toString().replace(/^http:\/\/fake/, this.baseUrl));
+			const next = new URL(base);
 			next.searchParams.set('after', String(after + perPage));
 			next.searchParams.set('page', String(Math.floor((after + perPage) / perPage) + 1));
-			headers['link'] = `<${next.toString()}>; rel="next"`;
+			links.push(`<${next.toString()}>; rel="next"`);
 		}
+		if (after > 0) {
+			const prev = new URL(base);
+			prev.searchParams.set('page', String(Math.floor(Math.max(after - perPage, 0) / perPage) + 1));
+			prev.searchParams.set('before', String(Math.max(after - perPage, 0)));
+			links.push(`<${prev.toString()}>; rel="prev"`);
+		}
+		if (links.length > 0) headers['link'] = links.join(', ');
 		return { status: 200, body: slice.map(issue => this.issueJson(issue)), headers };
 	}
 
@@ -1375,14 +1694,8 @@ export class FakeGitHub {
 				status: 422,
 				body: {
 					message: 'Validation Failed',
-					errors: [
-						{
-							message: 'Must include at least one user, organization, or repository',
-							resource: 'Search',
-							field: 'q',
-							code: 'invalid',
-						},
-					],
+					errors: [{ resource: 'Search', field: 'q', code: 'missing' }],
+					documentation_url: 'https://docs.github.com/v3/search',
 					status: '422',
 				},
 			};
@@ -1406,6 +1719,26 @@ export class FakeGitHub {
 			else if (key === 'sort' || key === 'order') continue;
 			else words.push(term.replace(/"/g, '').toLowerCase());
 		}
+		// Measured: another repository, and pull requests (this token has no pull-request permission), cannot be searched at all.
+		if ((repo !== undefined && repo !== this.repo.toLowerCase()) || isPr) {
+			return {
+				status: 422,
+				body: {
+					message: 'Validation Failed',
+					errors: [
+						{
+							message:
+								'The listed users and repositories cannot be searched either because the resources do not exist or you do not have permission to view them.',
+							resource: 'Search',
+							field: 'q',
+							code: 'invalid',
+						},
+					],
+					documentation_url: 'https://docs.github.com/v3/search/',
+					status: '422',
+				},
+			};
+		}
 		const matches =
 			repo !== this.repo.toLowerCase()
 				? []
@@ -1423,8 +1756,13 @@ export class FakeGitHub {
 								.filter(Boolean)
 								.join(' ')} `;
 						const haystack = normalize(titleOnly ? issue.title : `${issue.title} ${issue.body ?? ''}`);
-						// A term is a phrase: its words in a row, each a whole word.
-						return words.every(word => haystack.includes(normalize(word)));
+						// Measured: the words of a quoted phrase may come in any order, each one a whole word ("lis" does not match "list").
+						return words.every(word =>
+							normalize(word)
+								.split(' ')
+								.filter(Boolean)
+								.every(single => haystack.includes(` ${single} `))
+						);
 					});
 		matches.sort((a, b) => (url.searchParams.get('order') === 'asc' ? a.number - b.number : b.number - a.number));
 		const perPage = Math.min(Math.max(Number(url.searchParams.get('per_page') ?? 30), 1), 100);

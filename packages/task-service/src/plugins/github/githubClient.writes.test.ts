@@ -371,7 +371,7 @@ describe('GitHubClient: GraphQL', () => {
 
 			const answer = await c.graphql<{ deleteIssue: unknown }>(
 				'mutation($id: ID!) { deleteIssue(input: {issueId: $id}) { clientMutationId } }',
-				{ id: `I_${restricted.issues.get(1)!.id}` }
+				{ id: `I_kwDOfake${restricted.issues.get(1)!.id}` }
 			);
 
 			expect(answer.errors?.[0]).toMatchObject({ type: 'FORBIDDEN' });
