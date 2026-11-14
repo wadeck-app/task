@@ -7,6 +7,12 @@ import { ownConfigFile, registryStorage, tasksDirOf } from './storage.js';
 import { createSharedRegistrySandbox } from './testHelpers.js';
 import type { SharedRegistrySandbox } from './testHelpers.js';
 
+// The tool folder of a project is `projects/<id>-<slug>` (or the legacy `projects/<id>`): look for both.
+function toolFoldersOf(registryDir: string, id: string): string[] {
+	const dir = path.join(registryDir, 'projects');
+	return fs.existsSync(dir) ? fs.readdirSync(dir).filter(name => name === id || name.startsWith(`${id}-`)) : [];
+}
+
 let sandbox: SharedRegistrySandbox;
 
 beforeEach(() => {
@@ -36,7 +42,7 @@ describe('registryStorage', () => {
 
 		registryStorage(loadRegistry(sandbox.registryDir), sandbox.registryDir, project);
 
-		expect(fs.existsSync(path.join(sandbox.registryDir, 'projects', project.id))).toBe(false);
+		expect(toolFoldersOf(sandbox.registryDir, project.id)).toEqual([]);
 	});
 
 	it('lists the config files root first, the project own file last', async () => {

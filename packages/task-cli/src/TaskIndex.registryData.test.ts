@@ -12,6 +12,12 @@ vi.unmock('@wadeck-app/task-service');
 
 import { runTaskCommand } from './TaskIndex.js';
 
+// The tool folder of a project is `projects/<id>-<slug>` (or the legacy `projects/<id>`): look for both.
+function toolFoldersOf(registryDir: string, id: string): string[] {
+	const dir = path.join(registryDir, 'projects');
+	return fs.existsSync(dir) ? fs.readdirSync(dir).filter(name => name === id || name.startsWith(`${id}-`)) : [];
+}
+
 // The data and the config of a REGISTERED project live in the shared registry (projects/<id>/task/{data,config}),
 // never in <main path>/.task. Every test gets its own registry (XDG_CONFIG_HOME -> temp dir, restored afterwards).
 
@@ -97,7 +103,7 @@ describe('a registered project keeps its data in the shared registry', () => {
 
 		expect(empty.exitCode).toBe(0);
 		expect(titlesIn(empty.output)).toEqual([]);
-		expect(fs.existsSync(path.join(registryDir(), 'projects', project.id))).toBe(false);
+		expect(toolFoldersOf(registryDir(), project.id)).toEqual([]);
 
 		await runTaskCommand(['new', 'x', '-p', 'fresh'], root);
 

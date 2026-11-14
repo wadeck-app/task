@@ -12,6 +12,12 @@ import type { TaskStorage } from './storage.js';
 import { createSharedRegistrySandbox } from './testHelpers.js';
 import type { SharedRegistrySandbox } from './testHelpers.js';
 
+// The tool folder of a project is `projects/<id>-<slug>` (or the legacy `projects/<id>`): look for both.
+function toolFoldersOf(registryDir: string, id: string): string[] {
+	const dir = path.join(registryDir, 'projects');
+	return fs.existsSync(dir) ? fs.readdirSync(dir).filter(name => name === id || name.startsWith(`${id}-`)) : [];
+}
+
 let root: string;
 
 beforeEach(() => {
@@ -154,7 +160,7 @@ describe('openTaskContext: a project of the shared registry', () => {
 		const { store } = openTaskContext({ storage, project: { id: project.id, name: 'shop' } });
 
 		expect(await store.list()).toEqual([]);
-		expect(fs.existsSync(path.join(sandbox.registryDir, 'projects', project.id))).toBe(false);
+		expect(toolFoldersOf(sandbox.registryDir, project.id)).toEqual([]);
 	});
 
 	it('resolves the config from the project config layers', async () => {
