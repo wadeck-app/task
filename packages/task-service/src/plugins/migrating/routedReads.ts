@@ -396,7 +396,10 @@ export class RoutedReads {
 		try {
 			return await operation(this.sides[side], id);
 		} catch (error) {
-			if (error instanceof TaskNotFoundError && error.taskId === id) throw this.drift(route.publicId, side, id);
+			// A task the index knows must exist where it says; a task nobody knows is simply not found.
+			if (error instanceof TaskNotFoundError && error.taskId === id && route.row !== undefined) {
+				throw this.drift(route.publicId, side, id);
+			}
 			throw error;
 		}
 	}
@@ -527,10 +530,16 @@ export class RoutedReads {
 }
 
 function translateResolved(translator: Translator, side: Side, found: ResolvedTask): ResolvedTask {
-	const { parentId, ...rest } = found;
+	const { parentId, meta, ...rest } = found;
 	const context = `task ${found.id} in "${SIDE_NAME[side]}"`;
+	// The identity block belongs to the strategy: it is never shown.
+	const visible =
+		meta === undefined
+			? undefined
+			: Object.fromEntries(Object.entries(meta).filter(([key]) => !key.startsWith('migrating.')));
 	return {
 		...rest,
+		...(visible === undefined || Object.keys(visible).length === 0 ? {} : { meta: visible }),
 		id: translator.publicId(side, found.id, context),
 		...(parentId === undefined
 			? {}

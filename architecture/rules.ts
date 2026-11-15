@@ -163,6 +163,8 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 					'the github and gitlab strategies read their token from the file the config names (the value goes to the HTTP client only, never into a result)',
 				'packages/task-service/src/plugins/migrating/nodeIndexFiles.ts':
 					'the migrating strategy reads its routing index (a project data file: which side holds which task); task data goes through the backends',
+				'packages/task-service/src/plugins/migrating/nodeWalFiles.ts':
+					'the migrating strategy appends to its write-ahead log and its migration log (project data files, flushed to the disk before each step); task data goes through the backends',
 				'packages/task-service/src/plugins/github/responseCache.ts':
 					'the read-through cache of the github strategy: answers of GitHub as files in the project data folder; entries older than 30 days are deleted at the first access',
 				'packages/task-service/src/migrate/migrateJournal.ts':

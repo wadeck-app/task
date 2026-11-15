@@ -31,9 +31,22 @@ export interface IndexRow {
 	since: string;
 	/** Counts the changes of this row, from 1. */
 	version: number;
+	/**
+	 * Only for a `moving` row: the copy in `new` may differ from the task in `current` (a mirror of a write failed, or the index was
+	 * rebuilt), so it must be caught up before authority switches. Absent = no known difference.
+	 */
+	stale?: boolean;
+	/**
+	 * Only for a `moving` row: the loss kinds the person accepted when this task was copied (`task migrate --allow-loss`), so a later
+	 * change of the task is copied under the same terms and never loses more in silence.
+	 */
+	accepted?: string[];
 }
 
 /** The file system the index needs; every method may throw, nothing is swallowed. */
+/** The row of a task changed (or is missing) since the caller read it: another process moved or changed the task. Nothing was written. */
+export class IndexConflictError extends BackendDataError {}
+
 export interface IndexFiles {
 	/** The text of the file, or `undefined` when it does not exist (any other failure throws). */
 	read(file: string): string | undefined;
@@ -47,7 +60,7 @@ export interface IndexLock {
 	run<T>(operation: () => T): T;
 }
 
-const ROW_KEYS: readonly string[] = ['publicId', 'a', 'b', 'state', 'since', 'version'];
+const ROW_KEYS: readonly string[] = ['publicId', 'a', 'b', 'state', 'since', 'version', 'stale', 'accepted'];
 const FIX_REBUILD =
 	'Do not delete it: that would send every moved task back to its stale copy in "current". Restore it from a backup, or rebuild it from the identity blocks of the tasks in "new" (rebuildIndex), then run the command again.';
 
@@ -85,6 +98,23 @@ function validateRow(file: string, raw: unknown, position: number): IndexRow {
 	if (typeof version !== 'number' || !Number.isInteger(version) || version < 1) {
 		fail(file, `${where}: version must be a whole number from 1, found ${JSON.stringify(version)}`);
 	}
+	const stale = raw['stale'];
+	if (stale !== undefined && typeof stale !== 'boolean') {
+		fail(file, `${where}: stale must be true or false when present, found ${JSON.stringify(stale)}`);
+	}
+	if (stale !== undefined && state !== 'moving') {
+		fail(
+			file,
+			`${where}: only a moving task can be stale (the copy of an in-a task does not exist, an in-b task has no copy to follow)`
+		);
+	}
+	const accepted = raw['accepted'];
+	if (accepted !== undefined) {
+		if (!Array.isArray(accepted) || accepted.some(kind => typeof kind !== 'string')) {
+			fail(file, `${where}: accepted must be a list of loss kinds (texts) when present`);
+		}
+		if (state !== 'moving') fail(file, `${where}: accepted losses belong to a moving task only`);
+	}
 	const a = raw['a'] as string | undefined;
 	const b = raw['b'] as string | undefined;
 	if (state === 'in-a' && (a === undefined || b !== undefined)) {
@@ -107,6 +137,8 @@ function validateRow(file: string, raw: unknown, position: number): IndexRow {
 		state: state as RowState,
 		since,
 		version,
+		...(stale === true ? { stale: true } : {}),
+		...(accepted === undefined ? {} : { accepted: [...(accepted as string[])] }),
 	};
 }
 
@@ -240,6 +272,46 @@ export class RoutingIndex {
 			return checked;
 		};
 		return this.lock === undefined ? operation() : this.lock.run(operation);
+	}
+
+	/**
+	 * Changes ONE row (or creates it) inside the lock, the rows re-read there: the other rows are kept as the other process left them.
+	 * `change` gets the row as it is now (`undefined` when there is none) and returns the new one; its `version` is set here (the
+	 * old one plus one, 1 for a new row). `expectedVersion` refuses the write when another change got in between (a task moved by a
+	 * second process); `mustExist` refuses an unknown task. Both are loud errors naming the task.
+	 */
+	mutateRow(
+		publicId: string,
+		guard: { expectedVersion?: number; mustExist?: boolean },
+		change: (row: IndexRow | undefined) => IndexRow
+	): IndexSnapshot {
+		return this.mutate(rows => {
+			const position = rows.findIndex(row => row.publicId === publicId);
+			const current = position === -1 ? undefined : rows[position];
+			if (current === undefined && guard.mustExist === true) {
+				throw new IndexConflictError(
+					'migrating',
+					publicId,
+					`${this.file}: task ${publicId} has no row (it is in current only, or the index was rebuilt meanwhile)`,
+					'Run the command again.'
+				);
+			}
+			if (guard.expectedVersion !== undefined && current?.version !== guard.expectedVersion) {
+				throw new IndexConflictError(
+					'migrating',
+					publicId,
+					`${this.file}: the row of task ${publicId} changed meanwhile (version ${String(current?.version)}, expected ${guard.expectedVersion}): another process moved or changed the task`,
+					'Run the command again; nothing was written for this attempt.'
+				);
+			}
+			const changed = { ...change(current), version: (current?.version ?? 0) + 1 };
+			if (changed.publicId !== publicId)
+				fail(this.file, `a change of the row of task ${publicId} renamed it to ${changed.publicId}`);
+			const next = [...rows];
+			if (position === -1) next.push(changed);
+			else next[position] = changed;
+			return next;
+		});
 	}
 
 	/**

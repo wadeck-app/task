@@ -1,7 +1,13 @@
 // The plugin kinds of task and their typed instances (design 3A.3): the one place where the generic host seam (../plugin-host)
 // meets task types. Built-in plugins import this file, the seam and task-core types only (architecture rule PLUGINS_IMPORT_SEAM_ONLY).
 import { UnsupportedByBackendError } from '@wadeck-app/task-core';
-import type { BackendCapabilities, BackendKind, BackendTraits, TaskBackend } from '@wadeck-app/task-core';
+import type {
+	BackendCapabilities,
+	BackendKind,
+	BackendTraits,
+	TaskBackend,
+	VersionedRecord,
+} from '@wadeck-app/task-core';
 
 import type { Plugin, PluginInstance, PluginRegistry } from '../plugin-host/index.js';
 
@@ -146,6 +152,73 @@ export interface StrategyContext {
 	 * their events in the process, which simply does not hand them to a sink.
 	 */
 	suppressEvents?: boolean;
+	/**
+	 * The per-task copy of `task migrate` (mapping, loss ledger, creation that carries its fields, read-back comparison) between two
+	 * backends this strategy holds, so a strategy that moves tasks never forks that code. `from` and `to` name two of the strategy's
+	 * slots (the host knows their traits) and the two backends it opened. Absent when the strategy has no `strategySlots`.
+	 */
+	copyTasks?: (from: CopySide, to: CopySide) => TaskCopier;
+}
+
+/** One side of a copy: the slot it was opened from and its backend. */
+export interface CopySide {
+	slot: string;
+	backend: TaskBackend;
+}
+
+/** One thing the target cannot represent about a task (a row of the loss table of `task migrate`, for one task). */
+export interface TaskCopyLoss {
+	/** The kind of loss, by the name `--allow-loss` takes (`labels`, `comments`, `lease`, `hierarchy:depth`...). */
+	kind: string;
+	text: string;
+	fix: string;
+	/** True when the kinds the caller accepted cover it. */
+	allowed: boolean;
+}
+
+export interface TaskCopyInput {
+	/** The task as the side it is copied FROM holds it (its ids). */
+	record: VersionedRecord;
+	/** The ids of every task of the side it is copied from (a link to anything else is dangling). */
+	sourceIds: ReadonlySet<string>;
+	/** The id on the side it is copied TO of a task of the side it is copied from, when it has a copy there. */
+	targetIdOf: (sourceId: string) => string | undefined;
+	/** Loss kinds, groups or `all` the person accepted. */
+	acceptedLosses: readonly string[];
+	/** Where the task sits in the tree on the side it comes from: its level (a root is 1) and how many children its parent has. */
+	hierarchy?: { depth: number; siblings: number };
+	/** Metadata every copy carries besides the task's own, written in this order (the identity block; a partial block is recoverable). */
+	identity?: ReadonlyArray<readonly [string, string]>;
+}
+
+export interface TaskCopyAssessment {
+	losses: TaskCopyLoss[];
+	/** The losses nobody accepted: the copy must not start while there are any. */
+	blocking: TaskCopyLoss[];
+}
+
+export interface TaskCopyResult {
+	/** The id of the copy on the side it was copied to. */
+	id: string;
+	/** The copy as it is now. */
+	record: VersionedRecord;
+	created: boolean;
+	losses: TaskCopyLoss[];
+	/** Relations whose other end has no copy yet: written when it has one (the copy is complete only without them). */
+	unresolved: Array<{ relation: 'parent' | 'blockedBy' | 'duplicateOf' | 'causedBy'; sourceId: string }>;
+}
+
+/** What `copyTasks` gives: the copy of one task, idempotent (a second call only writes what still differs). */
+export interface TaskCopier {
+	/** What the copy would lose; writes nothing. */
+	assess(input: TaskCopyInput): TaskCopyAssessment;
+	/**
+	 * Creates the copy (when `existingId` is absent) and brings it equal to the task: fields, parent, links and comments. A relation to a
+	 * task that has no copy yet is left out and reported in `unresolved`. Throws when a loss is not accepted, before any write.
+	 */
+	copy(input: TaskCopyInput & { existingId?: string }): Promise<TaskCopyResult>;
+	/** Reads the copy again and compares it with what the task should be: the differences, one sentence each (empty = equal). */
+	verify(input: TaskCopyInput & { id: string }): Promise<string[]>;
 }
 
 /**

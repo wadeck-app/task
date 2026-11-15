@@ -2,13 +2,14 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { createLocalBackend, LOCAL_CAPABILITIES, UnsupportedByBackendError } from '@wadeck-app/task-core';
+import { createLocalBackend, LOCAL_CAPABILITIES, LOCAL_TRAITS, UnsupportedByBackendError } from '@wadeck-app/task-core';
+import { createRestrictedBackend } from '@wadeck-app/task-core/contract';
 import type { BackendCapabilities, TaskBackend } from '@wadeck-app/task-core';
 
 import { openTaskContext } from '../../openContext.js';
 import { FakeGitHub } from '../github/fakeGitHub.testkit.js';
 import { MigratingBackend } from './MigratingBackend.js';
-import { memoryIndexFiles, INDEX_FILE } from './testHelpers.js';
+import { engineParts, memoryIndexFiles, INDEX_FILE } from './testHelpers.js';
 import { RoutingIndex } from './routingIndex.js';
 
 let root: string;
@@ -26,11 +27,13 @@ const STATUSES = ['backlog', 'in-progress', 'done'];
 function wrapperOver(
 	capabilities: Partial<BackendCapabilities>,
 	heldBackBy: ConstructorParameters<typeof MigratingBackend>[0]['heldBackBy'] = {},
-	current: TaskBackend = createLocalBackend(path.join(root, 'tasks'))
+	current: TaskBackend = createLocalBackend(path.join(root, 'a', 'tasks'))
 ): MigratingBackend {
+	const next = createLocalBackend(path.join(root, 'b', 'tasks'));
 	return new MigratingBackend({
+		...engineParts(current, next),
 		current,
-		next: createLocalBackend(path.join(root, 'next-tasks')),
+		next,
 		index: new RoutingIndex({ file: INDEX_FILE, files: memoryIndexFiles() }),
 		capabilities: { ...LOCAL_CAPABILITIES, ...capabilities },
 		heldBackBy,
@@ -69,10 +72,33 @@ describe('MigratingBackend: the refusals of the intersection', () => {
 		await expect(promise).rejects.toBeInstanceOf(UnsupportedByBackendError);
 	});
 
+	it('a creation is refused when "new" cannot hold the identity block, naming the fix, before anything is written', async () => {
+		const next = createRestrictedBackend(path.join(root, 'r', 'tasks'));
+		const backend = new MigratingBackend({
+			...engineParts(createLocalBackend(path.join(root, 'a', 'tasks')), next, {
+				a: LOCAL_TRAITS,
+				b: LOCAL_TRAITS,
+			}),
+			current: createLocalBackend(path.join(root, 'a', 'tasks')),
+			next,
+			index: new RoutingIndex({ file: INDEX_FILE, files: memoryIndexFiles() }),
+			capabilities: { ...LOCAL_CAPABILITIES },
+			heldBackBy: {},
+			statuses: STATUSES,
+		});
+
+		const error = await refusal(backend.create({ title: 'a', status: 'backlog' }));
+
+		expect(error.capability).toBe('meta');
+		expect(error.hint).toContain('identity block');
+		expect(error.hint).toContain('meta fill');
+		expect(await next.list()).toEqual([]);
+	});
+
 	it('a refused call changes nothing in the side', async () => {
-		const side = createLocalBackend(path.join(root, 'tasks'));
+		const side = createLocalBackend(path.join(root, 'a', 'tasks'));
 		const backend = wrapperOver({ labels: false, writes: 'full' }, { labels: ['new'] }, side);
-		const task = await backend.create({ title: 'a', status: 'backlog' });
+		const task = await side.create({ title: 'a', status: 'backlog' });
 
 		await refusal(backend.addLabel(task.id, 'x'));
 		await refusal(backend.removeLabel(task.id, 'x'));
@@ -153,7 +179,7 @@ describe('MigratingBackend: the refusals of the intersection', () => {
 		}
 	});
 
-	it('what the intersection allows goes through to current unchanged', async () => {
+	it('what the intersection allows goes through to the side that holds the task', async () => {
 		const backend = wrapperOver({});
 		const a = await backend.create({ title: 'a', status: 'backlog' });
 		const b = await backend.create({ title: 'b', status: 'backlog' });
@@ -170,7 +196,7 @@ describe('MigratingBackend: the refusals of the intersection', () => {
 
 	it('a side that declares priority without implementing it is a loud bug report, not a silent success', async () => {
 		// An own property shadows the method of the class: the side then lacks setPriority.
-		const bare = Object.defineProperty(createLocalBackend(path.join(root, 'tasks')), 'setPriority', {
+		const bare = Object.defineProperty(createLocalBackend(path.join(root, 'a', 'tasks')), 'setPriority', {
 			value: undefined,
 		}) as TaskBackend;
 		const backend = wrapperOver({}, {}, bare);
@@ -183,7 +209,7 @@ describe('MigratingBackend: the refusals of the intersection', () => {
 
 describe('MigratingBackend: optional members of the port are present only when the side has them', () => {
 	it('prepare and syncLabels are absent when current has neither', () => {
-		const side = createLocalBackend(path.join(root, 'tasks'));
+		const side = createLocalBackend(path.join(root, 'a', 'tasks'));
 		const backend = wrapperOver({}, {}, side);
 
 		expect(backend.prepare).toBeUndefined();
@@ -192,7 +218,7 @@ describe('MigratingBackend: optional members of the port are present only when t
 
 	it('prepare and syncLabels are forwarded when current has them', async () => {
 		const calls: unknown[] = [];
-		const side = Object.assign(createLocalBackend(path.join(root, 'tasks')), {
+		const side = Object.assign(createLocalBackend(path.join(root, 'a', 'tasks')), {
 			prepare: (needs: unknown) => {
 				calls.push(['prepare', needs]);
 				return Promise.resolve();
@@ -218,8 +244,8 @@ describe('MigratingBackend: optional members of the port are present only when t
 	});
 });
 
-describe('the migrating strategy in state in-a never writes to the second side', () => {
-	it('after creating, changing, commenting and linking, the API of the second side saw no write', async () => {
+describe('the migrating strategy over a second side that cannot hold the identity block', () => {
+	it('refuses a creation with the fix, and the API of the second side saw no write', async () => {
 		const fake = await FakeGitHub.start({ searchLagRequests: 0 });
 		try {
 			const configFile = path.join(root, 'config', 'config.yml');
@@ -252,15 +278,9 @@ strategy:
 				project: { name: 'shop', path: root },
 				env: { MIGRATING_TEST_TOKEN: fake.token },
 			});
-			const a = await ctx.store.create({ title: 'a', status: 'backlog' });
-			const b = await ctx.store.create({ title: 'b', status: 'backlog' });
-			await ctx.store.updateStatus(a.id, 'done');
-			await ctx.store.addComment(a.id, 'note');
-			await ctx.store.addLink(b.id, 'blockedBy', a.id);
-			await ctx.store.setParent(b.id, a.id);
-			await ctx.store.addLabel(a.id, 'l');
-			await ctx.store.deleteTask(a.id).catch(() => undefined);
+			const error = await refusal(ctx.store.create({ title: 'a', status: 'backlog' }));
 
+			expect(error.hint).toContain('meta fill');
 			expect(fake.writes()).toEqual([]);
 			await ctx.dispose?.();
 		} finally {

@@ -16,7 +16,7 @@ function boardWithMove(id: string, status: string, version: string) {
 	for (const column of columns) {
 		column.cards = column.cards.filter(c => c.id !== id);
 	}
-	columns.find(c => c.status === status)!.cards.unshift(card);
+	columns.find(c => c.key === status)!.cards.unshift({ ...card, status });
 	return { columns, version, hasCards: true };
 }
 
@@ -138,10 +138,18 @@ describe('KanbanBoard variants', () => {
 		expect(screen.getByRole('button', { name: /Show To do \(2\)/ })).toBeInTheDocument();
 	});
 
-	it('rails: a collapsed rail is a drop target', () => {
+	it('rails: a collapsed rail opens into a panel with its drop areas while a card is dragged, and the area is the drop target', () => {
 		setup({ defaultVariant: 'rails' });
+		expect(screen.getByTestId('kanban-rail-doing')).toBeInTheDocument();
 
-		dragTo('aaa11111', screen.getByTestId('kanban-rail-doing'));
+		const card = document.querySelector('[data-card-id="aaa11111"]') as HTMLElement;
+		const dataTransfer = { setData: vi.fn(), getData: vi.fn(() => 'aaa11111'), effectAllowed: '', dropEffect: '' };
+		fireEvent.dragStart(card, { dataTransfer });
+		expect(screen.queryByTestId('kanban-rail-doing')).toBeNull();
+		const area = screen.getByTestId('kanban-drop-area-doing');
+		fireEvent.dragOver(area, { dataTransfer });
+		fireEvent.drop(area, { dataTransfer });
+		fireEvent.dragEnd(card, { dataTransfer });
 
 		expect(onAction).toHaveBeenCalledWith(
 			'moveCard',
@@ -246,7 +254,7 @@ describe('KanbanBoard keyboard move', () => {
 		);
 
 		const items = screen.getAllByRole('menuitem');
-		expect(items.map(i => i.textContent)).toEqual(['In progress', 'Done']);
+		expect(items.map(i => i.textContent)).toEqual(['doing', 'done']);
 		expect(items[0]).toHaveFocus();
 		await user.keyboard('{ArrowDown}');
 		expect(items[1]).toHaveFocus();
@@ -282,7 +290,7 @@ describe('KanbanBoard keyboard move', () => {
 		setup({ defaultVariant: variant });
 
 		await user.click(screen.getByRole('button', { name: 'Move aaa11111 to another status' }));
-		await user.click(screen.getByRole('menuitem', { name: 'Done' }));
+		await user.click(screen.getByRole('menuitem', { name: 'done' }));
 
 		expect(onAction).toHaveBeenCalledWith(
 			'moveCard',
@@ -356,7 +364,7 @@ describe('KanbanBoard optimistic moves', () => {
 
 		await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
 		expect(screen.getByRole('alert')).toHaveTextContent('aaa11111');
-		expect(screen.getByRole('alert')).toHaveTextContent('To do');
+		expect(screen.getByRole('alert')).toHaveTextContent('todo');
 		expect(cardIn('todo', 'aaa11111')).not.toBeNull();
 	});
 

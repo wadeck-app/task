@@ -1,9 +1,19 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { isAbort, postJson, problemText } from '../apiFetch.js';
+import { Settings2 } from 'lucide-react';
+import { deleteJson, isAbort, postJson, problemText, putJson } from '../apiFetch.js';
 import { getApiBase } from '../runtime-config.js';
 import { isUnreadableAnswer } from '../actionProblem.js';
 import { TONE_PILL } from '../tones.js';
-import { PILL_RADIUS } from '../ui/tokens.js';
+import {
+	CONTROL_BORDER,
+	CONTROL_H,
+	CONTROL_RADIUS,
+	FOCUS_RING,
+	GAP_CONTROLS,
+	ICON_SIZE,
+	PILL_RADIUS,
+	PILL_TEXT,
+} from '../ui/tokens.js';
 import { useAction } from '../useAction.js';
 import type { ActionFailure, ActionHandler } from '../useAction.js';
 import { Notice } from './Notice.js';
@@ -18,7 +28,15 @@ import {
 	VARIANT_LABELS,
 	VARIANTS,
 } from '../kanban/boardModel.js';
-import type { BoardCardData, BoardColumnData, KanbanVariant, PendingMove } from '../kanban/boardModel.js';
+import type {
+	BoardCardData,
+	BoardColumnData,
+	BoardLayoutData,
+	BoardStatusData,
+	KanbanVariant,
+	PendingMove,
+} from '../kanban/boardModel.js';
+import { ColumnsEditor } from '../kanban/ColumnsEditor.js';
 import { useLiveBoard } from '../kanban/useLiveBoard.js';
 import { ColumnsLayout, CompactLayout, RailsLayout, SwimlanesLayout, TabsLayout } from '../kanban/variants.js';
 
@@ -31,6 +49,10 @@ export interface KanbanBoardProps {
 	 * module's page, which has none of our sources): the board starts empty, says "Loading board" and fetches `boardPath`.
 	 */
 	columns?: BoardColumnData[];
+	/** The stored layout of the board (`config` of the answer: `{ isDefault, columns: [{ name, statuses }] }`), for the "Configure columns" editor. Only the first value matters; absent in contribution mode (the fetched answer has it). */
+	config?: { isDefault?: boolean; columns?: Array<{ name: string; statuses: string[] }> };
+	/** Every status of the project (`allStatuses` of the answer), for the editor. */
+	allStatuses?: BoardStatusData[];
 	/** The version of that answer; a `version` event with another value makes the board fetch again. */
 	version?: string;
 	/**
@@ -47,6 +69,8 @@ export interface KanbanBoardProps {
 	idParam?: string;
 	/** Route that answers the board, below `apiBase` (default `/tasks/board`). */
 	boardPath?: string;
+	/** Route that stores the column layout (PUT to save, DELETE to reset), below `apiBase` (default `/board/config`). */
+	configPath?: string;
 	/** Route of the event stream (SSE, event `version`), below `apiBase` (default `/board/events`). */
 	eventsPath?: string;
 	/** Where the module API is mounted; defaults to the one `configureTaskUi` set. */
@@ -78,6 +102,8 @@ export interface KanbanBoardProps {
 	actionPending?: Record<string, boolean>;
 }
 
+const CONFIGURE_BUTTON_CLASS = `inline-flex ${CONTROL_H} items-center ${GAP_CONTROLS} ${CONTROL_RADIUS} ${CONTROL_BORDER} bg-surface px-3 ${PILL_TEXT} text-content hover:bg-muted-bg ${FOCUS_RING}`;
+
 const LAYOUTS = {
 	columns: ColumnsLayout,
 	swimlanes: SwimlanesLayout,
@@ -94,6 +120,17 @@ const LIVE_HINT = {
 	reconnecting: 'The live connection is not open; trying again',
 	polling: 'No live connection: the board is fetched again every few seconds',
 } as const;
+
+/** The layout the page gave with its first columns, or null when it gave none. */
+function initialLayout(
+	config: KanbanBoardProps['config'],
+	allStatuses: KanbanBoardProps['allStatuses']
+): BoardLayoutData | null {
+	if (config === undefined || !Array.isArray(config.columns) || !Array.isArray(allStatuses)) {
+		return null;
+	}
+	return { isDefault: config.isDefault === true, columns: config.columns, allStatuses };
+}
 
 interface StoredVariant {
 	variant: string;
@@ -185,6 +222,8 @@ function VariantSwitcher({
  */
 export function KanbanBoard({
 	columns,
+	config,
+	allStatuses,
 	version = '',
 	projectParam,
 	moveAction,
@@ -192,6 +231,7 @@ export function KanbanBoard({
 	idParam = 'cardId',
 	boardPath = '/tasks/board',
 	eventsPath = '/board/events',
+	configPath = '/board/config',
 	apiBase,
 	variantSwitcher,
 	defaultVariant = 'columns',
@@ -225,6 +265,7 @@ export function KanbanBoard({
 		eventsPath,
 		apiBase: apiBase ?? getApiBase(),
 		pollSeconds: validPoll ? pollSeconds : DEFAULT_POLL_SECONDS,
+		layout: initialLayout(config, allStatuses),
 	});
 	const mover = useAction('KanbanBoard', moveAction, onAction, actionPending);
 
@@ -236,6 +277,11 @@ export function KanbanBoard({
 	const [moves, setMoves] = useState<Record<string, PendingMove>>({});
 	const [moveNote, setMoveNote] = useState<{ text: string; short: boolean } | null>(null);
 	const [overStatus, setOverStatus] = useState<string | null>(null);
+	// The card being dragged: state (the drop areas appear while it is set) and a ref (the handlers read it without waiting for a render).
+	const [dragState, setDragState] = useState<{ id: string; from: string } | null>(null);
+	const [configuring, setConfiguring] = useState(false);
+	const [configBusy, setConfigBusy] = useState(false);
+	const [configError, setConfigError] = useState<string | null>(null);
 
 	const movesRef = useRef(moves);
 	movesRef.current = moves;
@@ -268,7 +314,7 @@ export function KanbanBoard({
 		for (const [id, move] of settled) {
 			const actual = statusOfCard(live.columns, id);
 			if (actual !== undefined && actual !== move.to) {
-				const label = (status: string): string => live.columns.find(c => c.status === status)?.label ?? status;
+				const label = (status: string): string => status;
 				notes.push(
 					`Task ${id} was sent to "${label(move.to)}" but the server still shows it in "${label(actual)}", so it was put back. Open the task to check its status, then try again.`
 				);
@@ -294,7 +340,7 @@ export function KanbanBoard({
 		if (from === undefined || from === status) {
 			return;
 		}
-		const labelOf = (s: string): string => shown.find(c => c.status === s)?.label ?? s;
+		const labelOf = (s: string): string => s;
 		inFlight.current.add(id);
 		setMoveNote(null);
 		setMoves(current => ({ ...current, [id]: { to: status, settled: false } }));
@@ -339,8 +385,10 @@ export function KanbanBoard({
 				.map(([id]) => id)
 		),
 		overStatus,
+		dragging: dragState,
 		startDrag: (event, card: BoardCardData, from) => {
 			dragging.current = { id: card.id, from };
+			setDragState({ id: card.id, from });
 			live.holdRef.current = true;
 			if (event.dataTransfer) {
 				event.dataTransfer.setData('text/plain', card.id);
@@ -349,6 +397,7 @@ export function KanbanBoard({
 		},
 		endDrag: () => {
 			dragging.current = null;
+			setDragState(null);
 			setOverStatus(null);
 			live.release();
 		},
@@ -359,6 +408,8 @@ export function KanbanBoard({
 					return;
 				}
 				event.preventDefault();
+				// An area inside a column is the target of its status alone: the column does not take the drag over.
+				event.stopPropagation();
 				if (event.dataTransfer) {
 					event.dataTransfer.dropEffect = 'move';
 				}
@@ -376,6 +427,7 @@ export function KanbanBoard({
 					return;
 				}
 				event.preventDefault();
+				event.stopPropagation();
 				// The dragged card is drawn in its new column at once, so its element goes away and may never get `dragend`.
 				view.endDrag();
 				void move(drag.id, status);
@@ -383,6 +435,46 @@ export function KanbanBoard({
 			...(overStatus === status ? ({ 'data-drop-target': 'true' } as const) : {}),
 		}),
 		move: (id, status) => void move(id, status),
+	};
+
+	const saveLayout = async (columns: Array<{ name: string; statuses: string[] }>): Promise<void> => {
+		setConfigBusy(true);
+		setConfigError(null);
+		try {
+			await putJson(configPath, { project: projectParam }, { columns }, { apiBase: apiBase ?? getApiBase() });
+			await live.refetch(true);
+			if (mounted.current) {
+				setConfiguring(false);
+			}
+		} catch (error) {
+			if (mounted.current) {
+				setConfigError(`The columns were not saved: ${problemText(error)}`);
+			}
+		} finally {
+			if (mounted.current) {
+				setConfigBusy(false);
+			}
+		}
+	};
+
+	const resetLayout = async (): Promise<void> => {
+		setConfigBusy(true);
+		setConfigError(null);
+		try {
+			await deleteJson(configPath, { project: projectParam }, { apiBase: apiBase ?? getApiBase() });
+			await live.refetch(true);
+			if (mounted.current) {
+				setConfiguring(false);
+			}
+		} catch (error) {
+			if (mounted.current) {
+				setConfigError(`The columns were not reset: ${problemText(error)}`);
+			}
+		} finally {
+			if (mounted.current) {
+				setConfigBusy(false);
+			}
+		}
 	};
 
 	const pickVariant = (variant: KanbanVariant): void => {
@@ -459,6 +551,8 @@ export function KanbanBoard({
 	);
 	addNote('storage', switcherOn ? (storageNote ?? stored?.note ?? null) : null, 'warning');
 
+	// The layout is the project's config: offered where the cards can be moved, once the answer carried it.
+	const canConfigure = !isReadOnly && hasProject && live.loaded && live.meta.layout !== null;
 	const empty = isBoardEmpty(shown);
 	const Layout = LAYOUTS[variant];
 	const emptyMessage = emptyText ?? live.meta.emptyText ?? 'No tasks yet';
@@ -472,6 +566,20 @@ export function KanbanBoard({
 	} else if (live.meta.blank || !live.loaded) {
 		// Nothing to show (a blank answer), or the first load failed: the notice above says why.
 		content = null;
+	} else if (configuring && live.meta.layout !== null) {
+		content = (
+			<ColumnsEditor
+				layout={live.meta.layout}
+				busy={configBusy}
+				error={configError}
+				onSave={columns => void saveLayout(columns)}
+				onReset={() => void resetLayout()}
+				onCancel={() => {
+					setConfiguring(false);
+					setConfigError(null);
+				}}
+			/>
+		);
 	} else if (empty) {
 		content = <p className="m-0 text-sm text-muted">{emptyMessage}</p>;
 	} else {
@@ -492,15 +600,31 @@ export function KanbanBoard({
 				) : (
 					<span />
 				)}
-				{hasProject ? (
-					<span
-						data-testid="kanban-live"
-						title={LIVE_HINT[live.link]}
-						className={`inline-flex items-center ${PILL_RADIUS} px-2 text-xs font-medium ${TONE_PILL[LIVE_TONE[live.link]]}`}
-					>
-						{LIVE_TEXT[live.link]}
-					</span>
-				) : null}
+				<div className="flex flex-wrap items-center gap-2">
+					{canConfigure && !configuring ? (
+						<button
+							type="button"
+							data-testid="kanban-configure"
+							onClick={() => {
+								setConfigError(null);
+								setConfiguring(true);
+							}}
+							className={CONFIGURE_BUTTON_CLASS}
+						>
+							<Settings2 size={ICON_SIZE} aria-hidden="true" />
+							Configure columns
+						</button>
+					) : null}
+					{hasProject ? (
+						<span
+							data-testid="kanban-live"
+							title={LIVE_HINT[live.link]}
+							className={`inline-flex items-center ${PILL_RADIUS} px-2 text-xs font-medium ${TONE_PILL[LIVE_TONE[live.link]]}`}
+						>
+							{LIVE_TEXT[live.link]}
+						</span>
+					) : null}
+				</div>
 			</div>
 			{notes.length > 0 ? <div className="flex flex-col gap-2">{notes}</div> : null}
 			{content}

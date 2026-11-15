@@ -78,6 +78,8 @@ sections:
     - $type: task:KanbanBoard
       $if: $sources.board.columns
       columns: $sources.board.columns
+      config: $sources.board.config
+      allStatuses: $sources.board.allStatuses
       version: $sources.board.version
       projectParam: $sources.board.projectParam
       moveAction: moveCard

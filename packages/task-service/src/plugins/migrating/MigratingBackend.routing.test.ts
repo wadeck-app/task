@@ -348,6 +348,24 @@ describe.each(PAIR_KINDS)('MigratingBackend reads by state: $name', kind => {
 		});
 	});
 
+	describe('a task nobody knows (phase P2: found by the contract suite over a project whose tasks are in new)', () => {
+		it('is "not found" for every graph read, whatever the index holds, not an index mismatch', async () => {
+			const world = await mixedWorld(pair);
+			const reads = [
+				() => world.wrapped.backend.getLinks('nope0000'),
+				() => world.wrapped.backend.getLinksLenient('nope0000'),
+				() => world.wrapped.backend.getOpenBlockers('nope0000', isTerminal),
+				() => world.wrapped.backend.get('nope0000'),
+			];
+
+			for (const read of reads) {
+				const error = await rejection(read());
+				expect(error).toBeInstanceOf(TaskNotFoundError);
+				expect((error as TaskNotFoundError).taskId).toBe('nope0000');
+			}
+		});
+	});
+
 	describe('an index that does not match the stores is a loud error', () => {
 		it('names the task, the side and the id when new has no task the index sends there', async () => {
 			const seed = await seedCurrent(pair.a);
@@ -433,68 +451,6 @@ describe.each(PAIR_KINDS)('MigratingBackend reads by state: $name', kind => {
 				expect((error as Error).message).toContain('index.json');
 			}
 			expect(wrapped.files.text).toBe('{ broken');
-		});
-	});
-
-	describe('writes are not routed yet (phase P2): none goes where it would be wrong', () => {
-		it('keeps creating in current, and the new task is listed with the others', async () => {
-			const world = await mixedWorld(pair);
-
-			const created = await world.wrapped.backend.create({ title: 'Brand new', status: 'backlog' });
-
-			expect((await pair.a.get(created.id)).title).toBe('Brand new');
-			expect(titles(await world.wrapped.backend.list())).toContain('Brand new');
-		});
-
-		it('keeps writing to a task that is in current only', async () => {
-			const world = await mixedWorld(pair);
-
-			const changed = await world.wrapped.backend.setTitle(world.seed.loose.id, 'Loose renamed');
-
-			expect(changed.title).toBe('Loose renamed');
-			expect((await pair.a.get(world.seed.loose.id)).title).toBe('Loose renamed');
-		});
-
-		it.each([
-			['moving', (w: World) => w.seed.parent.id],
-			['in-b', (w: World) => w.seed.child1.id],
-			['made in new', (w: World) => w.rows.made.publicId],
-		])('refuses a write to a task that is %s, naming the state, and changes nothing', async (_name, pick) => {
-			const world = await mixedWorld(pair);
-			const id = pick(world);
-			const before = (await world.wrapped.backend.get(id)).title;
-
-			const error = await rejection(world.wrapped.backend.setTitle(id, 'Changed'));
-
-			expect(error).toBeInstanceOf(BackendRejectedError);
-			expect((error as BackendRejectedError).backendKind).toBe('migrating');
-			expect((error as Error).message).toContain(id);
-			expect((error as BackendRejectedError).hint).toContain('phase');
-			expect((await world.wrapped.backend.get(id)).title).toBe(before);
-		});
-
-		it('refuses a write that names such a task as parent or as link target', async () => {
-			const world = await mixedWorld(pair);
-
-			expect(
-				await rejection(
-					world.wrapped.backend.create({ title: 'Child', status: 'backlog', parentId: world.seed.child1.id })
-				)
-			).toBeInstanceOf(BackendRejectedError);
-			expect(
-				await rejection(world.wrapped.backend.setParent(world.seed.loose.id, world.seed.child1.id))
-			).toBeInstanceOf(BackendRejectedError);
-			expect(
-				await rejection(world.wrapped.backend.addLink(world.seed.loose.id, 'blockedBy', world.seed.parent.id))
-			).toBeInstanceOf(BackendRejectedError);
-		});
-
-		it('answers a write to a deleted task as not found', async () => {
-			const world = await mixedWorld(pair);
-
-			expect(await rejection(world.wrapped.backend.setTitle(world.seed.child2.id, 'x'))).toBeInstanceOf(
-				TaskNotFoundError
-			);
 		});
 	});
 });

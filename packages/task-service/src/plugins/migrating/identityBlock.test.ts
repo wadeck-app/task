@@ -170,3 +170,39 @@ describe('identityCarrierProblem over a real side that cannot store metadata', (
 		expect(problem).toContain('the restricted side');
 	});
 });
+
+describe('identity block: the authority marker (phase P2)', () => {
+	const HASH = '0123456789abcdef';
+
+	it('is written and read back when given', () => {
+		const block = { publicId: 'a1', fromId: 'a1', hash: HASH, authority: 'current' as const };
+		const meta = identityMeta(block);
+		expect(meta['migrating.authority']).toBe('current');
+		expect(readIdentity(meta, 'task 7')).toEqual(block);
+	});
+
+	it('is absent for a block written before it existed (read as no marker, not as an error)', () => {
+		const block = readIdentity({ 'migrating.publicId': 'a1', 'migrating.hash': HASH }, 'task 7');
+		expect(block).toEqual({ publicId: 'a1', hash: HASH });
+		expect(block?.authority).toBeUndefined();
+	});
+
+	it('is a loud error naming the key when it is neither "current" nor "new"', () => {
+		let thrown: unknown;
+		try {
+			readIdentity(
+				{ 'migrating.publicId': 'a1', 'migrating.hash': HASH, 'migrating.authority': 'both' },
+				'task 7'
+			);
+		} catch (error) {
+			thrown = error;
+		}
+		expect(thrown).toBeInstanceOf(BackendDataError);
+		expect((thrown as BackendDataError).message).toContain('migrating.authority');
+		expect((thrown as BackendDataError).message).toContain('"current"');
+	});
+
+	it('is part of the keys an identity key test recognises, and of none a person edits', () => {
+		expect(isIdentityKey(IDENTITY_KEYS.authority)).toBe(true);
+	});
+});

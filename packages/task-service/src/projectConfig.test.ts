@@ -45,11 +45,12 @@ async function single(): Promise<TaskStorage> {
 }
 
 describe('the schema of the task config', () => {
-	it('declares the six sections with their scope: statuses, types, priorities, fields and strategy local; defaults inherited deeply; no hooks', () => {
+	it('declares the seven sections with their scope: statuses, types, priorities, fields, strategy and board local; defaults inherited deeply; no hooks', () => {
 		expect(TASK_CONFIG_SCHEMA.sections).toEqual({
 			statuses: { scope: 'local' },
 			types: { scope: 'local' },
 			priorities: { scope: 'local' },
+			board: { scope: 'local' },
 			fields: { scope: 'local' },
 			strategy: { scope: 'local' },
 			defaults: { scope: 'inherit', merge: 'deep' },

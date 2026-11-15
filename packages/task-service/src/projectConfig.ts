@@ -6,6 +6,7 @@ import type { ConfigSchema, NamedLayer } from '@wadeck-app/project-sdk';
 import { MAX_LEASE_MINUTES, normalizePriority, statusOutcomeProblem, TaskConfigLoader } from '@wadeck-app/task-core';
 import type { TaskProjectConfig, TaskResolvedConfig } from '@wadeck-app/task-core';
 
+import { validateBoard } from './boardConfig.js';
 import { createBuiltinRegistry } from './plugins/builtinPlugins.js';
 import type { ProjectFacts, TaskPluginRegistry } from './plugins/kinds.js';
 import { assertNoHooks } from './removedConfigKey.js';
@@ -27,6 +28,7 @@ export const TASK_CONFIG_SCHEMA: ConfigSchema = {
 		statuses: { scope: 'local' },
 		types: { scope: 'local' },
 		priorities: { scope: 'local' },
+		board: { scope: 'local' },
 		fields: { scope: 'local' },
 		strategy: { scope: 'local' },
 		defaults: { scope: 'inherit', merge: 'deep' },
@@ -166,6 +168,8 @@ function readSetup(
 		validateLayer(TASK_CONFIG_SCHEMA, layer.name, layer.values, 'project');
 		checkStatusOutcomes(layer);
 		checkPriorities(layer);
+		// Structure and uniqueness in every layer; the statuses it names are checked below, for the own layer only.
+		if (layer.values['board'] !== undefined) validateBoard(layer.name, layer.values['board']);
 		checkLeaseMinutes(layer.name, (layer.values as TaskProjectConfig).defaults);
 		// Every layer is checked for structure (a parent's section is valid in its own file); only the own layer is resolved.
 		parseStrategySection(layer.name, layer.values['strategy']);
@@ -178,6 +182,8 @@ function readSetup(
 		source: ownName,
 	});
 	checkDefaultPriority(config, layers);
+	// A parent's statuses are not the child's (scope local): only the own layer's board is checked against the merged statuses.
+	if (merged.values['board'] !== undefined) validateBoard(ownName, merged.values['board'], config.statuses);
 	return { config, strategy: parseStrategySection(ownName, merged.values['strategy']) };
 }
 

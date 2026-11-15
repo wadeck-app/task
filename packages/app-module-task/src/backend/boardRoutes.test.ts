@@ -59,7 +59,13 @@ describe('GET /tasks/board: shape', () => {
 
 		expect(answer.status).toBe(200);
 		const columns = answer.body['columns'] as Array<Record<string, unknown>>;
-		expect(columns.map(column => column['status'])).toEqual(['backlog', 'in-progress', 'done', 'rejected']);
+		expect(columns.map(column => column['name'])).toEqual(['backlog', 'in-progress', 'done', 'rejected']);
+		expect(columns.map(column => column['key'])).toEqual(['backlog', 'in-progress', 'done', 'rejected']);
+		// Without a board key: one column per status, each holding exactly its status.
+		expect(
+			columns.map(column => (column['statuses'] as Array<{ name: string }>).map(status => status.name))
+		).toEqual([['backlog'], ['in-progress'], ['done'], ['rejected']]);
+		expect(answer.body['config']).toMatchObject({ isDefault: true });
 		expect(columns.map(column => column['count'])).toEqual([2, 1, 1, 0]);
 		expect(columns.map(column => column['hiddenCount'])).toEqual([0, 0, 0, 0]);
 		expect(columns.map(column => column['terminal'])).toEqual([false, false, true, true]);
@@ -105,6 +111,7 @@ describe('GET /tasks/board: shape', () => {
 			tone: 'neutral',
 		});
 		expect(typeof card['createdAt']).toBe('string');
+		expect(card).toMatchObject({ status: 'backlog' });
 		expect(card).not.toHaveProperty('assignee');
 		const rich = columns[1]!.cards[0]!;
 		expect(rich).toMatchObject({

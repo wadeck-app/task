@@ -37,7 +37,20 @@ export interface TaskGlobalConfig {
 	};
 }
 
+/** One column of the Kanban board: a name and the statuses whose tasks it shows. */
+export interface BoardColumnConfig {
+	name: string;
+	statuses: string[];
+}
+
+/** The `board` key of config.yml (validated by task-service). Absent = one column per status. */
+export interface BoardConfig {
+	columns: BoardColumnConfig[];
+}
+
 export interface TaskProjectConfig {
+	/** How the board groups the statuses; read as is here, validated by task-service. */
+	board?: BoardConfig;
 	statuses?: TaskStatusEntry[];
 	types?: string[];
 	fields?: Array<{ name: string; type: string; required?: boolean }>;
@@ -62,6 +75,8 @@ export interface TaskResolvedConfig {
 	types: string[];
 	/** The valid priorities, highest first (the order of the list is the order of importance). */
 	priorities: string[];
+	/** The board layout of the project; absent = one column per status. Validated against the statuses by task-service. */
+	board?: BoardConfig;
 	defaults: {
 		/** The priority a task without one has; one of `priorities` (checked by task-service when it reads a project). */
 		priority: string;
@@ -224,6 +239,7 @@ export class TaskConfigLoader {
 			negativeStatuses,
 			types: projectConfig.types ?? [],
 			priorities,
+			...(projectConfig.board === undefined ? {} : { board: projectConfig.board }),
 			defaults: {
 				priority: resolveDefaultPriority(
 					projectConfig.defaults?.priority,
@@ -260,6 +276,28 @@ export class TaskConfigLoader {
 	): void {
 		const projectConfig = loadYamlFile<TaskProjectConfig>(configPath) ?? {};
 		projectConfig.types = change(projectConfig.types ?? []);
+		if (options.createDirectory === true) fs.mkdirSync(path.dirname(configPath), { recursive: true });
+		writeFile(configPath, yaml.dump(projectConfig));
+	}
+
+	/**
+	 * Sets (or, with an undefined `value`, removes) ONE top-level key of a config file; the other keys are kept. Removing a key
+	 * that is not there (or from a missing file) writes nothing. The folder is created only with `createDirectory`.
+	 */
+	static updateSection<K extends keyof TaskProjectConfig>(
+		configPath: string,
+		key: K,
+		value: TaskProjectConfig[K] | undefined,
+		writeFile: (file: string, content: string) => void = (file, content) => fs.writeFileSync(file, content, 'utf8'),
+		options: { createDirectory?: boolean } = {}
+	): void {
+		const projectConfig = loadYamlFile<TaskProjectConfig>(configPath) ?? {};
+		if (value === undefined) {
+			if (projectConfig[key] === undefined) return;
+			delete projectConfig[key];
+		} else {
+			projectConfig[key] = value;
+		}
 		if (options.createDirectory === true) fs.mkdirSync(path.dirname(configPath), { recursive: true });
 		writeFile(configPath, yaml.dump(projectConfig));
 	}

@@ -35,6 +35,7 @@ import {
 import { MigrationRefusedError, MigrationStateError } from './migrate/migrateErrors.js';
 import { PluginCreateError } from './plugin-host/index.js';
 import { PluginNotImplementedError } from './plugins/kinds.js';
+import { BoardConfigError } from './boardConfig.js';
 import { RemovedConfigKeyError } from './removedConfigKey.js';
 import { StrategyConfigError } from './strategyConfig.js';
 import { TaskClosedError } from './taskClosedError.js';
@@ -232,8 +233,11 @@ function describeProjectError(error: ProjectError): ErrorDescription {
 		return describe(
 			'invalid',
 			error,
-			(error instanceof StrategyConfigError || error instanceof RemovedConfigKeyError ? error.hint : undefined) ??
-				'Fix the config.yml named in the message (remove or rename the key), then retry.'
+			(error instanceof StrategyConfigError ||
+			error instanceof RemovedConfigKeyError ||
+			error instanceof BoardConfigError
+				? error.hint
+				: undefined) ?? 'Fix the config.yml named in the message (remove or rename the key), then retry.'
 		);
 	}
 	if (error instanceof ProjectOptionError) {

@@ -5,20 +5,41 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { createLocalBackend } from '@wadeck-app/task-core';
-import type { TaskBackend, VersionedRecord } from '@wadeck-app/task-core';
+import { LOCAL_TRAITS, createLocalBackend } from '@wadeck-app/task-core';
+import type { BackendTraits, TaskBackend, VersionedRecord } from '@wadeck-app/task-core';
 
+import { createTaskCopier } from '../../migrate/taskCopier.js';
 import { openTaskContext } from '../../openContext.js';
+import type { ResolvedStrategy } from '../../strategyResolve.js';
+import type { ProjectFacts } from '../kinds.js';
 import { FakeGitHub } from '../github/fakeGitHub.testkit.js';
 import { intersectCapabilities, heldBackBy } from './capabilityIntersection.js';
 import { contentHash, identityMeta } from './identityBlock.js';
+import type { Authority } from './identityBlock.js';
 import { MigratingBackend } from './MigratingBackend.js';
+import type { MigratingBackendInput } from './MigratingBackend.js';
+import { MigrationJournal } from './migrationJournal.js';
+import type { WalFiles } from './migrationJournal.js';
 import { RoutingIndex } from './routingIndex.js';
 import type { IndexFiles, IndexRow, RowState } from './routingIndex.js';
 
 export const SINCE = '2026-11-15T10:00:00.000Z';
 export const INDEX_FILE = '/virtual/data/migrating/index.json';
 export const STATUSES = ['backlog', 'in-progress', 'review', 'done', 'cancelled', 'duplicate'];
+
+/** The facts of the project of these pairs (the same statuses and types on both sides, as in a real project). */
+export const FACTS: ProjectFacts = {
+	statuses: [
+		{ name: 'backlog', terminal: false, default: true, outcome: undefined },
+		{ name: 'in-progress', terminal: false, default: false, outcome: undefined },
+		{ name: 'review', terminal: false, default: false, outcome: undefined },
+		{ name: 'done', terminal: true, default: false, outcome: 'positive' },
+		{ name: 'cancelled', terminal: true, default: false, outcome: 'negative' },
+		{ name: 'duplicate', terminal: true, default: false, outcome: 'negative' },
+	],
+	types: ['bug', 'feature'],
+	priorities: ['urgent', 'high', 'medium', 'low'],
+};
 
 const STATUS_CONFIG = `statuses:
     - backlog
@@ -32,17 +53,113 @@ types:
     - feature
 `;
 
-/** Index files in memory: deterministic, nothing on disk. */
-export function memoryIndexFiles(initial?: string): IndexFiles & { text: string | undefined } {
+/**
+ * Index files in memory: deterministic, nothing on disk. `failWrites` makes the next that many writes fail (a full disk), after
+ * `skipWrites` writes that succeed.
+ */
+export function memoryIndexFiles(
+	initial?: string
+): IndexFiles & { text: string | undefined; failWrites: number; skipWrites: number } {
 	const files = {
 		text: initial,
+		failWrites: 0,
+		skipWrites: 0,
 		read: (): string | undefined => files.text,
 		write: (_file: string, content: string): void => {
+			if (files.skipWrites > 0) files.skipWrites--;
+			else if (files.failWrites > 0) {
+				files.failWrites--;
+				throw new Error('injected fault: the routing index cannot be written');
+			}
 			files.text = content;
 		},
 		ensureDir: (): void => undefined,
 	};
 	return files;
+}
+
+/** The files of the migration journal in memory. `failAppend` makes the file with that name refuse appends, after `skipAppends` that succeed. */
+export function memoryWalFiles(): WalFiles & {
+	texts: Map<string, string>;
+	failAppend: Set<string>;
+	skipAppends: number;
+} {
+	const files = {
+		texts: new Map<string, string>(),
+		failAppend: new Set<string>(),
+		skipAppends: 0,
+		append(file: string, text: string): void {
+			if ([...files.failAppend].some(name => file.endsWith(name))) {
+				if (files.skipAppends > 0) files.skipAppends--;
+				else throw new Error(`injected fault: ${file} is full`);
+			}
+			files.texts.set(file, (files.texts.get(file) ?? '') + text);
+		},
+		read: (file: string): string | undefined => files.texts.get(file),
+		ensureDir: (): void => undefined,
+		replace(file: string, text: string): void {
+			files.texts.set(file, text);
+		},
+	};
+	return files;
+}
+
+export interface FaultOptions {
+	/** The call that fails: the first one after the plan was made by default (1), then the 2nd... */
+	nth?: number;
+	/** The call IS applied and the answer is lost (the error comes after it ran): the outcome is unknown to the caller. */
+	applied?: boolean;
+	error?: Error;
+}
+
+/**
+ * Fault injection for a side: `failOn('setTitle')` makes the next call of that method throw (before it runs, or after it ran with
+ * `applied`). Every call of every side is recorded in `calls` as `a:setTitle` / `b:setTitle`, in the order they were made.
+ */
+export class Faults {
+	readonly calls: string[] = [];
+	private readonly plans: Array<{ side: string; method: string; remaining: number; options: FaultOptions }> = [];
+
+	failOn(side: 'a' | 'b', method: string, options: FaultOptions = {}): void {
+		this.plans.push({ side, method, remaining: options.nth ?? 1, options });
+	}
+
+	/** Takes the plan that fires for this call, if any. */
+	take(side: string, method: string): FaultOptions | undefined {
+		this.calls.push(`${side}:${method}`);
+		for (const plan of this.plans) {
+			if (plan.side !== side || plan.method !== method) continue;
+			plan.remaining--;
+			if (plan.remaining === 0) {
+				this.plans.splice(this.plans.indexOf(plan), 1);
+				return plan.options;
+			}
+		}
+		return undefined;
+	}
+
+	/** The calls of one method, in order, as `a` or `b`. */
+	of(method: string): string[] {
+		return this.calls.filter(call => call.endsWith(`:${method}`)).map(call => call.slice(0, 1));
+	}
+}
+
+/** The backend under the fault plan; every method is async in the port, so a fault is a rejected promise. */
+export function faulty(backend: TaskBackend, side: 'a' | 'b', faults: Faults): TaskBackend {
+	return new Proxy(backend, {
+		get(target, property, receiver) {
+			const value = Reflect.get(target, property, receiver) as unknown;
+			if (typeof value !== 'function' || typeof property !== 'string') return value;
+			return async (...args: unknown[]) => {
+				const fault = faults.take(side, property);
+				const failure = fault?.error ?? new Error(`injected fault: ${side}.${property}`);
+				if (fault !== undefined && fault.applied !== true) throw failure;
+				const result = await (value as (...inner: unknown[]) => Promise<unknown>).apply(target, args);
+				if (fault !== undefined) throw failure;
+				return result;
+			};
+		},
+	});
 }
 
 /** Wraps a backend so the names of the methods called on it are recorded (to prove a side was or was not asked). */
@@ -68,6 +185,11 @@ export interface Pair {
 	bCalls: string[];
 	/** The same side without the spy, to seed and to check. */
 	bRaw: TaskBackend;
+	/** What each side keeps (the traits of its strategy). */
+	aTraits: BackendTraits;
+	bTraits: BackendTraits;
+	/** The fake server behind `b`, when it has one (fault injection). */
+	fake?: FakeGitHub;
 	dispose: () => Promise<void>;
 }
 
@@ -89,12 +211,20 @@ async function openLocalPair(): Promise<Pair> {
 		a: createLocalBackend(path.join(root, 'a', 'tasks')),
 		b: spied(bRaw, bCalls),
 		bRaw,
+		aTraits: LOCAL_TRAITS,
+		bTraits: LOCAL_TRAITS,
 		bCalls,
 		dispose: () => {
 			fs.rmSync(root, { recursive: true, force: true });
 			return Promise.resolve();
 		},
 	};
+}
+
+function traitsOf(strategy: ResolvedStrategy | undefined): BackendTraits {
+	const traits = strategy?.plugin.traitsFor?.(strategy.options, strategy.fills, FACTS);
+	if (traits === undefined) throw new Error('the API side declares no traits: this is a bug of the test fixture');
+	return traits;
 }
 
 async function openApiPair(): Promise<Pair> {
@@ -123,6 +253,7 @@ async function openApiPair(): Promise<Pair> {
             duplicate: { state: closed, reason: duplicate }
         fills:
             meta: labels
+            delete: hard
 `,
 		'utf8'
 	);
@@ -138,6 +269,9 @@ async function openApiPair(): Promise<Pair> {
 		a: createLocalBackend(path.join(root, 'a', 'tasks')),
 		b: spied(ctx.store, bCalls),
 		bRaw: ctx.store,
+		aTraits: LOCAL_TRAITS,
+		bTraits: traitsOf(ctx.strategy),
+		fake,
 		bCalls,
 		dispose: async () => {
 			await ctx.dispose?.();
@@ -156,22 +290,78 @@ export interface Wrapped {
 	backend: MigratingBackend;
 	index: RoutingIndex;
 	files: ReturnType<typeof memoryIndexFiles>;
+	journal: MigrationJournal;
+	wal: ReturnType<typeof memoryWalFiles>;
+	faults: Faults;
+	/** The log notes a problem of the human log or of a recovery was reported to. */
+	problems: string[];
+}
+
+export interface WrapOptions {
+	files?: ReturnType<typeof memoryIndexFiles>;
+	wal?: ReturnType<typeof memoryWalFiles>;
+	faults?: Faults;
+	clock?: () => number;
+	/** Told at every boundary of a transaction (to simulate a crash there by throwing). */
+	boundary?: (name: string) => void | Promise<void>;
 }
 
 /** The wrapper over a pair, with its routing index in memory. The capabilities are the intersection, computed the way the plugin does. */
-export function wrap(pair: Pair, files = memoryIndexFiles()): Wrapped {
+export function wrap(pair: Pair, options: WrapOptions = {}): Wrapped {
+	const files = options.files ?? memoryIndexFiles();
+	const wal = options.wal ?? memoryWalFiles();
+	const faults = options.faults ?? new Faults();
+	const problems: string[] = [];
+	const a = faulty(pair.a, 'a', faults);
+	const b = faulty(pair.b, 'b', faults);
 	const { capabilities } = intersectCapabilities(pair.a.capabilities, pair.b.capabilities);
 	const held = heldBackBy({ current: pair.a.capabilities, new: pair.b.capabilities }, capabilities);
 	const index = new RoutingIndex({ file: INDEX_FILE, files });
+	let tx = 0;
+	const journal = new MigrationJournal({
+		dir: path.dirname(INDEX_FILE),
+		files: wal,
+		now: () => new Date().toISOString(),
+		newTx: () => `tx${++tx}-${Math.random().toString(36).slice(2, 8)}`,
+		onLogProblem: text => problems.push(text),
+	});
 	const backend = new MigratingBackend({
-		current: pair.a,
-		next: pair.b,
+		current: a,
+		next: b,
 		index,
 		capabilities,
 		heldBackBy: held,
 		statuses: STATUSES,
+		nextTraits: pair.bTraits,
+		journal,
+		copier: createTaskCopier({
+			project: { id: 'abcd1234', name: 'shop' },
+			facts: FACTS,
+			from: { backend: a, traits: pair.aTraits },
+			to: { backend: b, traits: pair.bTraits },
+		}),
+		...(options.clock === undefined ? {} : { now: options.clock }),
+		...(options.boundary === undefined ? {} : { boundary: options.boundary }),
 	});
-	return { backend, index, files };
+	return { backend, index, files, journal, wal, faults, problems };
+}
+
+/** What a MigratingBackend over two plain backends needs besides them (tests that do not use a pair). */
+export function engineParts(
+	a: TaskBackend,
+	b: TaskBackend,
+	traits: { a: BackendTraits; b: BackendTraits } = { a: LOCAL_TRAITS, b: LOCAL_TRAITS }
+): Pick<MigratingBackendInput, 'nextTraits' | 'journal' | 'copier'> {
+	return {
+		nextTraits: traits.b,
+		journal: new MigrationJournal({ dir: path.dirname(INDEX_FILE), files: memoryWalFiles() }),
+		copier: createTaskCopier({
+			project: { id: 'abcd1234', name: 'shop' },
+			facts: FACTS,
+			from: { backend: a, traits: traits.a },
+			to: { backend: b, traits: traits.b },
+		}),
+	};
 }
 
 export interface Seed {
@@ -209,6 +399,10 @@ export interface CopyOptions {
 	labels?: readonly string[];
 	/** The id in `new` of the parent's copy. */
 	parentB?: string;
+	/** The loss kinds accepted for this copy (kept in the row of a moving task). */
+	accepted?: readonly string[];
+	/** The authority marker of the identity block (absent: a block written before the marker existed). */
+	authority?: Authority;
 }
 
 /** What the move will do in a later phase, done by hand: a copy of a task of `current` in `new` with its identity block, and its row. */
@@ -219,15 +413,28 @@ export async function copyToNew(pair: Pair, task: VersionedRecord, options: Copy
 		...(options.parentB === undefined ? {} : { parentId: options.parentB }),
 	});
 	for (const label of options.labels ?? task.labels ?? []) await pair.bRaw.addLabel(created.id, label);
-	const meta = identityMeta({ publicId: task.id, fromId: task.id, hash: contentHash(task) });
+	const meta = identityMeta({
+		publicId: task.id,
+		fromId: task.id,
+		hash: contentHash(task),
+		...(options.authority === undefined ? {} : { authority: options.authority }),
+	});
 	for (const [key, value] of Object.entries(meta)) await pair.bRaw.setMeta(created.id, key, value);
-	return { publicId: task.id, a: task.id, b: created.id, state: options.state, since: SINCE, version: 1 };
+	return {
+		publicId: task.id,
+		a: task.id,
+		b: created.id,
+		state: options.state,
+		since: SINCE,
+		version: 1,
+		...(options.state === 'moving' && options.accepted !== undefined ? { accepted: [...options.accepted] } : {}),
+	};
 }
 
 /** A task that exists in `new` only (made there), with its identity block and its row. */
 export async function createInNew(
 	pair: Pair,
-	input: { title: string; status?: string; parentB?: string; labels?: readonly string[] }
+	input: { title: string; status?: string; parentB?: string; labels?: readonly string[]; authority?: Authority }
 ): Promise<IndexRow> {
 	const created = await pair.bRaw.create({
 		title: input.title,
@@ -238,6 +445,7 @@ export async function createInNew(
 	const meta = identityMeta({
 		publicId: created.id,
 		hash: contentHash({ title: input.title, status: input.status ?? 'backlog', labels: input.labels ?? [] }),
+		...(input.authority === undefined ? {} : { authority: input.authority }),
 	});
 	for (const [key, value] of Object.entries(meta)) await pair.bRaw.setMeta(created.id, key, value);
 	return { publicId: created.id, b: created.id, state: 'in-b', since: SINCE, version: 1 };

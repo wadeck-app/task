@@ -1,6 +1,7 @@
 // The built-in strategy `migrating` (plugins.migrating.default, alias migrating): a strategy made of two others. `current` is where the
-// tasks are, `new` is where they will go. Phase P0 of .claude/plans/2026-11-15_migrating-wrapper.md: the state `in-a` only. Every
-// operation goes to `current`; `new` is opened and checked and nothing is written to it; no task moves yet. It works for ANY pair of
+// tasks are, `new` is where they will go. Phase P2 of .claude/plans/2026-11-15_migrating-wrapper.md: writes route by the state of
+// the task (in-a: current, moving: current then mirrored to new, in-b: new), a creation goes to `new`, and `moveTask` moves one task
+// (the background worker that calls it is phase P3). It works for ANY pair of
 // strategies and knows none by name: the host opens each side (`StrategyContext.openStrategy`), and the plugin reads only their
 // capabilities, traits and locations.
 import * as path from 'node:path';
@@ -19,7 +20,9 @@ import type {
 } from '../kinds.js';
 import { heldBackBy, intersectCapabilities, NOTHING_PROMISED } from './capabilityIntersection.js';
 import { MigratingBackend } from './MigratingBackend.js';
+import { MigrationJournal } from './migrationJournal.js';
 import { nodeIndexFiles } from './nodeIndexFiles.js';
+import { nodeWalFiles } from './nodeWalFiles.js';
 import { ROW_STATES, RoutingIndex } from './routingIndex.js';
 import { combineTraits } from './traitsCombination.js';
 
@@ -139,7 +142,7 @@ export const migratingPlugin: StrategyPlugin = {
 	describe() {
 		return {
 			summary:
-				'A strategy made of two others: "current" is where the tasks are, "new" is where they will go. In this version every operation goes to "current"; "new" is opened and checked, nothing is written to it and no task moves yet. It offers only what both can do.',
+				'A strategy made of two others: "current" is where the tasks are, "new" is where they will go. A new task is created in "new"; a task stays in "current" until it is moved (one task at a time, copied, verified, then switched in ONE step; its copy in "current" is kept), and every change to a task goes to the side that holds it. It offers only what both can do.',
 			options: {
 				current: 'a full strategy block ({ type, options }): where the tasks are now (required)',
 				new: 'a full strategy block ({ type, options }): where the tasks will go (required); it must hold what "current" holds',
@@ -172,8 +175,18 @@ export const migratingPlugin: StrategyPlugin = {
 		const { capabilities } = intersectCapabilities(currentView.capabilities, nextView.capabilities);
 		const held = heldBackBy({ current: currentView.capabilities, new: nextView.capabilities }, capabilities);
 
+		if (context.copyTasks === undefined) {
+			throw new Error(
+				`${context.source}: the host gave the migrating strategy no way to copy a task between its two strategies; this is a bug of the host`
+			);
+		}
 		const current = await context.openStrategy('current');
 		const next = await context.openStrategy('new', { dataSubdir: NEW_SIDE_FOLDER });
+		const facts = {
+			statuses: context.statuses,
+			types: context.types,
+			...(context.priorities === undefined ? {} : { priorities: [...context.priorities] }),
+		};
 		const budget = options['budget'];
 		const perMinute = isMapping(budget) ? (budget['requestsPerMinute'] as number | undefined) : undefined;
 
@@ -184,6 +197,11 @@ export const migratingPlugin: StrategyPlugin = {
 			files: nodeIndexFiles(context.writeFile),
 			lock: new ProjectWriteLock(path.join(indexDir, 'index.lock')),
 		});
+		const journal = new MigrationJournal({
+			dir: indexDir,
+			files: nodeWalFiles(context.writeFile),
+			onLogProblem: text => context.log('warn', text),
+		});
 		const backend = new MigratingBackend({
 			current: current.backend,
 			next: next.backend,
@@ -191,11 +209,26 @@ export const migratingPlugin: StrategyPlugin = {
 			capabilities,
 			heldBackBy: held,
 			statuses: context.statuses.map(status => status.name),
+			nextTraits: nextView.traits(facts),
+			journal,
+			copier: context.copyTasks(
+				{ slot: 'current', backend: current.backend },
+				{ slot: 'new', backend: next.backend }
+			),
 		});
+		// What a crash left half done is settled before the first command runs; what was done is said, loudly.
+		const recovered = await backend.moves.recover();
+		for (const action of recovered.actions) context.log('warn', `migrating: recovery: ${action}`);
+		for (const open of recovered.unsettled) {
+			context.log(
+				'error',
+				`migrating: ${open.task === '' ? 'an interrupted creation' : `task ${open.task}`} could not be settled: ${open.reason}; writes to it are refused until the next opening settles it`
+			);
+		}
 		const instance: StrategyInstance = {
 			backend,
 			describe: () => [
-				'state: in-a (every operation goes to "current"; "new" is opened and checked, nothing is written to it)',
+				'state: writes follow the routing index (in-a: "current", moving: "current" then mirrored to "new", in-b: "new"); a new task is created in "new"',
 				...current.describe().map(line => `current: ${line}`),
 				...next.describe().map(line => `new: ${line}`),
 				perMinute === undefined
@@ -205,14 +238,36 @@ export const migratingPlugin: StrategyPlugin = {
 			check: async () => {
 				const index = indexLine(routingIndex, path.join(indexDir, 'index.json'));
 				const routed = index.status === 'ok' && !index.text.startsWith('no task is routed');
+				// A damaged index is reported by its own line; the counts need it readable.
+				const rows = index.status === 'error' ? [] : routingIndex.snapshot().rows;
+				const count = (state: string): number => rows.filter(row => row.state === state).length;
+				const stale = rows.filter(row => row.state === 'moving' && row.stale === true).length;
+				let open: number;
+				try {
+					open = backend.moves.openTransactions();
+				} catch (error) {
+					return [
+						{
+							name: 'state',
+							status: 'error',
+							text: error instanceof Error ? error.message : String(error),
+							fix: 'The write-ahead log is damaged: restore it from a backup; do not delete it while a move is unfinished.',
+						},
+						index,
+					];
+				}
+				const unsettled = backend.moves.unsettled().size;
 				const lines: CheckLine[] = [
 					{
 						name: 'state',
-						status: 'warn',
-						text: routed
-							? 'reads follow the routing index (see the index line); nothing is written to "new" and no task is moved by this version'
-							: 'in-a: every operation goes to "current"; "new" is opened and checked, nothing is written to it and no task is moved',
-						fix: 'This version does not move tasks yet. Keep this section to validate the pair, or remove it (keep only the "current" block as the strategy) to stop using it.',
+						status: unsettled > 0 ? 'error' : stale > 0 || open > 0 ? 'warn' : 'ok',
+						text: `${routed ? 'writes follow the routing index' : 'no task is routed yet'}: ${count('moving')} moving (${stale} stale copies), ${count('in-b')} in "new", ${count('deleted')} deleted; ${open} unfinished transaction(s) in the write-ahead log, ${unsettled} that recovery could not settle`,
+						fix:
+							unsettled > 0
+								? 'Fix the problem named in the task log (line "could not be settled"), then open the project again: recovery runs at the opening.'
+								: stale > 0 || open > 0
+									? 'A move or a recovery settles them: moves.moveTask / moves.catchUp, or open the project again. Nothing is lost: the copies in "current" are kept.'
+									: 'Nothing to do. No background worker moves tasks yet (phase P3): a task moves only when something calls moveTask.',
 					},
 					index,
 				];

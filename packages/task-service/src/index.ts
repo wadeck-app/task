@@ -102,6 +102,14 @@ export { selectDeleteTargets, describeDeleteEffects } from './deleteSelection.js
 export type { StatusInfo } from './listStatuses.js';
 export { listStatuses } from './listStatuses.js';
 export { listTypes, addType, removeType } from './taskTypes.js';
+export {
+	BoardConfigError,
+	BOARD_COLUMN_NAME_MAX,
+	clearBoardColumns,
+	saveBoardColumns,
+	unmappedStatuses,
+	validateBoard,
+} from './boardConfig.js';
 export { getTaskConfigDir, getTaskLogDir } from './configDir.js';
 export type { ProjectHealth } from './projectsHealth.js';
 export type { InspectedProject } from './projectsHealth.js';

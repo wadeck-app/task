@@ -3,9 +3,10 @@
 // an API); nothing is written to either side. Only `adoptIndex` writes, and only the index file.
 //
 // What the stores cannot say, said loudly rather than guessed:
-//  - which side is authoritative for a task that has a copy in both: the block holds no such fact. A copy of a task still in "current" is
-//    rebuilt as `moving` (current is read, the safe side: it is never deleted before the end). When the copy differs from what was
-//    copied it may have been edited in "new" since, and the report says so, task by task;
+//  - which side is authoritative for a task that has a copy in both: a block with the authority marker says it ("new" = in-b, both ids
+//    kept; "current" = moving, and STALE: a mirror may have failed, so the next catch-up compares it before authority can switch). A
+//    block written before the marker existed holds no such fact: the copy is rebuilt as `moving` (current is read, the safe side: it is
+//    never deleted before the end) and, when it differs from what was copied, the report says so, task by task;
 //  - a deleted task: it leaves no trace in a store, so a `deleted` row is not rebuilt (its copy in "current", if it still exists, is
 //    listed again);
 //  - a task of "new" with no identity block: it is not a task of the project as far as the index goes; it is reported as `unindexed`.
@@ -71,7 +72,29 @@ export async function rebuildIndex(input: RebuildInput): Promise<RebuildReport> 
 					`${subject} says it is the public id "${identity.publicId}" but was copied from the task "${fromId}" of "current", whose public id is "${fromId}"`
 				);
 			}
+			if (identity.authority === 'new') {
+				rows.push({ publicId: fromId, a: fromId, b: summary.id, state: 'in-b', since, version: 1 });
+				continue;
+			}
+			if (identity.authority === 'current') {
+				rows.push({
+					publicId: fromId,
+					a: fromId,
+					b: summary.id,
+					state: 'moving',
+					stale: true,
+					since,
+					version: 1,
+				});
+				notes.push(
+					`task ${fromId}: its copy "${summary.id}" in "new" follows "current"; it is rebuilt as moving and stale, so the next catch-up compares it with "current" before authority can switch.`
+				);
+				continue;
+			}
 			rows.push({ publicId: fromId, a: fromId, b: summary.id, state: 'moving', since, version: 1 });
+			notes.push(
+				`task ${fromId}: its copy "${summary.id}" in "new" has no authority marker (written before the marker existed); it is rebuilt as moving, so the version in "current" is read.`
+			);
 			if (contentHash(task) !== identity.hash) {
 				notes.push(
 					`task ${fromId}: its copy "${summary.id}" in "new" differs from what was copied (it may have been edited in "new" since); it is rebuilt as moving, so the version in "current" is read. Compare the two before going on.`

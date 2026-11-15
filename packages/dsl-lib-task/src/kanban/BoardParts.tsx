@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useDismiss } from '../useDismiss.js';
 import { CONTROL_RADIUS, CONTROL_SQUARE, FOCUS_RING, GAP_CONTROLS, ICON_SIZE, PILL_RADIUS } from '../ui/tokens.js';
 import { TONE_DOT, TONE_PILL, toneOf } from '../tones.js';
-import type { BoardCardData, BoardColumnData } from './boardModel.js';
+import type { BoardCardData, BoardColumnData, BoardStatusData } from './boardModel.js';
 
 /** What the layouts need from the board: the cards as shown, the move, the drag state. */
 export interface BoardView {
@@ -13,9 +13,11 @@ export interface BoardView {
 	busy: ReadonlySet<string>;
 	/** Which status the dragged card is over, when it may be dropped there. */
 	overStatus: string | null;
+	/** The card being dragged and its current status; null when nothing is dragged (the drop areas show only then). */
+	dragging: { id: string; from: string } | null;
 	startDrag: (event: React.DragEvent, card: BoardCardData, from: string) => void;
 	endDrag: () => void;
-	/** Props that make an element a drop target for `status`. */
+	/** Props that make an element the drop target of EXACTLY `status`. */
 	zone: (status: string) => ZoneProps;
 	move: (id: string, status: string) => void;
 }
@@ -36,7 +38,12 @@ function priorityTone(priority: string): 'danger' | 'warning' | 'neutral' {
 
 const MENU_ITEM_CLASS = `flex w-full cursor-pointer items-center ${GAP_CONTROLS} ${CONTROL_RADIUS} border-0 bg-transparent px-2 py-1.5 text-left text-sm text-content hover:bg-muted-bg focus:bg-muted-bg focus:outline-none`;
 
-/** The "Move to" menu of a card: the keyboard and touch way to change its status. */
+/** A column heading is shown in the "Move to" menu unless it only repeats the one status it holds. */
+function showsHeading(column: BoardColumnData): boolean {
+	return column.statuses.length !== 1 || column.statuses[0]!.name !== column.label;
+}
+
+/** The "Move to" menu of a card: the keyboard and touch way to change its status. Every status, grouped by column. */
 export function MoveMenu({
 	card,
 	from,
@@ -46,6 +53,7 @@ export function MoveMenu({
 	onMove,
 }: {
 	card: BoardCardData;
+	/** The current status of the card. */
 	from: string;
 	columns: BoardColumnData[];
 	disabled: boolean;
@@ -56,7 +64,10 @@ export function MoveMenu({
 	const root = useRef<HTMLSpanElement>(null);
 	const button = useRef<HTMLButtonElement>(null);
 	const items = useRef<Array<HTMLButtonElement | null>>([]);
-	const targets = columns.filter(column => column.status !== from);
+	const groups = columns
+		.map(column => ({ column, targets: column.statuses.filter(status => status.name !== from) }))
+		.filter(group => group.targets.length > 0);
+	const count = groups.reduce((total, group) => total + group.targets.length, 0);
 
 	useDismiss(root, open, () => setOpen(false));
 	useEffect(() => {
@@ -66,7 +77,6 @@ export function MoveMenu({
 	}, [open]);
 
 	const focusAt = (index: number): void => {
-		const count = targets.length;
 		items.current[((index % count) + count) % count]?.focus();
 	};
 
@@ -83,7 +93,7 @@ export function MoveMenu({
 			focusAt(0);
 		} else if (event.key === 'End') {
 			event.preventDefault();
-			focusAt(targets.length - 1);
+			focusAt(count - 1);
 		} else if (event.key === 'Escape') {
 			event.preventDefault();
 			setOpen(false);
@@ -93,6 +103,7 @@ export function MoveMenu({
 		}
 	};
 
+	let position = 0;
 	return (
 		<span ref={root} className="relative inline-flex shrink-0">
 			<button
@@ -102,7 +113,7 @@ export function MoveMenu({
 				aria-haspopup="menu"
 				aria-expanded={open}
 				title="Move to..."
-				disabled={disabled || targets.length === 0}
+				disabled={disabled || count === 0}
 				onClick={() => setOpen(value => !value)}
 				className={`inline-flex ${dense ? 'h-6 w-6' : CONTROL_SQUARE} cursor-pointer items-center justify-center ${CONTROL_RADIUS} border-0 bg-transparent text-muted hover:bg-muted-bg hover:text-content ${FOCUS_RING} disabled:cursor-not-allowed disabled:opacity-40`}
 			>
@@ -113,30 +124,46 @@ export function MoveMenu({
 					role="menu"
 					aria-label={`Move ${card.id} to`}
 					onKeyDown={onKeyDown}
-					className={`absolute right-0 top-full z-30 m-0 mt-1 min-w-[10rem] list-none ${CONTROL_RADIUS} border border-border bg-surface p-1 shadow-lg`}
+					className={`absolute right-0 top-full z-30 m-0 mt-1 max-h-[60vh] min-w-[10rem] list-none overflow-y-auto ${CONTROL_RADIUS} border border-border bg-surface p-1 shadow-lg`}
 				>
-					{targets.map((target, index) => (
-						<li key={target.status} role="none">
-							<button
-								ref={element => {
-									items.current[index] = element;
-								}}
-								type="button"
-								role="menuitem"
-								tabIndex={-1}
-								onClick={() => {
-									setOpen(false);
-									onMove(card.id, target.status);
-								}}
-								className={MENU_ITEM_CLASS}
-							>
-								<span
-									aria-hidden="true"
-									className={`inline-block h-2 w-2 shrink-0 ${PILL_RADIUS} ${TONE_DOT[toneOf(target.tone)]}`}
-								/>
-								{target.label}
-							</button>
-						</li>
+					{groups.map(({ column, targets }) => (
+						<React.Fragment key={column.key}>
+							{showsHeading(column) ? (
+								<li
+									role="presentation"
+									data-testid="kanban-move-group"
+									className="px-2 pb-0.5 pt-1.5 text-xs font-semibold text-muted"
+								>
+									{column.label}
+								</li>
+							) : null}
+							{targets.map(target => {
+								const index = position++;
+								return (
+									<li key={target.name} role="none">
+										<button
+											ref={element => {
+												items.current[index] = element;
+											}}
+											type="button"
+											role="menuitem"
+											tabIndex={-1}
+											onClick={() => {
+												setOpen(false);
+												onMove(card.id, target.name);
+											}}
+											className={MENU_ITEM_CLASS}
+										>
+											<span
+												aria-hidden="true"
+												className={`inline-block h-2 w-2 shrink-0 ${PILL_RADIUS} ${TONE_DOT[toneOf(target.tone)]}`}
+											/>
+											{target.name}
+										</button>
+									</li>
+								);
+							})}
+						</React.Fragment>
 					))}
 				</ul>
 			) : null}
@@ -147,19 +174,21 @@ export function MoveMenu({
 /** One card. `dense` is the one-line card of the compact layout. */
 export function BoardCard({
 	card,
-	status,
 	view,
 	dense = false,
 	showMove = true,
 	draggable = true,
+	showStatus = false,
 }: {
 	card: BoardCardData;
-	status: string;
 	view: BoardView;
 	dense?: boolean;
 	showMove?: boolean;
 	draggable?: boolean;
+	/** Shows the status of the card as a pill: the column holds several statuses. */
+	showStatus?: boolean;
 }): React.ReactElement {
+	const status = card.status ?? '';
 	const busy = view.busy.has(card.id);
 	const canDrag = draggable && !view.readOnly && !busy;
 	const labels = card.labels ?? [];
@@ -185,6 +214,15 @@ export function BoardCard({
 				dense={dense}
 				onMove={view.move}
 			/>
+		) : null;
+	const statusPill =
+		showStatus && status !== '' ? (
+			<span
+				data-testid="kanban-card-status"
+				className={`inline-flex shrink-0 items-center ${PILL_RADIUS} px-2 text-xs font-medium ${TONE_PILL[tone]}`}
+			>
+				{status}
+			</span>
 		) : null;
 	const priority =
 		card.priority !== undefined && card.priority !== '' ? (
@@ -212,6 +250,7 @@ export function BoardCard({
 				<div className={`flex flex-wrap items-center ${GAP_CONTROLS}`}>
 					{idText}
 					{headline}
+					{statusPill}
 					{priority}
 					{card.assignee ? <span className="shrink-0 text-xs text-muted">{card.assignee}</span> : null}
 					{move}
@@ -224,6 +263,7 @@ export function BoardCard({
 					</div>
 					{headline}
 					<div className={`flex flex-wrap items-center ${GAP_CONTROLS} text-xs`}>
+						{statusPill}
 						{priority}
 						{card.type ? <span className="text-muted">{card.type}</span> : null}
 						{card.assignee ? <span className="text-muted">{card.assignee}</span> : null}
@@ -273,4 +313,56 @@ export function EmptyColumn(): React.ReactElement {
 /** Common classes of a drop target, highlighted while a dragged card is over it. */
 export function zoneClass(highlighted: boolean): string {
 	return `${CONTROL_RADIUS} ${highlighted ? 'bg-primary-light ring-2 ring-primary' : ''}`;
+}
+
+/**
+ * The drop areas of a column, shown while a card is dragged: one labelled area per status the column holds, stacked, each
+ * tinted by the tone of its status. Dropping on an area sets EXACTLY that status. The area of the status the card is in is
+ * marked and does not accept the drop.
+ */
+export function DropAreas({
+	statuses,
+	view,
+	direction = 'column',
+}: {
+	statuses: BoardStatusData[];
+	view: BoardView;
+	direction?: 'column' | 'row';
+}): React.ReactElement | null {
+	const drag = view.dragging;
+	if (drag === null) {
+		return null;
+	}
+	return (
+		<div
+			data-testid="kanban-drop-areas"
+			className={`flex ${direction === 'row' ? 'flex-row flex-wrap' : 'flex-col'} gap-1`}
+		>
+			{statuses.map(status => {
+				const current = status.name === drag.from;
+				const zone = view.zone(status.name);
+				const over = zone['data-drop-target'] === 'true';
+				return (
+					<div
+						key={status.name}
+						data-testid={`kanban-drop-area-${status.name}`}
+						data-status={status.name}
+						data-current={current ? 'true' : undefined}
+						aria-label={
+							current ? `${status.name} (current status)` : `Drop here to set status ${status.name}`
+						}
+						{...zone}
+						className={`flex min-h-[2.5rem] min-w-0 flex-1 items-center ${GAP_CONTROLS} ${CONTROL_RADIUS} border-2 border-dashed px-2 text-xs font-medium ${current ? 'border-border bg-muted-bg text-muted opacity-70' : over ? 'border-primary bg-primary-light text-content ring-2 ring-primary' : 'border-primary/50 bg-surface text-content'}`}
+					>
+						<span
+							aria-hidden="true"
+							className={`inline-block h-2 w-2 shrink-0 ${PILL_RADIUS} ${TONE_DOT[toneOf(status.tone)]}`}
+						/>
+						<span className="min-w-0 flex-1 truncate">{status.name}</span>
+						{current ? <span className="shrink-0 font-normal">current</span> : null}
+					</div>
+				);
+			})}
+		</div>
+	);
 }

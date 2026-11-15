@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getJson, isAbort, problemText } from '../apiFetch.js';
 import { normalizeColumns } from './boardModel.js';
-import type { BoardColumnData } from './boardModel.js';
+import type { BoardColumnData, BoardLayoutData, BoardStatusData } from './boardModel.js';
 
 export type LiveState = 'live' | 'reconnecting' | 'polling';
 
@@ -19,6 +19,8 @@ export interface LiveBoardOptions {
 	/** Where the module API is mounted, already resolved (may be empty). */
 	apiBase: string;
 	pollSeconds: number;
+	/** The layout of the first answer (the page gives it with the first columns); the board then follows the server. */
+	layout?: BoardLayoutData | null;
 }
 
 export interface LiveBoard {
@@ -78,6 +80,8 @@ export interface BoardMeta {
 	emptyText: string | null;
 	abSwitcher: boolean | undefined;
 	readOnly: boolean | undefined;
+	/** The stored layout and the statuses it can place; null when the answer has none (the editor is then not offered). */
+	layout: BoardLayoutData | null;
 }
 
 const NO_META: BoardMeta = {
@@ -87,10 +91,41 @@ const NO_META: BoardMeta = {
 	emptyText: null,
 	abSwitcher: undefined,
 	readOnly: undefined,
+	layout: null,
 };
 
 const text = (value: unknown): string | null => (typeof value === 'string' && value !== '' ? value : null);
 const flag = (value: unknown): boolean | undefined => (typeof value === 'boolean' ? value : undefined);
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+	typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/** The `config` and `allStatuses` of a board answer, or null when either is missing or malformed. */
+export function layoutOf(raw: Record<string, unknown>): BoardLayoutData | null {
+	const config = raw['config'];
+	const all = raw['allStatuses'];
+	if (!isObject(config) || !Array.isArray(config['columns']) || !Array.isArray(all)) {
+		return null;
+	}
+	const columns: BoardLayoutData['columns'] = [];
+	for (const column of config['columns']) {
+		if (!isObject(column) || typeof column['name'] !== 'string' || !Array.isArray(column['statuses'])) {
+			return null;
+		}
+		columns.push({
+			name: column['name'],
+			statuses: column['statuses'].filter((x): x is string => typeof x === 'string'),
+		});
+	}
+	const allStatuses: BoardStatusData[] = [];
+	for (const status of all) {
+		if (!isObject(status) || typeof status['name'] !== 'string') {
+			return null;
+		}
+		allStatuses.push(status as unknown as BoardStatusData);
+	}
+	return { isDefault: config['isDefault'] === true, columns, allStatuses };
+}
 
 interface Shown {
 	columns: BoardColumnData[];
@@ -106,7 +141,7 @@ export function useLiveBoard(options: LiveBoardOptions): LiveBoard {
 	const [shown, setShown] = useState<Shown>({
 		columns: options.columns ?? [],
 		version: options.version,
-		meta: NO_META,
+		meta: { ...NO_META, layout: options.layout ?? null },
 	});
 	const [loading, setLoading] = useState(options.columns === undefined && options.projectParam !== '');
 	const [loaded, setLoaded] = useState(options.columns !== undefined);
@@ -176,6 +211,7 @@ export function useLiveBoard(options: LiveBoardOptions): LiveBoard {
 					emptyText: text(raw['emptyText']),
 					abSwitcher: flag(raw['abSwitcher']),
 					readOnly: flag(raw['readOnly']),
+					layout: layoutOf(raw),
 				};
 				setProblem(null);
 				setLoading(false);

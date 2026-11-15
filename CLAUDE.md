@@ -187,7 +187,7 @@ Detail: `docs/claude/task-components.md` (component table, props, transfer check
 
 - Task page `/tasks/p/:project/:id` is ONE design (A/B rows baked). Source `src/dsl-views/variants/` (`_page`, `_shared`, `_sections`); `task-page.yaml` is GENERATED (`npm run views --workspace=packages/app-module-task`, freshness-tested). Each fact is bound by ONE node (`taskPageVariants.test.ts`); no `AbTest` is left; no "terminal" word in any text (colour says it); no `project-header` slot on this page.
 - Sub-task detach action uses the placeholder `{childId}`, not `{id}` (a body-less action fills `{id}` from the page).
-- Kanban `/tasks/p/:project/board`: data `GET /tasks/board`, live through the module SSE `GET /board/events`; component `task:KanbanBoard` with 5 variants and a dev-only A/B switcher (`TASK_KANBAN_AB=1`); moving a card is the existing `POST /tasks/:id/status`.
+- Kanban `/tasks/p/:project/board`: data `GET /tasks/board`, live through the module SSE `GET /board/events`; component `task:KanbanBoard` with 5 variants and a dev-only A/B switcher (`TASK_KANBAN_AB=1`); moving a card is the existing `POST /tasks/:id/status`. Columns are configurable and can group statuses (`board` key of config.yml, D18; `PUT|DELETE /board/config`; one drop area per status while dragging; "Configure columns" editor).
 - Tree page (global, several projects): `task:ProjectAccordion` over `GET /tree?allProjects=true`; rows capped at `ROW_CAP` 60 per project; `warning` is one line.
 - Verified in a real shell: see the detail file for versions; any visual change must be checked in a real shell at 1440 and 390 px.
 

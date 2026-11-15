@@ -338,3 +338,79 @@ describe('RoutingIndex: replacing it from a rebuild', () => {
 		expect(files.writes).toEqual([]);
 	});
 });
+
+describe('RoutingIndex: the stale flag of a moving row (phase P2)', () => {
+	it('keeps `stale: true` on a moving row through a write and a read', () => {
+		const files = memoryFiles(undefined);
+		const index = new RoutingIndex({ file: FILE, files });
+
+		index.mutate(() => [row({ publicId: 'a1', a: 'a1', b: 'b1', state: 'moving', stale: true })]);
+
+		expect(new RoutingIndex({ file: FILE, files }).snapshot().byPublicId('a1')?.stale).toBe(true);
+	});
+
+	it.each([
+		['a row that is not moving', row({ publicId: 'a1', a: 'a1', state: 'in-a', stale: true })],
+		[
+			'a flag that is not a boolean',
+			{ ...row({ publicId: 'a1', a: 'a1', b: 'b1', state: 'moving' }), stale: 'yes' },
+		],
+	])('refuses %s, naming the file and the row', async (_name, bad) => {
+		const index = new RoutingIndex({ file: FILE, files: memoryFiles(undefined) });
+
+		const error = await problemOf(() => index.mutate(() => [bad as IndexRow]));
+
+		expect(error.message).toContain(FILE);
+		expect(error.message).toContain('stale');
+	});
+
+	it('mutateRow changes one row by its public id, bumps its version and refuses a version that moved', () => {
+		const index = new RoutingIndex({ file: FILE, files: memoryFiles(undefined) });
+		index.mutate(() => [row({ publicId: 'a1', a: 'a1', b: 'b1', state: 'moving' })]);
+
+		const changed = index.mutateRow('a1', { expectedVersion: 1 }, current => ({ ...current!, state: 'in-b' }));
+
+		expect(changed.byPublicId('a1')).toMatchObject({ state: 'in-b', version: 2 });
+		expect(() =>
+			index.mutateRow('a1', { expectedVersion: 1 }, current => ({ ...current!, state: 'moving' }))
+		).toThrow(/version/);
+	});
+
+	it('mutateRow can create a row (no expected version) and fails loudly on a task it does not know', () => {
+		const index = new RoutingIndex({ file: FILE, files: memoryFiles(undefined) });
+
+		const created = index.mutateRow('x', {}, current => current ?? row({ publicId: 'x', b: 'x', state: 'in-b' }));
+
+		expect(created.byPublicId('x')?.version).toBe(1);
+		expect(() => index.mutateRow('nope', { mustExist: true }, current => current!)).toThrow(/nope/);
+	});
+});
+
+describe('RoutingIndex: the losses accepted when a task was copied (phase P2)', () => {
+	it('keeps the list on a moving row through a write and a read', () => {
+		const files = memoryFiles(undefined);
+		new RoutingIndex({ file: FILE, files }).mutate(() => [
+			row({ publicId: 'a1', a: 'a1', b: 'b1', state: 'moving', accepted: ['created-at', 'history'] }),
+		]);
+
+		expect(new RoutingIndex({ file: FILE, files }).snapshot().byPublicId('a1')?.accepted).toEqual([
+			'created-at',
+			'history',
+		]);
+	});
+
+	it.each([
+		['on a row that is not moving', row({ publicId: 'a1', a: 'a1', state: 'in-a', accepted: ['all'] })],
+		[
+			'that is not a list of texts',
+			{ ...row({ publicId: 'a1', a: 'a1', b: 'b1', state: 'moving' }), accepted: [1] },
+		],
+	])('refuses a list %s, naming the file and the key', async (_name, bad) => {
+		const index = new RoutingIndex({ file: FILE, files: memoryFiles(undefined) });
+
+		const error = await problemOf(() => index.mutate(() => [bad as IndexRow]));
+
+		expect(error.message).toContain(FILE);
+		expect(error.message).toContain('accepted');
+	});
+});

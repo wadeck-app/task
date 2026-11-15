@@ -24,6 +24,8 @@ import { createTestWorld, type TestWorld } from './testHelpers.js';
 const EXPECTED_ROUTES = [
 	'GET /board/events',
 	'GET /tasks/board',
+	'PUT /board/config',
+	'DELETE /board/config',
 	'GET /projects',
 	'GET /summary',
 	'GET /tasks/open/count',

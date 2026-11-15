@@ -35,9 +35,11 @@ The wrapper works for ANY pair (A, B) of strategies and knows none by name: it r
 | -------------------------------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | P0                               | host seam `openStrategy`, plugin registration, option validation, intersected capabilities, architecture rules | contract suite passes with the wrapper over local+local in state `in-a` only |
 | P1 (DONE 2026-11-15, reads only) | index + states + merged reads (list, get, tree, links across stores), identity block, index rebuild            | reads correct in every state, rebuild test                                   |
-| P2                               | writes in every state, move state machine, WAL, crash/fault-injection matrix, deletion during move             | contract suite passes with tasks in every state; crash at each step recovers |
+| P2 (DONE 2026-11-15)             | writes in every state, move state machine, WAL, crash/fault-injection matrix, deletion during move             | contract suite passes with tasks in every state; crash at each step recovers |
 | P3                               | background worker, budget, rate pause, `status/pause/resume/log`                                               | worker moves N tasks under the fake with rate limits; status exact           |
 | P4                               | `finalize` / `abort`, config switch, backup                                                                    | end-to-end local -> fake GitHub, finalize, normal project afterwards         |
 | P5                               | live smoke script (not CI), docs, CLAUDE.md digest                                                             | run by the owner with a throwaway repo: UNVERIFIED until then                |
+
+P2 leftovers: trait enforcement on writes (depth, text limits, comment authors); a trait for write lag of a side; claim semantics in `new`; `prepare` forwarding; cross-process lock; docs of the `task strategy migrate` commands (P3). Fault tests of P2 ran on fakes only.
 
 Risks: cross-store hierarchy; GitHub write cap (500 content writes/hour) makes moves slow by nature (status shows the ETA); a task edited ON GitHub during the move is not seen (R7).

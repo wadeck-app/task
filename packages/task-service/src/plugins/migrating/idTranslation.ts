@@ -7,6 +7,7 @@
 import { BackendDataError } from '@wadeck-app/task-core';
 import type { ActivityEntry, TaskLink, TaskSummary, VersionedRecord } from '@wadeck-app/task-core';
 
+import { isIdentityKey } from './identityBlock.js';
 import type { IndexRow, IndexSnapshot } from './routingIndex.js';
 
 export type Side = 'a' | 'b';
@@ -28,6 +29,15 @@ export function otherSide(side: Side): Side {
 /** The activity kinds whose fields hold task ids. */
 const ID_IN_OLD_NEW = new Set(['parent']);
 const ID_IN_TARGET = new Set(['link-added', 'link-removed', 'child-added', 'child-removed']);
+
+/** An activity entry about a metadata entry of the identity block (the strategy's own bookkeeping, not a change of the task). */
+function isIdentityEntry(entry: ActivityEntry): boolean {
+	return (
+		(entry.kind === 'meta-set' || entry.kind === 'meta-removed') &&
+		entry.field !== undefined &&
+		isIdentityKey(entry.field)
+	);
+}
 
 export class Translator {
 	constructor(private readonly snapshot: IndexSnapshot) {}
@@ -76,13 +86,25 @@ export class Translator {
 
 	record(side: Side, record: VersionedRecord): VersionedRecord {
 		const context = `task ${record.id} in "${SIDE_NAME[side]}"`;
-		const { parentId, links, activity, ...rest } = record;
+		const { parentId, links, activity, meta, ...rest } = record;
+		// The identity block belongs to the strategy: it is never shown (a person's own metadata is).
+		const ownMeta =
+			meta === undefined
+				? undefined
+				: Object.fromEntries(Object.entries(meta).filter(([key]) => !isIdentityKey(key)));
 		return {
 			...rest,
 			id: this.publicId(side, record.id, context),
+			...(ownMeta === undefined || Object.keys(ownMeta).length === 0 ? {} : { meta: ownMeta }),
 			...(parentId === undefined ? {} : { parentId: this.publicId(side, parentId, `the parent of ${context}`) }),
 			...(links === undefined ? {} : { links: links.map(link => this.link(side, link, context)) }),
-			...(activity === undefined ? {} : { activity: activity.map(entry => this.activityEntry(side, entry)) }),
+			...(activity === undefined
+				? {}
+				: {
+						activity: activity
+							.filter(entry => !isIdentityEntry(entry))
+							.map(entry => this.activityEntry(side, entry)),
+					}),
 		};
 	}
 

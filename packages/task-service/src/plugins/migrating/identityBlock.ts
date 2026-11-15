@@ -4,7 +4,10 @@
 //   migrating.publicId  the id the person sees (the id in "current" for a task that was there, else its own id in "new")
 //   migrating.fromId    the id in "current" the copy was made from (absent for a task created in "new")
 //   migrating.hash      16 hex characters: a hash of the content of the task when it was copied (see contentHash)
-// The three keys are short on purpose: a metadata carrier may cap key and value together (a label carrier: 50 characters).
+//   migrating.authority which side holds the truth of the task: "current" (the copy follows it) or "new" (the copy is the task); written
+//                       with the copy and rewritten at the switch, so the routing index can be rebuilt without guessing. Absent from a
+//                       block written before it existed: read as "unknown", never as an error.
+// The keys are short on purpose: a metadata carrier may cap key and value together (a label carrier: 50 characters).
 import * as crypto from 'node:crypto';
 
 import { BackendDataError } from '@wadeck-app/task-core';
@@ -14,7 +17,12 @@ export const IDENTITY_KEYS = {
 	publicId: 'migrating.publicId',
 	fromId: 'migrating.fromId',
 	hash: 'migrating.hash',
+	authority: 'migrating.authority',
 } as const;
+
+/** Which side holds the truth of the task: the strategy it is moving from, or the one it is moving to. */
+export type Authority = 'current' | 'new';
+const AUTHORITIES: readonly string[] = ['current', 'new'];
 
 const PREFIX = 'migrating.';
 const HASH_PATTERN = /^[0-9a-f]{16}$/;
@@ -23,6 +31,8 @@ export interface IdentityBlock {
 	publicId: string;
 	fromId?: string;
 	hash: string;
+	/** Absent in a block written before the marker existed. */
+	authority?: Authority;
 }
 
 export function isIdentityKey(key: string): boolean {
@@ -34,6 +44,7 @@ export function identityMeta(block: IdentityBlock): Record<string, string> {
 		[IDENTITY_KEYS.publicId]: block.publicId,
 		...(block.fromId === undefined ? {} : { [IDENTITY_KEYS.fromId]: block.fromId }),
 		[IDENTITY_KEYS.hash]: block.hash,
+		...(block.authority === undefined ? {} : { [IDENTITY_KEYS.authority]: block.authority }),
 	};
 }
 
@@ -65,7 +76,16 @@ export function readIdentity(
 	}
 	const fromId = meta[IDENTITY_KEYS.fromId];
 	if (fromId === '') damaged(subject, IDENTITY_KEYS.fromId, 'is empty (leave it out for a task created in "new")');
-	return { publicId, ...(fromId === undefined ? {} : { fromId }), hash };
+	const authority = meta[IDENTITY_KEYS.authority];
+	if (authority !== undefined && !AUTHORITIES.includes(authority)) {
+		damaged(subject, IDENTITY_KEYS.authority, `must be "current" or "new", found ${JSON.stringify(authority)}`);
+	}
+	return {
+		publicId,
+		...(fromId === undefined ? {} : { fromId }),
+		hash,
+		...(authority === undefined ? {} : { authority: authority as Authority }),
+	};
 }
 
 /** What the content of a task is, for the hash: the fields a person edits. Not its ids, relations, dates, revision or comments. */

@@ -201,7 +201,7 @@ describe('KanbanBoard contribution mode: the move is a request of its own', () =
 			}
 			const columns = sampleColumns();
 			const card = columns[0]!.cards.shift()!;
-			columns[1]!.cards.unshift(card);
+			columns[1]!.cards.unshift({ ...card, status: 'doing' });
 			return jsonResponse(answer({ columns, version: 'v2' }));
 		});
 		await loaded();
@@ -256,7 +256,7 @@ describe('KanbanBoard contribution mode: the move is a request of its own', () =
 		await loaded();
 
 		fireEvent.click(screen.getByRole('button', { name: 'Move aaa11111 to another status' }));
-		fireEvent.click(screen.getByRole('menuitem', { name: 'Done' }));
+		fireEvent.click(screen.getByRole('menuitem', { name: 'done' }));
 
 		await waitFor(() => expect(calls.some(c => c.method === 'POST')).toBe(true));
 		expect(JSON.parse(calls.find(c => c.method === 'POST')!.body!)).toEqual({ status: 'done' });

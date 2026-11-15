@@ -4,6 +4,8 @@ export type {
 	TaskStatusEntry,
 	TaskGlobalConfig,
 	TaskProjectConfig,
+	BoardColumnConfig,
+	BoardConfig,
 	TaskResolvedConfig,
 	StatusOutcome,
 } from './TaskConfigLoader.js';

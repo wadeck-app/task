@@ -2,7 +2,8 @@
 // whether the board changed. Built from ONE read of the list (the index for the local strategy): no task file is read.
 import { createHash } from 'node:crypto';
 
-import { listStatuses, listTasks } from '@wadeck-app/task-service';
+import { listStatuses, listTasks, unmappedStatuses } from '@wadeck-app/task-service';
+import type { StatusInfo } from '@wadeck-app/task-service';
 import type { TaskSummary } from '@wadeck-app/task-core';
 
 import { shortTitle } from './display.js';
@@ -27,17 +28,43 @@ export interface BoardCard {
 	priorityText: string;
 	/** Absent when nobody holds the task. */
 	assignee?: string;
+	/** The status of the task: the card sits in the column that lists it, and a drop area of that status moves it here. */
+	status: string;
+	/** The tone of the status. */
 	tone: string;
 	createdAt: string;
 }
 
-export interface BoardColumn {
-	status: string;
-	label: string;
+/** One status a column holds. */
+export interface BoardColumnStatus {
+	name: string;
 	tone: string;
 	terminal: boolean;
-	/** Terminal columns only. */
 	outcome?: 'positive' | 'negative';
+	/** The tasks in this status, the hidden ones included. */
+	count: number;
+}
+
+/** The key of the implicit column of the statuses no column lists. */
+export const UNMAPPED_COLUMN_KEY = '__unmapped__';
+const UNMAPPED_COLUMN_NAME = 'Unmapped';
+
+export interface BoardColumn {
+	/** Identifies the column: its name, or UNMAPPED_COLUMN_KEY. */
+	key: string;
+	name: string;
+	/** What the header shows (the name). */
+	label: string;
+	/** True for the column of the statuses no column lists (not stored in the config). */
+	implicit?: true;
+	/** The tone of the status of a single-status column; neutral for a group. */
+	tone: string;
+	/** Every status of the column is terminal. */
+	terminal: boolean;
+	/** A single-status terminal column only. */
+	outcome?: 'positive' | 'negative';
+	/** The statuses the column holds, in the order of the column: each one is a drop area. */
+	statuses: BoardColumnStatus[];
 	/** The tasks in this status, the hidden ones included. */
 	count: number;
 	hiddenCount: number;
@@ -77,7 +104,7 @@ export function boardVersion(ctx: OpenedProject, tasks: readonly TaskSummary[]):
 			JSON.stringify([task.id, task.status, task.title, effectivePriority(ctx.config, task), task.assignee ?? ''])
 		);
 	// The columns are part of the board: a status added to or removed from the config changes the version too.
-	const columns = JSON.stringify(listStatuses(ctx));
+	const columns = JSON.stringify([listStatuses(ctx), ctx.config.board ?? null]);
 	return createHash('sha256')
 		.update([columns, ...lines].join('\n'))
 		.digest('hex')
@@ -93,6 +120,7 @@ function cardOf(ctx: OpenedProject, task: TaskSummary): BoardCard {
 		priority,
 		priorityText: task.priority === undefined ? `${priority} (default)` : priority,
 		...(task.assignee === undefined ? {} : { assignee: task.assignee }),
+		status: task.status,
 		tone: statusTone(ctx.config, task.status),
 		createdAt: task.createdAt,
 	};
@@ -113,7 +141,69 @@ function unknownStatusWarning(unknown: readonly TaskSummary[]): string | null {
 	return `${unknown.length} task${unknown.length === 1 ? ' is' : 's are'} in a status that config.yml does not list, so ${unknown.length === 1 ? 'it is' : 'they are'} not on the board: ${named}${more}. Add the status to the project config.yml, or move the task with: task set-status <id> <status>.`;
 }
 
-/** The answer of GET /tasks/board. */
+/** What a column is made of before the tasks are put in it. */
+interface ColumnSpec {
+	key: string;
+	name: string;
+	statuses: string[];
+	implicit?: true;
+}
+
+/** The columns of the board: the `board` key of the config (one column per status without it), plus Unmapped when a status is in none. */
+function columnSpecs(ctx: OpenedProject, statuses: readonly StatusInfo[]): ColumnSpec[] {
+	const board = ctx.config.board;
+	if (board === undefined) {
+		return statuses.map(status => ({ key: status.name, name: status.name, statuses: [status.name] }));
+	}
+	const specs: ColumnSpec[] = board.columns.map(column => ({
+		key: column.name,
+		name: column.name,
+		statuses: column.statuses,
+	}));
+	const unmapped = unmappedStatuses(ctx.config);
+	if (unmapped.length > 0) {
+		specs.push({ key: UNMAPPED_COLUMN_KEY, name: UNMAPPED_COLUMN_NAME, statuses: unmapped, implicit: true });
+	}
+	return specs;
+}
+
+function buildColumn(
+	ctx: OpenedProject,
+	spec: ColumnSpec,
+	statuses: readonly StatusInfo[],
+	tasks: readonly TaskSummary[]
+): BoardColumn {
+	const infos = spec.statuses
+		.map(name => statuses.find(status => status.name === name))
+		.filter((info): info is StatusInfo => info !== undefined);
+	const byPriority = priorityThenOldest(ctx);
+	// The statuses in the order of the column, then each status as before: a closed one newest first, an open one by priority then age.
+	const ordered = infos.flatMap(info =>
+		tasks.filter(task => task.status === info.name).sort(info.terminal ? newestFirst : byPriority)
+	);
+	const single = infos.length === 1 ? infos[0] : undefined;
+	return {
+		key: spec.key,
+		name: spec.name,
+		label: spec.name,
+		...(spec.implicit === true ? { implicit: true as const } : {}),
+		tone: single === undefined ? 'neutral' : statusTone(ctx.config, single.name),
+		terminal: infos.length > 0 && infos.every(info => info.terminal),
+		...(single?.outcome === undefined ? {} : { outcome: single.outcome }),
+		statuses: infos.map(info => ({
+			name: info.name,
+			tone: statusTone(ctx.config, info.name),
+			terminal: info.terminal,
+			...(info.outcome === undefined ? {} : { outcome: info.outcome }),
+			count: tasks.filter(task => task.status === info.name).length,
+		})),
+		count: ordered.length,
+		hiddenCount: Math.max(ordered.length - BOARD_COLUMN_CAP, 0),
+		cards: ordered.slice(0, BOARD_COLUMN_CAP).map(task => cardOf(ctx, task)),
+	};
+}
+
+/** The answer of GET /tasks/board (and of PUT / DELETE /board/config, which answer the board they leave). */
 export function boardBody(
 	ctx: OpenedProject,
 	tasks: readonly TaskSummary[],
@@ -121,22 +211,24 @@ export function boardBody(
 ): Record<string, unknown> {
 	const statuses = listStatuses(ctx);
 	const known = new Set(statuses.map(status => status.name));
-	const columns: BoardColumn[] = statuses.map(status => {
-		const inColumn = tasks.filter(task => task.status === status.name);
-		const ordered = [...inColumn].sort(status.terminal ? newestFirst : priorityThenOldest(ctx));
-		return {
-			status: status.name,
-			label: status.name,
+	const columns = columnSpecs(ctx, statuses).map(spec => buildColumn(ctx, spec, statuses, tasks));
+	const configured = ctx.config.board;
+	return {
+		columns,
+		// What the "Configure columns" editor starts from: the stored layout, or one column per status.
+		config: {
+			isDefault: configured === undefined,
+			columns: (
+				configured?.columns ?? statuses.map(status => ({ name: status.name, statuses: [status.name] }))
+			).map(column => ({ name: column.name, statuses: [...column.statuses] })),
+		},
+		// Every status of the project: the editor offers them.
+		allStatuses: statuses.map(status => ({
+			name: status.name,
 			tone: statusTone(ctx.config, status.name),
 			terminal: status.terminal,
 			...(status.outcome === undefined ? {} : { outcome: status.outcome }),
-			count: inColumn.length,
-			hiddenCount: Math.max(inColumn.length - BOARD_COLUMN_CAP, 0),
-			cards: ordered.slice(0, BOARD_COLUMN_CAP).map(task => cardOf(ctx, task)),
-		};
-	});
-	return {
-		columns,
+		})),
 		version: boardVersion(ctx, tasks),
 		hasCards: tasks.length > 0,
 		emptyText:

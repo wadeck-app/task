@@ -93,7 +93,8 @@ describe.each(PAIR_KINDS)('rebuildIndex: the index from the identity blocks of t
 		const seed = await seedCurrent(pair.a);
 		await copyToNew(pair, seed.child2, { state: 'moving' });
 
-		expect((await run()).notes).toEqual([]);
+		const notes = (await run()).notes.join('\n');
+		expect(notes).not.toContain('differs from what was copied');
 	});
 
 	it('only reads: the new side is listed and resolved, never written', async () => {
@@ -199,5 +200,75 @@ describe.each(PAIR_KINDS)('rebuildIndex: the index from the identity blocks of t
 			expect(report.notes.join('\n')).toContain('deleted');
 			expect(wrapped.index.snapshot().rows).toEqual([]);
 		});
+	});
+});
+
+describe.each(PAIR_KINDS)('rebuildIndex with the authority marker (phase P2): $name', kind => {
+	let pair: Pair;
+
+	beforeEach(async () => {
+		pair = await kind.open();
+	});
+
+	afterEach(async () => {
+		await pair.dispose();
+	});
+
+	const run = () => rebuildIndex({ current: pair.a, next: pair.b, now: () => NOW });
+
+	it('a copy that says "current" is moving, and stale until a catch-up has compared it with current', async () => {
+		const seed = await seedCurrent(pair.a);
+		const copy = await copyToNew(pair, seed.parent, { state: 'moving', authority: 'current' });
+
+		const report = await run();
+
+		expect(report.rows).toEqual([
+			{
+				publicId: seed.parent.id,
+				a: seed.parent.id,
+				b: copy.b,
+				state: 'moving',
+				stale: true,
+				since: NOW,
+				version: 1,
+			},
+		]);
+		expect(report.notes.join('\n')).toContain('stale');
+	});
+
+	it('a copy that says "new" is in-b although the task still exists in current: no guess, both ids kept', async () => {
+		const seed = await seedCurrent(pair.a);
+		const copy = await copyToNew(pair, seed.child1, {
+			state: 'in-b',
+			title: 'Child one (edited in new)',
+			authority: 'new',
+		});
+
+		const report = await run();
+
+		expect(report.rows).toEqual([
+			{ publicId: seed.child1.id, a: seed.child1.id, b: copy.b, state: 'in-b', since: NOW, version: 1 },
+		]);
+		// The title differs from the hash: nothing to compare, new is the task.
+		expect(report.notes).toEqual([]);
+	});
+
+	it('a task made in new says "new" and is in-b', async () => {
+		const made = await createInNew(pair, { title: 'Made in new', authority: 'new' });
+
+		expect((await run()).rows).toEqual([
+			{ publicId: made.publicId, b: made.b, state: 'in-b', since: NOW, version: 1 },
+		]);
+	});
+
+	it('a block written before the marker existed is rebuilt the old way, and the note says the marker is missing', async () => {
+		const seed = await seedCurrent(pair.a);
+		await copyToNew(pair, seed.parent, { state: 'moving' });
+
+		const report = await run();
+
+		expect(report.rows[0]?.state).toBe('moving');
+		expect(report.rows[0]?.stale).toBeUndefined();
+		expect(report.notes.join('\n')).toContain('no authority marker');
 	});
 });

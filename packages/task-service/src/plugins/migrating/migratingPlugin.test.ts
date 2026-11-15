@@ -253,15 +253,30 @@ describe('the migrating strategy once opened (state in-a)', () => {
 		});
 	}
 
-	it('writes go to current only: new is opened in a folder of its own and stays empty', async () => {
+	it('a new task goes to new, which has a folder of its own; current stays as it was', async () => {
 		const ctx = open();
 		const created = await ctx.store.create({ title: 'first', status: 'backlog' });
 
 		expect((await ctx.store.get(created.id)).title).toBe('first');
-		expect(fs.readdirSync(path.join(root, 'data', 'tasks'))).toHaveLength(1);
 		await ctx.dispose?.();
 		const newTasks = path.join(root, 'data', 'migrating', 'new', 'tasks');
-		expect(!fs.existsSync(newTasks) || fs.readdirSync(newTasks).length === 0).toBe(true);
+		// One folder per task, whatever its file names are.
+		expect(fs.readdirSync(newTasks)).not.toHaveLength(0);
+		const currentTasks = path.join(root, 'data', 'tasks');
+		expect(!fs.existsSync(currentTasks) || fs.readdirSync(currentTasks).length === 0).toBe(true);
+	});
+
+	it('opens with the write-ahead log and the migration log under migrating/, and compacts the log when nothing is open', async () => {
+		const ctx = open();
+		await ctx.store.create({ title: 'first', status: 'backlog' });
+		await ctx.dispose?.();
+
+		const log = fs.readFileSync(path.join(root, 'data', 'migrating', 'log.ndjson'), 'utf8');
+		expect(log).toContain('"op":"create"');
+		const reopened = open();
+		await reopened.store.list();
+		await reopened.dispose?.();
+		expect(fs.readFileSync(path.join(root, 'data', 'migrating', 'wal.ndjson'), 'utf8')).toBe('');
 	});
 
 	it('the store reports the kind and the intersected capabilities before anything is opened', () => {

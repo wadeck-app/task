@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { CONTROL_RADIUS, FOCUS_RING, GAP_BLOCKS, GAP_CONTROLS, PILL_RADIUS } from '../ui/tokens.js';
 import { TONE_DOT, toneOf } from '../tones.js';
-import { BoardCard, ColumnHeader, EmptyColumn, zoneClass } from './BoardParts.js';
+import { BoardCard, ColumnHeader, DropAreas, EmptyColumn, zoneClass } from './BoardParts.js';
 import type { BoardView } from './BoardParts.js';
 import { laneKeyOf, lanesOf } from './boardModel.js';
 import type { BoardColumnData } from './boardModel.js';
@@ -10,6 +10,16 @@ import type { BoardColumnData } from './boardModel.js';
 export const COLUMN_MIN_REM = 13;
 /** Gap between columns, in rem (gap-4). */
 const GAP_REM = 1;
+/**
+ * The cards of a column scroll INSIDE the column past this height, so the header and the drop areas (which sit above the cards)
+ * are never pushed out of the window by a long column.
+ */
+const CARDS_SCROLL_CLASS = 'max-h-[calc(100vh-16rem)] min-h-[3rem] overflow-y-auto pr-1';
+
+/** The status a whole column stands for when it holds exactly one (a drop anywhere on it sets that status); none for a group. */
+function onlyStatus(column: BoardColumnData): string | undefined {
+	return column.statuses.length === 1 ? column.statuses[0]!.name : undefined;
+}
 
 /**
  * The strip the columns live in: never wider than its container, it scrolls sideways when the columns at their least
@@ -56,7 +66,7 @@ function ScrollStrip({
 	);
 }
 
-/** The shell of one column: drop target, header, cards or the quiet "No tasks". */
+/** The shell of one column: header, the drop areas (while dragging), cards or the quiet "No tasks". */
 function Column({
 	column,
 	view,
@@ -68,24 +78,27 @@ function Column({
 	dense?: boolean;
 	className?: string;
 }): React.ReactElement {
-	const zone = view.zone(column.status);
+	const only = onlyStatus(column);
+	const zone = only === undefined ? undefined : view.zone(only);
+	const grouped = column.statuses.length > 1;
 	return (
 		<section
-			data-testid={`kanban-column-${column.status}`}
-			data-status={column.status}
+			data-testid={`kanban-column-${column.key}`}
+			data-status={only ?? column.key}
 			data-terminal={column.terminal ? 'true' : 'false'}
 			data-tone={toneOf(column.tone)}
 			aria-label={column.label}
-			{...zone}
-			className={`flex min-w-0 flex-col gap-2 p-1 ${zoneClass(zone['data-drop-target'] === 'true')} ${className}`}
+			{...(zone ?? {})}
+			className={`flex min-w-0 flex-col gap-2 p-1 ${zoneClass(zone?.['data-drop-target'] === 'true')} ${className}`}
 		>
 			<ColumnHeader column={column} />
+			<DropAreas statuses={column.statuses} view={view} />
 			{column.cards.length === 0 ? (
 				<EmptyColumn />
 			) : (
-				<div className={`flex flex-col ${dense ? 'gap-1' : 'gap-2'}`}>
+				<div className={`flex flex-col ${dense ? 'gap-1' : 'gap-2'} ${CARDS_SCROLL_CLASS}`}>
 					{column.cards.map(card => (
-						<BoardCard key={card.id} card={card} status={column.status} view={view} dense={dense} />
+						<BoardCard key={card.id} card={card} view={view} dense={dense} showStatus={grouped} />
 					))}
 				</div>
 			)}
@@ -100,7 +113,7 @@ export function ColumnsLayout({ view, dense = false }: { view: BoardView; dense?
 			<div className={`flex items-start ${GAP_BLOCKS}`}>
 				{view.columns.map(column => (
 					<Column
-						key={column.status}
+						key={column.key}
 						column={column}
 						view={view}
 						dense={dense}
@@ -117,7 +130,7 @@ export function CompactLayout({ view }: { view: BoardView }): React.ReactElement
 	return <ColumnsLayout view={view} dense />;
 }
 
-/** Rows by effective priority, columns by status. */
+/** Rows by effective priority, columns by status. The drop areas sit under the column headers, above the lanes. */
 export function SwimlanesLayout({ view }: { view: BoardView }): React.ReactElement {
 	const lanes = lanesOf(view.columns);
 	const count = view.columns.length;
@@ -128,68 +141,94 @@ export function SwimlanesLayout({ view }: { view: BoardView }): React.ReactEleme
 			<div style={{ minWidth }} className={`flex flex-col ${GAP_BLOCKS}`}>
 				<div className={`grid ${GAP_BLOCKS}`} style={grid}>
 					{view.columns.map(column => (
-						<ColumnHeader key={column.status} column={column} />
+						<div key={column.key} className="flex min-w-0 flex-col gap-1">
+							<ColumnHeader column={column} />
+							<DropAreas statuses={column.statuses} view={view} />
+						</div>
 					))}
 				</div>
-				{lanes.map(lane => (
-					<section
-						key={lane.key}
-						data-testid="kanban-lane"
-						data-lane={lane.key}
-						aria-label={`Priority ${lane.label}`}
-						className="flex flex-col gap-2"
-					>
-						<h3 className="m-0 text-xs font-semibold text-muted">{lane.label}</h3>
-						<div className={`grid ${GAP_BLOCKS}`} style={grid}>
-							{view.columns.map(column => {
-								const zone = view.zone(column.status);
-								const cards = column.cards.filter(card => laneKeyOf(card) === lane.key);
-								return (
-									<div
-										key={column.status}
-										data-testid={`kanban-cell-${lane.key}-${column.status}`}
-										data-status={column.status}
-										{...zone}
-										className={`flex min-h-[2.5rem] flex-col gap-2 p-1 ${zoneClass(zone['data-drop-target'] === 'true')}`}
-									>
-										{cards.map(card => (
-											<BoardCard key={card.id} card={card} status={column.status} view={view} />
-										))}
-									</div>
-								);
-							})}
-						</div>
-					</section>
-				))}
+				<div className={`flex flex-col ${GAP_BLOCKS} max-h-[calc(100vh-18rem)] overflow-y-auto pr-1`}>
+					{lanes.map(lane => (
+						<section
+							key={lane.key}
+							data-testid="kanban-lane"
+							data-lane={lane.key}
+							aria-label={`Priority ${lane.label}`}
+							className="flex flex-col gap-2"
+						>
+							<h3 className="m-0 text-xs font-semibold text-muted">{lane.label}</h3>
+							<div className={`grid ${GAP_BLOCKS}`} style={grid}>
+								{view.columns.map(column => {
+									const only = onlyStatus(column);
+									const zone = only === undefined ? undefined : view.zone(only);
+									const cards = column.cards.filter(card => laneKeyOf(card) === lane.key);
+									return (
+										<div
+											key={column.key}
+											data-testid={`kanban-cell-${lane.key}-${column.key}`}
+											data-status={only ?? column.key}
+											{...(zone ?? {})}
+											className={`flex min-h-[2.5rem] flex-col gap-2 p-1 ${zoneClass(zone?.['data-drop-target'] === 'true')}`}
+										>
+											{cards.map(card => (
+												<BoardCard
+													key={card.id}
+													card={card}
+													view={view}
+													showStatus={column.statuses.length > 1}
+												/>
+											))}
+										</div>
+									);
+								})}
+							</div>
+						</section>
+					))}
+				</div>
 			</div>
 		</ScrollStrip>
 	);
 }
 
-/** One expanded column; the others are vertical rails (also drop targets) that open on click. */
+/**
+ * One expanded column; the others are vertical rails that open on click. While a card is dragged every rail opens into a
+ * panel with its drop areas (a rail is too narrow to name the statuses it holds).
+ */
 export function RailsLayout({ view }: { view: BoardView }): React.ReactElement {
 	const [chosen, setChosen] = useState<string | undefined>(undefined);
-	const expanded = view.columns.some(column => column.status === chosen) ? chosen : view.columns[0]?.status;
+	const expanded = view.columns.some(column => column.key === chosen) ? chosen : view.columns[0]?.key;
 	return (
 		<ScrollStrip>
 			<div className={`flex items-stretch ${GAP_BLOCKS}`}>
 				{view.columns.map(column => {
-					if (column.status === expanded) {
+					if (column.key === expanded) {
+						return <Column key={column.key} column={column} view={view} className="min-w-[16rem] flex-1" />;
+					}
+					if (view.dragging !== null) {
 						return (
-							<Column key={column.status} column={column} view={view} className="min-w-[16rem] flex-1" />
+							<section
+								key={column.key}
+								data-testid={`kanban-rail-open-${column.key}`}
+								aria-label={column.label}
+								className={`flex w-44 shrink-0 flex-col gap-2 p-1 ${CONTROL_RADIUS} border border-border bg-muted-bg`}
+							>
+								<ColumnHeader column={column} />
+								<DropAreas statuses={column.statuses} view={view} />
+							</section>
 						);
 					}
-					const zone = view.zone(column.status);
+					const only = onlyStatus(column);
+					const zone = only === undefined ? undefined : view.zone(only);
 					const tone = toneOf(column.tone);
 					return (
 						<button
-							key={column.status}
+							key={column.key}
 							type="button"
-							data-testid={`kanban-rail-${column.status}`}
+							data-testid={`kanban-rail-${column.key}`}
 							aria-label={`Show ${column.label} (${column.count})`}
-							onClick={() => setChosen(column.status)}
-							{...zone}
-							className={`flex w-12 shrink-0 cursor-pointer flex-col items-center ${GAP_CONTROLS} ${CONTROL_RADIUS} border border-border bg-muted-bg px-1 py-3 text-sm text-content ${FOCUS_RING} ${zone['data-drop-target'] === 'true' ? 'bg-primary-light ring-2 ring-primary' : ''}`}
+							onClick={() => setChosen(column.key)}
+							{...(zone ?? {})}
+							className={`flex w-12 shrink-0 cursor-pointer flex-col items-center ${GAP_CONTROLS} ${CONTROL_RADIUS} border border-border bg-muted-bg px-1 py-3 text-sm text-content ${FOCUS_RING} ${zone?.['data-drop-target'] === 'true' ? 'bg-primary-light ring-2 ring-primary' : ''}`}
 						>
 							<span
 								aria-hidden="true"
@@ -205,10 +244,10 @@ export function RailsLayout({ view }: { view: BoardView }): React.ReactElement {
 	);
 }
 
-/** Status tabs and the list of the selected one; moves go through the "Move to" menu (no drag: good on a phone). */
+/** Column tabs and the list of the selected one; moves go through the "Move to" menu (no drag: good on a phone). */
 export function TabsLayout({ view }: { view: BoardView }): React.ReactElement {
 	const [chosen, setChosen] = useState<string | undefined>(undefined);
-	const active = view.columns.find(column => column.status === chosen) ?? view.columns[0];
+	const active = view.columns.find(column => column.key === chosen) ?? view.columns[0];
 	if (active === undefined) {
 		return <EmptyColumn />;
 	}
@@ -216,16 +255,16 @@ export function TabsLayout({ view }: { view: BoardView }): React.ReactElement {
 		<div className="flex flex-col gap-2">
 			<div role="tablist" aria-label="Statuses" className={`flex ${GAP_CONTROLS} overflow-x-auto pb-1`}>
 				{view.columns.map(column => {
-					const selected = column.status === active.status;
+					const selected = column.key === active.key;
 					return (
 						<button
-							key={column.status}
+							key={column.key}
 							type="button"
 							role="tab"
-							id={`kanban-tab-${column.status}`}
+							id={`kanban-tab-${column.key}`}
 							aria-selected={selected}
 							aria-controls="kanban-tabpanel"
-							onClick={() => setChosen(column.status)}
+							onClick={() => setChosen(column.key)}
 							className={`inline-flex h-8 shrink-0 cursor-pointer items-center ${GAP_CONTROLS} ${PILL_RADIUS} border px-3 text-sm font-medium ${FOCUS_RING} ${selected ? 'border-primary bg-primary-light text-primary' : 'border-border bg-surface text-content'}`}
 						>
 							{column.label}
@@ -237,9 +276,9 @@ export function TabsLayout({ view }: { view: BoardView }): React.ReactElement {
 			<div
 				role="tabpanel"
 				id="kanban-tabpanel"
-				aria-labelledby={`kanban-tab-${active.status}`}
-				data-testid={`kanban-column-${active.status}`}
-				data-status={active.status}
+				aria-labelledby={`kanban-tab-${active.key}`}
+				data-testid={`kanban-column-${active.key}`}
+				data-status={onlyStatus(active) ?? active.key}
 				className="flex flex-col gap-2"
 			>
 				{(active.hiddenCount ?? 0) > 0 ? (
@@ -249,7 +288,13 @@ export function TabsLayout({ view }: { view: BoardView }): React.ReactElement {
 					<EmptyColumn />
 				) : (
 					active.cards.map(card => (
-						<BoardCard key={card.id} card={card} status={active.status} view={view} draggable={false} />
+						<BoardCard
+							key={card.id}
+							card={card}
+							view={view}
+							draggable={false}
+							showStatus={active.statuses.length > 1}
+						/>
 					))
 				)}
 			</div>

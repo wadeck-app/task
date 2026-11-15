@@ -28,7 +28,7 @@ export function isAbort(error: unknown): boolean {
 /** The text to show for any error: the message, then the hint of the route when there is one. */
 export function problemText(error: unknown): string {
 	if (error instanceof ApiProblem) {
-		return error.hint ? `${error.message}. ${error.hint}` : error.message;
+		return error.hint ? `${error.message}${/[.!?]$/.test(error.message) ? ' ' : '. '}${error.hint}` : error.message;
 	}
 	return error instanceof Error ? error.message : String(error);
 }
@@ -100,7 +100,8 @@ export async function getJson(
  * answer, or undefined when the success answer has no body; rejects with the cancellation untouched (see `isAbort`), else
  * with an `ApiProblem` carrying the route's message and hint.
  */
-export async function postJson(
+async function sendJson(
+	method: 'POST' | 'PUT' | 'DELETE',
 	path: string,
 	query: Record<string, string | number | undefined>,
 	body: unknown,
@@ -117,10 +118,13 @@ export async function postJson(
 	let response: Response;
 	try {
 		response = await fetch(url, {
-			method: 'POST',
+			method,
 			signal: options.signal,
-			headers: { accept: 'application/json', 'content-type': 'application/json' },
-			body: JSON.stringify(body),
+			headers: {
+				accept: 'application/json',
+				...(body === undefined ? {} : { 'content-type': 'application/json' }),
+			},
+			...(body === undefined ? {} : { body: JSON.stringify(body) }),
 		});
 	} catch (error) {
 		if (isAbort(error)) {
@@ -144,4 +148,32 @@ export async function postJson(
 		// The change was accepted (2xx); only its answer is unreadable.
 		return undefined;
 	}
+}
+
+export function postJson(
+	path: string,
+	query: Record<string, string | number | undefined>,
+	body: unknown,
+	options: GetJsonOptions = {}
+): Promise<unknown> {
+	return sendJson('POST', path, query, body, options);
+}
+
+/** Same as {@link postJson} with PUT (a replacement of a stored setting). */
+export function putJson(
+	path: string,
+	query: Record<string, string | number | undefined>,
+	body: unknown,
+	options: GetJsonOptions = {}
+): Promise<unknown> {
+	return sendJson('PUT', path, query, body, options);
+}
+
+/** DELETE with no body; resolves with the parsed answer, or undefined when it has none. Rejections as {@link postJson}. */
+export function deleteJson(
+	path: string,
+	query: Record<string, string | number | undefined>,
+	options: GetJsonOptions = {}
+): Promise<unknown> {
+	return sendJson('DELETE', path, query, undefined, options);
 }

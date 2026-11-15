@@ -3,14 +3,33 @@
 // and by `task strategy check`, so both open a strategy the same way.
 import * as path from 'node:path';
 
+import { createTaskCopier } from './migrate/taskCopier.js';
 import { createInstance } from './plugin-host/index.js';
-import type { OpenStrategyOptions, StrategyContext, StrategyInstance } from './plugins/kinds.js';
+import type {
+	CopySide,
+	OpenStrategyOptions,
+	ProjectFacts,
+	StrategyContext,
+	StrategyInstance,
+} from './plugins/kinds.js';
 import { subStrategyViews } from './strategyResolve.js';
 import type { ResolvedStrategy } from './strategyResolve.js';
 import { transportOpener } from './strategyTransport.js';
 
 /** What the host adds to a context: the transport and the sub-strategies. The caller gives the rest. */
-export type BaseStrategyContext = Omit<StrategyContext, 'openTransport' | 'openStrategy' | 'subStrategies'>;
+export type BaseStrategyContext = Omit<
+	StrategyContext,
+	'openTransport' | 'openStrategy' | 'subStrategies' | 'copyTasks'
+>;
+
+/** What the project's config says that the copy of a task has to agree with (both sides of a meta-plugin share it). */
+function factsOf(base: BaseStrategyContext): ProjectFacts {
+	return {
+		statuses: base.statuses,
+		types: base.types,
+		...(base.priorities === undefined ? {} : { priorities: [...base.priorities] }),
+	};
+}
 
 interface SubOpener {
 	open: (slot: string, options?: OpenStrategyOptions) => Promise<StrategyInstance>;
@@ -93,12 +112,39 @@ export async function createStrategyInstance(
 	const opener = transportOpener(strategy, base.env);
 	const subs = subOpener(strategy, base);
 	const views = subs === undefined ? undefined : subStrategyViews(strategy);
+	const copyTasks =
+		views === undefined
+			? undefined
+			: (from: CopySide, to: CopySide) => {
+					const facts = factsOf(base);
+					const traitsOf = (slot: string) => {
+						const view = views[slot];
+						if (view === undefined) {
+							throw new Error(
+								`strategy slot "${slot}" is not an option of this strategy that holds a strategy (available: ${Object.keys(views).join(', ')})`
+							);
+						}
+						return view.traits(facts);
+					};
+					return createTaskCopier({
+						project: {
+							id: base.project.id ?? base.project.name,
+							name: base.project.name,
+							...(base.project.path === undefined ? {} : { path: base.project.path }),
+						},
+						facts,
+						from: { backend: from.backend, traits: traitsOf(from.slot) },
+						to: { backend: to.backend, traits: traitsOf(to.slot) },
+					});
+				};
 	let instance: StrategyInstance;
 	try {
 		instance = await createInstance(strategy, {
 			...base,
 			...(opener === undefined ? {} : { openTransport: opener }),
-			...(subs === undefined || views === undefined ? {} : { openStrategy: subs.open, subStrategies: views }),
+			...(subs === undefined || views === undefined || copyTasks === undefined
+				? {}
+				: { openStrategy: subs.open, subStrategies: views, copyTasks }),
 		});
 	} catch (error) {
 		if (subs !== undefined) await subs.disposeAll().catch(() => undefined);

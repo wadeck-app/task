@@ -34,6 +34,11 @@ ${newBlock}
 	);
 }
 
+// What a second side needs to hold the identity block every task made in it carries.
+const WITH_META = `                fills:
+                    meta: labels
+`;
+
 const GITHUB_BLOCK = (extra = ''): string => `            type: github
             options:
                 repo: acme/shop
@@ -139,14 +144,13 @@ describe('task strategy show on a migrating project', () => {
 });
 
 describe('task strategy check on a migrating project', () => {
-	it('checks both sides, every line named after its side, and says nothing moves yet, with the fix', async () => {
-		configure(GITHUB_BLOCK());
+	it('checks both sides, every line named after its side, and counts what is routed, with no task moved yet', async () => {
+		configure(GITHUB_BLOCK(WITH_META));
 
 		const result = await run('strategy', 'check');
 
 		expect(result.exitCode).toBe(0);
-		expect(result.output).toMatch(/state\s+warn\s+in-a: every operation goes to "current"/);
-		expect(result.output).toMatch(/fix: This version does not move tasks yet/);
+		expect(result.output).toMatch(/state\s+ok\s+no task is routed yet: 0 moving/);
 		expect(result.output).toMatch(/current\.data\s+ok/);
 		expect(result.output).toMatch(/current\.tasks\s+ok\s+0 tasks/);
 		expect(result.output).toMatch(/new\.reachable\s+ok/);
@@ -211,8 +215,8 @@ describe('task strategy check on a migrating project', () => {
 });
 
 describe('a migrating project used as a normal project', () => {
-	it('task new and task list work, the tasks are in the files of "current", the API saw no write', async () => {
-		configure(GITHUB_BLOCK());
+	it('task new makes the task in "new" (the API) and task list shows it', async () => {
+		configure(GITHUB_BLOCK(WITH_META));
 
 		const created = await run('new', 'first task');
 		const listed = await run('list');
@@ -220,14 +224,25 @@ describe('a migrating project used as a normal project', () => {
 		expect(created.exitCode).toBe(0);
 		expect(listed.exitCode).toBe(0);
 		expect(listed.output).toContain('first task');
+		expect(fake.writes().length).toBeGreaterThan(0);
+	});
+
+	it('task new is refused when "new" cannot hold the identity block, names the fix, and the API saw no write', async () => {
+		configure(GITHUB_BLOCK());
+
+		const result = await run('new', 'first task');
+
+		expect(result.exitCode).toBe(1);
+		expect(result.output).toContain('meta fill');
 		expect(fake.writes()).toEqual([]);
 	});
 
 	it('an operation the intersection holds back says which side to change and exits 1', async () => {
-		configure(GITHUB_BLOCK());
+		configure(GITHUB_BLOCK(WITH_META));
 		const created = JSON.parse((await run('new', 'meta task', '--json')).output) as { id: string };
+		const other = JSON.parse((await run('new', 'other task', '--json')).output) as { id: string };
 
-		const result = await run('set-meta', created.id, 'k', 'v');
+		const result = await run('link', created.id, 'causedBy', other.id);
 
 		expect(result.exitCode).toBe(1);
 		expect(result.output).toContain('"new"');
