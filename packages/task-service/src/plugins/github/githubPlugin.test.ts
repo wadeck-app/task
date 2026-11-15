@@ -99,6 +99,7 @@ describe('the plugin is registered', () => {
 			'github',
 			'gitlab',
 			'local',
+			'migrating',
 			'remote',
 		]);
 	});

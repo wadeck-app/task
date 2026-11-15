@@ -32,6 +32,7 @@ export const OWN_TEMP_PREFIXES: readonly string[] = [
 	'task-backend-golden-',
 	'task-cli-declare-',
 	'task-cli-github-',
+	'task-cli-migrating-',
 	'task-cli-gitlab-',
 	'task-cli-globalconfig-',
 	'task-cli-iso-',

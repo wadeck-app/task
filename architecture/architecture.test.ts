@@ -752,3 +752,63 @@ describe('the task server and the remote client stay apart', () => {
 		expect(files[`${SRC}/plugins/plain-http/transportToken.ts`]).toMatch(/token/);
 	});
 });
+
+// The migrating strategy (plan 2026-11-15_migrating-wrapper, decision D13) works for ANY pair of strategies: it reads capabilities,
+// traits, locations and the port, and never names a kind of storage.
+describe('the migrating strategy is agnostic: it names no kind of storage', () => {
+	const FOLDER = 'packages/task-service/src/plugins/migrating';
+	const noRelative = (s: string): string => s;
+	const check = (file: string, source: string, isTest = false): Violation[] =>
+		checkSource(file, source, PACKAGE_RULES['task-service'], { isTest, resolveRelative: noRelative }).filter(
+			v => v.rule === 'migrating-names-a-storage'
+		);
+
+	it('the folder exists and holds sources (a scan of nothing proves nothing)', () => {
+		const sources = sourceFiles(path.join(ROOT, FOLDER)).filter(file => !/\.test\.ts$/.test(file));
+		expect(sources.length).toBeGreaterThan(0);
+	});
+
+	it.each([
+		'const kind = "local";',
+		"const kind = 'github';",
+		'const x = GitLabBackend;',
+		'import { createLocalBackend } from "@wadeck-app/task-core";',
+		'const caps = LOCAL_CAPABILITIES;',
+		'if (backend.kind === `remote`) return;',
+		'function isGithub() {}',
+		'const REMOTE_CAPABILITIES = 1;',
+	])('refuses %s', source => {
+		const found = check(`${FOLDER}/migratingPlugin.ts`, source);
+		expect(found).toHaveLength(1);
+		expect(found[0]!.detail).toContain('names a kind of storage');
+	});
+
+	it.each([
+		'const sides = ["current", "new"];',
+		'// a comment may say that the first side is local or a github repository',
+		'/* remote, gitlab */ const x = 1;',
+		'const url = "http://example.org"; // github',
+		'const allocated = 1;',
+	])('allows %s', source => {
+		expect(check(`${FOLDER}/migratingPlugin.ts`, source)).toEqual([]);
+	});
+
+	it('it still may not import another plugin: the host opens the sides (plugin-imports-outside-seam)', () => {
+		const rules = checkSource(
+			`${FOLDER}/migratingPlugin.ts`,
+			"import { x } from '../other/otherPlugin.js';",
+			PACKAGE_RULES['task-service'],
+			{ isTest: false, resolveRelative: () => 'packages/task-service/src/plugins/other/otherPlugin.js' }
+		).map(v => v.rule);
+		expect(rules).toContain('plugin-imports-outside-seam');
+	});
+
+	it('its tests are free to build any pair', () => {
+		expect(check(`${FOLDER}/migratingPlugin.test.ts`, "const a = 'github'; const b = 'local';", true)).toEqual([]);
+	});
+
+	it('other plugins and other folders are not affected', () => {
+		expect(check('packages/task-service/src/plugins/local/localPlugin.ts', "const kind = 'local';")).toEqual([]);
+		expect(check('packages/task-service/src/openContext.ts', "const kind = 'github';")).toEqual([]);
+	});
+});

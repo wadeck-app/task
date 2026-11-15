@@ -1,15 +1,14 @@
 // `task strategy check`: validates the project's strategy configuration end to end and reports every finding as a line with its
 // fix. A config problem is a line (never a throw), so the command can print it in the block it prints everything else in.
 import { describeError } from './describeError.js';
-import { createInstance } from './plugin-host/index.js';
-import type { CheckLine, ProjectFacts } from './plugins/kinds.js';
+import type { CheckLine, ProjectFacts, StrategyInstance } from './plugins/kinds.js';
 import { loadProjectSetup, projectFactsOf } from './projectConfig.js';
 import { techniquesOf } from './strategyFills.js';
 import { collectTokenKeys, fillRows, showStrategy } from './strategyReport.js';
 import type { StrategyReport, StrategyTarget } from './strategyReport.js';
+import { createStrategyInstance } from './strategyInstance.js';
 import { taskLogWriter } from './strategyLog.js';
 import { tasksDirOf } from './storage.js';
-import { transportOpener } from './strategyTransport.js';
 import { checkTokenEnv, checkTokenFile } from './tokenCheck.js';
 import type { ResolvedStrategy } from './strategyResolve.js';
 
@@ -41,7 +40,18 @@ function transportUrl(strategy: ResolvedStrategy): string | undefined {
 	return typeof url === 'string' ? url : undefined;
 }
 
-function fillWarnings(strategy: ResolvedStrategy): CheckLine[] {
+/** The warnings of the fills of a strategy and of the strategies it holds (text prefixed with the slot of a held one). */
+function fillWarnings(strategy: ResolvedStrategy, slot?: string): CheckLine[] {
+	const own = ownFillWarnings(strategy, slot === undefined ? '' : `${slot}: `);
+	return [
+		...own,
+		...Object.entries(strategy.subs ?? {}).flatMap(([name, sub]) =>
+			fillWarnings(sub, slot === undefined ? name : `${slot}.${name}`)
+		),
+	];
+}
+
+function ownFillWarnings(strategy: ResolvedStrategy, prefix: string): CheckLine[] {
 	return fillRows(strategy)
 		.filter(fill => fill.quality !== 'exact')
 		.map(fill => {
@@ -55,7 +65,7 @@ function fillWarnings(strategy: ResolvedStrategy): CheckLine[] {
 			return {
 				name: 'fills',
 				status: 'warn' as const,
-				text: `${fill.capability} is emulated via ${fill.technique} (${fill.quality}): edits made on the forge may overwrite it`,
+				text: `${prefix}${fill.capability} is emulated via ${fill.technique} (${fill.quality}): edits made on the forge may overwrite it`,
 				fix:
 					exact.length === 0
 						? 'Accepted by fidelity: degrade; no exact technique exists for this capability on this backend'
@@ -91,10 +101,9 @@ async function backendLines(
 	target: StrategyTarget,
 	facts: ProjectFacts
 ): Promise<CheckLine[]> {
-	let instance: Awaited<ReturnType<typeof createInstance<typeof strategy.plugin>>>;
-	const opener = transportOpener(strategy, target.env ?? process.env);
+	let instance: StrategyInstance;
 	try {
-		instance = await createInstance(strategy, {
+		instance = await createStrategyInstance(strategy, {
 			source: strategy.source,
 			statuses: facts.statuses,
 			types: facts.types,
@@ -110,7 +119,6 @@ async function backendLines(
 			fills: strategy.fills,
 			log: taskLogWriter(),
 			...(target.memoryCache === true ? { memoryCache: true } : {}),
-			...(opener === undefined ? {} : { openTransport: opener }),
 		});
 	} catch (error) {
 		const hint = describeError(error).hint;

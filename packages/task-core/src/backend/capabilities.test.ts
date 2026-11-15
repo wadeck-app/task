@@ -5,8 +5,8 @@ describe('the runtime lists that mirror the capability types', () => {
 		expect([...BACKEND_CAPABILITY_NAMES].sort()).toEqual(Object.keys(LOCAL_CAPABILITIES).sort());
 	});
 
-	it('BACKEND_KINDS lists the four kinds of the design', () => {
-		expect([...BACKEND_KINDS]).toEqual(['local', 'github', 'gitlab', 'remote']);
+	it('BACKEND_KINDS lists the kinds of the design (the strategies a project can select)', () => {
+		expect([...BACKEND_KINDS]).toEqual(['local', 'github', 'gitlab', 'remote', 'migrating']);
 	});
 });
 

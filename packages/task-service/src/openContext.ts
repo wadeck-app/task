@@ -2,15 +2,15 @@ import { writeFileAtomic } from '@wadeck-app/project-sdk';
 
 import type { TaskServiceContext } from './context.js';
 import { createLazyBackend } from './lazyBackend.js';
-import { createInstance } from './plugin-host/index.js';
 import { createBuiltinRegistry } from './plugins/builtinPlugins.js';
 import type { ReadNotice, TaskPluginRegistry } from './plugins/kinds.js';
 import { loadProjectSetup, projectFactsOf } from './projectConfig.js';
 import type { OwnLayerOverride } from './projectConfig.js';
 import type { ResolvedProject } from './resolveProject.js';
+import { createStrategyInstance } from './strategyInstance.js';
 import { taskLogWriter } from './strategyLog.js';
+import { subStrategyViews } from './strategyResolve.js';
 import { tasksDirOf } from './storage.js';
-import { transportOpener } from './strategyTransport.js';
 import type { TaskStorage } from './storage.js';
 
 export interface OpenTaskContextInput {
@@ -67,11 +67,10 @@ export function openTaskContext(input: OpenTaskContextInput): TaskServiceContext
 		...(projectPath === undefined ? {} : { path: projectPath }),
 	};
 	const facts = projectFactsOf(config);
-	const opener = transportOpener(strategy, input.env ?? process.env);
 	const lazy = createLazyBackend(
 		strategy.plugin,
 		() =>
-			createInstance(strategy, {
+			createStrategyInstance(strategy, {
 				source: strategy.source,
 				statuses: facts.statuses,
 				types: facts.types,
@@ -87,9 +86,9 @@ export function openTaskContext(input: OpenTaskContextInput): TaskServiceContext
 				...(input.freshReads === true ? { freshReads: true } : {}),
 				...(input.memoryCache === true ? { memoryCache: true } : {}),
 				...(input.suppressEvents === true ? { suppressEvents: true } : {}),
-				...(opener === undefined ? {} : { openTransport: opener }),
 			}),
-		strategy.plugin.capabilitiesFor?.(strategy.fills, strategy.options) ?? strategy.plugin.capabilities
+		strategy.plugin.capabilitiesFor?.(strategy.fills, strategy.options, subStrategyViews(strategy)) ??
+			strategy.plugin.capabilities
 	);
 	// Notices of the fresh contexts opened for one call: kept here until the caller asks, so a stale answer is never lost with them.
 	const forwarded: ReadNotice[] = [];

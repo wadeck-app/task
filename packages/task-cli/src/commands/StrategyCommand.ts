@@ -115,7 +115,23 @@ export function formatReport(report: StrategyReport): string {
 	if (report.transport !== undefined) {
 		lines.push(...field('Transport:', [`${report.transport.ref} ${JSON.stringify(report.transport.options)}`]));
 	}
+	// A strategy that holds other strategies: each side, then what the whole offers (the table below) and what each side offers.
+	for (const side of report.subStrategies ?? []) {
+		const label = `${side.slot.charAt(0).toUpperCase()}${side.slot.slice(1)}:`;
+		lines.push(
+			...field(label, [
+				`${side.type === side.ref ? side.ref : `${side.type} (${side.ref})`}, fidelity ${side.fidelity}`,
+				side.summary,
+				...side.fills.map(
+					fill => `fill ${fill.capability} via ${fill.technique} (${fill.quality}, fidelity ${fill.fidelity})`
+				),
+			])
+		);
+	}
 	lines.push('', 'Capabilities:', ...capabilityTable(report.capabilities));
+	for (const side of report.subStrategies ?? []) {
+		lines.push('', `Capabilities of "${side.slot}":`, ...capabilityTable(side.capabilities));
+	}
 	return lines.join('\n');
 }
 

@@ -8,6 +8,7 @@ import { loadProjectSetup } from './projectConfig.js';
 import type { OwnLayerOverride } from './projectConfig.js';
 import type { Fidelity } from './strategyConfig.js';
 import { techniquesOf } from './strategyFills.js';
+import { subStrategyViews } from './strategyResolve.js';
 import type { ResolvedStrategy } from './strategyResolve.js';
 import type { TaskStorage } from './storage.js';
 
@@ -50,6 +51,20 @@ export interface TokenRow {
 	present?: boolean;
 }
 
+/** One strategy held by another (a meta-plugin option): what `show` prints for it. Its tokens are in the report's `tokens`, under their full key. */
+export interface SubStrategyReport {
+	/** The option of the holder that carries it (`current`, `new`). */
+	slot: string;
+	type: string;
+	ref: string;
+	kind: BackendKind;
+	summary: string;
+	fidelity: Fidelity;
+	fills: FillRow[];
+	options: Record<string, unknown>;
+	capabilities: CapabilityRow[];
+}
+
 export interface StrategyReport {
 	project: { id?: string; name: string; path?: string };
 	/** The config file the strategy is read from (the project's own). */
@@ -65,6 +80,8 @@ export interface StrategyReport {
 	options: Record<string, unknown>;
 	tokens: TokenRow[];
 	transport?: { ref: string; options: Record<string, unknown> };
+	/** The strategies the strategy holds, by slot in config order. Absent for a strategy that holds none. */
+	subStrategies?: SubStrategyReport[];
 	capabilities: CapabilityRow[];
 	dataDir: string;
 }
@@ -211,8 +228,28 @@ export function showStrategy(target: StrategyTarget): StrategyReport {
 		...(strategy.transport === undefined
 			? {}
 			: { transport: { ref: strategy.transport.ref, options: strategy.transport.options } }),
+		...(strategy.subs === undefined
+			? {}
+			: {
+					subStrategies: Object.entries(strategy.subs).map(([slot, sub]) => ({
+						slot,
+						type: sub.type,
+						ref: sub.ref,
+						kind: sub.plugin.backendKind,
+						summary: sub.plugin.describe().summary,
+						fidelity: sub.fidelity,
+						fills: fillRows(sub),
+						options: sub.options,
+						capabilities: describeCapabilities(
+							sub.plugin.capabilitiesFor?.({}, sub.options) ?? sub.plugin.capabilities,
+							sub.fills,
+							sub.plugin.capabilityNotes
+						),
+					})),
+				}),
 		capabilities: describeCapabilities(
-			strategy.plugin.capabilitiesFor?.({}, strategy.options) ?? strategy.plugin.capabilities,
+			strategy.plugin.capabilitiesFor?.({}, strategy.options, subStrategyViews(strategy)) ??
+				strategy.plugin.capabilities,
 			strategy.fills,
 			strategy.plugin.capabilityNotes
 		),

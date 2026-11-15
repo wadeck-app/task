@@ -1,17 +1,19 @@
 // Turns the structure-checked strategy section of the project in effect into a plugin and its options (design 3A.3, 4.1).
 // Registry lookup only: a type the schema knows (github, gitlab, remote) but no plugin implements is a loud error, never `local`.
-import { BACKEND_KINDS } from '@wadeck-app/task-core';
+import { BACKEND_KINDS, NO_TRAITS } from '@wadeck-app/task-core';
 
 import { PluginLookupError, PluginSlotError, resolveSlot } from './plugin-host/index.js';
 import type { ResolvedSlot } from './plugin-host/index.js';
 import type {
 	DeclaredFills,
 	ProjectFacts,
+	SubStrategyView,
+	SubStrategyViews,
 	StrategyPlugin,
 	TaskPluginRegistry,
 	TransportPlugin,
 } from './plugins/kinds.js';
-import { StrategyConfigError } from './strategyConfig.js';
+import { parseStrategySection, StrategyConfigError } from './strategyConfig.js';
 import type { Fidelity, StrategySection } from './strategyConfig.js';
 
 /** The default of a project without a strategy section (or without `type`). */
@@ -32,6 +34,8 @@ export interface ResolvedStrategy {
 	options: Record<string, unknown>;
 	/** The validated `options.transport` slot of a remote strategy. */
 	transport?: ResolvedSlot<TransportPlugin>;
+	/** The resolved strategy blocks of a meta-plugin by slot (the plugin's `strategySlots` that are written). Absent for any other plugin. */
+	subs?: Record<string, ResolvedStrategy>;
 }
 
 function toConfigError(error: unknown): never {
@@ -76,12 +80,24 @@ export function resolveStrategy(
 	section: StrategySection | undefined,
 	source: string,
 	registry: TaskPluginRegistry,
-	project?: ProjectFacts
+	project?: ProjectFacts,
+	/** The dotted path of the section in the file: `strategy`, or `strategy.options.<slot>` for a block held by a meta-plugin. */
+	base = 'strategy',
+	/** The section is held by a meta-plugin: another meta-plugin is refused there (no nesting in v1). */
+	nested = false
 ): ResolvedStrategy {
 	const wanted = section ?? { type: undefined, fidelity: 'strict' as const, options: {}, fills: {} };
 	const type = wanted.type ?? DEFAULT_STRATEGY_TYPE;
 	const declaredKind = declaredKindOf(type);
 	const installed = isInstalled(registry, type);
+	if (nested && installed && registry.lookup(type, 'strategy').strategySlots !== undefined) {
+		throw new StrategyConfigError(
+			source,
+			`${base}.type`,
+			`"${type}" holds other strategies and cannot be nested in another one`,
+			'Use a plain strategy in this slot (one that stores the tasks itself); strategies that hold other strategies cannot be combined in this version.'
+		);
+	}
 
 	// A remote strategy carries a transport slot: check it first, so a typo in it is reported rather than "not installed".
 	let transport: ResolvedSlot<TransportPlugin> | undefined;
@@ -92,7 +108,7 @@ export function resolveStrategy(
 				registry,
 				'transport',
 				typeof slot === 'object' && slot !== null && !Array.isArray(slot) ? slot : {},
-				{ file: source, path: 'strategy.options.transport' },
+				{ file: source, path: `${base}.options.transport` },
 				'plain-http'
 			);
 		} catch (error) {
@@ -103,12 +119,12 @@ export function resolveStrategy(
 	if (!installed && declaredKind !== undefined) {
 		throw new StrategyConfigError(
 			source,
-			'strategy.type',
+			`${base}.type`,
 			`strategy type ${declaredKind} is declared but no plugin is installed; built-in types: ${registry
 				.list('strategy')
 				.map(entry => entry.aliases[0] ?? entry.ref)
 				.join(', ')}`,
-			`Set strategy.type to a built-in type (${registry
+			`Set ${base}.type to a built-in type (${registry
 				.list('strategy')
 				.map(entry => entry.aliases[0] ?? entry.ref)
 				.join(
@@ -119,12 +135,7 @@ export function resolveStrategy(
 
 	let resolved: ResolvedSlot<StrategyPlugin>;
 	try {
-		resolved = resolveSlot(
-			registry,
-			'strategy',
-			{ type, options: wanted.options },
-			{ file: source, path: 'strategy' }
-		);
+		resolved = resolveSlot(registry, 'strategy', { type, options: wanted.options }, { file: source, path: base });
 	} catch (error) {
 		if (error instanceof PluginSlotError && error.problem.startsWith('unknown strategy plugin')) {
 			const missing = BACKEND_KINDS.filter(kind => !isInstalled(registry, kind));
@@ -144,21 +155,39 @@ export function resolveStrategy(
 		if (!implemented.includes(fill.use)) {
 			throw new StrategyConfigError(
 				source,
-				`strategy.options.fills.${key}`,
+				`${base}.options.fills.${key}`,
 				`the "${name}" strategy does not implement the fill "${fill.use}" for ${key.split('.')[0]} ` +
 					`(${describeImplemented(resolved.plugin, key, implemented)})`
 			);
 		}
 	}
 
-	const projectProblem =
-		project === undefined ? undefined : resolved.plugin.validateForProject?.(wanted.options, project);
-	if (projectProblem !== undefined) {
-		const keyed = /^([A-Za-z][A-Za-z0-9_.-]*): ([\s\S]+)$/.exec(projectProblem);
-		throw keyed === null
-			? new StrategyConfigError(source, 'strategy.options', projectProblem)
-			: new StrategyConfigError(source, `strategy.options.${keyed[1]}`, keyed[2]!);
+	// The strategy blocks of a meta-plugin: checked like a project's own section, under their own dotted key.
+	let subs: Record<string, ResolvedStrategy> | undefined;
+	const slots = resolved.plugin.strategySlots;
+	if (slots !== undefined) {
+		subs = {};
+		for (const slot of slots) {
+			const block = wanted.options[slot];
+			if (block === undefined) continue;
+			subs[slot] = resolveSubStrategy(block, source, registry, project, `${base}.options.${slot}`);
+		}
 	}
+
+	const asKeyed = (problem: string): StrategyConfigError => {
+		const keyed = KEYED_PROBLEM.exec(problem);
+		return keyed === null
+			? new StrategyConfigError(source, `${base}.options`, problem)
+			: new StrategyConfigError(source, `${base}.options.${keyed[1]}`, keyed[2]!);
+	};
+	const views = subs === undefined ? undefined : viewsOf(subs);
+	if (views !== undefined) {
+		const combined = resolved.plugin.validateSubStrategies?.(wanted.options, views);
+		if (combined !== undefined) throw asKeyed(combined);
+	}
+	const projectProblem =
+		project === undefined ? undefined : resolved.plugin.validateForProject?.(wanted.options, project, views);
+	if (projectProblem !== undefined) throw asKeyed(projectProblem);
 
 	return {
 		source,
@@ -170,5 +199,51 @@ export function resolveStrategy(
 		fills: wanted.fills,
 		options: wanted.options,
 		...(transport === undefined ? {} : { transport }),
+		...(subs === undefined ? {} : { subs }),
 	};
+}
+
+const KEYED_PROBLEM = /^([A-Za-z][A-Za-z0-9_.-]*): ([\s\S]+)$/;
+
+/** One option of a meta-plugin holding a strategy block: parsed like a project section (its path in the messages), then resolved. */
+function resolveSubStrategy(
+	block: unknown,
+	source: string,
+	registry: TaskPluginRegistry,
+	project: ProjectFacts | undefined,
+	path: string
+): ResolvedStrategy {
+	const section = parseStrategySection(source, block, path);
+	if (section === undefined || section.type === undefined) {
+		const registered = registry.list('strategy').map(entry => entry.aliases[0] ?? entry.ref);
+		throw new StrategyConfigError(
+			source,
+			`${path}.type`,
+			'required (there is no default for a strategy held by another one)',
+			`Registered strategy plugins: ${registered.join(', ')}`
+		);
+	}
+	return resolveStrategy(section, source, registry, project, path, true);
+}
+
+function viewsOf(subs: Record<string, ResolvedStrategy>): SubStrategyViews {
+	return Object.fromEntries(
+		Object.entries(subs).map(([slot, sub]): [string, SubStrategyView] => [
+			slot,
+			{
+				slot,
+				type: sub.type,
+				ref: sub.ref,
+				kind: sub.plugin.backendKind,
+				capabilities: sub.plugin.capabilitiesFor?.(sub.fills, sub.options) ?? sub.plugin.capabilities,
+				traits: facts => sub.plugin.traitsFor?.(sub.options, sub.fills, facts) ?? NO_TRAITS,
+				location: sub.plugin.locationOf?.(sub.options),
+			},
+		])
+	);
+}
+
+/** The views of the sub-strategies of a resolved strategy, as the hooks of its plugin take them; empty for a plugin without slots. */
+export function subStrategyViews(strategy: ResolvedStrategy): SubStrategyViews {
+	return strategy.subs === undefined ? {} : viewsOf(strategy.subs);
 }

@@ -8,6 +8,7 @@ import { eventsRaisedByServer } from '../eventsRaisedByServer.js';
 import { openResolvedProject } from '../openContext.js';
 import type { TaskPluginRegistry } from '../plugins/kinds.js';
 import { projectFactsOf } from '../projectConfig.js';
+import { subStrategyViews } from '../strategyResolve.js';
 import type { ResolvedProject } from '../resolveProject.js';
 import { MigrationRefusedError } from './migrateErrors.js';
 import { runMigration } from './migrateRun.js';
@@ -42,13 +43,15 @@ function endpointOf(ctx: TaskServiceContext, resolved: ResolvedProject): Migrati
 		},
 		backend: ctx.store,
 		facts,
-		traits: strategy.plugin.traitsFor?.(strategy.options, strategy.fills, facts) ?? NO_TRAITS,
+		traits:
+			strategy.plugin.traitsFor?.(strategy.options, strategy.fills, facts, subStrategyViews(strategy)) ??
+			NO_TRAITS,
 		takeNotices: () => ctx.takeNotices?.() ?? [],
 	};
 }
 
 function locationOf(ctx: TaskServiceContext): string | undefined {
-	return ctx.strategy?.plugin.locationOf?.(ctx.strategy.options);
+	return ctx.strategy?.plugin.locationOf?.(ctx.strategy.options, subStrategyViews(ctx.strategy));
 }
 
 /**

@@ -58,6 +58,7 @@ Detail: `docs/claude/shared-registry.md`
 - Plugin host (`task-service/src/plugin-host/`) imports only its own files and `node:`; `plugins/<id>/` imports the seam, `plugins/kinds`, task-core and `node:`; only `builtinPlugins.ts` imports a `plugins/<id>/` folder; no computed `import(...)`.
 - Commands: `task strategy show|check [-p] [--json]` (every warning/error has a `fix`; exit 1 on any error). `task plugins` does not exist.
 - Never use silent fallbacks: unsupported operations throw `UnsupportedByBackendError` naming the fill to declare.
+- `migrating` strategy (`current` + `new` blocks, agnostic of storage kinds; capabilities = intersection): PARTIAL, phase P0 only (state in-a: everything goes to `current`, nothing moves). Plan `.claude/plans/2026-11-15_migrating-wrapper.md`.
 
 Detail: `docs/claude/storage-strategy.md`
 

@@ -73,11 +73,11 @@ describe('resolveStrategy: types declared but not installed fail loudly, never f
 		const bare = type.replace(/^plugins\.|\.default$/g, '');
 
 		expect(error.message).toBe(
-			`${FILE}: strategy.type: strategy type ${bare} is declared but no plugin is installed; built-in types: github, local, remote`
+			`${FILE}: strategy.type: strategy type ${bare} is declared but no plugin is installed; built-in types: github, local, migrating, remote`
 		);
 		expect(error.path).toBe('strategy.type');
 		expect(error.hint).toMatch(
-			/Set strategy.type to a built-in type \((github, local, remote)\) or remove the strategy section/
+			/Set strategy.type to a built-in type \((github, local, migrating, remote)\) or remove the strategy section/
 		);
 	});
 
@@ -86,7 +86,7 @@ describe('resolveStrategy: types declared but not installed fail loudly, never f
 
 		expect(error.message).toBe(`${FILE}: strategy.type: unknown strategy plugin "foo"`);
 		expect(error.hint).toBe(
-			'Registered strategy plugins: github (plugins.github.default), local (plugins.local.default), remote (plugins.remote.default). Declared but not installed: gitlab.'
+			'Registered strategy plugins: github (plugins.github.default), local (plugins.local.default), migrating (plugins.migrating.default), remote (plugins.remote.default). Declared but not installed: gitlab.'
 		);
 	});
 

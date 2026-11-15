@@ -2,10 +2,16 @@
 // Enum-valued where the difference matters (design 1.3); a value is a promise the contract checks.
 import type { LinkType } from '../TaskStore.js';
 
-export type BackendKind = 'local' | 'github' | 'gitlab' | 'remote';
+export type BackendKind = 'local' | 'github' | 'gitlab' | 'remote' | 'migrating';
 
 /** Every backend kind of the design, as a runtime list (config validation lists them; only the installed ones can be opened). */
-export const BACKEND_KINDS: readonly BackendKind[] = Object.freeze(['local', 'github', 'gitlab', 'remote'] as const);
+export const BACKEND_KINDS: readonly BackendKind[] = Object.freeze([
+	'local',
+	'github',
+	'gitlab',
+	'remote',
+	'migrating',
+] as const);
 
 /** Parent/child tasks: any depth, a depth cap (GitHub sub-issues), or none. */
 export type HierarchySupport = 'unlimited' | 'limited' | 'none';

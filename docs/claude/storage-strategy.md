@@ -15,3 +15,23 @@ Installed: `local` (the default), `github` (read and write, stage 2: next sectio
 - Commands (`StrategyCommand.ts` over `showStrategy` / `checkStrategy`; they open the project themselves so a config problem is an answer, not a failure before the command): `task strategy show [-p] [--json]` (type, fidelity, fills, tokens as NAME + set/unset, capability table native/emulated/unsupported; opens no backend, creates nothing) and `task strategy check [-p] [--json]` (lines `config strategy fills token security` plus the plugin's lines: local = data, writable, task counts; each warning/error has a `fix`; exit 1 on any error; warns on plain `http://` to a non-loopback host; a `tokenFile` must be absolute and, on POSIX, mode 600 (Windows: a warning, permissions cannot be read)). `--json` failures keep the full result on stderr with exit 1. `task plugins list|config` (the stale flow mirror) is removed: unknown command.
 - Host additions of stage 1: `StrategyContext` also carries `source` (the config file), `statuses` / `types` (`ProjectFacts`, from `projectFactsOf(config)`) and `log` (task log writer); a plugin may implement `validateForProject(options, facts)`, run by `resolveStrategy` at load (message `key: problem` becomes file + `strategy.options.<key>`); a `StrategyInstance` may implement `takeNotices()` (`ReadNotice`: `stale`, `ignored`, or `emulated` for a write done through an approximate fill), exposed as `ctx.takeNotices()` (the CLI prints each as a `warning:` line on stderr, the module adds the texts as `readNotices`); a fill the plugin lacks says what it does implement (`describeImplemented`).
 - Remaining: `GET /projects` does not expose `strategy`/`capabilities`; `fills` keys outside `BackendCapabilities` (`type`, `fields`, `events`, `writes`, `origin` of design 2A) are refused until the design maps them to capabilities (`writes` now IS a capability, with no fill: see below).
+
+## Storage strategy: migrating (plan `.claude/plans/2026-11-15_migrating-wrapper.md`, phase P0 only)
+
+PARTIAL: state `in-a` only. Every operation goes to `current`; `new` is opened and checked, never written; no task moves, no index, no worker, no `strategy migrate` commands (P1 to P5).
+
+```yaml
+strategy:
+    type: migrating # plugins.migrating.default
+    options:
+        current: { type: <strategy> } # full strategy blocks, same schema and secret rules as a project section
+        new: { type: <strategy>, options: { ... } }
+        budget: { requestsPerMinute: 30 } # optional positive integer; validated, not used yet
+```
+
+- Agnostic (D13): the plugin reads capabilities, traits, `locationOf` and the port, never a storage kind. Rule `migrating-names-a-storage` forbids `local|github|gitlab|remote` (any case, any substring) in code of non-test files of `plugins/migrating/`.
+- Host seam: `StrategyPlugin.strategySlots` names the options that are strategy blocks. `resolveStrategy` checks each like a project section (errors name `strategy.options.<slot>...`; a block needs `type`; a meta-plugin inside one is refused), keeps them in `ResolvedStrategy.subs` and passes `SubStrategyViews` (capabilities, `traits(facts)`, location; NO_TRAITS when a plugin declares none) to `capabilitiesFor`, `traitsFor`, `locationOf`, `validateForProject` and `validateSubStrategies`. `StrategyContext.openStrategy(slot, { dataSubdir? })` (`strategyInstance.ts`) opens a block lazily, once per slot and folder, and disposes it with the parent. `new` uses `<data>/migrating/new`.
+- Capabilities = intersection (`capabilityIntersection.ts`, one rule per capability, compile-checked): weaker enum value, both sides for booleans, common link types, `delete` only when equal, `ids` generated only when both. Conflicts the wrapper cannot honour (`events` client vs server, history/activity none vs something) are refused at load. Same location on both sides is refused. `locationOf` = both locations joined with `+`. `traitsFor` = `combineTraits`: tighter limits, pessimistic cost without a model, no `foldsCreate`.
+- Enforcement: an operation whose capability the intersection lacks is refused with `UnsupportedByBackendError` naming the side to change, even if `current` could do it. Trait limits (depth, text lengths, label rules, comment authors) are NOT enforced yet.
+- `strategy show` prints each side and its capability table; `check` prefixes each side's lines (`current.`, `new.`) and always warns `state` (nothing moves yet) with a fix. `labels sync` is not forwarded to `new`.
+- Tests: `runBackendContract` over local+local and local+fake GitHub (`MigratingBackend.contract.test.ts`).

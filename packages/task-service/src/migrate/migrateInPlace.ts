@@ -20,6 +20,7 @@ import type { OwnLayerOverride } from '../projectConfig.js';
 import type { ResolvedProject } from '../resolveProject.js';
 import { ownConfigFile } from '../storage.js';
 import { checkStrategy } from '../strategyCheck.js';
+import { subStrategyViews } from '../strategyResolve.js';
 import { canonical, sha256Hex } from './canonicalJson.js';
 import { MigrationRefusedError } from './migrateErrors.js';
 import {
@@ -82,7 +83,9 @@ function endpointOf(ctx: TaskServiceContext, resolved: ResolvedProject): Migrati
 		},
 		backend: ctx.store,
 		facts,
-		traits: strategy.plugin.traitsFor?.(strategy.options, strategy.fills, facts) ?? NO_TRAITS,
+		traits:
+			strategy.plugin.traitsFor?.(strategy.options, strategy.fills, facts, subStrategyViews(strategy)) ??
+			NO_TRAITS,
 		takeNotices: () => ctx.takeNotices?.() ?? [],
 	};
 }
@@ -254,7 +257,8 @@ export async function migrateInPlace(input: MigrateInPlaceInput): Promise<Migrat
 			priorities: setup.config.priorities,
 			defaultPriority: setup.config.defaults.priority,
 		},
-		targetPlugin.locationOf?.(setup.strategy.options) ?? `kind:${targetPlugin.backendKind}`
+		targetPlugin.locationOf?.(setup.strategy.options, subStrategyViews(setup.strategy)) ??
+			`kind:${targetPlugin.backendKind}`
 	);
 
 	// The lock first: two runs of the same project must not race on the checks below. A dry run writes nothing, so it takes none.
@@ -458,10 +462,12 @@ async function migrateLocked(input: Locked): Promise<MigrationResult> {
 
 		const sourcePlugin = source.strategy?.plugin;
 		const targetPlugin = target.strategy?.plugin;
-		const sourceWhere = sourcePlugin?.locationOf?.(source.strategy!.options);
+		const sourceWhere = sourcePlugin?.locationOf?.(source.strategy!.options, subStrategyViews(source.strategy!));
 		if (
 			(sourcePlugin?.backendKind === 'local' && targetPlugin?.backendKind === 'local') ||
-			(sourceWhere !== undefined && sourceWhere === targetPlugin?.locationOf?.(target.strategy!.options))
+			(sourceWhere !== undefined &&
+				sourceWhere ===
+					targetPlugin?.locationOf?.(target.strategy!.options, subStrategyViews(target.strategy!)))
 		) {
 			throw new MigrationRefusedError(
 				sourceWhere === undefined

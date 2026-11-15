@@ -67,6 +67,37 @@ export interface ProjectFacts {
 	priorities?: string[];
 }
 
+/**
+ * A strategy a meta-plugin holds (an option of the plugin that is a full `strategy` block), as the host resolved and validated it at
+ * load: what the meta-plugin may know about it without importing it. Everything comes from the sub-strategy's own plugin hooks.
+ */
+export interface SubStrategyView {
+	/** The option that holds the block (`strategy.options.<slot>`). */
+	slot: string;
+	/** As written in the block. */
+	type: string;
+	ref: string;
+	kind: BackendKind;
+	/** What the sub-strategy can do once its own declared fills are taken into account. */
+	capabilities: BackendCapabilities;
+	/** What it keeps and its limits; a plugin that declares none keeps nothing (NO_TRAITS). */
+	traits(project: ProjectFacts): BackendTraits;
+	/** Where its tasks live (`locationOf`), when it says. */
+	location: string | undefined;
+}
+
+/** The sub-strategies of a meta-plugin by slot name. Absent for a plugin without `strategySlots`. */
+export type SubStrategyViews = Readonly<Record<string, SubStrategyView>>;
+
+/** What `openStrategy` may ask beyond the slot. */
+export interface OpenStrategyOptions {
+	/**
+	 * A folder under the data folder of the project where the sub-strategy keeps what it stores locally (task files, index, caches). Absent:
+	 * the project's own data folder, so the sub-strategy IS the project's current storage. Two sub-strategies of one project must not share it.
+	 */
+	dataSubdir?: string;
+}
+
 export interface StrategyContext {
 	/** The project's own config file: where the strategy is written, named in error messages. */
 	source: string;
@@ -102,6 +133,14 @@ export interface StrategyContext {
 	 */
 	openTransport?: () => Promise<TransportInstance>;
 	/**
+	 * Opens the strategy written in the option `slot` of this strategy (a meta-plugin declares its `strategySlots`; the host resolved and
+	 * validated each block at load with the same rules as a project `strategy` section, and disposes what it opens when this instance is
+	 * disposed). The same instance is returned for the same slot and folder. Absent when the plugin has no `strategySlots`.
+	 */
+	openStrategy?: (slot: string, options?: OpenStrategyOptions) => Promise<StrategyInstance>;
+	/** The resolved views of the strategies in `strategySlots` (what `capabilitiesFor` and the other hooks were given). Absent without slots. */
+	subStrategies?: SubStrategyViews;
+	/**
 	 * The writes of this context must not raise queue events (a migration, which raises one summary instead). Honoured by a strategy
 	 * whose server raises the events (`capabilities.events: 'server'`): it asks the server to stay silent. Other strategies raise
 	 * their events in the process, which simply does not hand them to a sink.
@@ -121,7 +160,23 @@ export interface StrategyPlugin extends Plugin<'strategy', StrategyInstance, Str
 	 * and the validated options. Absent: the static ones. `strategy show` prints
 	 * the answer for NO fill (the options still apply) with the declared fills as `emulated`.
 	 */
-	capabilitiesFor?(fills: DeclaredFills, options: Record<string, unknown>): BackendCapabilities;
+	capabilitiesFor?(
+		fills: DeclaredFills,
+		options: Record<string, unknown>,
+		subStrategies?: SubStrategyViews
+	): BackendCapabilities;
+	/**
+	 * A meta-plugin: the names of its options that are full `strategy` blocks (`current`, `new`). The host checks each present one like a
+	 * project's own `strategy` section (same schema, same secret rules, errors naming the dotted key under `strategy.options.<slot>`),
+	 * refuses a block that is itself a meta-plugin (no nesting in v1), and hands the resolved views to the hooks below. The plugin
+	 * never imports another plugin: it opens a sub-strategy through `StrategyContext.openStrategy`.
+	 */
+	readonly strategySlots?: readonly string[];
+	/**
+	 * Checks what the sub-strategies together cannot do (a pair that cannot be combined), always, whether or not the project facts are
+	 * known: the same single-sentence shape as `validate` (a problem about one slot starts with its key and ": ").
+	 */
+	validateSubStrategies?(options: Record<string, unknown>, subStrategies: SubStrategyViews): string | undefined;
 	/** Capability -> the fill techniques this plugin implements (empty: everything is native, no fill applies). */
 	readonly fillTechniques: Readonly<Record<string, readonly string[]>>;
 	/**
@@ -133,17 +188,26 @@ export interface StrategyPlugin extends Plugin<'strategy', StrategyInstance, Str
 	 * Checks the options against the project (every status mapped, every type representable) at load, like `validate` does for the
 	 * options alone: the same single-sentence shape, a problem about one option starting with its dotted key and ": ".
 	 */
-	validateForProject?(options: Record<string, unknown>, project: ProjectFacts): string | undefined;
+	validateForProject?(
+		options: Record<string, unknown>,
+		project: ProjectFacts,
+		subStrategies?: SubStrategyViews
+	): string | undefined;
 	/**
 	 * What the backend keeps and where its limits are (`task migrate` reads it to build the loss table before it writes). Called with
 	 * options that passed `validate`. Absent: the plugin promises nothing (the migration then assumes the backend keeps nothing).
 	 */
-	traitsFor?(options: Record<string, unknown>, fills: DeclaredFills, project: ProjectFacts): BackendTraits;
+	traitsFor?(
+		options: Record<string, unknown>,
+		fills: DeclaredFills,
+		project: ProjectFacts,
+		subStrategies?: SubStrategyViews
+	): BackendTraits;
 	/**
 	 * Where the tasks live, as a string two projects share only when they share the storage (the repository of a forge). `task migrate`
 	 * refuses a migration whose two sides have the same location. Absent: the storage is private to the project (the data folder).
 	 */
-	locationOf?(options: Record<string, unknown>): string | undefined;
+	locationOf?(options: Record<string, unknown>, subStrategies?: SubStrategyViews): string | undefined;
 }
 
 /** What a transport plugin builds (design 3.1): how bytes reach the server. It never parses protocol payloads. */

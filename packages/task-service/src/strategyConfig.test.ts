@@ -268,3 +268,52 @@ describe('parseStrategySection: fills', () => {
 		).not.toThrow();
 	});
 });
+
+describe('parseStrategySection: a block nested in another strategy (a base path)', () => {
+	const BASE = 'strategy.options.current';
+
+	function nested(value: unknown): StrategyConfigError {
+		try {
+			parseStrategySection(FILE, value, BASE);
+		} catch (error) {
+			expect(error).toBeInstanceOf(StrategyConfigError);
+			return error as StrategyConfigError;
+		}
+		throw new Error(`expected the nested block to be refused: ${JSON.stringify(value)}`);
+	}
+
+	it('parses the same shape as a project section', () => {
+		expect(parseStrategySection(FILE, { type: 'x', options: { a: 1 } }, BASE)).toEqual({
+			type: 'x',
+			fidelity: 'strict',
+			options: { a: 1 },
+			fills: {},
+		});
+	});
+
+	it('names the nested dotted key in a structural error', () => {
+		const error = nested({ type: 3 });
+		expect(error.message).toBe(`${FILE}: ${BASE}.type: must be a string, found 3`);
+	});
+
+	it('names the nested key of an unknown key, a bad fidelity and bad options', () => {
+		expect(nested({ tokenEnv: 'X' }).message).toContain(`${BASE}.tokenEnv: unknown key`);
+		expect(nested({ fidelity: 'loose' }).message).toContain(`${BASE}.fidelity: must be "strict" or "degrade"`);
+		expect(nested({ options: [] }).message).toContain(`${BASE}.options: must be a mapping`);
+		expect(nested(7).message).toContain(`${BASE}: must be a mapping of type, fidelity and options`);
+	});
+
+	it('refuses a literal credential and names the nested key, with the same fix', () => {
+		const error = nested({ type: 'x', options: { token: 'abc' } });
+		expect(error.message).toBe(
+			`${FILE}: ${BASE}.options.token: a credential must not be written in the config file`
+		);
+		expect(error.hint).toContain('tokenEnv: <VARIABLE_NAME>');
+	});
+
+	it('names the nested key of a fill problem', () => {
+		expect(nested({ type: 'x', options: { fills: { meta: 'nope' } } }).message).toContain(
+			`${BASE}.options.fills.meta: unknown technique`
+		);
+	});
+});

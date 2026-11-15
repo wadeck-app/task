@@ -113,9 +113,11 @@ describe('checkStrategy: a config that cannot be used', () => {
 		expect(result.lines).toHaveLength(1);
 		expect(result.lines[0]).toMatchObject({ name: 'config', status: 'error' });
 		expect(result.lines[0]!.text).toContain(
-			'strategy.type: strategy type gitlab is declared but no plugin is installed; built-in types: github, local, remote'
+			'strategy.type: strategy type gitlab is declared but no plugin is installed; built-in types: github, local, migrating, remote'
 		);
-		expect(result.lines[0]!.fix).toMatch(/Set strategy.type to a built-in type \((github, local, remote)\)/);
+		expect(result.lines[0]!.fix).toMatch(
+			/Set strategy.type to a built-in type \((github, local, migrating, remote)\)/
+		);
 		expect(result.report).toBeUndefined();
 	});
 

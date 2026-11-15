@@ -353,6 +353,7 @@ export function checkSource(
 	}
 	violations.push(...checkPluginFolders(file, source, options));
 	violations.push(...checkServerFolder(file, source, options));
+	violations.push(...checkMigratingFolder(file, source, options));
 	return violations;
 }
 
@@ -481,6 +482,31 @@ export function checkPluginFolders(
 		}
 	}
 	return violations;
+}
+
+// ---- the migrating strategy is agnostic (plan 2026-11-15_migrating-wrapper, decision D13) ----
+
+const MIGRATING_DIR = 'packages/task-service/src/plugins/migrating/';
+// A kind of storage, wherever it is written inside a name or a text (`createLocalBackend`, `isGithub`, `'remote'`, `LOCAL_CAPABILITIES`).
+const STORAGE_KIND_NAME = /local|github|gitlab|remote/i;
+
+/**
+ * The migrating strategy works for any pair of strategies: it reads capabilities, traits, locations and the port, and never names a
+ * kind of storage. No code (comments are not code) of a non-test file of `plugins/migrating/` contains `local`, `github`, `gitlab`
+ * or `remote`, in a name or in a text: whatever one backend needs from the wrapper must come through a trait or a capability. Its tests
+ * build the pairs and are free.
+ */
+export function checkMigratingFolder(file: string, source: string, options: { isTest: boolean }): Violation[] {
+	if (options.isTest || !file.startsWith(MIGRATING_DIR)) return [];
+	const found = STORAGE_KIND_NAME.exec(stripComments(source));
+	if (found === null) return [];
+	return [
+		{
+			file,
+			rule: 'migrating-names-a-storage',
+			detail: `names a kind of storage ("${found[0]}"): the migrating strategy is agnostic and works from capabilities, traits and locations only; make the fact a trait or a capability of the side that needs it`,
+		},
+	];
 }
 
 // ---- the task server (stage 4 of the storage design, `task serve`) ----

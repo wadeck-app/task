@@ -99,7 +99,14 @@ function parseFidelity(file: string, path: string, value: unknown): Fidelity {
 }
 
 /** One declared fill under its key (`meta`, `linkTypes.causedBy`): a technique name, or `{ use, fidelity? }`. */
-function parseFill(file: string, path: string, key: string, value: unknown, global: Fidelity): DeclaredFills[string] {
+function parseFill(
+	file: string,
+	path: string,
+	key: string,
+	value: unknown,
+	global: Fidelity,
+	base: string
+): DeclaredFills[string] {
 	const techniques = techniquesOf(key);
 	if (techniques === undefined) throw new Error(`parseFill called for a key without fill: ${key}`);
 	const valid = Object.keys(techniques).join(', ');
@@ -136,13 +143,13 @@ function parseFill(file: string, path: string, key: string, value: unknown, glob
 			file,
 			path,
 			`"${technique}" is ${class_} and fidelity is strict`,
-			`Accept it for this capability: ${key.split('.').pop()}: { use: ${technique}, fidelity: degrade } (or set strategy.fidelity: degrade for all fills).`
+			`Accept it for this capability: ${key.split('.').pop()}: { use: ${technique}, fidelity: degrade } (or set ${base}.fidelity: degrade for all fills).`
 		);
 	}
 	return { use: technique, fidelity: effective };
 }
 
-function parseFills(file: string, path: string, value: unknown, global: Fidelity): DeclaredFills {
+function parseFills(file: string, path: string, value: unknown, global: Fidelity, base: string): DeclaredFills {
 	if (!isMapping(value)) {
 		throw new StrategyConfigError(
 			file,
@@ -174,7 +181,8 @@ function parseFills(file: string, path: string, value: unknown, global: Fidelity
 					`${capabilityPath}.${linkType}`,
 					`linkTypes.${linkType}`,
 					technique,
-					global
+					global,
+					base
 				);
 			}
 			continue;
@@ -189,7 +197,7 @@ function parseFills(file: string, path: string, value: unknown, global: Fidelity
 					: `unknown capability (fillable: ${fillable.join(', ')})`
 			);
 		}
-		fills[capability] = parseFill(file, capabilityPath, capability, declared, global);
+		fills[capability] = parseFill(file, capabilityPath, capability, declared, global, base);
 	}
 	return fills;
 }
@@ -203,21 +211,26 @@ function isCapabilityName(name: string): boolean {
  * registry, no I/O): it runs on every layer of the project chain. Whether the plugin exists and likes its options is the
  * resolver's job, on the layer in effect only. `undefined` (no section) returns undefined.
  */
-export function parseStrategySection(file: string, value: unknown): StrategySection | undefined {
+export function parseStrategySection(
+	file: string,
+	value: unknown,
+	/** The dotted path of the value in the file: `strategy`, or `strategy.options.current` for a block nested in another strategy. */
+	base = 'strategy'
+): StrategySection | undefined {
 	if (value === undefined) return undefined;
 	if (!isMapping(value)) {
 		throw new StrategyConfigError(
 			file,
-			'strategy',
+			base,
 			`must be a mapping of type, fidelity and options, found ${found(value)}`,
-			'Write "strategy:" followed by an indented "type: local", or remove the key.'
+			`Write "${base.split('.').pop()}:" followed by an indented "type: local", or remove the key.`
 		);
 	}
 	for (const key of Object.keys(value)) {
 		if (key === 'pluginsDir') {
 			throw new StrategyConfigError(
 				file,
-				'strategy.pluginsDir',
+				`${base}.pluginsDir`,
 				'external plugins are not supported in this version (only the built-in ones can be used)',
 				'Remove the key.'
 			);
@@ -225,29 +238,29 @@ export function parseStrategySection(file: string, value: unknown): StrategySect
 		if ((SECTION_KEYS as readonly string[]).includes(key)) continue;
 		throw new StrategyConfigError(
 			file,
-			`strategy.${key}`,
+			`${base}.${key}`,
 			`unknown key (valid: ${SECTION_KEYS.join(', ')})`,
 			MISPLACED_AT_TOP.includes(key)
-				? `Move it under strategy.options: strategy.options.${key}`
-				: 'The settings of a strategy go under strategy.options.'
+				? `Move it under ${base}.options: ${base}.options.${key}`
+				: `The settings of a strategy go under ${base}.options.`
 		);
 	}
 	const type = value['type'];
 	if (type !== undefined && typeof type !== 'string') {
-		throw new StrategyConfigError(file, 'strategy.type', `must be a string, found ${found(type)}`);
+		throw new StrategyConfigError(file, `${base}.type`, `must be a string, found ${found(type)}`);
 	}
 	const fidelity =
-		value['fidelity'] === undefined ? 'strict' : parseFidelity(file, 'strategy.fidelity', value['fidelity']);
+		value['fidelity'] === undefined ? 'strict' : parseFidelity(file, `${base}.fidelity`, value['fidelity']);
 	const rawOptions = value['options'] ?? {};
 	if (!isMapping(rawOptions)) {
 		throw new StrategyConfigError(
 			file,
-			'strategy.options',
+			`${base}.options`,
 			`must be a mapping of option names to values, found ${found(rawOptions)}`
 		);
 	}
-	checkSecrets(file, 'strategy', value);
+	checkSecrets(file, base, value);
 	const { fills: rawFills, ...options } = rawOptions;
-	const fills = rawFills === undefined ? {} : parseFills(file, 'strategy.options.fills', rawFills, fidelity);
+	const fills = rawFills === undefined ? {} : parseFills(file, `${base}.options.fills`, rawFills, fidelity, base);
 	return { type, fidelity, options, fills };
 }
