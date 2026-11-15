@@ -58,6 +58,8 @@ export interface MigrationPlan {
 	targetClock?: string;
 	/** What the source held when the plan was made (id -> content hash and per-part hashes): an in-place run compares it again before it switches. */
 	sourceContent: Map<string, { hash: string; parts: Record<string, string> }>;
+	/** What the target held when the plan was made (one list: the callers reuse it instead of listing again). */
+	targetSummaries: TaskSummary[];
 }
 
 export interface PlanInput {
@@ -241,7 +243,11 @@ export async function buildPlan(input: PlanInput): Promise<MigrationPlan> {
 	const pending = journal?.pending;
 	if (pending !== undefined && sourceIds.has(pending.sourceId) && !entries.has(pending.sourceId)) {
 		const mapped = mappedById.get(pending.sourceId)!;
-		const taken = new Set([...entries.values()].map(entry => entry.target));
+		// An accepted foreign task is somebody else's: it is never the creation a crash left pending.
+		const taken = new Set([
+			...[...entries.values()].map(entry => entry.target),
+			...(journal?.inPlace?.acceptedForeignIds ?? []),
+		]);
 		const candidates = targetSummaries.filter(
 			summary =>
 				!taken.has(summary.id) &&
@@ -320,6 +326,7 @@ export async function buildPlan(input: PlanInput): Promise<MigrationPlan> {
 		estimate,
 		vanished,
 		targetClock: latestInstant(targetSummaries),
+		targetSummaries,
 		sourceContent: new Map(
 			records.map(record => {
 				const parts = contentParts(record);

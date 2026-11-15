@@ -11,7 +11,7 @@ import { describeError } from '../describeError.js';
 import type { TaskEvent, TaskProjectEnv } from '../events.js';
 import { checkAllowLoss } from './lossLedger.js';
 import { MIGRATED_FROM_KEY, commentMarker } from './mapTask.js';
-import { MigrationRefusedError } from './migrateErrors.js';
+import { MigrationRefusedError, MigrationStateError } from './migrateErrors.js';
 import {
 	PHASES,
 	acquireLock,
@@ -205,12 +205,13 @@ class Run {
 		// The same throttle as the journal; nothing to write when the journal holds nothing new since the last write.
 		if (!force && now - this.lastMapSave < JOURNAL_INTERVAL_MS) return;
 		if (!this.mapDirty) return;
-		this.lastMapSave = now;
-		this.mapDirty = false;
 		writeIdMap(
 			file,
 			Object.entries(this.journal.tasks).map(([from, entry]) => ({ from, to: entry.target }))
 		);
+		// Only once the file is there: a write that failed is retried by the next forced save.
+		this.lastMapSave = now;
+		this.mapDirty = false;
 	}
 
 	targetOf(sourceId: string): string {
@@ -681,6 +682,12 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 	let releaseWarning: string | undefined;
 	try {
 		const knownSource = existing?.inPlace?.source;
+		if (input.inPlace !== undefined && existing?.inPlace !== undefined && knownSource === undefined) {
+			throw new MigrationRefusedError(
+				`the journal ${journalFile} of an earlier in-place run does not record the storage the tasks were read from (it predates source recording), so a resume cannot tell that config.yml still points there`,
+				`Move ${journalFile} aside (the id map file stays as it is) and run again. The tasks that run copied are then unclaimed on the target: remove them first, or accept them with --allow-non-empty-target.`
+			);
+		}
 		if (
 			input.inPlace !== undefined &&
 			knownSource !== undefined &&
@@ -693,23 +700,26 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 		}
 		const plan = await buildPlan({ source, target, options, journal: existing, onProgress: input.onProgress });
 		// In place, the target is the storage the project is about to use: tasks already there that this migration did not create (no journal
-		// entry, no marker) would be duplicated by the copy.
+		// entry, no marker) would be duplicated by the copy. The list is the one the plan read.
 		let targetNotEmpty: TargetNotEmpty | undefined;
-		let nonEmptyAccepted = false;
+		let acceptedForeignIds: string[] | undefined;
 		if (input.inPlace !== undefined) {
 			const claimed = new Set<string>([
 				...Object.values(existing?.tasks ?? {}).map(entry => entry.target),
 				...plan.tasks.flatMap(planned => (planned.targetId === undefined ? [] : [planned.targetId])),
 			]);
-			const foreign = (await listAll(target.backend)).filter(summary => !claimed.has(summary.id));
+			const acceptedBefore = existing?.inPlace?.acceptedForeignIds ?? [];
+			const foreign = plan.targetSummaries.filter(
+				summary => !claimed.has(summary.id) && !acceptedBefore.includes(summary.id)
+			);
 			if (foreign.length > 0) {
-				if (options.allowNonEmptyTarget === true || existing?.inPlace?.nonEmptyTargetAccepted === true) {
-					nonEmptyAccepted = true;
+				if (options.allowNonEmptyTarget === true) {
+					acceptedForeignIds = [...acceptedBefore, ...foreign.map(summary => summary.id)];
 				} else {
 					targetNotEmpty = {
 						count: foreign.length,
 						ids: foreign.slice(0, 10).map(summary => summary.id),
-						hint: 'They may be the copy of an earlier migration that was rolled back, the old local files still in the data folder after a rollback, or the tasks of an existing repository or project. Copying now would duplicate them. Remove them from the target, or accept the duplicates with --allow-non-empty-target (recorded in the journal).',
+						hint: 'They may be the copy of an earlier migration that was rolled back, the old local files still in the data folder after a rollback, or the tasks of an existing repository or project. Copying now would duplicate them. Remove them from the target, or accept the duplicates with --allow-non-empty-target (their ids are recorded in the journal: a task that appears later is a new blocker).',
 					};
 					if (!options.dryRun) {
 						throw new MigrationRefusedError(
@@ -718,8 +728,23 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 						);
 					}
 				}
+			} else if (acceptedBefore.length > 0) {
+				acceptedForeignIds = [...acceptedBefore];
 			}
 		}
+		// A target read answered from a cache (the system was unreachable) proves nothing about what it holds: no write on it.
+		const planStale: string[] = [];
+		if (input.inPlace !== undefined) {
+			for (const notice of target.takeNotices?.() ?? []) {
+				if (notice.kind === 'stale') planStale.push(`target: ${notice.text}`);
+				else plan.warnings.push(`target: ${notice.text}`);
+			}
+		}
+		const blockers: string[] = [
+			...plan.blocking,
+			...(targetNotEmpty === undefined ? [] : ['targetNotEmpty']),
+			...(planStale.length === 0 ? [] : ['stale-read']),
+		];
 		const base = {
 			dryRun: options.dryRun,
 			from: side(source),
@@ -732,7 +757,7 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 		};
 		const pending = plan.tasks.filter(planned => planned.state !== 'done').length;
 
-		if (options.dryRun || plan.blocking.length > 0) {
+		if (options.dryRun || plan.blocking.length > 0 || planStale.length > 0) {
 			// Nothing is written: the counts say what a run would do (dry run) or that it did nothing (blocked).
 			const counts = emptyCounts(plan.tasks.length);
 			counts.skipped = plan.tasks.length - pending;
@@ -744,8 +769,23 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 			}
 			return {
 				...base,
-				status: options.dryRun ? 'dry-run' : 'blocked',
+				status: options.dryRun ? 'dry-run' : planStale.length > 0 ? 'stopped' : 'blocked',
 				counts,
+				blocked: blockers.length > 0,
+				blockers,
+				...(planStale.length > 0 && !options.dryRun
+					? {
+							failure: {
+								step: 'stale-read',
+								message: `a read was answered from a cache because the system could not be reached, so the plan cannot be trusted yet (${planStale.join('; ')})`,
+								hint: 'Nothing was written. Retry when the system is reachable: run the same command again.',
+							},
+							resumeCommand: input.resumeCommand,
+						}
+					: {}),
+				...(input.inPlace === undefined
+					? {}
+					: { inPlace: { switched: false, idMapFile: input.inPlace.idMapFile } }),
 				warnings: plan.warnings,
 				idMap: plan.tasks.flatMap(planned =>
 					planned.targetId === undefined
@@ -791,7 +831,7 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 				// Reset: a run that comes back to the full path has not started a switch yet.
 				switchStarted: false,
 				source: input.inPlace.source,
-				...(nonEmptyAccepted ? { nonEmptyTargetAccepted: true } : {}),
+				...(acceptedForeignIds === undefined ? {} : { acceptedForeignIds }),
 			};
 		}
 		delete journal.lastError;
@@ -860,7 +900,14 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 				];
 				journal.inPlace!.verified = true;
 				if (accepted.length > 0) journal.inPlace!.acceptedDifferences = accepted;
-				run.saveIdMap(true);
+				try {
+					run.saveIdMap(true);
+				} catch (error) {
+					throw new MigrationStateError(
+						`the id map ${inPlace.idMapFile} could not be written (${error instanceof Error ? error.message : String(error)}): the config was NOT switched, because a map that lags behind the journal would lose the old-id to new-id link`,
+						'Fix the cause (disk, permissions), then run the same command with --resume: the map is rewritten from the journal and the read-back runs again.'
+					);
+				}
 				run.save(true);
 				await inPlace.switchConfig(started => {
 					journal.inPlace!.switchStarted = started;
@@ -891,7 +938,6 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 		}
 		try {
 			run.save(true);
-			run.saveIdMap(true);
 		} catch (error) {
 			if (!run.switchedNow) throw error;
 			// The config is already the draft: the answer must say so, and how to finish. The journal on disk still says verified and
@@ -899,6 +945,14 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 			run.bookkeepingPending = true;
 			run.warnings.push(
 				`the configuration was switched but the journal could not be saved: run the same command with --resume to finish the bookkeeping (${error instanceof Error ? error.message : String(error)})`
+			);
+		}
+
+		try {
+			run.saveIdMap(true);
+		} catch (error) {
+			run.warnings.push(
+				`the id map ${input.inPlace?.idMapFile ?? ''} could not be written (${error instanceof Error ? error.message : String(error)}): --resume rewrites it from the journal`
 			);
 		}
 
@@ -927,6 +981,26 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 					...run.env,
 				},
 			});
+		}
+		if (input.inPlace !== undefined && run.switchedNow) {
+			if (run.bookkeepingPending) {
+				// The journal could not be saved: the --resume that finishes the bookkeeping raises the event, once.
+				const at = run.events.findIndex(event => event.name === 'onTasksMigrated');
+				if (at >= 0) run.events.splice(at, 1);
+				run.warnings.push(
+					'the summary event onTasksMigrated was not raised: the --resume that finishes the bookkeeping raises it'
+				);
+			} else if (run.events.some(event => event.name === 'onTasksMigrated')) {
+				// Recorded when the result that carries the event is returned, so a later --resume does not raise it a second time.
+				journal.inPlace!.summaryEventRaised = true;
+				try {
+					run.save(true);
+				} catch (error) {
+					run.warnings.push(
+						`the summary event onTasksMigrated is raised, but the journal could not record it (${error instanceof Error ? error.message : String(error)}): a --resume that finishes the bookkeeping could raise it again`
+					);
+				}
+			}
 		}
 		releaseWarning = ownLock ? lock?.release() : undefined;
 		if (releaseWarning !== undefined) run.warnings.push(releaseWarning);

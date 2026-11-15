@@ -173,6 +173,10 @@ export interface MigrationResult {
 	inPlace?: InPlaceReport;
 	/** In place, dry run: the target holds unclaimed tasks; a real run refuses (see `--allow-non-empty-target`). */
 	targetNotEmpty?: TargetNotEmpty;
+	/** Dry run and blocked plan: a real run would be refused. Scripts test this (the exit code of a dry run stays 0 unless --fail-on-blocked). */
+	blocked?: boolean;
+	/** What blocks: the loss kinds not allowed, `targetNotEmpty`, `stale-read`. Empty when nothing does. */
+	blockers?: string[];
 }
 
 /** What an in-place migration says about the switch of the config (the engine fills the first two, the entry the rest). */

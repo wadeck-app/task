@@ -138,3 +138,75 @@ describe('item 8: the id map follows the journal throttle', () => {
 		expect(mapAtSwitch).toBe(6);
 	});
 });
+
+// Item 4 (fourth review): a map write that failed is retried; a map that cannot be written blocks the switch.
+describe('item 4 (fourth review): a failed id map write is not forgotten', () => {
+	async function failIdMapWrites(skip: number, times: number): Promise<void> {
+		const actual = await vi.importActual<typeof import('@wadeck-app/project-sdk')>('@wadeck-app/project-sdk');
+		let toSkip = skip;
+		let toFail = times;
+		vi.mocked(sdk.writeFileAtomic).mockImplementation((file, ...rest) => {
+			if (path.basename(String(file)).startsWith('migrate-idmap')) {
+				if (toSkip > 0) toSkip--;
+				else if (toFail > 0) {
+					toFail--;
+					throw new Error('disk full');
+				}
+			}
+			return actual.writeFileAtomic(file, ...rest);
+		});
+	}
+
+	it('one failure right before the switch: the run stops, nothing is switched, and the end-of-run flush leaves a complete map', async () => {
+		const made = await pair();
+		await failIdMapWrites(1, 1);
+		const switchConfig = vi.fn();
+
+		const result = await runMigration({
+			source: made.source.endpoint,
+			target: made.target.endpoint,
+			journalDir: made.target.dataDir,
+			options: optionsWith({ allowLoss: ['history'] }),
+			resumeCommand: 'resume',
+			now: () => 1_000,
+			inPlace: {
+				target: { hash: 'h', parts: {}, location: 'kind:local' },
+				source: { kind: 'local', location: 'kind:local' },
+				idMapFile: path.join(made.target.dataDir, 'migrate-idmap-x.json'),
+				switchConfig,
+			},
+		});
+
+		expect(result.status).toBe('failed');
+		expect(result.failure!.message).toMatch(/id map/);
+		expect(switchConfig).not.toHaveBeenCalled();
+		expect(idMapOf(made.target)).toHaveLength(6);
+	});
+
+	it('a map that stays unwritable blocks the switch with a clear stop, never a raw error', async () => {
+		const made = await pair();
+		await failIdMapWrites(1, 99);
+		const switchConfig = vi.fn();
+
+		const result = await runMigration({
+			source: made.source.endpoint,
+			target: made.target.endpoint,
+			journalDir: made.target.dataDir,
+			options: optionsWith({ allowLoss: ['history'] }),
+			resumeCommand: 'resume',
+			now: () => 1_000,
+			inPlace: {
+				target: { hash: 'h', parts: {}, location: 'kind:local' },
+				source: { kind: 'local', location: 'kind:local' },
+				idMapFile: path.join(made.target.dataDir, 'migrate-idmap-x.json'),
+				switchConfig,
+			},
+		});
+
+		expect(result.status).toBe('failed');
+		expect(result.failure!.message).toMatch(/id map/);
+		expect(result.failure!.hint).toMatch(/--resume|resume/);
+		expect(switchConfig).not.toHaveBeenCalled();
+		expect(result.warnings.join(' ')).toMatch(/id map/);
+	});
+});

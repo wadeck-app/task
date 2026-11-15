@@ -52,6 +52,8 @@ export interface ParsedMigrate {
 	/** `--in-place --to-config <file>`: the project changes storage; `draft` is the file path, `project` the name it resolved to. */
 	inPlace?: { draft: string; project?: string };
 	options: MigrationOptions;
+	/** `--fail-on-blocked` (dry run only): exit 1 when a real run would be refused. */
+	failOnBlocked?: boolean;
 }
 
 /** The sides and the options typed, or the error to print. Checked before any project is looked up. */
@@ -61,6 +63,7 @@ export function parseMigrateArgs(rest: readonly string[], jsonMode: boolean): Pa
 	let inPlace = false;
 	let toConfig: string | undefined;
 	const options: MigrationOptions = { ...DEFAULT_MIGRATION_OPTIONS };
+	let failOnBlocked = false;
 	const allow: string[] = [];
 	let allowGiven = false;
 
@@ -145,6 +148,9 @@ export function parseMigrateArgs(rest: readonly string[], jsonMode: boolean): Pa
 			case '--accept-draft-change':
 				options.acceptDraftChange = true;
 				break;
+			case '--fail-on-blocked':
+				failOnBlocked = true;
+				break;
 			case '--allow-non-empty-target':
 				options.allowNonEmptyTarget = true;
 				break;
@@ -166,6 +172,13 @@ export function parseMigrateArgs(rest: readonly string[], jsonMode: boolean): Pa
 			jsonMode,
 			`${flag} only goes with --in-place`,
 			'It accepts a read-back difference or a changed draft of an in-place migration: task migrate --in-place --to-config <file> ...'
+		);
+	}
+	if (failOnBlocked && !options.dryRun) {
+		return errorOutput(
+			jsonMode,
+			'--fail-on-blocked only goes with --dry-run',
+			'It makes a dry run exit 1 when a real run would be refused: task migrate ... --dry-run --fail-on-blocked'
 		);
 	}
 	if (!inPlace && options.allowNonEmptyTarget === true) {
@@ -200,7 +213,7 @@ export function parseMigrateArgs(rest: readonly string[], jsonMode: boolean): Pa
 			);
 		}
 		options.allowLoss = [...new Set(allow)];
-		return { from: '', to: '', inPlace: { draft: toConfig }, options };
+		return { from: '', to: '', inPlace: { draft: toConfig }, options, ...(failOnBlocked ? { failOnBlocked } : {}) };
 	}
 	if (toConfig !== undefined) {
 		return errorOutput(
@@ -215,7 +228,7 @@ export function parseMigrateArgs(rest: readonly string[], jsonMode: boolean): Pa
 	if (from === undefined) return errorOutput(jsonMode, '--from <project> is required', USAGE);
 	if (to === undefined) return errorOutput(jsonMode, '--to <project> is required', USAGE);
 	options.allowLoss = [...new Set(allow)];
-	return { from, to, options };
+	return { from, to, options, ...(failOnBlocked ? { failOnBlocked } : {}) };
 }
 
 function quoted(text: string): string {
@@ -291,7 +304,7 @@ function inPlaceLines(result: MigrationResult, report: NonNullable<MigrationResu
 	}
 	if (result.targetNotEmpty !== undefined) {
 		lines.push(
-			`BLOCKED:   the target already holds ${result.targetNotEmpty.count} task${result.targetNotEmpty.count === 1 ? '' : 's'} that this migration did not create (${result.targetNotEmpty.ids.join(', ')}${result.targetNotEmpty.count > result.targetNotEmpty.ids.length ? ', ...' : ''}): a real run refuses`,
+			`Blocker:   the target already holds ${result.targetNotEmpty.count} task${result.targetNotEmpty.count === 1 ? '' : 's'} that this migration did not create (${result.targetNotEmpty.ids.join(', ')}${result.targetNotEmpty.count > result.targetNotEmpty.ids.length ? ', ...' : ''}): a real run refuses`,
 			`           ${result.targetNotEmpty.hint}`
 		);
 	}
@@ -338,6 +351,15 @@ function inPlaceLines(result: MigrationResult, report: NonNullable<MigrationResu
 	return lines;
 }
 
+/**
+ * 0 for a dry run (even when a real run would be refused: the answer carries `blocked` and `blockers`; `--fail-on-blocked` turns that into 1)
+ * and for a completed run whose bookkeeping is done; 1 otherwise.
+ */
+export function migrationExitCode(result: MigrationResult, parsed: ParsedMigrate): number {
+	if (result.status === 'dry-run') return parsed.failOnBlocked === true && result.blocked === true ? 1 : 0;
+	return result.status === 'completed' && result.inPlace?.bookkeepingPending !== true ? 0 : 1;
+}
+
 /** The text of a result: what was done or would be, what is lost, what to type next. */
 export function formatMigration(result: MigrationResult, parsed: ParsedMigrate): string {
 	const { counts } = result;
@@ -376,6 +398,11 @@ export function formatMigration(result: MigrationResult, parsed: ParsedMigrate):
 		}
 	}
 	lines.push(`Journal:   ${result.journal}`);
+	if (result.dryRun && result.blocked === true) {
+		lines.push(
+			`BLOCKED: a real run will be refused (${(result.blockers ?? []).join(', ')})${parsed.failOnBlocked === true ? '' : ' (exit code 0: add --fail-on-blocked to make a script stop)'}`
+		);
+	}
 	if (result.inPlace !== undefined) lines.push(...inPlaceLines(result, result.inPlace));
 
 	if (result.status === 'rate-limited') {
@@ -519,10 +546,7 @@ export async function runMigrate(
 			await sink.flush?.();
 		}
 	}
-	const exitCode =
-		(result.status === 'dry-run' || result.status === 'completed') && result.inPlace?.bookkeepingPending !== true
-			? 0
-			: 1;
+	const exitCode = migrationExitCode(result, parsed);
 	const { events: _events, ...printed } = result;
 	return jsonMode
 		? { exitCode, output: JSON.stringify(printed, null, 2) }

@@ -63,8 +63,10 @@ export interface InPlaceState {
 	switchStarted: boolean;
 	/** The storage the tasks were read from when the run started: a resume with another source is refused. Absent in journals of older runs. */
 	source?: { kind: string; location: string };
-	/** `--allow-non-empty-target` was given: the tasks already on the target were accepted. */
-	nonEmptyTargetAccepted?: boolean;
+	/** The ids of the tasks already on the target that `--allow-non-empty-target` accepted: only these are accepted on a resume. */
+	acceptedForeignIds?: string[];
+	/** The summary event of the switch was raised (best effort: written when the result that carries it is returned). */
+	summaryEventRaised?: boolean;
 	acceptedDifferences?: MigrationMismatch[];
 }
 
@@ -239,7 +241,12 @@ function readInPlaceState(file: string, raw: unknown): InPlaceState | undefined 
 				typeof raw['source']['kind'] === 'string' &&
 				typeof raw['source']['location'] === 'string'
 			)) ||
-		(raw['nonEmptyTargetAccepted'] !== undefined && typeof raw['nonEmptyTargetAccepted'] !== 'boolean')
+		(raw['acceptedForeignIds'] !== undefined &&
+			!(
+				Array.isArray(raw['acceptedForeignIds']) &&
+				raw['acceptedForeignIds'].every(id => typeof id === 'string')
+			)) ||
+		(raw['summaryEventRaised'] !== undefined && typeof raw['summaryEventRaised'] !== 'boolean')
 	) {
 		throw bad();
 	}
@@ -266,7 +273,10 @@ function readInPlaceState(file: string, raw: unknown): InPlaceState | undefined 
 		...(isRecord(raw['source'])
 			? { source: { kind: raw['source']['kind'] as string, location: raw['source']['location'] as string } }
 			: {}),
-		...(raw['nonEmptyTargetAccepted'] === true ? { nonEmptyTargetAccepted: true } : {}),
+		...(Array.isArray(raw['acceptedForeignIds'])
+			? { acceptedForeignIds: raw['acceptedForeignIds'] as string[] }
+			: {}),
+		...(raw['summaryEventRaised'] === true ? { summaryEventRaised: true } : {}),
 		...(accepted === undefined ? {} : { acceptedDifferences: accepted }),
 	};
 }
@@ -339,8 +349,13 @@ export function recoverArchives(
 		let names: string[] = [];
 		try {
 			names = fs.readdirSync(dir);
-		} catch {
-			continue;
+		} catch (error) {
+			// A folder that does not exist has no stray; any other failure means the check cannot be trusted: stop, never go on.
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+			throw new MigrationStateError(
+				`cannot look for an interrupted archive in ${dir}: ${(error as Error).message}`,
+				`Fix the permissions of ${dir} (or what is in the way), then run again: a run that cannot see the files of an earlier migration there must not start.`
+			);
 		}
 		for (const name of names) {
 			if (name.startsWith(prefix))
@@ -364,10 +379,27 @@ export function recoverArchives(
 			);
 		}
 	}
-	return moves.map(move => {
-		rename(move.from, move.to);
-		return `an interrupted archive was completed: ${move.from} -> ${move.to}`;
-	});
+	// All or nothing, like archiveFiles: a rename that fails puts the ones already done back and stops the run.
+	const done: Array<[string, string]> = [];
+	try {
+		for (const move of moves) {
+			rename(move.from, move.to);
+			done.push([move.from, move.to]);
+		}
+	} catch (error) {
+		for (const [from, to] of done.reverse()) {
+			try {
+				fs.renameSync(to, from);
+			} catch {
+				/* what could not be put back stays under its archived name, which the error names below */
+			}
+		}
+		throw new MigrationStateError(
+			`cannot finish the interrupted archive (${moves.map(move => move.from).join(', ')}): ${(error as Error).message}`,
+			'Nothing was changed: the files are where they were. Fix the cause, then run again; the run does not start until the archive is complete.'
+		);
+	}
+	return moves.map(move => `an interrupted archive was completed: ${move.from} -> ${move.to}`);
 }
 
 /** Writes the journal whole or not at all. */

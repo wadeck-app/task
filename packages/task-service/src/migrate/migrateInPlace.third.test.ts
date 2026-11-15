@@ -175,9 +175,9 @@ describe('items 2+3: tasks on the target that nothing claims are a blocker', () 
 		const first = await run(made, switchConfig, { allowNonEmptyTarget: true });
 		expect(first.status).toBe('stopped');
 		const journal = JSON.parse(fs.readFileSync(journalFileOf(made.target), 'utf8')) as {
-			inPlace: { nonEmptyTargetAccepted?: boolean };
+			inPlace: { acceptedForeignIds?: string[] };
 		};
-		expect(journal.inPlace.nonEmptyTargetAccepted).toBe(true);
+		expect(journal.inPlace.acceptedForeignIds).toHaveLength(1);
 
 		const resumed = await run(made, switchConfig, { resume: true });
 		expect(resumed.status).toBe('completed');
@@ -271,7 +271,7 @@ describe('item 6: an archive that crashed halfway is completed at the start of t
 });
 
 describe('item 9: the journal cannot be saved after the config was replaced', () => {
-	it('the answer says switched, tells how to finish, keeps the event and flags the bookkeeping', async () => {
+	it('the answer says switched, tells how to finish, defers the event to the resume and flags the bookkeeping', async () => {
 		const made = await setup();
 		const journalFile = journalFileOf(made.target);
 		// After the config is replaced, the journal path becomes a folder: the next atomic write cannot rename over it.
@@ -286,7 +286,8 @@ describe('item 9: the journal cannot be saved after the config was replaced', ()
 		expect(result.warnings.join(' ')).toMatch(
 			/switched but the journal could not be saved: run the same command with --resume/
 		);
-		expect(result.events.map(event => event.name)).toEqual(['onTasksMigrated']);
+		expect(result.events).toEqual([]);
+		expect(result.warnings.join(' ')).toMatch(/summary event/);
 	});
 
 	it('a journal that cannot be saved BEFORE the switch is still an ordinary failure', async () => {

@@ -9,7 +9,7 @@ import { FakeGitHub } from '@wadeck-app/task-service/fakeGitHub';
 import type { MigrationResult } from '@wadeck-app/task-service';
 
 import { runTaskCommand } from '../TaskIndex.js';
-import { commandLine, formatMigration, parseMigrateArgs } from './MigrateCommand.js';
+import { commandLine, formatMigration, migrationExitCode, parseMigrateArgs } from './MigrateCommand.js';
 import { type RegisteredTestProject, registerTestProject } from '../testHelpers.js';
 
 // Events reach this list instead of the queue (see MigrateCommand.test.ts).
@@ -442,7 +442,7 @@ describe('task migrate --in-place: the new answers of the third review', () => {
 			parsedInPlace() as never
 		);
 
-		expect(text).toMatch(/BLOCKED:.*3 tasks.*a real run refuses/);
+		expect(text).toMatch(/Blocker:.*3 tasks.*a real run refuses/);
 		expect(text).toContain('--allow-non-empty-target');
 	});
 
@@ -464,5 +464,79 @@ describe('task migrate --in-place: the new answers of the third review', () => {
 		);
 
 		expect(text).not.toMatch(/Rollback:/);
+	});
+});
+
+describe('task migrate: a dry run that a real run would refuse (fourth review)', () => {
+	const dryResult = (change: Record<string, unknown>): MigrationResult =>
+		({
+			status: 'dry-run',
+			dryRun: true,
+			from: { id: 'a', name: 'shop', kind: 'local' },
+			to: { id: 'a', name: 'shop', kind: 'github' },
+			counts: { source: 1, created: 1, resumed: 0, skipped: 0, failed: 0, remaining: 0 },
+			losses: [],
+			blocking: [],
+			notes: [],
+			warnings: [],
+			estimate: { writes: 0, requests: 0, seconds: 0 },
+			idMap: [],
+			journal: 'j.json',
+			events: [],
+			blocked: false,
+			blockers: [],
+			inPlace: { switched: false, idMapFile: 'm.json' },
+			...change,
+		}) as unknown as MigrationResult;
+	const parse = (...args: string[]): NonNullable<ReturnType<typeof parseMigrateArgs>> => {
+		const parsed = parseMigrateArgs(args, false);
+		if ('exitCode' in parsed) throw new Error(parsed.output);
+		return parsed;
+	};
+
+	it('the text says a real run will be refused', () => {
+		const text = formatMigration(
+			dryResult({ blocked: true, blockers: ['targetNotEmpty'] }),
+			parse('--in-place', '--to-config', 'x.yml', '--dry-run') as never
+		);
+
+		expect(text).toMatch(/BLOCKED: a real run will be refused/);
+		expect(text).toContain('targetNotEmpty');
+	});
+
+	it('a dry run that is blocked still exits 0; with --fail-on-blocked it exits 1', () => {
+		const blocked = dryResult({ blocked: true, blockers: ['stale-read'] });
+
+		expect(migrationExitCode(blocked, parse('--in-place', '--to-config', 'x.yml', '--dry-run') as never)).toBe(0);
+		expect(
+			migrationExitCode(
+				blocked,
+				parse('--in-place', '--to-config', 'x.yml', '--dry-run', '--fail-on-blocked') as never
+			)
+		).toBe(1);
+		expect(
+			migrationExitCode(
+				dryResult({}),
+				parse('--in-place', '--to-config', 'x.yml', '--dry-run', '--fail-on-blocked') as never
+			)
+		).toBe(0);
+	});
+
+	it('--fail-on-blocked needs --dry-run, for both forms', async () => {
+		for (const args of [
+			['migrate', '--in-place', '--to-config', 'x.yml', '--fail-on-blocked'],
+			['migrate', '--from', 'a', '--to', 'b', '--fail-on-blocked'],
+		]) {
+			const result = await run(project.dir, ...args);
+			expect(result.exitCode).toBe(1);
+			expect(result.output).toMatch(/--fail-on-blocked only goes with --dry-run/);
+		}
+	});
+
+	it('--help documents --fail-on-blocked and the blocked / blockers fields', async () => {
+		const help = await runTaskCommand(['migrate', '--help'], tmpDir);
+
+		expect(help.output).toContain('--fail-on-blocked');
+		expect(help.output).toMatch(/blockers/);
 	});
 });

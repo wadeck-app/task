@@ -227,11 +227,14 @@ Usage:
                         and defaults.priority), when the storage location is the same. Connection-only options (tokenEnv, tokenFile,
                         timeoutSeconds, cache, pageSize, maxPages, writeSpacingSeconds, rateLimit) and comments never need it. Another
                         location is always refused. Never copied into printed commands either.
+  --fail-on-blocked     (with --dry-run) Exit 1 when a real run would be refused (a loss not allowed, a target that is not empty, a read served
+                        from a cache). Without it a dry run exits 0 whatever it finds; the --json answer always carries blocked and
+                        blockers (the kinds), and the text says BLOCKED: a real run will be refused.
   --allow-non-empty-target
                         (in place) Go on although the target already holds tasks that nothing of this migration claims (no journal entry,
                         no marker): a copy of an earlier migration that was rolled back, the old local files still in the data folder, an
                         existing repository. Without it a real run refuses before writing anything (the count, the ids, what to check) and a
-                        dry run reports it as BLOCKED. Recorded in the journal, so a resume does not need it again. Never copied into printed
+                        dry run reports it as BLOCKED. The ids accepted are recorded in the journal: a resume needs nothing for them, a task that appears later is a new blocker. Never copied into printed
                         commands.
   --dry-run             Read both sides, print the plan, the loss table and the estimate, and stop: nothing is written (no task, no journal,
                         no lock, no request that changes anything); exit 0 even when the plan is blocked.

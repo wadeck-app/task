@@ -718,7 +718,9 @@ function keysDropped(snapshot: string | undefined, draft: Draft): string[] {
 function finishBookkeeping(input: Locked, journal: Journal): MigrationResult {
 	const { project, idMapFile, journalFile, clock } = input;
 	const state = journal.inPlace!;
-	journal.inPlace = { ...state, switched: true };
+	// The first run may already have raised the summary event (the journal then says so): never twice.
+	const eventAlreadyRaised = state.summaryEventRaised === true;
+	journal.inPlace = { ...state, switched: true, summaryEventRaised: true };
 	journal.status = 'completed';
 	delete journal.lastError;
 	delete journal.pending;
@@ -763,7 +765,7 @@ function finishBookkeeping(input: Locked, journal: Journal): MigrationResult {
 		estimate: { writes: 0, requests: 0, seconds: 0 },
 		idMap: entries.map(([source, entry]) => ({ source, target: entry.target })),
 		journal: journalFile,
-		events: [event],
+		events: eventAlreadyRaised ? [] : [event],
 		inPlace: {
 			switched: true,
 			idMapFile,
