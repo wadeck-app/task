@@ -7,11 +7,22 @@ import * as path from 'node:path';
 import { writeFileAtomic } from '@wadeck-app/project-sdk';
 
 import { MigrationStateError } from './migrateErrors.js';
+import type { LinkType } from '@wadeck-app/task-core';
+
 import type { MigrationMismatch } from './migrateTypes.js';
 
 /** How far a source task got: created (and recorded), fields set, links set, comments written (done). */
 export const PHASES = ['created', 'fielded', 'linked', 'done'] as const;
 export type Phase = (typeof PHASES)[number];
+
+/**
+ * What a task could not get because the other end was outside the selection of the run that copied it (source ids): written by the
+ * first later run whose selection holds that other end.
+ */
+export interface DeferredRelations {
+	parent?: string;
+	links?: Array<{ type: LinkType; target: string }>;
+}
 
 export interface JournalTask {
 	/** The id of the task on the target. */
@@ -21,6 +32,8 @@ export interface JournalTask {
 	content?: string;
 	/** The hash of each part (see sourceContent.ts), to name what changed. */
 	parts?: Record<string, string>;
+	/** Relations left for a later run (a selection that left their other end out). Absent: none. */
+	deferred?: DeferredRelations;
 }
 
 export type JournalStatus = 'running' | 'stopped' | 'completed';
@@ -176,6 +189,7 @@ export function readJournal(file: string, expected: { fromId: string; toId: stri
 			phase: entry['phase'] as Phase,
 			...(typeof entry['content'] === 'string' ? { content: entry['content'] } : {}),
 			...(isRecord(entry['parts']) ? { parts: entry['parts'] as Record<string, string> } : {}),
+			...(entry['deferred'] === undefined ? {} : { deferred: readDeferred(file, sourceId, entry['deferred']) }),
 		};
 	}
 	const last = value['lastError'];
@@ -213,6 +227,36 @@ export function readJournal(file: string, expected: { fromId: string; toId: stri
 			: {}),
 		...(pending === undefined ? {} : { pending }),
 		...(inPlace === undefined ? {} : { inPlace }),
+	};
+}
+
+function readDeferred(file: string, sourceId: string, raw: unknown): DeferredRelations {
+	const bad = (): MigrationStateError =>
+		corrupt(file, `the "deferred" of task ${sourceId} is not {parent?, links?: [{type, target}]}`);
+	if (!isRecord(raw)) throw bad();
+	const { parent, links } = raw;
+	if (parent !== undefined && typeof parent !== 'string') throw bad();
+	if (
+		links !== undefined &&
+		!(
+			Array.isArray(links) &&
+			links.every(
+				link => isRecord(link) && typeof link['type'] === 'string' && typeof link['target'] === 'string'
+			)
+		)
+	) {
+		throw bad();
+	}
+	return {
+		...(parent === undefined ? {} : { parent }),
+		...(links === undefined
+			? {}
+			: {
+					links: (links as Array<{ type: LinkType; target: string }>).map(link => ({
+						type: link.type,
+						target: link.target,
+					})),
+				}),
 	};
 }
 

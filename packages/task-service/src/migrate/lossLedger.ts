@@ -10,7 +10,10 @@ interface Entry {
 }
 
 /** What the person can do about each kind, and how its row reads. `what` gets the number of tasks concerned and the details. */
-const WORDING: Record<LossKind, { what: (items: number, tasks: number, details: string) => string; fix: string }> = {
+const WORDING: Record<
+	LossKind,
+	{ what: (items: number, tasks: number, details: string) => string; fix: string | ((details: string) => string) }
+> = {
 	status: {
 		what: (_items, tasks, details) =>
 			`${tasks} task(s) have a status the target project does not define (${details}); they are created in the target's default status`,
@@ -52,9 +55,15 @@ const WORDING: Record<LossKind, { what: (items: number, tasks: number, details: 
 		fix: 'finish or release the claims on the source first (task release <id>), or accept the loss',
 	},
 	comments: {
-		what: (items, tasks) =>
-			`${items} comment(s) on ${tasks} task(s) cannot be stored: the target has no comments; they are not written`,
-		fix: 'accept the loss (a target without comments cannot keep them)',
+		// A detail says it is the person's choice (--comments none); without one the target has no comments.
+		what: (items, tasks, details) =>
+			details === ''
+				? `${items} comment(s) on ${tasks} task(s) cannot be stored: the target has no comments; they are not written`
+				: `${items} comment(s) on ${tasks} task(s) are not written (${details})`,
+		fix: details =>
+			details === ''
+				? 'accept the loss (a target without comments cannot keep them)'
+				: 'use --comments digest to keep them in ONE comment per task, or accept the loss',
 	},
 	history: {
 		what: (_items, tasks) =>
@@ -98,6 +107,11 @@ const WORDING: Record<LossKind, { what: (items: number, tasks: number, details: 
 		what: items => `${items} parent link(s) of the source form a cycle; each is dropped to break it`,
 		fix: 'fix the parents in the source, or accept the loss',
 	},
+	'hierarchy:excluded': {
+		what: items =>
+			`${items} task(s) have a parent outside the selection (not on the target yet); they are created as roots for now`,
+		fix: 'select the parent too, or accept the loss: the parent is attached later, by the run that migrates it (--allow-loss hierarchy:excluded)',
+	},
 	'links:blockedBy': {
 		what: items => `${items} blockedBy link(s) cannot be stored by the target`,
 		fix: 'accept the loss',
@@ -113,6 +127,11 @@ const WORDING: Record<LossKind, { what: (items: number, tasks: number, details: 
 	'links:dangling': {
 		what: items => `${items} link(s) point to a task that is not in the source; they are not created`,
 		fix: 'remove the link in the source (task unlink), or accept the loss',
+	},
+	'links:excluded': {
+		what: items =>
+			`${items} link(s) point to a task outside the selection (not on the target yet); they are not created for now`,
+		fix: 'select the other end too, or accept the loss: the link is written later, by the run that migrates the other end (--allow-loss links:excluded)',
 	},
 };
 
@@ -141,13 +160,14 @@ export class LossLedger {
 				.map(([name, count]) => (entry.details.size > 1 || count > 1 ? `${name} x${count}` : name))
 				.join(', ');
 			const more = entry.details.size > 8 ? `, and ${entry.details.size - 8} more` : '';
+			const { fix } = WORDING[kind];
 			return [
 				{
 					kind,
 					count: entry.count,
 					taskIds: entry.ids.slice(0, LOSS_IDS_MAX),
 					text: WORDING[kind].what(entry.count, entry.ids.length, details + more),
-					fix: WORDING[kind].fix,
+					fix: typeof fix === 'function' ? fix(details + more) : fix,
 					allowed: allowed(kind),
 				},
 			];

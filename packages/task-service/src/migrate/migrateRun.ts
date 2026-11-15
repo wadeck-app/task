@@ -23,9 +23,10 @@ import {
 } from './migrateJournal.js';
 import type { HeldLock, Journal, Phase } from './migrateJournal.js';
 import { before, buildPlan, listAll, readRecords } from './migratePlan.js';
+import { checkSelection } from './migrateSelection.js';
 import { contentHash, contentParts, differingParts } from './sourceContent.js';
 import type { MigrationPlan, PlannedTask } from './migratePlan.js';
-import { LOSS_GROUPS, LOSS_KINDS } from './migrateTypes.js';
+import { COMMENTS_MODES, LOSS_GROUPS, LOSS_KINDS } from './migrateTypes.js';
 import type {
 	MigrationCounts,
 	MigrationEndpoint,
@@ -98,8 +99,11 @@ function emptyCounts(source: number): MigrationCounts {
 	return { source, created: 0, resumed: 0, skipped: 0, failed: 0, remaining: 0 };
 }
 
-/** The options as the engine accepts them: unknown `--allow-loss` names are an error that lists the valid ones. */
-function checkOptions(options: MigrationOptions): void {
+/**
+ * The options as the engine accepts them: unknown `--allow-loss` names are an error that lists the valid ones, and so are a selection
+ * and a comments mode that cannot be honoured (checked against the statuses of the source before anything is read or written).
+ */
+function checkOptions(options: MigrationOptions, source: MigrationEndpoint): void {
 	const { unknown } = checkAllowLoss(options.allowLoss);
 	if (unknown.length > 0) {
 		throw new MigrationRefusedError(
@@ -107,6 +111,20 @@ function checkOptions(options: MigrationOptions): void {
 			`Valid kinds: ${LOSS_KINDS.join(', ')}; groups: ${LOSS_GROUPS.join(', ')} (all = every kind). \`task migrate --dry-run\` prints the kinds that apply.`
 		);
 	}
+	const mode = options.comments ?? 'each';
+	if (!(COMMENTS_MODES as readonly string[]).includes(mode)) {
+		throw new MigrationRefusedError(
+			`unknown value for --comments: ${String(mode)} (valid: ${COMMENTS_MODES.join(', ')})`,
+			`Valid values: ${COMMENTS_MODES.join(', ')} (each = one comment per source comment, the default; digest = one comment per task; none = no comment, a loss of the kind comments).`
+		);
+	}
+	if (mode === 'none' && options.historyComment) {
+		throw new MigrationRefusedError(
+			'--comments none and --history-comment contradict each other: the history note is a comment',
+			'Use --comments digest with --history-comment (the note and the comments go in ONE comment per task), or drop --history-comment.'
+		);
+	}
+	checkSelection(options.selection, source.facts.statuses);
 }
 
 /** The state of one run: what it created, what it touched, the journal and the events. */
@@ -127,6 +145,8 @@ class Run {
 	targetClock: string | undefined;
 	/** True when this run replaced the config (in-place). */
 	switchedNow = false;
+	/** In place, with a selection that leaves tasks out: nothing is switched, only what was written is checked. */
+	readonly partial: boolean;
 	private lastSave = 0;
 	private lastMapSave = 0;
 	/** The id map file is behind the journal (true at the start: the first write repairs a map an earlier crash left behind). */
@@ -166,8 +186,9 @@ class Run {
 		readonly journal: Journal,
 		readonly journalFile: string
 	) {
-		this.counts = emptyCounts(plan.tasks.length);
+		this.counts = emptyCounts(plan.sourceCount);
 		this.targetClock = plan.targetClock;
+		this.partial = input.inPlace !== undefined && (plan.selection?.excluded ?? 0) > 0;
 		this.warnings = [...plan.warnings];
 	}
 
@@ -394,6 +415,7 @@ async function createPass(run: Run): Promise<void> {
 				target: record.id,
 				phase: 'created',
 				...(run.input.inPlace === undefined ? {} : contentOf(run.plan, sourceId)),
+				...(planned.deferred === undefined ? {} : { deferred: planned.deferred }),
 			};
 			delete run.journal.pending;
 			if (run.targetClock === undefined || record.createdAt > run.targetClock) run.targetClock = record.createdAt;
@@ -424,6 +446,75 @@ async function createPass(run: Run): Promise<void> {
 		run.records.set(sourceId, await fillFields(run, planned, record.id, record, folded));
 		run.advance(sourceId, 'fielded');
 		run.progress({ ...progress, targetId: record.id, action });
+	}
+}
+
+/**
+ * Pass 1b: the parents and links an earlier run left out because their other end was outside its selection, now that the other end is
+ * in this run or on the target. Checked against the record (a relation already there is not written again), then forgotten by the journal.
+ */
+async function relinkPass(run: Run): Promise<void> {
+	const { plan } = run;
+	const backend = run.target.backend;
+	run.step = 'links';
+	let position = 0;
+	for (const planned of plan.tasks) {
+		position++;
+		const { relink, mapped } = planned;
+		if (relink === undefined) continue;
+		const sourceId = mapped.sourceId;
+		run.currentSourceId = sourceId;
+		const targetId = run.targetOf(sourceId);
+		let record = await backend.get(targetId);
+		let written = 0;
+		if (relink.parent !== undefined) {
+			const parentId = run.targetOf(relink.parent);
+			if (record.parentId !== parentId) {
+				const oldParentId = record.parentId;
+				record = await backend.setParent(targetId, parentId);
+				written++;
+				run.emit({
+					name: 'onTaskParentChanged',
+					payload: { taskId: targetId, oldParentId, newParentId: parentId, ...run.env },
+				});
+			}
+		}
+		for (const link of relink.links) {
+			const to = run.targetOf(link.target);
+			if ((record.links ?? []).some(held => held.type === link.type && held.target === to)) continue;
+			const statusBefore = record.status;
+			record = await backend.addLink(targetId, link.type, to);
+			written++;
+			run.emit({
+				name: 'onTaskLinked',
+				payload: { taskId: targetId, linkType: link.type, targetId: to, ...run.env },
+			});
+			// A target may change the status with the link (GitHub closes an issue it marks as a duplicate): put back the planned one.
+			if (statusBefore === mapped.status && record.status !== mapped.status) {
+				record = await backend.updateStatus(targetId, mapped.status);
+			}
+		}
+		// Only now does the journal forget them: a crash before this line repeats the pass, which writes nothing twice.
+		const entry = run.journal.tasks[sourceId];
+		if (entry !== undefined) {
+			if (planned.deferred === undefined) delete entry.deferred;
+			else entry.deferred = planned.deferred;
+			run.save(false);
+		}
+		run.records.set(sourceId, record);
+		if (written > 0) {
+			run.touched.add(sourceId);
+			run.progress({
+				stage: 'links',
+				done: position,
+				total: plan.tasks.length,
+				sourceId,
+				targetId,
+				title: mapped.title,
+				action: 'linked',
+				items: written,
+			});
+		}
 	}
 }
 
@@ -579,7 +670,7 @@ async function verifyPass(run: Run): Promise<MigrationMismatch[]> {
 	run.currentSourceId = undefined;
 	// The switch of an in-place migration is the point of no return: every task is read back, not only what this run wrote.
 	const checked = plan.tasks.filter(
-		planned => run.input.inPlace !== undefined || run.touched.has(planned.mapped.sourceId)
+		planned => (run.input.inPlace !== undefined && !run.partial) || run.touched.has(planned.mapped.sourceId)
 	);
 	const mismatches: MigrationMismatch[] = [];
 	for (let start = 0; start < checked.length; start += VERIFY_CHUNK) {
@@ -727,7 +818,7 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 			'Migrate between two registered projects: --from <source project> --to <other project>. Register the second with the project CLI: project add <dir>.'
 		);
 	}
-	checkOptions(options);
+	checkOptions(options, source);
 
 	const clock = input.now ?? Date.now;
 	const journalFile = path.join(
@@ -852,7 +943,7 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 
 		if (options.dryRun || plan.blocking.length > 0 || planStale.length > 0) {
 			// Nothing is written: the counts say what a run would do (dry run) or that it did nothing (blocked).
-			const counts = emptyCounts(plan.tasks.length);
+			const counts = emptyCounts(plan.sourceCount);
 			counts.skipped = plan.tasks.length - pending;
 			if (options.dryRun) {
 				counts.created = plan.tasks.filter(planned => planned.state === 'new').length;
@@ -886,6 +977,8 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 						: [{ source: planned.mapped.sourceId, target: planned.targetId }]
 				),
 				events: [],
+				...(plan.selection === undefined ? {} : { selection: plan.selection }),
+				...(plan.comments === undefined ? {} : { comments: plan.comments }),
 				...(targetNotEmpty === undefined ? {} : { targetNotEmpty }),
 			};
 		}
@@ -910,6 +1003,13 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 					...(input.inPlace === undefined ? {} : contentOf(plan, planned.mapped.sourceId)),
 				};
 			}
+		}
+		// What each known task still lacks of its relations is what THIS plan says (a relink is recorded when it is written).
+		for (const planned of plan.tasks) {
+			const entry = journal.tasks[planned.mapped.sourceId];
+			if (entry === undefined || planned.relink !== undefined) continue;
+			if (planned.deferred === undefined) delete entry.deferred;
+			else entry.deferred = planned.deferred;
 		}
 		journal.status = 'running';
 		if (input.inPlace !== undefined) {
@@ -941,14 +1041,18 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 		let verification: MigrationResult['verification'];
 		try {
 			await createPass(run);
+			await relinkPass(run);
 			await linkPass(run);
 			await commentPass(run);
 			const mismatches = await verifyPass(run);
-			verification = { checked: input.inPlace === undefined ? run.touched.size : plan.tasks.length, mismatches };
+			verification = {
+				checked: input.inPlace === undefined || run.partial ? run.touched.size : plan.tasks.length,
+				mismatches,
+			};
 			const inPlace = input.inPlace;
 			const accept = inPlace !== undefined && options.acceptDifferences === true;
 			let acceptedSource: MigrationMismatch[] = [];
-			if (inPlace !== undefined) {
+			if (inPlace !== undefined && !run.partial) {
 				run.step = 'switch';
 				run.currentSourceId = undefined;
 				// The source is read again, whole, before the read-back result is judged: it is the cause when both differ.
@@ -982,7 +1086,7 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 							: 'The config of the project was NOT switched. The differences are listed: fix those tasks by hand where it matters, then run again with --resume (every task is read back again before the switch). A difference that can never clear (a forge normalising a text) can be accepted with --accept-differences: the switch then happens, the target keeps the text as the forge holds it, and the differences are recorded in the journal and printed.',
 				};
 			}
-			if (failure === undefined && inPlace !== undefined) {
+			if (failure === undefined && inPlace !== undefined && !run.partial) {
 				// Point of no return: everything is written and read back, the id map and the journal are saved; only now does the
 				// project change storage.
 				// A task whose source changed is recorded once, by that: its read-back differences are the same fact.
@@ -1009,7 +1113,9 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 				journal.inPlace!.switched = true;
 				run.switchedNow = true;
 			}
-			journal.status = failure !== undefined && inPlace !== undefined ? 'stopped' : 'completed';
+			// A partial run is unfinished by definition: its journal stays resumable (a finished one would be archived by the next run).
+			if (failure === undefined && run.partial) status = 'partial';
+			journal.status = (failure !== undefined && inPlace !== undefined) || run.partial ? 'stopped' : 'completed';
 			if (journal.status === 'stopped' && failure !== undefined) {
 				journal.lastError = { step: failure.step, message: failure.message };
 			}
@@ -1070,7 +1176,7 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 					skipped: run.counts.skipped,
 					failed: run.counts.failed,
 					remaining: run.counts.remaining,
-					complete: status === 'completed',
+					complete: status === 'completed' && (plan.selection?.excluded ?? 0) === 0,
 					...run.env,
 				},
 			});
@@ -1107,6 +1213,8 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 				return entry === undefined ? [] : [{ source: planned.mapped.sourceId, target: entry.target }];
 			}),
 			events: run.events,
+			...(plan.selection === undefined ? {} : { selection: plan.selection }),
+			...(plan.comments === undefined ? {} : { comments: plan.comments }),
 			...(verification === undefined ? {} : { verification }),
 			...(retryAt === undefined ? {} : { retryAt }),
 			...(input.inPlace === undefined
@@ -1121,7 +1229,8 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 								: {}),
 						},
 					}),
-			...(failure !== undefined && (failure.step !== 'verify' || input.inPlace !== undefined)
+			...((failure !== undefined && (failure.step !== 'verify' || input.inPlace !== undefined)) ||
+			status === 'partial'
 				? { resumeCommand: input.resumeCommand }
 				: {}),
 			...(failure === undefined ? {} : { failure }),

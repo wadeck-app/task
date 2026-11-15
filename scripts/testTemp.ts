@@ -39,6 +39,7 @@ export const OWN_TEMP_PREFIXES: readonly string[] = [
 	'task-cli-iso-trav-',
 	'task-cli-inplace-',
 	'task-cli-migrate-',
+	'task-cli-phase2-',
 	'task-cli-serve-',
 	'task-cli-xdg-',
 	'task-config-',

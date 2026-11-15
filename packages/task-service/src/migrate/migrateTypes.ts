@@ -28,15 +28,36 @@ export const LOSS_KINDS = [
 	'hierarchy:children',
 	'hierarchy:orphan',
 	'hierarchy:cycle',
+	'hierarchy:excluded',
 	'links:blockedBy',
 	'links:duplicateOf',
 	'links:causedBy',
 	'links:dangling',
+	'links:excluded',
 ] as const;
 export type LossKind = (typeof LOSS_KINDS)[number];
 
 /** The groups `--allow-loss` accepts besides the kinds themselves. */
 export const LOSS_GROUPS = ['hierarchy', 'links', 'all'] as const;
+
+/** How the comments of a task are written: one comment each (the default), one digest per task, or none. */
+export const COMMENTS_MODES = ['each', 'digest', 'none'] as const;
+export type CommentsMode = (typeof COMMENTS_MODES)[number];
+
+/**
+ * A subset of the source tasks (phase 2). Absent or without any member: every task, as always. A task the journal already knows (an
+ * earlier run created it) stays in the run whatever the selection says; the selection only decides which NEW tasks join.
+ */
+export interface MigrationSelection {
+	/** Only the tasks in a non-terminal status of the SOURCE project. Excludes `statuses`. */
+	onlyOpen?: boolean;
+	/** Only the tasks in these statuses of the source project. Excludes `onlyOpen`. */
+	statuses?: readonly string[];
+	/** Only these source task ids. */
+	ids?: readonly string[];
+	/** At most this many tasks written by the run, the first ones in plan order (parents first), the unfinished ones of the journal counted. */
+	limit?: number;
+}
 
 /** One side of a migration: a project, its backend and what the backend keeps. */
 export interface MigrationEndpoint {
@@ -68,6 +89,10 @@ export interface MigrationOptions {
 	acceptDraftChange?: boolean;
 	/** In place only: go on although the target already holds tasks nothing of this migration claims (they stay, the copies may duplicate them). Recorded in the journal. */
 	allowNonEmptyTarget?: boolean;
+	/** A subset of the source (see {@link MigrationSelection}); absent: every task. */
+	selection?: MigrationSelection;
+	/** How comments are written; absent: `each`. */
+	comments?: CommentsMode;
 }
 
 export const DEFAULT_MIGRATION_OPTIONS: MigrationOptions = {
@@ -111,7 +136,15 @@ export interface MigrationEstimate {
 }
 
 /** `stopped`: in place, everything was written but the source changed meanwhile: nothing was switched, `--resume` continues. */
-export type MigrationStatus = 'dry-run' | 'blocked' | 'completed' | 'rate-limited' | 'failed' | 'stopped';
+export type MigrationStatus =
+	| 'dry-run'
+	| 'blocked'
+	| 'completed'
+	| 'rate-limited'
+	| 'failed'
+	| 'stopped'
+	/** In place, with a selection that leaves tasks out: what was selected is copied and verified, the config was NOT switched. */
+	| 'partial';
 
 export interface MigrationCounts {
 	/** Tasks read from the source. */
@@ -126,6 +159,30 @@ export interface MigrationCounts {
 	failed: number;
 	/** Tasks not reached because the run stopped. */
 	remaining: number;
+}
+
+/** What a selection did (present only when the run has one). */
+export interface SelectionReport {
+	/** Tasks read from the source. */
+	total: number;
+	/** Tasks this run writes: the new ones it selected and the unfinished ones of the journal. */
+	selected: number;
+	/** Tasks an earlier run finished (kept, not written again). */
+	alreadyMigrated: number;
+	/** New tasks left out. */
+	excluded: number;
+	/** Why they were left out (a task counts once, under the first reason that applies). */
+	excludedBy: { status: number; ids: number; limit: number };
+	/** The relations of selected tasks that point to a task that is not on the target (written when that task is migrated). */
+	deferred: { parents: number; links: number };
+}
+
+/** What `--comments` did: the comments the target gets and the writes saved against one comment each. */
+export interface CommentsReport {
+	mode: CommentsMode;
+	/** Comments written by the tasks to migrate. */
+	planned: number;
+	saved: number;
 }
 
 export interface MigrationMismatch {
@@ -183,6 +240,10 @@ export interface MigrationResult {
 	blocked?: boolean;
 	/** What blocks: the loss kinds not allowed, `targetNotEmpty`, `stale-read`. Empty when nothing does. */
 	blockers?: string[];
+	/** A selection was given: what it kept and what it left out. */
+	selection?: SelectionReport;
+	/** `--comments digest|none`: what the mode wrote and saved. */
+	comments?: CommentsReport;
 }
 
 /** What an in-place migration says about the switch of the config (the engine fills the first two, the entry the rest). */

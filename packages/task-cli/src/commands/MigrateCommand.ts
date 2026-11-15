@@ -3,7 +3,9 @@
 import * as path from 'node:path';
 
 import {
+	COMMENTS_MODES,
 	DEFAULT_MIGRATION_OPTIONS,
+	LIST_LIMIT_MAX,
 	deliverEvents,
 	describeError,
 	migrateInPlace,
@@ -11,9 +13,11 @@ import {
 	resolveProjectReference,
 } from '@wadeck-app/task-service';
 import type {
+	CommentsMode,
 	EventSink,
 	LossRow,
 	MigrationOptions,
+	MigrationSelection,
 	MigrationProgress,
 	MigrationResult,
 	ResolvedProject,
@@ -23,9 +27,11 @@ import { MIGRATE_HELP } from '../cli/help.js';
 import { errorOutput, failure } from '../cli/output.js';
 import type { CommandResult } from '../cli/output.js';
 
+const SUBSET =
+	'[--only-open | --status <s>[,<s>...]] [--ids <id>[,<id>...]] [--limit <n>] [--comments each|digest|none]';
 const USAGE =
-	'Usage: task migrate --from <project> --to <project> [--dry-run] [--allow-loss <kind>[,<kind>...]] [--resume] [--history-comment] [--emit-events] [--json]\n' +
-	'   or: task migrate --in-place --to-config <file> [-p <project>] [--dry-run] [--allow-loss <kind>[,<kind>...]] [--resume] [--history-comment] [--emit-events] [--json]\n' +
+	`Usage: task migrate --from <project> --to <project> [--dry-run] [--allow-loss <kind>[,<kind>...]] [--resume] [--history-comment] ${SUBSET} [--emit-events] [--json]\n` +
+	`   or: task migrate --in-place --to-config <file> [-p <project>] [--dry-run] [--allow-loss <kind>[,<kind>...]] [--resume] [--history-comment] ${SUBSET} [--emit-events] [--json]\n` +
 	'Run `task migrate --help` for what each option does.';
 
 /** `task migrate --help` needs no project. */
@@ -66,6 +72,7 @@ export function parseMigrateArgs(rest: readonly string[], jsonMode: boolean): Pa
 	let failOnBlocked = false;
 	const allow: string[] = [];
 	let allowGiven = false;
+	const selection: { onlyOpen?: true; statuses?: string[]; ids?: string[]; limit?: number } = {};
 
 	const valueOf = (index: number): string | undefined => {
 		const next = rest[index + 1];
@@ -130,6 +137,70 @@ export function parseMigrateArgs(rest: readonly string[], jsonMode: boolean): Pa
 				);
 				break;
 			}
+			case '--only-open':
+				selection.onlyOpen = true;
+				break;
+			case '--status':
+			case '--ids': {
+				const value = inline ?? valueOf(index);
+				const what = name === '--ids' ? 'source task ids' : 'source statuses';
+				if (value === undefined || value === '') {
+					return errorOutput(
+						jsonMode,
+						`${name} needs a comma separated list of ${what}, for example ${name} ${name === '--ids' ? 'ab12cd34,ef56ab78' : 'backlog,in-progress'}`,
+						USAGE
+					);
+				}
+				if (inline === undefined) index++;
+				const key = name === '--ids' ? 'ids' : 'statuses';
+				if (selection[key] !== undefined) {
+					return errorOutput(jsonMode, `${name} is given twice`, `Put every value in one list: ${name} a,b`);
+				}
+				const entries = value.split(',').map(entry => entry.trim());
+				if (entries.some(entry => entry === '')) {
+					return errorOutput(
+						jsonMode,
+						`${name} has an empty entry: ${JSON.stringify(value)}`,
+						`Give ${what} separated by single commas.`
+					);
+				}
+				selection[key] = entries;
+				break;
+			}
+			case '--limit': {
+				const value = inline ?? valueOf(index);
+				if (value === undefined || value === '') {
+					return errorOutput(jsonMode, `--limit needs a whole number from 1 to ${LIST_LIMIT_MAX}`, USAGE);
+				}
+				if (inline === undefined) index++;
+				if (selection.limit !== undefined) return errorOutput(jsonMode, '--limit is given twice', USAGE);
+				if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > LIST_LIMIT_MAX) {
+					return errorOutput(
+						jsonMode,
+						`--limit ${JSON.stringify(value)} is not a whole number from 1 to ${LIST_LIMIT_MAX}`,
+						'--limit <n> copies at most n tasks per run; the same command copies the next ones.'
+					);
+				}
+				selection.limit = Number(value);
+				break;
+			}
+			case '--comments': {
+				const value = inline ?? valueOf(index);
+				if (value === undefined || value === '') {
+					return errorOutput(jsonMode, `--comments needs one of: ${COMMENTS_MODES.join(', ')}`, USAGE);
+				}
+				if (inline === undefined) index++;
+				if (options.comments !== undefined) return errorOutput(jsonMode, '--comments is given twice', USAGE);
+				if (!(COMMENTS_MODES as readonly string[]).includes(value)) {
+					return errorOutput(
+						jsonMode,
+						`--comments ${value} is not one of ${COMMENTS_MODES.join(', ')}`,
+						'each = one comment per source comment (the default), digest = ONE comment per task, none = no comment (a loss of the kind comments).'
+					);
+				}
+				options.comments = value as CommentsMode;
+				break;
+			}
 			case '--dry-run':
 				options.dryRun = true;
 				break;
@@ -166,6 +237,21 @@ export function parseMigrateArgs(rest: readonly string[], jsonMode: boolean): Pa
 			USAGE
 		);
 	}
+	if (selection.onlyOpen === true && selection.statuses !== undefined) {
+		return errorOutput(
+			jsonMode,
+			'--only-open and --status contradict each other',
+			'--only-open means every status that does not end a task; --status names the statuses. Give only one of them.'
+		);
+	}
+	if (options.comments === 'none' && options.historyComment) {
+		return errorOutput(
+			jsonMode,
+			'--comments none and --history-comment contradict each other: the history note is a comment',
+			'Use --comments digest with --history-comment (the note and the comments go in ONE comment per task), or drop --history-comment.'
+		);
+	}
+	if (Object.keys(selection).length > 0) options.selection = selection as MigrationSelection;
 	if (!inPlace && (options.acceptDifferences === true || options.acceptDraftChange === true)) {
 		const flag = options.acceptDifferences === true ? '--accept-differences' : '--accept-draft-change';
 		return errorOutput(
@@ -252,6 +338,13 @@ export function commandLine(
 				];
 	if (allow.length > 0) parts.push('--allow-loss', allow.join(','));
 	if (options.historyComment) parts.push('--history-comment');
+	// The selection and the comments mode describe the run: a resume must continue THIS run, not another one.
+	const { selection } = options;
+	if (selection?.onlyOpen === true) parts.push('--only-open');
+	if (selection?.statuses !== undefined) parts.push('--status', selection.statuses.map(quoted).join(','));
+	if (selection?.ids !== undefined) parts.push('--ids', selection.ids.map(quoted).join(','));
+	if (selection?.limit !== undefined) parts.push('--limit', String(selection.limit));
+	if (options.comments !== undefined && options.comments !== 'each') parts.push('--comments', options.comments);
 	// --accept-differences and --accept-draft-change are never copied: each is a decision about ONE run, not a habit to repeat.
 	if (options.emitEvents) parts.push('--emit-events');
 	if (change.resume === true || options.resume) parts.push('--resume');
@@ -272,6 +365,7 @@ const HEADLINES: Record<MigrationResult['status'], string> = {
 	'rate-limited': 'STOPPED on the rate limit',
 	stopped: 'STOPPED, the source changed meanwhile (the config was NOT switched)',
 	failed: 'FAILED',
+	partial: 'PARTIAL, the selected tasks are copied and verified; the config was NOT switched',
 };
 
 function lossLines(rows: readonly LossRow[]): string[] {
@@ -288,6 +382,26 @@ function lossLines(rows: readonly LossRow[]): string[] {
 			];
 		}),
 	];
+}
+
+/** What the selection kept and left out, and what waits for a later run. */
+function selectionLines(report: NonNullable<MigrationResult['selection']>): string[] {
+	const { excludedBy } = report;
+	const why = [
+		excludedBy.status > 0 ? `${excludedBy.status} by status` : undefined,
+		excludedBy.ids > 0 ? `${excludedBy.ids} by --ids` : undefined,
+		excludedBy.limit > 0 ? `${excludedBy.limit} by --limit` : undefined,
+	].filter((text): text is string => text !== undefined);
+	const lines = [
+		`Selection: ${report.selected} selected${report.alreadyMigrated > 0 ? `, ${report.alreadyMigrated} already migrated` : ''}${report.excluded > 0 ? `, ${report.excluded} left out (${why.join(', ')})` : ''}, of ${report.total} in the source`,
+	];
+	const { parents, links } = report.deferred;
+	if (parents + links > 0) {
+		lines.push(
+			`           ${parents} parent(s) and ${links} link(s) wait for the run that copies their other end (kept in the journal, written then)`
+		);
+	}
+	return lines;
 }
 
 /** The in-place part of a result: strategy checks of a dry run, id map, the state of the switch, how to go back. */
@@ -334,6 +448,10 @@ function inPlaceLines(result: MigrationResult, report: NonNullable<MigrationResu
 		lines.push(
 			`Switch:    would replace ${config} by the draft after the read-back, keeping the old one (when there is one) as ${config}.before-migration`
 		);
+	} else if (result.status === 'partial') {
+		lines.push(
+			`Switch:    NOT done: ${config} is unchanged, the project still reads its previous storage (a selection that leaves tasks out never switches)`
+		);
 	} else if (result.failure?.step === 'switch') {
 		lines.push(
 			`Switch:    FAILED, every task is written and verified: ${config} is NOT replaced yet (the project still reads its previous storage)`
@@ -357,7 +475,10 @@ function inPlaceLines(result: MigrationResult, report: NonNullable<MigrationResu
  */
 export function migrationExitCode(result: MigrationResult, parsed: ParsedMigrate): number {
 	if (result.status === 'dry-run') return parsed.failOnBlocked === true && result.blocked === true ? 1 : 0;
-	return result.status === 'completed' && result.inPlace?.bookkeepingPending !== true ? 0 : 1;
+	// A partial run did what it was asked (the selection) and left the config alone on purpose; scripts test inPlace.switched.
+	return (result.status === 'completed' || result.status === 'partial') && result.inPlace?.bookkeepingPending !== true
+		? 0
+		: 1;
 }
 
 /** The text of a result: what was done or would be, what is lost, what to type next. */
@@ -372,6 +493,12 @@ export function formatMigration(result: MigrationResult, parsed: ParsedMigrate):
 			? `Tasks:     ${counts.source} read; would create ${counts.created}, finish ${counts.resumed}, skip ${counts.skipped}`
 			: `Tasks:     ${counts.source} read; created ${counts.created}, finished ${counts.resumed}, skipped ${counts.skipped}, failed ${counts.failed}, remaining ${counts.remaining}`,
 	];
+	if (result.selection !== undefined) lines.push(...selectionLines(result.selection));
+	if (result.comments !== undefined) {
+		lines.push(
+			`Comments:  ${result.comments.mode}: ${result.comments.planned} comment(s) written, ${result.comments.saved} write(s) saved against one comment each`
+		);
+	}
 	if (result.losses.length > 0) lines.push(...lossLines(result.losses));
 	if (result.notes.length > 0) lines.push('Notes:', ...result.notes.map(note => `  - ${note}`));
 	if (result.warnings.length > 0) lines.push('Warnings:', ...result.warnings.map(warning => `  - ${warning}`));
@@ -450,6 +577,18 @@ export function formatMigration(result: MigrationResult, parsed: ParsedMigrate):
 		);
 	} else if (result.status === 'dry-run') {
 		lines.push('', `Next: run again without --dry-run: ${commandLine(parsed)}`);
+	} else if (result.status === 'partial') {
+		lines.push(
+			'',
+			`Next: ${result.resumeCommand ?? commandLine(parsed, { resume: true })} (copies more tasks; the config is switched only when every task of the source is copied, a run with no selection finishes it)`
+		);
+	} else if (result.status === 'completed' && result.selection !== undefined && result.selection.excluded > 0) {
+		lines.push(
+			'',
+			result.selection.excludedBy.limit > 0
+				? `Next: ${commandLine(parsed)} (the same command copies the next tasks)`
+				: 'Next: the tasks left out are copied by a run with another selection, or none; the relations to them are written then.'
+		);
 	}
 	return lines.join('\n');
 }

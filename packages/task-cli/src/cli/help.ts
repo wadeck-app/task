@@ -200,8 +200,9 @@ Environment variables:
 export const MIGRATE_HELP = `task migrate - copy the tasks of one registered project into another, or move one project to another storage
 
 Usage:
-  task migrate --from <project> --to <project> [--dry-run] [--allow-loss <kind>[,<kind>...]] [--resume] [--history-comment] [--emit-events] [--json]
-  task migrate --in-place --to-config <file> [-p <project>] [--dry-run] [--allow-loss <kind>[,<kind>...]] [--resume] [--history-comment] [--emit-events] [--json]
+  task migrate --from <project> --to <project> [--dry-run] [--allow-loss <kind>[,<kind>...]] [--resume] [--history-comment] [subset] [--comments each|digest|none] [--emit-events] [--json]
+  task migrate --in-place --to-config <file> [-p <project>] [--dry-run] [--allow-loss <kind>[,<kind>...]] [--resume] [--history-comment] [subset] [--comments each|digest|none] [--emit-events] [--json]
+  subset = [--only-open | --status <s>[,<s>...]] [--ids <id>[,<id>...]] [--limit <n>]
 
   --from <project>      The source: a registered project (id, unique id prefix of 4 or more, name or alias; never a path). Only read.
   --to <project>        The target: another registered project. Its own strategy (config.yml) decides where its tasks go: local files or
@@ -245,6 +246,23 @@ Usage:
                         Without it, an unfinished journal is refused with this hint.
   --history-comment     Write one note comment per task with its original creation instant and status history, so those are not lost
                         (resolves the history and created-at kinds when the target has comments).
+  --only-open           Copy only the tasks in a status of the SOURCE project that does not end a task. The others stay in the source.
+  --status <s>,<s>      Copy only the tasks in these statuses of the source project (an unknown one lists the valid ones). Not with --only-open.
+  --ids <id>,<id>       Copy only these source tasks (exact ids). Combines with the others: a task must match every one given.
+  --limit <n>           Copy at most n tasks per run (1 to 1000): the first ones in plan order (parents before children), the ones an earlier
+                        run left unfinished counting first. Run the same command again for the next n: what is already copied is never copied
+                        twice (the journal knows it).
+                        A subset leaves tasks out. A link, or a parent, that points to one of them is a loss (links:excluded, hierarchy:excluded:
+                        blocking until allowed with --allow-loss, the dry run lists the tasks); the task is copied without it, the journal keeps
+                        the relation, and the run that copies the other end writes it on the task copied earlier (once, nothing is duplicated).
+                        In place, a subset NEVER switches config.yml (the source would lose the tasks left out): the run ends PARTIAL (exit 0,
+                        inPlace.switched false) and prints the next command; the switch comes with the run that covers every task of the source,
+                        after reading all of them back. Do not change the --comments mode between the runs of one migration.
+  --comments <mode>     each (default): one comment per source comment, as always. digest: ONE comment per task with all its comments in order
+                        (each keeps its Originally posted <instant> [by <author>] line; the author is always in the text; split in several comments
+                        only when the target limits the length of a comment); with --history-comment the note joins it. Far fewer writes into
+                        GitHub (a content write is capped at 80 a minute and 500 an hour). none: write no comment (a loss of the kind comments,
+                        blocking until allowed; not with --history-comment). The dry run prints the writes saved.
   --emit-events         Also deliver the events the same writes raise in an ordinary session (onTaskCreated, onTaskLabelAdded, ...). By default
                         a migration raises ONE summary event (onTasksMigrated) after the last write: a bulk copy is not a user changing tasks
                         one by one, and a subscriber that reacts to onTaskCreated would otherwise run once per task.
@@ -264,15 +282,17 @@ Loss kinds (--dry-run lists the ones that apply):
   type, labels, meta       a type the target does not list, a label it refuses (length, reserved), metadata it cannot store
   priority, assignee       a priority the target does not list, or no priority / assignee support on the target
   lease                    a claim lease is never migrated (reported for each task that holds one)
-  comments                 the target has no comments
+  comments                 the target has no comments, or --comments none
   history, created-at     the status history and activity log cannot be replayed through the port; the target assigns the creation instant
                            (--history-comment keeps both in a note comment)
   marker                   the target has no metadata, so migrated tasks are recognised by the journal only
   text-length              a text longer than the target accepts is cut with a note
-  hierarchy:unsupported, hierarchy:depth, hierarchy:children, hierarchy:orphan, hierarchy:cycle
-                           parents the target cannot keep, or the source does not hold together; the task becomes a root
-  links:blockedBy, links:duplicateOf, links:causedBy, links:dangling
-                           link types the target cannot store (causedBy on GitHub), links to tasks that are not in the source
+  hierarchy:unsupported, hierarchy:depth, hierarchy:children, hierarchy:orphan, hierarchy:cycle, hierarchy:excluded
+                           parents the target cannot keep, or the source does not hold together; the task becomes a root. excluded: the parent is
+                           outside the subset (--only-open, --status, --ids, --limit); it is attached when a later run copies it
+  links:blockedBy, links:duplicateOf, links:causedBy, links:dangling, links:excluded
+                           link types the target cannot store (causedBy on GitHub), links to tasks that are not in the source, links to a task
+                           outside the subset (written when a later run copies it)
 
 In place: the copy is the one above (journal, marker meta migratedFrom=<project id>/<old id>, loss table, read-back), with these additions.
   - Id map: <data folder>/migrate-idmap-<project id>.json, a list of {from, to}, saved after every task is created and before the switch; it is
@@ -328,6 +348,41 @@ Usage:
 These commands need no project: the registry is global (-p and TASK_PROJECT are not used here).`;
 
 /** `task strategy --help`. */
+export const MIGRATE_STRATEGY_HELP = `task strategy migrate - move the tasks of a project to another strategy, in the background
+
+The project's strategy must be of type migrating (config.yml, section 'strategy'): two full strategy blocks, "current" (where the tasks are)
+and "new" (where they go), and an optional budget. New tasks are created in "new" at once; the tasks of "current" move one at a time, parents
+first, while every other command keeps working. A task is copied, verified, and only then switched to "new"; its copy in "current" is kept.
+
+Usage:
+  task strategy migrate start [-p <project>] [--allow-loss <kinds>] [--dry-run] [--json]
+      Plans the move of EVERY task of "current": what each side keeps and loses (the same ledger as 'task migrate'), the number of requests,
+      the time at the pace of the budget. --dry-run stops there and writes nothing. Without it the start is refused while a loss is not
+      accepted (--allow-loss history,comments, or all); otherwise it routes every task as in "current", stores the accepted losses, and
+      launches the worker (a background process, no window on Windows). The "new" strategy must be able to store metadata (a meta fill).
+  task strategy migrate status [-p <project>] [--json]
+      Where it stands: tasks moved of the total, per state (in current, moving, stale copies, deleted, made in new), the worker (pid, alive,
+      what it does, heartbeat), the pace used and its limits, the time left, the last errors, tasks set aside, and the next thing to do.
+      Reads files only: it opens neither strategy, so it works when a token is missing or a server is down.
+  task strategy migrate pause [-p <project>] [--json]
+      The worker finishes the task it is moving and stops. Nothing is lost: the migration continues with resume.
+  task strategy migrate resume [-p <project>] [--json]
+      Relaunches the worker after a pause, a stop, or a crash (status says which); cancels a pause that was asked and not yet seen.
+  task strategy migrate log [-p <project>] [--follow] [--tail <n>] [--json]
+      The migration log (<data>/migrating/log.ndjson): every move, step, rate pause and error. Last 50 lines by default; --follow keeps printing
+      what is added until Ctrl+C; --json prints a list (one JSON object a line with --follow).
+  task strategy migrate finalize               NOT AVAILABLE YET (phase P4): exits 1 and says so. Until then no copy in "current" is deleted.
+  task strategy migrate abort                  NOT AVAILABLE YET (phase P4): exits 1 and says so; pause stops the background move meanwhile.
+  task strategy migrate worker -p <project>    INTERNAL: what the background process runs; run it in a terminal to move the tasks in the foreground.
+
+The pace: strategy.options.budget.requestsPerMinute is the share of requests the worker may use; a cap on writes that "new" documents is kept
+too. A side that answers "rate limited until <time>" makes the worker sleep until then (a line in the log), never fail. A claimed task is
+skipped and retried when its lease ends. After 5 failures in a row the worker stops with a status and the fix (task strategy migrate status).
+
+Files (<data>/migrating/): index.json (which side holds which task), state.json (accepted losses, counters, status), control.json (pause and
+stop asks), worker.json (heartbeat), worker.lock (one worker per project), worker.out.log (the process's own output), wal.ndjson, log.ndjson.
+`;
+
 export const STRATEGY_HELP = `task strategy - where the tasks of this project are stored
 
 Usage:
@@ -343,6 +398,8 @@ Usage:
                                                 (warnings do not fail it).
   task strategy help github                     Step-by-step guide to the github token: create it, store it, check it, fix a refusal
                                                 (also in docs/github-strategy-token.md); 'task strategy help' lists the topics
+  task strategy migrate <sub>                   Move the tasks of a project from one strategy to another in the background (strategy type
+                                                migrating): start, status, pause, resume, log. 'task strategy migrate --help' says how.
   task strategy --help                          Show this help
 
 Configuration (the project's config.yml, section 'strategy'; no section = type: local, silently):

@@ -616,3 +616,60 @@ describe('labels are compared as GitHub does: case-insensitively', () => {
 		expect(same.added).toBe(1);
 	});
 });
+
+describe('--comments and a selection against the fake GitHub: the estimate counts what the run writes', () => {
+	/** A task with three comments, and a closed one with two (the closed one costs a PATCH more). */
+	async function seedCommented(from: ResolvedProject): Promise<{ chatty: string; closed: string }> {
+		const ctx = openResolvedProject(from, path.join(world.sandbox.root, 'global'));
+		try {
+			const chatty = await ctx.store.create({ title: 'Chatty', status: 'backlog' });
+			for (const text of ['one', 'two', 'three']) await ctx.store.addComment(chatty.id, text, { author: 'ann' });
+			const closed = await ctx.store.create({ title: 'Closed', status: 'backlog' });
+			await ctx.store.updateStatus(closed.id, 'done');
+			for (const text of ['four', 'five']) await ctx.store.addComment(closed.id, text);
+			return { chatty: chatty.id, closed: closed.id };
+		} finally {
+			await ctx.dispose?.();
+		}
+	}
+
+	it.each<[string, Partial<MigrationOptions>, number]>([
+		// create + 3 comments, create + close + 2 comments
+		['each (the default)', {}, 8],
+		// create + 1 digest, create + close + 1 digest
+		['digest', { comments: 'digest' }, 5],
+		// create, create + close
+		['none', { comments: 'none' }, 3],
+	])('--comments %s: %s writes, the dry run counts the same', async (_name, extra, writes) => {
+		const from = await world.project('old');
+		const to = await world.githubProject('shop');
+		await seedCommented(from);
+		const options = { allowLoss: ['all'], ...extra };
+
+		const dry = await world.migrate(from, to, { ...options, dryRun: true });
+		const measured = await world.measure(from, to, options);
+
+		expect(measured.result.status).toBe('completed');
+		expect(measured.result.verification!.mismatches).toEqual([]);
+		expect(measured.total.writes).toBe(writes);
+		expect(dry.estimate.writes).toBe(writes);
+		const tolerance = Math.max(3, Math.ceil(measured.total.requests * 0.05));
+		expect(Math.abs(dry.estimate.requests - measured.total.requests)).toBeLessThanOrEqual(tolerance);
+	});
+
+	it('--only-open copies the open task only: its writes are the whole bill, the dry run counts the same', async () => {
+		const from = await world.project('old');
+		const to = await world.githubProject('shop');
+		await seedCommented(from);
+		const options = { allowLoss: ['all'], selection: { onlyOpen: true } };
+
+		const dry = await world.migrate(from, to, { ...options, dryRun: true });
+		const measured = await world.measure(from, to, options);
+
+		expect(measured.result.status).toBe('completed');
+		expect(measured.total.writes).toBe(4);
+		expect(dry.estimate.writes).toBe(4);
+		expect(measured.result.selection).toMatchObject({ selected: 1, excluded: 1 });
+		expect([...world.fake.issues.values()].map(issue => issue.title)).toEqual(['Chatty']);
+	});
+});

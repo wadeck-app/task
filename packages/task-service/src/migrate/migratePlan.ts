@@ -1,22 +1,26 @@
 // The plan of a migration: read the source, decide for every task what it becomes on the target and what is lost, and find out which
 // tasks an earlier run already migrated (the journal first, then the marker the target holds). Reads only: the dry run stops here.
-import type { MigrationTaskFacts, TaskBackend, TaskSummary, VersionedRecord } from '@wadeck-app/task-core';
+import type { LinkType, MigrationTaskFacts, TaskBackend, TaskSummary, VersionedRecord } from '@wadeck-app/task-core';
 
 import { planHierarchy } from './hierarchyPlan.js';
+import type { HierarchyPlan } from './hierarchyPlan.js';
 import { LossLedger, isLossAllowed } from './lossLedger.js';
 import { MIGRATED_FROM_KEY, mapTask } from './mapTask.js';
 import type { MappedTask } from './mapTask.js';
 import { MigrationRefusedError } from './migrateErrors.js';
+import { isSelectionActive, selectTasks } from './migrateSelection.js';
 import { contentHash, contentParts } from './sourceContent.js';
 import { PHASES } from './migrateJournal.js';
-import type { Journal, Phase } from './migrateJournal.js';
+import type { DeferredRelations, Journal, Phase } from './migrateJournal.js';
 import type {
+	CommentsReport,
 	LossKind,
 	LossRow,
 	MigrationEndpoint,
 	MigrationEstimate,
 	MigrationOptions,
 	MigrationProgress,
+	SelectionReport,
 } from './migrateTypes.js';
 
 /** Tasks read in one `getMany` (a remote backend does one request per task anyway; this bounds what is held while it works). */
@@ -42,11 +46,21 @@ export interface PlannedTask {
 	adopted?: true;
 	/** How far an earlier run got, for `resume`. */
 	phase?: Phase;
+	/** Relations this run leaves out because their other end is outside the selection (written by the run that migrates it). */
+	deferred?: DeferredRelations;
+	/** Relations an earlier run left out whose other end is now in this run or on the target: written by this run (source ids). */
+	relink?: { parent?: string; links: Array<{ type: LinkType; target: string }> };
 }
 
 export interface MigrationPlan {
-	/** Parents before children. */
+	/** Parents before children. With a selection: the tasks the journal knows and the new ones the selection keeps. */
 	tasks: PlannedTask[];
+	/** Tasks read from the source (more than `tasks` when a selection leaves some out). */
+	sourceCount: number;
+	/** A selection was given: what it kept and left out. */
+	selection?: SelectionReport;
+	/** `--comments digest|none`: the comments written and the writes saved. */
+	comments?: CommentsReport;
 	losses: LossRow[];
 	blocking: LossKind[];
 	notes: string[];
@@ -150,6 +164,8 @@ export function estimateMigration(
 ): { estimate: MigrationEstimate; notes: string[]; warnings: string[] } {
 	const caps = target.backend.capabilities;
 	const pending = tasks.filter(task => task.state !== 'done');
+	// A task an earlier run finished whose relations are written now: only those are left to do for it.
+	const relinkOnly = tasks.filter(task => task.state === 'done' && task.relink !== undefined);
 	const cost = target.traits.cost;
 	const sourceRead = source.traits.cost?.read;
 	const targetRead = cost?.read;
@@ -158,7 +174,20 @@ export function estimateMigration(
 	let seconds = 0;
 	const notes: string[] = [];
 	if (cost?.model !== undefined) {
-		const counted = cost.model(pending.map(task => factsOf(task, caps.meta)));
+		const counted = cost.model([
+			...pending.map(task => factsOf(task, caps.meta)),
+			...relinkOnly.map(task => ({
+				...factsOf({ ...task, state: 'resume', phase: 'fielded' }, caps.meta),
+				links: task.relink!.links.map(link => link.type),
+				comments: 0,
+			})),
+		]);
+		const parents = relinkOnly.filter(task => task.relink!.parent !== undefined).length;
+		if (parents > 0) {
+			notes.push(
+				`${parents} parent attachment(s) of tasks copied earlier are written by this run and are not in the estimate`
+			);
+		}
 		writes = counted.writes;
 		// The model counts the writes and what follows them; the list of the target that the plan itself read comes first.
 		requests = counted.requests + reads.targetListPages;
@@ -177,6 +206,8 @@ export function estimateMigration(
 			writes += (mapped.assignee === undefined ? 0 : 1) + mapped.labels.length + Object.keys(mapped.meta).length;
 			writes += mapped.links.length + mapped.comments.length;
 		}
+		for (const task of relinkOnly)
+			writes += (task.relink!.parent === undefined ? 0 : 1) + task.relink!.links.length;
 		// Reading a task costs requests too: the source, the target tasks scanned for a marker, and the read-back of what is written.
 		requests =
 			(cost === undefined ? 0 : writes * cost.requests) +
@@ -246,32 +277,11 @@ export async function buildPlan(input: PlanInput): Promise<MigrationPlan> {
 		}
 		warnings.push(`source: ${notice.text}`);
 	}
-
-	// 2. What every task becomes, and what is lost.
-	const ledger = new LossLedger();
 	const sourceIds = new Set(records.map(record => record.id));
 	const caps = target.backend.capabilities;
-	const hierarchy = planHierarchy(
-		records,
-		{
-			hierarchy: caps.hierarchy,
-			...(target.traits.hierarchyDepth === undefined ? {} : { depth: target.traits.hierarchyDepth }),
-			...(target.traits.childrenPerParent === undefined ? {} : { children: target.traits.childrenPerParent }),
-		},
-		ledger
-	);
-	const byId = new Map(records.map(record => [record.id, record]));
-	const mappedById = new Map<string, MappedTask>();
-	for (const id of hierarchy.order) {
-		mappedById.set(id, mapTask(byId.get(id)!, { source, target, options, ledger, sourceIds }));
-	}
-	onProgress?.({ stage: 'plan', done: records.length, total: records.length });
 
-	const allowed = (kind: LossKind): boolean => isLossAllowed(kind, options.allowLoss);
-	const losses = ledger.rows(allowed);
-	const blocking = losses.filter(row => !row.allowed).map(row => row.kind);
-
-	// 3. What an earlier run already did: the journal, then (when the target can hold the marker) the marker itself.
+	// 2. What an earlier run already did: the journal, then (when the target can hold the marker) the marker itself. Read BEFORE the
+	// mapping: a selection needs to know which tasks the target already has.
 	const targetSummaries = await listAll(target.backend);
 	const targetIds = new Set(targetSummaries.map(summary => summary.id));
 	const entries = new Map<string, { target: string; phase: Phase }>();
@@ -327,6 +337,73 @@ export async function buildPlan(input: PlanInput): Promise<MigrationPlan> {
 		);
 	}
 
+	// 3. What every task becomes, and what is lost. With a selection, only the tasks of the run are mapped: a loss of a task left out
+	// is not this run's business, and a relation to one is a loss of its own (links:excluded, hierarchy:excluded).
+	const ledger = new LossLedger();
+	const limits = {
+		hierarchy: caps.hierarchy,
+		...(target.traits.hierarchyDepth === undefined ? {} : { depth: target.traits.hierarchyDepth }),
+		...(target.traits.childrenPerParent === undefined ? {} : { children: target.traits.childrenPerParent }),
+	};
+	const byId = new Map(records.map(record => [record.id, record]));
+	let hierarchy: HierarchyPlan;
+	let inPlan: ReadonlySet<string> | undefined;
+	let selection: Omit<SelectionReport, 'deferred'> | undefined;
+	const excludedParent = new Map<string, string>();
+	if (isSelectionActive(options.selection)) {
+		// The order of the whole source decides who comes first; its losses are only counted for the tasks that stay in the run.
+		const whole = planHierarchy(records, limits, new LossLedger());
+		// The creation the last run left pending is part of this run whatever the selection: nothing else knows it exists.
+		const pendingId = journal?.pending?.sourceId;
+		const chosen = selectTasks({
+			records,
+			order: whole.order,
+			selection: options.selection,
+			sourceStatuses: source.facts.statuses,
+			stateOf: id => {
+				const entry = entries.get(id);
+				if (entry === undefined) return id === pendingId ? 'resume' : 'new';
+				return entry.phase === 'done' ? 'done' : 'resume';
+			},
+		});
+		const kept = chosen.inPlan;
+		inPlan = kept;
+		selection = chosen.report;
+		const subset = records
+			.filter(record => kept.has(record.id))
+			.map(record => {
+				const parent = record.parentId;
+				if (parent !== undefined && caps.hierarchy !== 'none' && sourceIds.has(parent) && !kept.has(parent)) {
+					ledger.add('hierarchy:excluded', record.id, `parent ${parent}`);
+					excludedParent.set(record.id, parent);
+					return { id: record.id };
+				}
+				return { id: record.id, ...(parent === undefined ? {} : { parentId: parent }) };
+			});
+		hierarchy = planHierarchy(subset, limits, ledger);
+	} else {
+		hierarchy = planHierarchy(records, limits, ledger);
+	}
+	const mappedById = new Map<string, MappedTask>();
+	for (const id of hierarchy.order) {
+		mappedById.set(
+			id,
+			mapTask(byId.get(id)!, {
+				source,
+				target,
+				options,
+				ledger,
+				sourceIds,
+				...(inPlan === undefined ? {} : { available: inPlan }),
+			})
+		);
+	}
+	onProgress?.({ stage: 'plan', done: records.length, total: records.length });
+
+	const allowed = (kind: LossKind): boolean => isLossAllowed(kind, options.allowLoss);
+	const losses = ledger.rows(allowed);
+	const blocking = losses.filter(row => !row.allowed).map(row => row.kind);
+
 	// A creation the last run started and never recorded: the task may be on the target without the journal knowing. Look for it by
 	// title (and by the instant: the source's when the target keeps it, else not before the last task the target had then, on the
 	// target's own clock); one match is taken back,
@@ -366,15 +443,31 @@ export async function buildPlan(input: PlanInput): Promise<MigrationPlan> {
 		const mapped = mappedById.get(sourceId)!;
 		const parentSourceId = hierarchy.parentOf.get(sourceId);
 		const entry = entries.get(sourceId);
-		if (entry === undefined)
-			return { mapped, ...(parentSourceId === undefined ? {} : { parentSourceId }), state: 'new' };
-		return {
+		const deferredParent = excludedParent.get(sourceId);
+		const deferredLinks = mapped.deferredLinks ?? [];
+		const deferred: DeferredRelations | undefined =
+			deferredParent === undefined && deferredLinks.length === 0
+				? undefined
+				: {
+						...(deferredParent === undefined ? {} : { parent: deferredParent }),
+						...(deferredLinks.length === 0
+							? {}
+							: { links: deferredLinks.map(link => ({ type: link.type, target: link.sourceTarget })) }),
+					};
+		const common = {
 			mapped,
 			...(parentSourceId === undefined ? {} : { parentSourceId }),
-			state: entry.phase === 'done' ? 'done' : 'resume',
+			...(deferred === undefined ? {} : { deferred }),
+		};
+		if (entry === undefined) return { ...common, state: 'new' as const };
+		const relink = relinkOf(journal?.tasks[sourceId]?.deferred, deferred, mapped, parentSourceId);
+		return {
+			...common,
+			state: entry.phase === 'done' ? ('done' as const) : ('resume' as const),
 			...(adopted.has(sourceId) ? { adopted: true as const } : {}),
 			targetId: entry.target,
 			phase: entry.phase,
+			...(relink === undefined ? {} : { relink }),
 		};
 	});
 
@@ -401,6 +494,22 @@ export async function buildPlan(input: PlanInput): Promise<MigrationPlan> {
 	if (journal !== undefined && journal.status !== 'completed' && !options.resume) {
 		notes.push('an earlier run did not finish: add --resume to continue it');
 	}
+	const relinked = tasks.filter(task => task.relink !== undefined);
+	if (relinked.length > 0) {
+		const count = relinked.reduce(
+			(sum, task) => sum + (task.relink!.parent === undefined ? 0 : 1) + task.relink!.links.length,
+			0
+		);
+		notes.push(
+			`${count} relation(s) of ${relinked.length} task(s) copied by an earlier run are written now: their other end is in this run or already on the target`
+		);
+	}
+	const left = selection === undefined ? 0 : selection.excluded;
+	if (left > 0) {
+		notes.push(
+			`${left} task(s) are left out by the selection and stay in the source: run again with another selection to copy them; relations to them are written then`
+		);
+	}
 
 	const counted = estimateMigration(tasks, source, target, {
 		source: records.length,
@@ -415,14 +524,37 @@ export async function buildPlan(input: PlanInput): Promise<MigrationPlan> {
 			`the estimate (${estimate.requests} requests) is close to or over the hourly quota (${estimate.quotaPerHour}): the run will probably stop on the rate limit and tell you when to continue (--resume)`
 		);
 	}
+	const mode = options.comments ?? 'each';
+	const toWrite = tasks.filter(task => task.state !== 'done');
 	return {
 		tasks,
+		sourceCount: records.length,
 		losses,
 		blocking,
 		notes,
 		warnings,
 		estimate,
 		vanished,
+		...(selection === undefined
+			? {}
+			: {
+					selection: {
+						...selection,
+						deferred: {
+							parents: tasks.filter(task => task.deferred?.parent !== undefined).length,
+							links: tasks.reduce((sum, task) => sum + (task.deferred?.links?.length ?? 0), 0),
+						},
+					},
+				}),
+		...(mode === 'each'
+			? {}
+			: {
+					comments: {
+						mode,
+						planned: toWrite.reduce((sum, task) => sum + task.mapped.comments.length, 0),
+						saved: toWrite.reduce((sum, task) => sum + (task.mapped.commentsSaved ?? 0), 0),
+					},
+				}),
 		targetClock: latestInstant(targetSummaries),
 		targetSummaries,
 		sourceContent: new Map(
@@ -432,6 +564,31 @@ export async function buildPlan(input: PlanInput): Promise<MigrationPlan> {
 			})
 		),
 	};
+}
+
+/**
+ * What an earlier run left for later (the journal's `deferred`) that this run can write now: the parent when the task keeps exactly it, the
+ * links the task holds now. Undefined when there is nothing.
+ */
+function relinkOf(
+	earlier: DeferredRelations | undefined,
+	now: DeferredRelations | undefined,
+	mapped: MappedTask,
+	parentSourceId: string | undefined
+): PlannedTask['relink'] {
+	if (earlier === undefined) return undefined;
+	const parent =
+		earlier.parent !== undefined && now?.parent === undefined && parentSourceId === earlier.parent
+			? earlier.parent
+			: undefined;
+	const links = (earlier.links ?? []).filter(
+		link =>
+			mapped.links.some(held => held.type === link.type && held.sourceTarget === link.target) &&
+			!(now?.links ?? []).some(still => still.type === link.type && still.target === link.target)
+	);
+	return parent === undefined && links.length === 0
+		? undefined
+		: { ...(parent === undefined ? {} : { parent }), links };
 }
 
 /** Maps source id -> target id for the target tasks that carry a `migratedFrom` marker of this source project. */

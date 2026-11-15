@@ -46,7 +46,11 @@ export interface MappedTask {
 	/** The metadata of the task (the marker is not in it). */
 	meta: Record<string, string>;
 	links: Array<{ type: LinkType; sourceTarget: string }>;
+	/** Links to a task outside the selection: not written now, kept in the journal and written when that task is migrated. */
+	deferredLinks?: Array<{ type: LinkType; sourceTarget: string }>;
 	comments: MappedComment[];
+	/** Writes `--comments digest|none` saves against one comment each (0 for `each`). */
+	commentsSaved?: number;
 }
 
 export interface MapContext {
@@ -56,6 +60,57 @@ export interface MapContext {
 	ledger: LossLedger;
 	/** Every task id of the source (to tell a link to a missing task). */
 	sourceIds: ReadonlySet<string>;
+	/** With a selection: the source tasks the target holds or gets in this run; a link to any other source task is `links:excluded`. */
+	available?: ReadonlySet<string>;
+}
+
+/** Between the blocks of a digest. */
+const DIGEST_SEPARATOR = '\n\n---\n\n';
+
+/** The key of part `index` (1-based) of the digest of a task. */
+export function digestKey(index: number): string {
+	return `digest-${index}`;
+}
+
+/**
+ * The blocks (one per comment, and the history note) as the comments of ONE digest: packed in order, a new comment only when the next
+ * block would pass the target's limit. Each part ends with its own marker, so a part is never written twice. A block longer than the
+ * limit alone is cut (a loss of the kind `text-length`, reported by the caller).
+ */
+export function digestComments(
+	qualifiedId: string,
+	blocks: readonly string[],
+	max: number | undefined
+): { comments: MappedComment[]; cut: boolean } {
+	const marked = (part: readonly string[], index: number): string =>
+		`${part.join(DIGEST_SEPARATOR)}\n\n${commentMarker(qualifiedId, digestKey(index))}`;
+	if (max === undefined) return { comments: [{ key: digestKey(1), text: marked(blocks, 1) }], cut: false };
+	// The room a part keeps for its marker line (an index of up to four digits).
+	const budget = Math.max(1, max - (2 + commentMarker(qualifiedId, digestKey(9999)).length));
+	const parts: string[][] = [];
+	let cut = false;
+	let current: string[] = [];
+	let length = 0;
+	for (const block of blocks) {
+		let text = block;
+		if (text.length > budget) {
+			text = cutText(text, budget).text;
+			cut = true;
+		}
+		const added = (current.length === 0 ? 0 : DIGEST_SEPARATOR.length) + text.length;
+		if (current.length > 0 && length + added > budget) {
+			parts.push(current);
+			current = [];
+			length = 0;
+		}
+		length += (current.length === 0 ? 0 : DIGEST_SEPARATOR.length) + text.length;
+		current.push(text);
+	}
+	if (current.length > 0) parts.push(current);
+	return {
+		comments: parts.map((part, index) => ({ key: digestKey(index + 1), text: marked(part, index + 1) })),
+		cut,
+	};
 }
 
 /** The text cut to `max` characters, ending with a note that says so; unchanged when it fits. */
@@ -181,26 +236,41 @@ export function mapTask(record: VersionedRecord, ctx: MapContext): MappedTask {
 
 	// Links.
 	const links: MappedTask['links'] = [];
+	const deferredLinks: NonNullable<MappedTask['deferredLinks']> = [];
 	for (const link of record.links ?? []) {
 		const kind = `links:${link.type}` as const;
 		if (!caps.linkTypes.includes(link.type)) ledger.add(kind, id, `${id} ${link.type} ${link.target}`);
 		else if (!ctx.sourceIds.has(link.target)) ledger.add('links:dangling', id, `${id} ${link.type} ${link.target}`);
-		else links.push({ type: link.type, sourceTarget: link.target });
+		else if (ctx.available !== undefined && !ctx.available.has(link.target)) {
+			ledger.add('links:excluded', id, `${id} ${link.type} ${link.target}`);
+			deferredLinks.push({ type: link.type, sourceTarget: link.target });
+		} else links.push({ type: link.type, sourceTarget: link.target });
 	}
 
 	// Comments: written by the migrating user; the time (and the author, when the target cannot store it) go in a first line.
+	// `digest` puts every comment of the task in ONE comment (the author is then always in the text); `none` writes none (a loss).
+	const mode = options.comments ?? 'each';
 	const comments: MappedComment[] = [];
+	const blocks: string[] = [];
 	const sourceComments = record.comments ?? [];
+	let commentsSaved = 0;
 	if (sourceComments.length > 0 && !caps.comments) {
 		ledger.add('comments', id, undefined, sourceComments.length);
+	} else if (mode === 'none') {
+		if (sourceComments.length > 0) ledger.add('comments', id, '--comments none', sourceComments.length);
+		commentsSaved = sourceComments.length;
 	} else {
 		for (const comment of sourceComments) {
-			const stored = traits.authoredComments && comment.author !== undefined;
+			const stored = mode === 'each' && traits.authoredComments && comment.author !== undefined;
 			const header =
 				`Originally posted ${comment.at}` +
 				(comment.author !== undefined && !stored ? ` by ${comment.author}` : '') +
 				(comment.editedAt === undefined ? '' : ` (edited ${comment.editedAt})`) +
 				` ${commentMarker(qualifiedId, comment.id)}`;
+			if (mode === 'digest') {
+				blocks.push(`${header}\n\n${comment.text}`);
+				continue;
+			}
 			const cut = cutText(`${header}\n\n${comment.text}`, traits.commentTextMax);
 			if (cut.cut) ledger.add('text-length', id, 'comment');
 			const author =
@@ -215,10 +285,19 @@ export function mapTask(record: VersionedRecord, ctx: MapContext): MappedTask {
 	const hasHistory = record.history.length > 1 || (record.activity ?? []).length > 0;
 	const noted = options.historyComment && caps.comments;
 	if (noted) {
-		comments.push({ key: NOTE_KEY, text: noteText(record, qualifiedId, traits.keepsCreatedAt) });
+		const note = noteText(record, qualifiedId, traits.keepsCreatedAt);
+		// With a digest the note joins it; a task with no comment keeps its note as a comment of its own.
+		if (mode === 'digest' && blocks.length > 0) blocks.push(note);
+		else comments.push({ key: NOTE_KEY, text: note });
 	} else {
 		if (hasHistory) ledger.add('history', id);
 		if (!traits.keepsCreatedAt) ledger.add('created-at', id);
+	}
+	if (blocks.length > 0) {
+		const digest = digestComments(qualifiedId, blocks, traits.commentTextMax);
+		if (digest.cut) ledger.add('text-length', id, 'comment');
+		comments.push(...digest.comments);
+		commentsSaved = blocks.length - digest.comments.length;
 	}
 
 	return {
@@ -234,6 +313,8 @@ export function mapTask(record: VersionedRecord, ctx: MapContext): MappedTask {
 		labels,
 		meta,
 		links,
+		...(deferredLinks.length === 0 ? {} : { deferredLinks }),
 		comments,
+		...(commentsSaved === 0 ? {} : { commentsSaved }),
 	};
 }
