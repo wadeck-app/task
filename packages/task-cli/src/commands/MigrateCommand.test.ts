@@ -4,11 +4,12 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ownConfigFile } from '@wadeck-app/task-service';
-import type { TaskEvent } from '@wadeck-app/task-service';
+import type { MigrationResult, TaskEvent } from '@wadeck-app/task-service';
 import { FakeGitHub } from '@wadeck-app/task-service/fakeGitHub';
 import { FakeGitLab } from '@wadeck-app/task-service/fakeGitLab';
 
 import { runTaskCommand } from '../TaskIndex.js';
+import { formatMigration, parseMigrateArgs } from './MigrateCommand.js';
 import { type RegisteredTestProject, registerTestProject } from '../testHelpers.js';
 
 // Events reach this list instead of the queue: the CLI builds its sink with createQueueEventSink, replaced here (after the
@@ -465,5 +466,49 @@ strategy:
 		expect(dry.output).toMatch(/hierarchy:depth +1 +BLOCKING/);
 		expect(dry.output).toContain('level 3 of at most 2');
 		expect(fakeLab!.writes()).toEqual([]);
+	});
+});
+
+describe('the estimate line of the text output', () => {
+	function dryRunResult(estimate: Record<string, unknown>): MigrationResult {
+		return {
+			status: 'dry-run',
+			dryRun: true,
+			from: { id: 'a', name: 'old', kind: 'local' },
+			to: { id: 'b', name: 'shop', kind: 'github' },
+			counts: { source: 24, created: 24, resumed: 0, skipped: 0, failed: 0, remaining: 0 },
+			losses: [],
+			blocking: [],
+			notes: [],
+			warnings: [],
+			estimate,
+			idMap: [],
+			journal: 'j.json',
+			events: [],
+		} as unknown as MigrationResult;
+	}
+	const parsed = (): never => {
+		const result = parseMigrateArgs(['--from', 'old', '--to', 'shop', '--dry-run'], false);
+		if ('exitCode' in result) throw new Error(result.output);
+		return result as never;
+	};
+
+	it('says it is computed from the plan, not measured, and gives the hours the hourly cap asks for', () => {
+		const text = formatMigration(
+			dryRunResult({ writes: 1200, requests: 4800, seconds: 3600, hours: 2.4, contentCapPerHour: 500 }),
+			parsed()
+		);
+
+		expect(text).toMatch(/Estimate: +about 1200 writes, 4800 requests, /);
+		expect(text).toContain('computed from the plan, not measured');
+		expect(text).toContain('at least 2.4 h');
+		expect(text).toContain('500 content-generating requests an hour');
+	});
+
+	it('prints no hour count for a target that declares no cap', () => {
+		const text = formatMigration(dryRunResult({ writes: 10, requests: 40, seconds: 60, hours: 0 }), parsed());
+
+		expect(text).toContain('computed from the plan, not measured');
+		expect(text).not.toContain('content-generating');
 	});
 });

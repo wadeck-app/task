@@ -32,19 +32,32 @@ describe('githubTraits (what task migrate needs to know about GitHub as a target
 		expect(traits.descriptionMax).toBeGreaterThan(60000);
 	});
 
-	it('costs about seven requests and the write spacing plus three seconds per write, two requests per read, within 5000 requests an hour', () => {
-		expect(githubTraits(settingsWith(), {}).cost).toEqual({
-			requests: 7,
+	it('a separate write costs 4 requests and the write spacing plus three seconds (an assumption), a read 2 requests, a fields-only read 1, within 5000 requests an hour', () => {
+		expect(githubTraits(settingsWith(), {}).cost).toMatchObject({
+			requests: 4,
 			seconds: 4,
 			quotaPerHour: 5000,
 			read: { requests: 2, seconds: 0.7 },
+			resolve: { requests: 1 },
 		});
-		expect(githubTraits(settingsWith({ writeSpacingSeconds: 4 }), {}).cost).toEqual({
-			requests: 7,
+		expect(githubTraits(settingsWith({ writeSpacingSeconds: 4 }), {}).cost).toMatchObject({
+			requests: 4,
 			seconds: 7,
-			quotaPerHour: 5000,
-			read: { requests: 2, seconds: 0.7 },
 		});
+	});
+
+	it('knows GitHub caps the requests that change it at 80 a minute and 500 an hour, and says where that is documented', () => {
+		const cap = githubTraits(settingsWith(), {}).cost!.contentCap!;
+
+		expect(cap).toMatchObject({ perHour: 500, perMinute: 80 });
+		expect(cap.source).toMatch(/docs.github.com/);
+	});
+
+	it('writes the fields of a migrated task in the create call, and counts a run with a model', () => {
+		const traits = githubTraits(settingsWith(), {});
+
+		expect(traits.foldsCreate).toBe(true);
+		expect(traits.cost!.model).toBeTypeOf('function');
 	});
 
 	it('refuses the labels GitHub would refuse, and the ones task reserves', () => {
@@ -88,11 +101,12 @@ describe('githubTraits (what task migrate needs to know about GitHub as a target
 			{ statuses: TEST_STATUSES, types: [] }
 		);
 
-		expect(traits?.cost).toEqual({
-			requests: 7,
+		expect(traits?.cost).toMatchObject({
+			requests: 4,
 			seconds: 3,
 			quotaPerHour: 5000,
 			read: { requests: 2, seconds: 0.7 },
 		});
+		expect(traits?.foldsCreate).toBe(true);
 	});
 });

@@ -174,3 +174,24 @@ describe('the optional prepare member', () => {
 		expect(prepared).toEqual([{ priority: true }]);
 	});
 });
+
+describe('the optional createMigrated member', () => {
+	it('is forwarded to a backend that has it, and is a loud error on one that has not (the engine asks the traits first, never the member)', async () => {
+		const created: unknown[] = [];
+		const rich = createLazyBackend({ backendKind: 'github', capabilities: {} } as never, () =>
+			Promise.resolve({
+				backend: { createMigrated: (input: unknown) => Promise.resolve(void created.push(input)) },
+			} as never)
+		);
+		const plain = createLazyBackend({ backendKind: 'remote', capabilities: {} } as never, () =>
+			Promise.resolve({ backend: {} } as never)
+		);
+
+		await rich.backend.createMigrated!({ title: 't', status: 'backlog' });
+
+		expect(created).toEqual([{ title: 't', status: 'backlog' }]);
+		await expect(plain.backend.createMigrated!({ title: 't', status: 'backlog' })).rejects.toThrow(
+			/remote backend has no method "createMigrated"/
+		);
+	});
+});

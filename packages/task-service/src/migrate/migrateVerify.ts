@@ -1,6 +1,6 @@
 // The last step of a migration: every task the run touched is read again from the target and compared with what the plan said it
 // should hold. A difference is reported, never repaired: the person decides (a forge may normalise a text, a person may have edited).
-import type { VersionedRecord } from '@wadeck-app/task-core';
+import type { ResolvedTask, VersionedRecord } from '@wadeck-app/task-core';
 
 import { MIGRATED_FROM_KEY, commentMarker } from './mapTask.js';
 import type { MappedTask } from './mapTask.js';
@@ -20,8 +20,14 @@ export interface Expectation {
 	links: Array<{ type: string; target: string }>;
 }
 
-/** What differs between the record read back and the expectation; empty when the task is as planned. */
-export function compare(expect: Expectation, actual: VersionedRecord): MigrationMismatch[] {
+/**
+ * A task read back from the target: a whole record, or only its fields (`resolve`) when the expectation holds no link and no comment,
+ * which are the only things the fields-only answer lacks.
+ */
+export type Observed = ResolvedTask & Partial<Pick<VersionedRecord, 'links' | 'comments'>>;
+
+/** What differs between the task read back and the expectation; empty when the task is as planned. */
+export function compare(expect: Expectation, actual: Observed): MigrationMismatch[] {
 	const { mapped } = expect;
 	const found: MigrationMismatch[] = [];
 	const differ = (field: string, expected: string, got: string): void => {

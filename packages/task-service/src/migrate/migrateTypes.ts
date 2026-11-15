@@ -102,6 +102,10 @@ export interface MigrationEstimate {
 	seconds: number;
 	/** The hourly request quota of the target system, when it has one. */
 	quotaPerHour?: number;
+	/** At least this many hours in all: the time at the pace of the writes, or what the cap on requests that change the target asks for. Absent for a target with no cost. */
+	hours?: number;
+	/** The cap on requests that change the target, per hour, when it has one (GitHub: 500). */
+	contentCapPerHour?: number;
 }
 
 /** `stopped`: in place, everything was written but the source changed meanwhile: nothing was switched, `--resume` continues. */

@@ -92,6 +92,22 @@ export interface CreateTaskInput {
 	createdAt?: string;
 }
 
+/**
+ * What {@link TaskBackend.createMigrated} takes: a creation that also carries the fields a migration would otherwise write one call
+ * at a time right after it. Every field is optional; a backend writes the ones it can write IN the creation and leaves the others
+ * unwritten, and the caller completes what the record it gets back lacks.
+ */
+export interface MigratedCreateInput extends CreateTaskInput {
+	/** A type the project accepts. */
+	type?: string;
+	/** Plain labels (never a status, type, priority or metadata label: those have their own fields). */
+	labels?: readonly string[];
+	/** A priority of the project. A backend that stores it elsewhere than in the creation does not write it. */
+	priority?: string;
+	/** Metadata, the migration marker included. A backend without metadata is never given any. */
+	meta?: Readonly<Record<string, string>>;
+}
+
 export interface BackendCommentChange extends Omit<CommentChange, 'task'> {
 	task: VersionedRecord;
 }
@@ -208,6 +224,16 @@ export interface TaskBackend {
 	 * order, a priority filter, `available`, an assignee filter) calls it before listing.
 	 */
 	prepare?(needs: { priority?: boolean }): Promise<void>;
+
+	// ---- optional: a creation that carries its fields (only a backend where each field is a call of its own) ----
+	/**
+	 * Creates the task with the fields of {@link MigratedCreateInput} in the SAME call where the backend can (github: the type, label,
+	 * priority-as-label and metadata-in-the-body ride in the one create request). Only `task migrate` calls it, and only for a backend
+	 * whose `BackendTraits.foldsCreate` says so: the caller never guesses from the member being there (a lazy wrapper cannot tell
+	 * before it opens the backend). What the returned record lacks of the input was not written: the caller writes it. The same
+	 * errors as `create`, raised BEFORE any request when the input could not be written (a label name the backend refuses...).
+	 */
+	createMigrated?(input: MigratedCreateInput): Promise<VersionedRecord>;
 
 	// ---- optional: priority, assignee and claim (capabilities `priority`, `assignee`, `claim`) ----
 	// Optional so that a backend written before them keeps compiling. A backend WITHOUT the capability must still implement them,

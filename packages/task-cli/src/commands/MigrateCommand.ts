@@ -376,8 +376,15 @@ export function formatMigration(result: MigrationResult, parsed: ParsedMigrate):
 	if (result.notes.length > 0) lines.push('Notes:', ...result.notes.map(note => `  - ${note}`));
 	if (result.warnings.length > 0) lines.push('Warnings:', ...result.warnings.map(warning => `  - ${warning}`));
 	if (result.estimate.requests > 0 || result.estimate.seconds > 0) {
+		const { estimate } = result;
+		const cap =
+			estimate.contentCapPerHour === undefined ||
+			estimate.hours === undefined ||
+			estimate.writes <= estimate.contentCapPerHour
+				? ''
+				: `; at least ${estimate.hours} h with the hourly cap of ${estimate.contentCapPerHour} content-generating requests an hour`;
 		lines.push(
-			`Estimate:  about ${result.estimate.writes} writes, ${result.estimate.requests} requests, ${duration(result.estimate.seconds)} (${result.to.kind}, at the configured write spacing)`
+			`Estimate:  about ${estimate.writes} writes, ${estimate.requests} requests, ${duration(estimate.seconds)} (${result.to.kind}, at the configured write spacing; computed from the plan, not measured${cap})`
 		);
 	}
 	if (result.verification !== undefined) {

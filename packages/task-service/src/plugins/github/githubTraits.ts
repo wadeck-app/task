@@ -2,6 +2,7 @@
 import type { BackendTraits } from '@wadeck-app/task-core';
 
 import type { DeclaredFills } from '../kinds.js';
+import { githubCostModel } from './githubCostModel.js';
 import { labelProblem } from './githubOptions.js';
 import type { GitHubSettings } from './githubOptions.js';
 import { TOMBSTONE_LABEL } from './issueMapping.js';
@@ -15,10 +16,16 @@ const BODY_ROOM = 4096;
 /** GitHub allows 5000 requests an hour to a token. */
 const QUOTA_PER_HOUR = 5000;
 
-/** Rough cost of one port write: the conditional re-read, the write, and the record read again (issue, timeline, comments). */
-const REQUESTS_PER_WRITE = 7;
-/** Seconds one port write takes besides the spacing between writes (measured: 0.8 to 1.5 s per request on github.com). */
+/** A field written on its own: the conditional re-read, the write, and the record read again (issue, timeline). The counts of a whole run are in githubCostModel.ts. */
+const REQUESTS_PER_WRITE = 4;
+/**
+ * Seconds one write takes besides the spacing between writes. AN ASSUMPTION, not a measurement of this code: about 4 requests around a
+ * write at the 0.3 to 1 s per request measured on github.com (2026-11-08, before the create carried its fields), so about 3 s.
+ */
 const SECONDS_BESIDES_SPACING = 3;
+/** GitHub documents 80 content-generating requests a minute and 500 an hour (docs.github.com, rate limits for the REST API). */
+const CONTENT_PER_MINUTE = 80;
+const CONTENT_PER_HOUR = 500;
 
 export function githubTraits(settings: GitHubSettings, fills: DeclaredFills): BackendTraits {
 	const statusLabels = new Set(
@@ -49,8 +56,17 @@ export function githubTraits(settings: GitHubSettings, fills: DeclaredFills): Ba
 			seconds: settings.writeSpacingSeconds + SECONDS_BESIDES_SPACING,
 			// Reading one task: the issue and its timeline (the comments only when it has some); measured 0.7 s.
 			read: { requests: 2, seconds: 0.7 },
+			// `resolve` answers the fields of one issue with ONE request (no timeline, comments or blockers).
+			resolve: { requests: 1, seconds: 0.35 },
 			quotaPerHour: QUOTA_PER_HOUR,
+			contentCap: {
+				perHour: CONTENT_PER_HOUR,
+				perMinute: CONTENT_PER_MINUTE,
+				source: 'GitHub documents 80 content-generating requests a minute and 500 an hour (docs.github.com, rate limits for the REST API)',
+			},
+			model: githubCostModel(settings, fills),
 		},
+		foldsCreate: true,
 		labelProblem: label => {
 			const refused = labelProblem(label);
 			if (refused !== undefined) return refused;

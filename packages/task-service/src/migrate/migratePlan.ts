@@ -1,6 +1,6 @@
 // The plan of a migration: read the source, decide for every task what it becomes on the target and what is lost, and find out which
 // tasks an earlier run already migrated (the journal first, then the marker the target holds). Reads only: the dry run stops here.
-import type { TaskBackend, TaskSummary, VersionedRecord } from '@wadeck-app/task-core';
+import type { MigrationTaskFacts, TaskBackend, TaskSummary, VersionedRecord } from '@wadeck-app/task-core';
 
 import { planHierarchy } from './hierarchyPlan.js';
 import { LossLedger, isLossAllowed } from './lossLedger.js';
@@ -38,7 +38,7 @@ export interface PlannedTask {
 	state: PlannedState;
 	/** The task on the target, for `resume` and `done`. */
 	targetId?: string;
-	/** The task was found on the target after a creation whose answer was lost: its parent and status are checked, not only its fields. */
+	/** The task was found on the target without the journal (by its marker, or after a creation whose answer was lost): its parent and status are checked, not only its fields. */
 	adopted?: true;
 	/** How far an earlier run got, for `resume`. */
 	phase?: Phase;
@@ -116,42 +116,104 @@ function countReferences(tasks: readonly MappedTask[], sourceIds: ReadonlySet<st
 	return count;
 }
 
-function estimateWrites(
+/** What the plan decided for a task, as the cost model of the target wants it (the ones an earlier run finished are not asked about). */
+function factsOf(task: PlannedTask, marker: boolean): MigrationTaskFacts {
+	const { mapped } = task;
+	return {
+		state: task.state === 'new' ? 'new' : 'resume',
+		status: mapped.status,
+		hasParent: task.parentSourceId !== undefined,
+		...(mapped.type === undefined ? {} : { type: mapped.type }),
+		...(mapped.priority === undefined ? {} : { priority: mapped.priority }),
+		...(mapped.assignee === undefined ? {} : { assignee: mapped.assignee }),
+		labels: mapped.labels,
+		meta: mapped.meta,
+		marker,
+		links: mapped.links.map(link => link.type),
+		comments: mapped.comments.length,
+	};
+}
+
+/**
+ * The estimate printed by the dry run, from the PLAN (nothing is measured): the writes and requests the tasks still to migrate will cost,
+ * the reads of the source and of the scan for markers, the time at the pace of the writes, and the hours the target's cap on requests
+ * that change it asks for. A target that declares a cost model counts the calls its backend really makes (a create that carries its
+ * fields is one write); any other pays `cost.requests` and `cost.seconds` per write the engine counts.
+ */
+export function estimateMigration(
 	tasks: readonly PlannedTask[],
 	source: MigrationEndpoint,
 	target: MigrationEndpoint,
-	reads: { source: number; targetScan: number }
-): MigrationEstimate {
+	reads: { source: number; targetScan: number; targetListPages: number }
+): { estimate: MigrationEstimate; notes: string[]; warnings: string[] } {
 	const caps = target.backend.capabilities;
-	let writes = 0;
-	let verified = 0;
-	for (const task of tasks) {
-		if (task.state === 'done') continue;
-		verified++;
-		const { mapped } = task;
-		if (task.state === 'new') writes += 1;
-		if (caps.meta) writes += 1;
-		writes += (mapped.type === undefined ? 0 : 1) + (mapped.priority === undefined ? 0 : 1);
-		writes += (mapped.assignee === undefined ? 0 : 1) + mapped.labels.length + Object.keys(mapped.meta).length;
-		writes += mapped.links.length + mapped.comments.length;
-	}
+	const pending = tasks.filter(task => task.state !== 'done');
 	const cost = target.traits.cost;
 	const sourceRead = source.traits.cost?.read;
 	const targetRead = cost?.read;
-	// Reading a task costs requests too: the source, the target tasks scanned for a marker, and the read-back of what is written.
-	const requests =
-		(cost === undefined ? 0 : writes * cost.requests) +
-		(sourceRead === undefined ? 0 : reads.source * sourceRead.requests) +
-		(targetRead === undefined ? 0 : (reads.targetScan + verified) * targetRead.requests);
-	const seconds =
-		(cost === undefined ? 0 : writes * cost.seconds) +
-		(sourceRead === undefined ? 0 : reads.source * sourceRead.seconds) +
-		(targetRead === undefined ? 0 : (reads.targetScan + verified) * targetRead.seconds);
+	let writes = 0;
+	let requests = 0;
+	let seconds = 0;
+	const notes: string[] = [];
+	if (cost?.model !== undefined) {
+		const counted = cost.model(pending.map(task => factsOf(task, caps.meta)));
+		writes = counted.writes;
+		// The model counts the writes and what follows them; the list of the target that the plan itself read comes first.
+		requests = counted.requests + reads.targetListPages;
+		notes.push(...counted.notes);
+		// The check's read-back is a read (priced as one), the rest of the model's requests are writes and the reads around them.
+		const perRead = targetRead === undefined ? 0 : targetRead.seconds / targetRead.requests;
+		seconds = writes * cost.seconds + counted.verifyRequests * perRead;
+		requests += targetRead === undefined ? 0 : reads.targetScan * targetRead.requests;
+		seconds += targetRead === undefined ? 0 : reads.targetScan * targetRead.seconds;
+	} else {
+		for (const task of pending) {
+			const { mapped } = task;
+			if (task.state === 'new') writes += 1;
+			if (caps.meta) writes += 1;
+			writes += (mapped.type === undefined ? 0 : 1) + (mapped.priority === undefined ? 0 : 1);
+			writes += (mapped.assignee === undefined ? 0 : 1) + mapped.labels.length + Object.keys(mapped.meta).length;
+			writes += mapped.links.length + mapped.comments.length;
+		}
+		// Reading a task costs requests too: the source, the target tasks scanned for a marker, and the read-back of what is written.
+		requests =
+			(cost === undefined ? 0 : writes * cost.requests) +
+			(targetRead === undefined ? 0 : (reads.targetScan + pending.length) * targetRead.requests);
+		seconds =
+			(cost === undefined ? 0 : writes * cost.seconds) +
+			(targetRead === undefined ? 0 : (reads.targetScan + pending.length) * targetRead.seconds);
+	}
+	if (sourceRead !== undefined) {
+		requests += reads.source * sourceRead.requests;
+		seconds += reads.source * sourceRead.seconds;
+	}
+	const cap = cost?.contentCap;
+	// At least: the time at the pace of the writes, or the hours the cap on requests that change the target needs, whichever is longer.
+	const hours =
+		cost === undefined
+			? undefined
+			: Math.round(Math.max(seconds / 3600, cap === undefined ? 0 : writes / cap.perHour) * 10) / 10;
+	const warnings: string[] = [];
+	if (cap !== undefined && writes > cap.perHour && hours !== undefined) {
+		warnings.push(
+			`the plan needs about ${writes} writes (requests that change the target) and ${cap.source}: expect at least ${hours} h in total with the hourly cap of ${cap.perHour} content-generating requests an hour. The run stops when the target refuses and prints when to continue: run the same command with --resume, the progress is kept per task. This is an estimate from the plan${
+				cost?.quotaPerHour === undefined
+					? ''
+					: `; the other limit, ${cost.quotaPerHour} requests an hour of all kinds, is separate (${Math.round(requests)} are estimated)`
+			}.`
+		);
+	}
 	return {
-		writes,
-		requests: Math.round(requests),
-		seconds: Math.round(seconds),
-		...(cost?.quotaPerHour === undefined ? {} : { quotaPerHour: cost.quotaPerHour }),
+		estimate: {
+			writes,
+			requests: Math.round(requests),
+			seconds: Math.round(seconds),
+			...(hours === undefined ? {} : { hours }),
+			...(cap === undefined ? {} : { contentCapPerHour: cap.perHour }),
+			...(cost?.quotaPerHour === undefined ? {} : { quotaPerHour: cost.quotaPerHour }),
+		},
+		notes,
+		warnings,
 	};
 }
 
@@ -212,6 +274,9 @@ export async function buildPlan(input: PlanInput): Promise<MigrationPlan> {
 		else vanished.push(sourceId);
 	}
 	const notes: string[] = [];
+	// Tasks the target holds that the journal does not know (found by their title after a lost answer, or by a marker written WITH the
+	// creation): the creation can have stopped before its close or its attachment to the parent, so their parent and status are checked.
+	const adopted = new Set<string>();
 	const claimed = new Set([...entries.values()].map(entry => entry.target));
 	const unclaimed = targetSummaries.filter(summary => !claimed.has(summary.id));
 	const needsScan =
@@ -222,8 +287,11 @@ export async function buildPlan(input: PlanInput): Promise<MigrationPlan> {
 	if (needsScan) {
 		const found = await scanMarkers(target.backend, unclaimed, source.project.id);
 		for (const [sourceId, targetId] of found.entries()) {
-			if (sourceIds.has(sourceId) && !entries.has(sourceId))
+			if (sourceIds.has(sourceId) && !entries.has(sourceId)) {
 				entries.set(sourceId, { target: targetId, phase: 'created' });
+				// Only where the marker is written WITH the creation (foldsCreate): elsewhere it is written after the status and the parent.
+				if (target.traits.foldsCreate === true) adopted.add(sourceId);
+			}
 		}
 		notes.push(
 			`read ${unclaimed.length} task(s) of the target looking for the marker ${MIGRATED_FROM_KEY} of an earlier run: ${found.size} found`
@@ -239,7 +307,6 @@ export async function buildPlan(input: PlanInput): Promise<MigrationPlan> {
 	// title (and by the instant: the source's when the target keeps it, else not before the last task the target had then, on the
 	// target's own clock); one match is taken back,
 	// none means it never happened, several are not guessed.
-	const adopted = new Set<string>();
 	const pending = journal?.pending;
 	if (pending !== undefined && sourceIds.has(pending.sourceId) && !entries.has(pending.sourceId)) {
 		const mapped = mappedById.get(pending.sourceId)!;
@@ -311,7 +378,14 @@ export async function buildPlan(input: PlanInput): Promise<MigrationPlan> {
 		notes.push('an earlier run did not finish: add --resume to continue it');
 	}
 
-	const estimate = estimateWrites(tasks, source, target, { source: records.length, targetScan: scanned });
+	const counted = estimateMigration(tasks, source, target, {
+		source: records.length,
+		targetScan: scanned,
+		targetListPages: Math.max(1, Math.ceil(targetSummaries.length / PAGE_SIZE)),
+	});
+	const estimate = counted.estimate;
+	notes.push(...counted.notes);
+	warnings.push(...counted.warnings);
 	if (estimate.quotaPerHour !== undefined && estimate.requests > estimate.quotaPerHour * 0.9) {
 		warnings.push(
 			`the estimate (${estimate.requests} requests) is close to or over the hourly quota (${estimate.quotaPerHour}): the run will probably stop on the rate limit and tell you when to continue (--resume)`

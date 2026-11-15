@@ -38,6 +38,7 @@ import type {
 	CreateTaskInput,
 	LabelSyncReport,
 	LinkType,
+	MigratedCreateInput,
 	ReleaseOptions,
 	VersionedRecord,
 	WriteOptions,
@@ -127,6 +128,12 @@ const LABEL_STYLE: Record<LabelKind, { color: string; description?: string }> = 
 	user: { color: 'ededed' },
 	deleted: { color: 'b60205', description: 'Deleted task, hidden by the task tool' },
 };
+
+/** What a migrated creation carries besides the title, the status label and the plain body: labels (with their kind) and a managed block. */
+interface FoldedFields {
+	labels: Array<{ name: string; kind: LabelKind }>;
+	block: Record<string, unknown> | undefined;
+}
 
 /** One call of a multi-call write. `description` is the past tense: it is shown as applied or as not applied. */
 interface Step {
@@ -632,21 +639,94 @@ export class GitHubWriter {
 	}
 
 	async create(input: CreateTaskInput): Promise<VersionedRecord> {
+		return this.createIssue(input, { labels: [], block: undefined });
+	}
+
+	/**
+	 * `create` that also writes what a migrated task has beside its status: the type and the labels (as labels), the priority (when it
+	 * is stored as a label) and the metadata (as labels, or as the managed block of the body) travel in the ONE create request, where
+	 * each would be a write of its own (conditional re-read, write, record read again). Everything GitHub would refuse is refused first,
+	 * with the error the separate write gives. What is NOT written here (a priority kept in the issue field, a type mapped to a native
+	 * issue type) is left to the caller, which finds it missing in the record it gets back. The close of a terminal status, the
+	 * attachment to a parent, links and comments stay calls of their own.
+	 */
+	async createMigrated(input: MigratedCreateInput): Promise<VersionedRecord> {
+		return this.createIssue(input, await this.foldedFields(input));
+	}
+
+	/** The labels and the block of body a migrated creation carries, checked; the one request it may make is the priority resolution. */
+	private async foldedFields(input: MigratedCreateInput): Promise<FoldedFields> {
+		const labels: Array<{ name: string; kind: LabelKind }> = [];
+		const add = (name: string, kind: LabelKind): void => {
+			if (!labels.some(held => eq(held.name, name))) labels.push({ name, kind });
+		};
+		if (input.type !== undefined) {
+			const { label } = this.typeLabelOf(input.type);
+			if (label !== undefined) add(label, 'type');
+		}
+		for (const label of input.labels ?? []) {
+			const error = this.labelError('create', label) ?? this.reservedLabelError('create', label);
+			if (error !== undefined) throw error;
+			add(label, 'user');
+		}
+		const wanted =
+			input.priority === undefined ? undefined : normalizePriority(input.priority, this.map.priority.priorities);
+		const meta = Object.entries(input.meta ?? {});
+		const mode = this.fill('meta');
+		let block: Record<string, unknown> | undefined;
+		const metaLabels: string[] = [];
+		if (meta.length > 0) {
+			if (mode !== 'labels' && mode !== 'body-block') throw this.metaUnsupported('create');
+			if (mode === 'labels') {
+				for (const [key, value] of meta) metaLabels.push(this.metaLabelChecked('create', key, value));
+			} else {
+				block = { meta: Object.fromEntries(meta) };
+			}
+		}
+		if (wanted !== undefined) {
+			const resolution = await this.host.priority.resolve();
+			if (resolution.storage === 'label') {
+				const label = this.priorityLabel(wanted);
+				this.warnOfFallback(resolution, label);
+				add(label, 'priority');
+			}
+		}
+		for (const label of metaLabels) add(label, 'meta');
+		if (labels.length + 1 > LABELS_PER_ISSUE) {
+			throw new BackendLimitError(
+				'github',
+				'labels per issue',
+				LABELS_PER_ISSUE,
+				`An issue holds ${LABELS_PER_ISSUE} labels at most, statuses, types and metadata included; this task needs ${labels.length + 1}`
+			);
+		}
+		if (block !== undefined) {
+			this.emulated(
+				`meta is emulated: it is kept in a hidden block of the body of the issues (fills.meta: body-block, accepted with fidelity: degrade); editing the body on GitHub can overwrite it`
+			);
+		}
+		return { labels, block };
+	}
+
+	private async createIssue(input: CreateTaskInput, folded: FoldedFields): Promise<VersionedRecord> {
 		const rep = this.representation('create', input.status);
+		const text = input.description?.trim() ?? '';
+		const visible = text === '' || text === input.title.trim() ? undefined : input.description!;
+		const body = folded.block === undefined ? visible : composeBody((visible ?? '').trimEnd(), folded.block);
+		if (body !== undefined && body.length > BODY_MAX) throw this.bodyLimit(body.length);
 		let parent: ApiIssue | undefined;
 		if (input.parentId !== undefined) {
 			parent = (await this.host.loadIssue(input.parentId, { revalidate: false })).issue;
 			await this.requireRoomForChild(parent);
 		}
-		const text = input.description?.trim() ?? '';
-		const body = text === '' || text === input.title.trim() ? undefined : input.description!;
-		if (body !== undefined && body.length > BODY_MAX) throw this.bodyLimit(body.length);
 		if (rep.label !== undefined) await this.ensureLabel(rep.label, 'status');
+		for (const label of folded.labels) await this.ensureLabel(label.name, label.kind);
+		const labels = [...(rep.label === undefined ? [] : [rep.label]), ...folded.labels.map(label => label.name)];
 		const created = (
 			await this.send<ApiIssue>('create', 'new task', 'POST', `${this.host.repoPath}/issues`, {
 				title: input.title,
 				...(body === undefined ? {} : { body }),
-				...(rep.label === undefined ? {} : { labels: [rep.label] }),
+				...(labels.length === 0 ? {} : { labels }),
 			})
 		).body;
 		const number = created.number;
@@ -758,7 +838,11 @@ export class GitHubWriter {
 		return labelNames(issue).filter(name => typeOfLabel(name, this.map) !== undefined);
 	}
 
-	async setType(id: string, type: string, options?: WriteOptions): Promise<VersionedRecord> {
+	/** The label that carries a type (none for a native issue type), refused when GitHub would refuse its name. */
+	private typeLabelOf(type: string): {
+		rule: { label?: string; issueType?: string } | undefined;
+		label: string | undefined;
+	} {
 		const { typeMap, typePrefix } = this.map.settings;
 		const rule = Object.hasOwn(typeMap, type) ? typeMap[type] : undefined;
 		const label = rule?.issueType !== undefined ? undefined : (rule?.label ?? `${typePrefix}${type}`);
@@ -773,6 +857,11 @@ export class GitHubWriter {
 				);
 			}
 		}
+		return { rule, label };
+	}
+
+	async setType(id: string, type: string, options?: WriteOptions): Promise<VersionedRecord> {
+		const { rule, label } = this.typeLabelOf(type);
 		const { issue } = await this.prepare(id, options, ['type']);
 		const number = issue.number;
 		if (typeOf(issue, this.map) === type) return this.read(number);
@@ -831,6 +920,37 @@ export class GitHubWriter {
 		return `${this.map.settings.metaPrefix}${key}${value === '' ? '' : `=${value}`}`;
 	}
 
+	/** The label of a metadata entry (fills.meta: labels), refused before any request when GitHub would refuse it. */
+	private metaLabelChecked(operation: string, key: string, value: string): string {
+		if (key === '' || key.includes('=')) {
+			throw new BackendRejectedError(
+				'github',
+				operation,
+				`the meta key "${key}" cannot be part of a label (empty, or with "=")`,
+				'Use a plain key, or declare "meta: body-block" in strategy.options.fills, which accepts any key'
+			);
+		}
+		const label = this.metaLabel(key, value);
+		const problem = labelProblem(label);
+		if (problem !== undefined) {
+			const tooLong = !value.includes(',') && !key.includes(',') && label.length > GITHUB_LABEL_MAX;
+			throw tooLong
+				? new BackendLimitError(
+						'github',
+						'label name length',
+						GITHUB_LABEL_MAX,
+						`The meta ${key}=${value.length > 20 ? `${value.slice(0, 20)}...` : value} would be the label ${problem}. Keep key and value short, or declare "meta: body-block" in strategy.options.fills (no size limit).`
+					)
+				: new BackendRejectedError(
+						'github',
+						operation,
+						`the meta ${key} cannot be a label: ${problem}`,
+						'Declare "meta: body-block" in strategy.options.fills, which accepts any text'
+					);
+		}
+		return label;
+	}
+
 	private metaLabelsOfKey(issue: ApiIssue, key: string): string[] {
 		const prefix = this.map.settings.metaPrefix.toLowerCase();
 		return labelNames(issue).filter(name => {
@@ -844,34 +964,7 @@ export class GitHubWriter {
 	async setMeta(id: string, key: string, value: string, options?: WriteOptions): Promise<VersionedRecord> {
 		const mode = this.fill('meta');
 		if (mode !== 'labels' && mode !== 'body-block') throw this.metaUnsupported('setMeta');
-		if (mode === 'labels') {
-			if (key === '' || key.includes('=')) {
-				throw new BackendRejectedError(
-					'github',
-					'setMeta',
-					`the meta key "${key}" cannot be part of a label (empty, or with "=")`,
-					'Use a plain key, or declare "meta: body-block" in strategy.options.fills, which accepts any key'
-				);
-			}
-			const label = this.metaLabel(key, value);
-			const problem = labelProblem(label);
-			if (problem !== undefined) {
-				const tooLong = !value.includes(',') && !key.includes(',') && label.length > GITHUB_LABEL_MAX;
-				throw tooLong
-					? new BackendLimitError(
-							'github',
-							'label name length',
-							GITHUB_LABEL_MAX,
-							`The meta ${key}=${value.length > 20 ? `${value.slice(0, 20)}...` : value} would be the label ${problem}. Keep key and value short, or declare "meta: body-block" in strategy.options.fills (no size limit).`
-						)
-					: new BackendRejectedError(
-							'github',
-							'setMeta',
-							`the meta ${key} cannot be a label: ${problem}`,
-							'Declare "meta: body-block" in strategy.options.fills, which accepts any text'
-						);
-			}
-		}
+		if (mode === 'labels') this.metaLabelChecked('setMeta', key, value);
 		const { issue } = await this.prepare(id, options, ['meta']);
 		const number = issue.number;
 		const currentMeta = metaOf(issue, this.map);

@@ -5,7 +5,7 @@
 import * as path from 'node:path';
 
 import { RateLimitedError } from '@wadeck-app/task-core';
-import type { VersionedRecord } from '@wadeck-app/task-core';
+import type { MigratedCreateInput, ResolvedTask, VersionedRecord } from '@wadeck-app/task-core';
 
 import { describeError } from '../describeError.js';
 import type { TaskEvent, TaskProjectEnv } from '../events.js';
@@ -38,7 +38,7 @@ import type {
 	TargetNotEmpty,
 } from './migrateTypes.js';
 import { compare } from './migrateVerify.js';
-import type { Expectation } from './migrateVerify.js';
+import type { Expectation, Observed } from './migrateVerify.js';
 
 /**
  * In-place migration (one project, its storage changes): what the engine needs besides the two endpoints. The two endpoints carry the
@@ -238,12 +238,17 @@ class Run {
 	}
 }
 
-/** Fills what the target task lacks of the planned fields; a field already set (by an earlier run or a person) is left alone. */
+/**
+ * Fills what the target task lacks of the planned fields; a field already set (by an earlier run or a person) is left alone.
+ * `carried`: the task was just created by this run with its fields in the creation call (createMigrated): a field found in place was
+ * written by this run, so its event is raised as when the field was a write of its own; only what the creation did not carry is written.
+ */
 async function fillFields(
 	run: Run,
 	planned: PlannedTask,
 	targetId: string,
-	current: VersionedRecord
+	current: VersionedRecord,
+	carried = false
 ): Promise<VersionedRecord> {
 	const { mapped } = planned;
 	const backend = run.target.backend;
@@ -260,15 +265,18 @@ async function fillFields(
 	if (backend.capabilities.meta && record.meta?.[MIGRATED_FROM_KEY] !== mapped.qualifiedId) {
 		record = await backend.setMeta(targetId, MIGRATED_FROM_KEY, mapped.qualifiedId);
 	}
-	if (mapped.type !== undefined && record.type === undefined) {
-		record = await backend.setType(targetId, mapped.type);
+	if (mapped.type !== undefined && (record.type === undefined || (carried && record.type === mapped.type))) {
+		if (record.type === undefined) record = await backend.setType(targetId, mapped.type);
 		run.emit({
 			name: 'onTaskTypeChanged',
 			payload: { taskId: targetId, oldType: undefined, newType: mapped.type, ...env },
 		});
 	}
-	if (mapped.priority !== undefined && record.priority === undefined) {
-		record = await backend.setPriority!(targetId, mapped.priority);
+	if (
+		mapped.priority !== undefined &&
+		(record.priority === undefined || (carried && record.priority === mapped.priority))
+	) {
+		if (record.priority === undefined) record = await backend.setPriority!(targetId, mapped.priority);
 		run.emit({
 			name: 'onTaskPriorityChanged',
 			payload: { taskId: targetId, oldPriority: undefined, newPriority: mapped.priority, ...env },
@@ -282,19 +290,41 @@ async function fillFields(
 		});
 	}
 	for (const label of mapped.labels) {
-		if ((record.labels ?? []).includes(label)) continue;
-		record = await backend.addLabel(targetId, label);
+		const held = (record.labels ?? []).includes(label);
+		if (held && !carried) continue;
+		if (!held) record = await backend.addLabel(targetId, label);
 		run.emit({ name: 'onTaskLabelAdded', payload: { taskId: targetId, label, ...env } });
 	}
 	for (const [key, value] of Object.entries(mapped.meta)) {
-		if (record.meta !== undefined && Object.hasOwn(record.meta, key)) continue;
-		record = await backend.setMeta(targetId, key, value);
+		const held = record.meta !== undefined && Object.hasOwn(record.meta, key);
+		if (held && !(carried && record.meta![key] === value)) continue;
+		if (!held) record = await backend.setMeta(targetId, key, value);
 		run.emit({
 			name: 'onTaskMetaChanged',
 			payload: { taskId: targetId, key, oldValue: undefined, newValue: value, ...env },
 		});
 	}
 	return record;
+}
+
+/**
+ * What a new task's creation carries when the target backend writes fields IN the creation (its traits say `foldsCreate`): the type, the
+ * labels, the priority and the metadata with the migration marker. Undefined when the backend does not, or the task has none of them
+ * (then a plain create). What the backend leaves out of the creation is found missing in the record and written by fillFields.
+ */
+function carriedFields(run: Run, planned: PlannedTask): Omit<MigratedCreateInput, 'title' | 'status'> | undefined {
+	if (run.target.traits.foldsCreate !== true) return undefined;
+	const { mapped } = planned;
+	const meta = run.target.backend.capabilities.meta
+		? { [MIGRATED_FROM_KEY]: mapped.qualifiedId, ...mapped.meta }
+		: mapped.meta;
+	const carried = {
+		...(mapped.type === undefined ? {} : { type: mapped.type }),
+		...(mapped.labels.length === 0 ? {} : { labels: mapped.labels }),
+		...(mapped.priority === undefined ? {} : { priority: mapped.priority }),
+		...(Object.keys(meta).length === 0 ? {} : { meta }),
+	};
+	return Object.keys(carried).length === 0 ? undefined : carried;
 }
 
 /** Pass 1: parents before children, create (when the target has no task for it yet) and fill the fields. */
@@ -325,6 +355,8 @@ async function createPass(run: Run): Promise<void> {
 		}
 		let record: VersionedRecord;
 		let action: 'created' | 'resumed';
+		// The task was created with its fields in the creation call (see carriedFields).
+		let folded = false;
 		if (planned.state === 'new') {
 			const parentId = planned.parentSourceId === undefined ? undefined : run.targetOf(planned.parentSourceId);
 			// Written before the request: if the answer is lost, the next run knows what to look for on the target.
@@ -335,13 +367,25 @@ async function createPass(run: Run): Promise<void> {
 				...(run.targetClock === undefined ? {} : { after: run.targetClock }),
 			};
 			run.save(true);
-			record = await backend.create({
+			const creation = {
 				title: mapped.title,
 				status: mapped.status,
 				...(parentId === undefined ? {} : { parentId }),
 				...(mapped.description === undefined ? {} : { description: mapped.description }),
 				...(mapped.createdAt === undefined ? {} : { createdAt: mapped.createdAt }),
-			});
+			};
+			const carries = carriedFields(run, planned);
+			if (carries === undefined) {
+				record = await backend.create(creation);
+			} else {
+				if (typeof backend.createMigrated !== 'function') {
+					throw new Error(
+						`internal error: the ${backend.kind} backend declares foldsCreate but has no createMigrated`
+					);
+				}
+				record = await backend.createMigrated({ ...creation, ...carries });
+			}
+			folded = carries !== undefined;
 			// Written at once: from here on a second run knows this task exists.
 			run.journal.tasks[sourceId] = {
 				target: record.id,
@@ -363,8 +407,9 @@ async function createPass(run: Run): Promise<void> {
 					status: record.status,
 					description: record.description ?? record.title,
 					parentId: record.parentId,
-					type: record.type,
-					labels: record.labels ?? [],
+					// The creation describes the task before its fields, as when each was a write of its own; they follow as events.
+					type: folded ? undefined : record.type,
+					labels: folded ? [] : (record.labels ?? []),
 					...run.env,
 				},
 			});
@@ -373,7 +418,7 @@ async function createPass(run: Run): Promise<void> {
 			action = 'resumed';
 		}
 		run.touched.add(sourceId);
-		run.records.set(sourceId, await fillFields(run, planned, record.id, record));
+		run.records.set(sourceId, await fillFields(run, planned, record.id, record, folded));
 		run.advance(sourceId, 'fielded');
 		run.progress({ ...progress, targetId: record.id, action });
 	}
@@ -486,6 +531,31 @@ async function commentPass(run: Run): Promise<void> {
 	}
 }
 
+/**
+ * Reads the tasks of a chunk back from the target. A backend whose fields-only read (`resolve`) is cheaper than the whole record (its
+ * cost trait says so: github, where the record is the issue, its timeline, its comments and its blockers) is asked for it for a task
+ * with no link and no comment to check, since the check compares nothing else; every other task, and every other backend, is read whole
+ * (a remote backend answers a whole chunk in one request).
+ */
+async function readBack(run: Run, chunk: readonly PlannedTask[]): Promise<Observed[]> {
+	const backend = run.target.backend;
+	const cost = run.target.traits.cost;
+	const cheap = cost?.resolve !== undefined && cost.read !== undefined && cost.resolve.requests < cost.read.requests;
+	const needsWhole = (planned: PlannedTask): boolean =>
+		!cheap || planned.mapped.links.length > 0 || planned.mapped.comments.length > 0;
+	const whole = await readRecords(
+		backend,
+		chunk.filter(needsWhole).map(planned => run.targetOf(planned.mapped.sourceId))
+	);
+	let next = 0;
+	const answers: Observed[] = [];
+	for (const planned of chunk) {
+		if (needsWhole(planned)) answers.push(whole[next++]!);
+		else answers.push((await backend.resolve(run.targetOf(planned.mapped.sourceId))) as ResolvedTask);
+	}
+	return answers;
+}
+
 /** Pass 4: every task the run wrote to is read again and compared with the plan. */
 async function verifyPass(run: Run): Promise<MigrationMismatch[]> {
 	const { plan } = run;
@@ -499,10 +569,7 @@ async function verifyPass(run: Run): Promise<MigrationMismatch[]> {
 	const mismatches: MigrationMismatch[] = [];
 	for (let start = 0; start < checked.length; start += VERIFY_CHUNK) {
 		const chunk = checked.slice(start, start + VERIFY_CHUNK);
-		const records = await readRecords(
-			target.backend,
-			chunk.map(planned => run.targetOf(planned.mapped.sourceId))
-		);
+		const records = await readBack(run, chunk);
 		chunk.forEach((planned, index) => {
 			const sourceId = planned.mapped.sourceId;
 			const expectation: Expectation = {

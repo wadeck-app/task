@@ -43,12 +43,13 @@ export type {
 	CreateTaskInput,
 	LabelCount,
 	ListQuery,
+	MigratedCreateInput,
 	Page,
 	ResolvedTask,
 	TaskBackend,
 	VersionedRecord,
 	WriteOptions,
 } from './TaskBackend.js';
-export type { BackendTraits } from './traits.js';
+export type { BackendTraits, MigrationCostModelResult, MigrationTaskFacts } from './traits.js';
 export { LOCAL_TRAITS, NO_TRAITS } from './traits.js';
 export { LocalFileBackend, createLocalBackend, revisionOf } from './LocalFileBackend.js';

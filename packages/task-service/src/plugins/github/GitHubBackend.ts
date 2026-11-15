@@ -11,6 +11,7 @@ import type {
 	ReleaseOptions,
 	BackendCommentEdit,
 	CreateTaskInput,
+	MigratedCreateInput,
 	LabelCount,
 	LabelSyncReport,
 	ListQuery,
@@ -832,6 +833,10 @@ export class GitHubBackend implements TaskBackend {
 
 	create(input: CreateTaskInput): Promise<VersionedRecord> {
 		return this.writer.create(input);
+	}
+
+	createMigrated(input: MigratedCreateInput): Promise<VersionedRecord> {
+		return this.writer.createMigrated(input);
 	}
 
 	updateStatus(id: string, status: TaskStatus, options?: WriteOptions): Promise<VersionedRecord> {
