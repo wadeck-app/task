@@ -260,3 +260,77 @@ describe('createMigrated after the create call', () => {
 		expect(fake.issues.get(1)!.labels).toEqual(['type:bug']);
 	});
 });
+
+describe('createMigrated counts and dedupes the labels of the issue as GitHub does (case-insensitive, status label included)', () => {
+	const many = (count: number): string[] => Array.from({ length: count }, (_value, index) => `l${index}`);
+
+	it('exactly 100 labels with no status label is accepted (the status label counts only when the status has one)', async () => {
+		for (const label of many(100)) fake.addRepoLabel(label);
+
+		const record = await t.backend.createMigrated!({ title: 'Many', status: 'backlog', labels: many(100) });
+
+		expect(record.labels).toHaveLength(100);
+		expect(sent()).toEqual(['POST /issues']);
+	});
+
+	it('100 labels plus a status label is 101: refused before any request, naming the limit', async () => {
+		const error = await failure(() =>
+			t.backend.createMigrated!({ title: 'Too many', status: 'in-progress', labels: many(100) })
+		);
+
+		expect(error).toBeInstanceOf(BackendLimitError);
+		expect(fake.requests).toEqual([]);
+	});
+
+	it('99 labels plus the status label is exactly 100 and passes', async () => {
+		for (const label of [...many(99), 'status:in-progress']) fake.addRepoLabel(label);
+
+		const record = await t.backend.createMigrated!({ title: 'Edge', status: 'in-progress', labels: many(99) });
+
+		expect(fake.issues.get(1)!.labels).toHaveLength(100);
+		expect(record.status).toBe('in-progress');
+	});
+
+	it('a folded label equal to the status label (whatever its case) is ONE label of the POST', async () => {
+		t = make({ options: { typeMap: { bug: { label: 'Status:In-Progress' } } } });
+
+		await t.backend.createMigrated!({ title: 'Same', status: 'in-progress', type: 'bug' });
+
+		expect(sent()).toEqual(['POST /issues']);
+		expect((fake.writes()[0]!.body as { labels: string[] }).labels).toEqual(['status:in-progress']);
+	});
+});
+
+describe('createMigrated asks about a label only when the label is really sent', () => {
+	it('metadata in the body block (marker included) needs no label: no label request of any kind', async () => {
+		await t.backend.createMigrated!({
+			title: 'Block',
+			status: 'backlog',
+			meta: { migratedFrom: 'abc/3', owner: 'ann' },
+		});
+
+		expect(fake.requests.filter(request => request.path.includes('/labels'))).toEqual([]);
+		expect(sent()).toEqual(['POST /issues']);
+	});
+
+	it('a status label is probed once even when a type label of another case names the same label', async () => {
+		t = make({ options: { typeMap: { bug: { label: 'STATUS:IN-PROGRESS' } } } });
+
+		await t.backend.createMigrated!({ title: 'Same', status: 'in-progress', type: 'bug' });
+
+		expect(
+			fake.requests.filter(request => request.method === 'GET' && request.path.includes('/labels/'))
+		).toHaveLength(1);
+	});
+});
+
+describe('createMigrated compares labels case-insensitively, as GitHub does', () => {
+	it('a label the repository holds under another case is not created again, and two spellings in the input are one label', async () => {
+		fake.addRepoLabel('Release');
+
+		await t.backend.createMigrated!({ title: 'Cases', status: 'backlog', labels: ['release', 'RELEASE'] });
+
+		expect(sent()).toEqual(['POST /issues']);
+		expect((fake.writes()[0]!.body as { labels: string[] }).labels).toEqual(['release']);
+	});
+});

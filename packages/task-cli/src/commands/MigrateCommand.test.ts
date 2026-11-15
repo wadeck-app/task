@@ -505,6 +505,35 @@ describe('the estimate line of the text output', () => {
 		expect(text).toContain('500 content-generating requests an hour');
 	});
 
+	it('names the per-minute cap too, and stays quiet when the pace of the writes is slower than the caps', () => {
+		const bound = formatMigration(
+			dryRunResult({
+				writes: 600,
+				requests: 2400,
+				seconds: 600,
+				hours: 1,
+				contentCapPerHour: 100000,
+				contentCapPerMinute: 10,
+			}),
+			parsed()
+		);
+		const slow = formatMigration(
+			dryRunResult({
+				writes: 100,
+				requests: 400,
+				seconds: 3600,
+				hours: 1,
+				contentCapPerHour: 500,
+				contentCapPerMinute: 80,
+			}),
+			parsed()
+		);
+
+		expect(bound).toContain('10 content-generating requests a minute');
+		expect(bound).toContain('100000 content-generating requests an hour');
+		expect(slow).not.toContain('content-generating');
+	});
+
 	it('prints no hour count for a target that declares no cap', () => {
 		const text = formatMigration(dryRunResult({ writes: 10, requests: 40, seconds: 60, hours: 0 }), parsed());
 

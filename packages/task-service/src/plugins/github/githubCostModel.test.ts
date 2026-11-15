@@ -100,11 +100,37 @@ describe('githubCostModel', () => {
 	});
 
 	it('a task an earlier run created is not created again: what it lacks is written field by field (an upper bound)', () => {
-		const resumed = model()([task({ state: 'resume', type: 'bug', labels: ['planning'] })]);
+		const resumed = model()([task({ state: 'resume', phase: 'created', type: 'bug', labels: ['planning'] })]);
 
 		// The marker, the type and the label: three writes of their own.
 		expect(resumed.writes).toBe(3);
 		expect(resumed.requests).toBe(3 * 4 + 1);
+	});
+
+	it('a resumed task costs what its journal phase has left: created = fields, links and comments; fielded = links and comments; linked = comments', () => {
+		const rest = { type: 'bug', labels: ['planning'], links: ['blockedBy'], comments: 1 };
+		const created = model()([task({ state: 'resume', phase: 'created', ...rest })]);
+		const fielded = model()([task({ state: 'resume', phase: 'fielded', ...rest })]);
+		const linked = model()([task({ state: 'resume', phase: 'linked', ...rest })]);
+
+		// created: marker + type + label (3 separate writes of 4 requests), the link (7), the comment (5), the whole check (2 + 1 + 1).
+		expect(created).toMatchObject({ writes: 3 + 1 + 1, requests: 3 * 4 + 7 + 5 + 4 });
+		// fielded: no field write; linked: no link write either.
+		expect(fielded).toMatchObject({ writes: 1 + 1, requests: 7 + 5 + 4 });
+		expect(linked).toMatchObject({ writes: 1, requests: 5 + 4 });
+	});
+
+	it('a resumed task without a phase is an error, not a guess', () => {
+		expect(() => model()([task({ state: 'resume' })])).toThrow(/phase/);
+	});
+
+	it('a status the statusMap does not know is an error naming it', () => {
+		expect(() => model()([task({ status: 'nonsense' })])).toThrow(/status "nonsense".*statusMap/);
+	});
+
+	it('metadata (or the marker) with no meta fill is an error, not a free write', () => {
+		expect(() => model({}, {})([task({ marker: true })])).toThrow(/metadata/);
+		expect(() => model({}, {})([task({ marker: false, meta: { a: 'b' } })])).toThrow(/metadata/);
 	});
 
 	it('says in its notes that labels are counted as new', () => {

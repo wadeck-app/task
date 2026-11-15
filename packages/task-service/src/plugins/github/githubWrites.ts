@@ -692,12 +692,17 @@ export class GitHubWriter {
 			}
 		}
 		for (const label of metaLabels) add(label, 'meta');
-		if (labels.length + 1 > LABELS_PER_ISSUE) {
+		// What GitHub counts: the distinct labels (case-insensitive) of the POST, the status label included when the status has one and
+		// no folded label is already it.
+		const statusLabel = this.representation('create', input.status).label;
+		const folds = statusLabel !== undefined && labels.some(held => eq(held.name, statusLabel));
+		const total = labels.length + (statusLabel === undefined || folds ? 0 : 1);
+		if (total > LABELS_PER_ISSUE) {
 			throw new BackendLimitError(
 				'github',
 				'labels per issue',
 				LABELS_PER_ISSUE,
-				`An issue holds ${LABELS_PER_ISSUE} labels at most, statuses, types and metadata included; this task needs ${labels.length + 1}`
+				`An issue holds ${LABELS_PER_ISSUE} labels at most, statuses, types and metadata included; this task needs ${total}`
 			);
 		}
 		if (block !== undefined) {
@@ -719,9 +724,11 @@ export class GitHubWriter {
 			parent = (await this.host.loadIssue(input.parentId, { revalidate: false })).issue;
 			await this.requireRoomForChild(parent);
 		}
+		// A folded label that is the status label (whatever its case) is ONE label of the request, and is made once.
+		const carried = folded.labels.filter(label => rep.label === undefined || !eq(label.name, rep.label));
 		if (rep.label !== undefined) await this.ensureLabel(rep.label, 'status');
-		for (const label of folded.labels) await this.ensureLabel(label.name, label.kind);
-		const labels = [...(rep.label === undefined ? [] : [rep.label]), ...folded.labels.map(label => label.name)];
+		for (const label of carried) await this.ensureLabel(label.name, label.kind);
+		const labels = [...(rep.label === undefined ? [] : [rep.label]), ...carried.map(label => label.name)];
 		const created = (
 			await this.send<ApiIssue>('create', 'new task', 'POST', `${this.host.repoPath}/issues`, {
 				title: input.title,

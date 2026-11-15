@@ -121,6 +121,8 @@ function factsOf(task: PlannedTask, marker: boolean): MigrationTaskFacts {
 	const { mapped } = task;
 	return {
 		state: task.state === 'new' ? 'new' : 'resume',
+		// A resumed task always has its phase (the journal's); a `done` one is never asked about. A missing one is the model's loud error.
+		...(task.state === 'new' || task.phase === undefined || task.phase === 'done' ? {} : { phase: task.phase }),
 		status: mapped.status,
 		hasParent: task.parentSourceId !== undefined,
 		...(mapped.type === undefined ? {} : { type: mapped.type }),
@@ -188,15 +190,20 @@ export function estimateMigration(
 		seconds += reads.source * sourceRead.seconds;
 	}
 	const cap = cost?.contentCap;
-	// At least: the time at the pace of the writes, or the hours the cap on requests that change the target needs, whichever is longer.
-	const hours =
-		cost === undefined
-			? undefined
-			: Math.round(Math.max(seconds / 3600, cap === undefined ? 0 : writes / cap.perHour) * 10) / 10;
+	// What the caps on requests that change the target ask for, in seconds: the hourly one and the per-minute one both apply, so the
+	// longer of the two (the hourly one is the stricter for any sustained run, the per-minute one only limits how fast a burst may go).
+	const capSeconds =
+		cap === undefined
+			? 0
+			: Math.max((writes / cap.perHour) * 3600, cap.perMinute === undefined ? 0 : (writes / cap.perMinute) * 60);
+	// At least: the time at the pace of the writes, or the time the caps need, whichever is longer.
+	const hours = cost === undefined ? undefined : Math.round(Math.max(seconds / 3600, capSeconds / 3600) * 10) / 10;
 	const warnings: string[] = [];
-	if (cap !== undefined && writes > cap.perHour && hours !== undefined) {
+	// A warning only when a cap really is what limits the run: at the pace of the writes alone the caps would not be reached.
+	if (cap !== undefined && capSeconds > seconds && hours !== undefined) {
+		const caps = `${cap.perMinute === undefined ? '' : `${cap.perMinute} content-generating requests a minute and `}${cap.perHour} content-generating requests an hour`;
 		warnings.push(
-			`the plan needs about ${writes} writes (requests that change the target) and ${cap.source}: expect at least ${hours} h in total with the hourly cap of ${cap.perHour} content-generating requests an hour. The run stops when the target refuses and prints when to continue: run the same command with --resume, the progress is kept per task. This is an estimate from the plan${
+			`the plan needs about ${writes} writes (requests that change the target) and ${cap.source}: expect at least ${hours} h in total with the caps of ${caps}. The run stops when the target refuses and prints when to continue: run the same command with --resume, the progress is kept per task. This is an estimate from the plan${
 				cost?.quotaPerHour === undefined
 					? ''
 					: `; the other limit, ${cost.quotaPerHour} requests an hour of all kinds, is separate (${Math.round(requests)} are estimated)`
@@ -210,6 +217,7 @@ export function estimateMigration(
 			seconds: Math.round(seconds),
 			...(hours === undefined ? {} : { hours }),
 			...(cap === undefined ? {} : { contentCapPerHour: cap.perHour }),
+			...(cap?.perMinute === undefined ? {} : { contentCapPerMinute: cap.perMinute }),
 			...(cost?.quotaPerHour === undefined ? {} : { quotaPerHour: cost.quotaPerHour }),
 		},
 		notes,
@@ -268,21 +276,25 @@ export async function buildPlan(input: PlanInput): Promise<MigrationPlan> {
 	const targetIds = new Set(targetSummaries.map(summary => summary.id));
 	const entries = new Map<string, { target: string; phase: Phase }>();
 	const vanished: string[] = [];
+	const adopted = new Set<string>();
 	for (const [sourceId, entry] of Object.entries(journal?.tasks ?? {})) {
 		if (!sourceIds.has(sourceId)) continue; // gone from the source since: nothing to continue
-		if (targetIds.has(entry.target)) entries.set(sourceId, entry);
-		else vanished.push(sourceId);
+		if (targetIds.has(entry.target)) {
+			entries.set(sourceId, entry);
+			// The journal says the creation of this task was the last thing done: its status and parent are checked (see `adopted`).
+			if (entry.phase === 'created' && target.traits.foldsCreate === true) adopted.add(sourceId);
+		} else vanished.push(sourceId);
 	}
 	const notes: string[] = [];
 	// Tasks the target holds that the journal does not know (found by their title after a lost answer, or by a marker written WITH the
 	// creation): the creation can have stopped before its close or its attachment to the parent, so their parent and status are checked.
-	const adopted = new Set<string>();
 	const claimed = new Set([...entries.values()].map(entry => entry.target));
 	const unclaimed = targetSummaries.filter(summary => !claimed.has(summary.id));
 	const needsScan =
 		caps.meta &&
 		unclaimed.length > 0 &&
 		(journal === undefined || journal.status !== 'completed' || vanished.length > 0);
+	const untouched: string[] = [];
 	const scanned = needsScan ? unclaimed.length : 0;
 	if (needsScan) {
 		const found = await scanMarkers(target.backend, unclaimed, source.project.id);
@@ -290,12 +302,24 @@ export async function buildPlan(input: PlanInput): Promise<MigrationPlan> {
 			if (sourceIds.has(sourceId) && !entries.has(sourceId)) {
 				entries.set(sourceId, { target: targetId, phase: 'created' });
 				// Only where the marker is written WITH the creation (foldsCreate): elsewhere it is written after the status and the parent.
-				if (target.traits.foldsCreate === true) adopted.add(sourceId);
+				// And only with evidence that the creation is OURS and unfinished: the journal had this task at the phase `created` (its
+				// target gone from the list, found again by the marker), or it is the creation the journal left pending. A copy found by the
+				// marker alone may have been closed or detached by a person since: it is left as it is.
+				if (target.traits.foldsCreate === true) {
+					if (journal?.tasks[sourceId]?.phase === 'created' || journal?.pending?.sourceId === sourceId) {
+						adopted.add(sourceId);
+					} else untouched.push(sourceId);
+				}
 			}
 		}
 		notes.push(
 			`read ${unclaimed.length} task(s) of the target looking for the marker ${MIGRATED_FROM_KEY} of an earlier run: ${found.size} found`
 		);
+		if (untouched.length > 0) {
+			notes.push(
+				`${untouched.length} task(s) found by marker, not touched (${untouched.slice(0, 5).join(', ')}${untouched.length > 5 ? ', ...' : ''}): the journal has no trace of their creation, so their status/parent were not re-applied; the differences, if any, are reported by the final check`
+			);
+		}
 	}
 	if (vanished.length > 0) {
 		warnings.push(

@@ -142,3 +142,89 @@ describe('the hourly cap on requests that change the target', () => {
 		expect(result.estimate.hours).toBeUndefined();
 	});
 });
+
+describe('the estimate of a resumed task depends on the phase its journal recorded', () => {
+	it('hands the model the phase of each resumed task (and none for a new one)', async () => {
+		const model = vi.fn((_tasks: readonly MigrationTaskFacts[]) => answer(1));
+		const source = side({ id: 'aaaa1111' });
+		const target = side({
+			id: 'bbbb2222',
+			traits: { cost: { requests: 4, seconds: 3, read: { requests: 2, seconds: 1 }, model } },
+		});
+		await seedSource(source.endpoint.backend);
+		const input = {
+			source: source.endpoint,
+			target: target.endpoint,
+			journalDir: target.dataDir,
+			resumeCommand: 'task migrate --resume',
+		};
+		const first = await runMigration({ ...input, options: optionsWith({ allowLoss: ['history'] }) });
+		const journal = JSON.parse(fs.readFileSync(first.journal, 'utf8')) as {
+			status: string;
+			tasks: Record<string, { phase: string }>;
+		};
+		const phases = ['created', 'fielded', 'linked', 'done'];
+		journal.status = 'stopped';
+		Object.values(journal.tasks).forEach((entry, index) => {
+			entry.phase = phases[index % phases.length]!;
+		});
+		fs.writeFileSync(first.journal, JSON.stringify(journal));
+		model.mockClear();
+
+		await runMigration({ ...input, options: optionsWith({ dryRun: true, resume: true, allowLoss: ['history'] }) });
+
+		const facts = model.mock.calls[0]![0];
+		const expected = Object.values(journal.tasks)
+			.map(entry => entry.phase)
+			.filter(phase => phase !== 'done')
+			.sort();
+		// A `done` task is not asked about; the others carry their phase.
+		expect(facts.map(task => task.phase).sort()).toEqual(expected);
+		expect(facts.every(task => task.state === 'resume')).toBe(true);
+	});
+});
+
+describe('the per-minute cap on requests that change the target', () => {
+	it('binds when it is the stricter one: the hours follow it, and the warning names both caps', async () => {
+		// 600 writes at 1 s each is 10 minutes of work, but 10 a minute needs an hour; the hourly cap (100000) is not the limit.
+		const result = await dryRun({
+			requests: 4,
+			seconds: 1,
+			contentCap: { perHour: 100000, perMinute: 10, source: 'a documented cap' },
+			model: () => answer(600, 2400, 0),
+		});
+
+		expect(result.estimate.hours).toBe(1);
+		expect(result.estimate.contentCapPerMinute).toBe(10);
+		const warning = result.warnings.find(text => text.includes('at least 1 h'));
+		expect(warning).toBeDefined();
+		expect(warning).toContain('10 content-generating requests a minute');
+		expect(warning).toContain('100000 content-generating requests an hour');
+	});
+
+	it('does not warn when the pace of the writes is already slower than both caps', async () => {
+		const result = await dryRun({
+			requests: 4,
+			seconds: 36,
+			contentCap: { perHour: 500, perMinute: 80, source: 'GitHub documents it' },
+			model: () => answer(100, 400, 0),
+		});
+
+		expect(result.warnings.join('\n')).not.toMatch(/content-generating/);
+	});
+
+	it('with GitHub numbers the hourly cap is the stricter one, and the estimate says both', async () => {
+		const result = await dryRun({
+			requests: 4,
+			seconds: 3,
+			contentCap: { perHour: 500, perMinute: 80, source: 'GitHub documents it' },
+			model: () => answer(1000, 4000, 0),
+		});
+
+		expect(result.estimate.hours).toBe(2);
+		expect(result.estimate.contentCapPerMinute).toBe(80);
+		const warning = result.warnings.find(text => text.includes('at least 2 h'))!;
+		expect(warning).toContain('80 content-generating requests a minute');
+		expect(warning).toContain('500 content-generating requests an hour');
+	});
+});

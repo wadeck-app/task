@@ -377,12 +377,19 @@ export function formatMigration(result: MigrationResult, parsed: ParsedMigrate):
 	if (result.warnings.length > 0) lines.push('Warnings:', ...result.warnings.map(warning => `  - ${warning}`));
 	if (result.estimate.requests > 0 || result.estimate.seconds > 0) {
 		const { estimate } = result;
+		// Said only when a cap is what limits the run: the hours (rounded to 0.1 h) exceed the time at the pace of the writes.
+		const capBound =
+			estimate.contentCapPerHour !== undefined &&
+			estimate.hours !== undefined &&
+			estimate.hours * 3600 - estimate.seconds > 180;
 		const cap =
-			estimate.contentCapPerHour === undefined ||
-			estimate.hours === undefined ||
-			estimate.writes <= estimate.contentCapPerHour
-				? ''
-				: `; at least ${estimate.hours} h with the hourly cap of ${estimate.contentCapPerHour} content-generating requests an hour`;
+			capBound && estimate.contentCapPerHour !== undefined
+				? `; at least ${estimate.hours} h with the caps of ${
+						estimate.contentCapPerMinute === undefined
+							? ''
+							: `${estimate.contentCapPerMinute} content-generating requests a minute and `
+					}${estimate.contentCapPerHour} content-generating requests an hour`
+				: '';
 		lines.push(
 			`Estimate:  about ${estimate.writes} writes, ${estimate.requests} requests, ${duration(estimate.seconds)} (${result.to.kind}, at the configured write spacing; computed from the plan, not measured${cap})`
 		);

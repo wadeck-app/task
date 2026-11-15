@@ -534,3 +534,85 @@ describe('the dry-run estimate against what the fake server counted (no label ex
 		expect(dry.estimate.hours).toBeDefined();
 	});
 });
+
+describe('adoption: only our own interrupted creation is forced back to the plan', () => {
+	beforeEach(seedLabels);
+
+	it('a copy found by its marker, with no journal entry, is NOT touched: what a person closed or detached stays, and the plan says so', async () => {
+		const from = await world.project('old');
+		const to = await world.githubProject('shop');
+		const ids = await world.seedTypical(from, ['child']);
+		const first = await world.migrate(from, to, { allowLoss: ['all'] });
+		const child = [...world.fake.issues.values()].find(issue => issue.title === 'Child')!;
+		// A person works on GitHub, and the journal is lost.
+		world.fake.updateIssue(child.number, { state: 'closed' });
+		world.fake.setParent(child.number, null);
+		fs.rmSync(first.journal);
+		const writes = world.fake.writes().length;
+
+		const again = await world.migrate(from, to, { allowLoss: ['all'] });
+
+		expect(world.fake.writes().length).toBe(writes);
+		expect(world.fake.issues.get(child.number)).toMatchObject({ state: 'closed', parent: null });
+		const note = again.notes.find(text => text.includes('found by marker, not touched'));
+		expect(note).toBeDefined();
+		expect(note).toContain(ids.child!);
+		expect(note).toContain('their status/parent were not re-applied');
+		// The differences are reported, as before: never repaired.
+		expect(again.verification!.mismatches.map(mismatch => mismatch.field)).toEqual(
+			expect.arrayContaining(['status', 'parent'])
+		);
+	});
+
+	it('a journal entry left at the phase `created` (our own interrupted run) has its status put back', async () => {
+		const from = await world.project('old');
+		const to = await world.githubProject('shop');
+		await world.seedTypical(from, ['closed']);
+		const first = await world.migrate(from, to, { allowLoss: ['all'] });
+		world.fake.updateIssue(1, { state: 'open' });
+		const journal = JSON.parse(fs.readFileSync(first.journal, 'utf8')) as {
+			status: string;
+			tasks: Record<string, { phase: string }>;
+		};
+		journal.status = 'stopped';
+		for (const entry of Object.values(journal.tasks)) entry.phase = 'created';
+		fs.writeFileSync(first.journal, JSON.stringify(journal));
+
+		const resumed = await world.migrate(from, to, { allowLoss: ['all'], resume: true });
+
+		expect(resumed.failure).toBeUndefined();
+		expect(world.fake.issues.get(1)).toMatchObject({ state: 'closed' });
+	});
+});
+
+describe('labels are compared as GitHub does: case-insensitively', () => {
+	async function requestsWith(existing: string): Promise<{ requests: number; added: number; labels: string[] }> {
+		await world.stop();
+		world = new CostWorld();
+		await world.start();
+		world.fake.addRepoLabel(existing);
+		const from = await world.project('old');
+		const to = await world.githubProject('shop');
+		const ctx = openResolvedProject(from, path.join(world.sandbox.root, 'global'));
+		const task = await ctx.store.create({ title: 'Labelled', status: 'backlog' });
+		await ctx.store.addLabel(task.id, 'bug');
+		await ctx.dispose?.();
+		const before = world.fake.requests.length;
+		const result = await world.migrate(from, to, { allowLoss: ['all'], emitEvents: true });
+		expect(result.verification!.mismatches).toEqual([]);
+		return {
+			requests: world.fake.requests.length - before,
+			added: result.events.filter(event => event.name === 'onTaskLabelAdded').length,
+			labels: world.fake.issues.get(1)!.labels,
+		};
+	}
+
+	it('a label that exists as `Bug` and a source label `bug` cost no extra call, and raise one event', async () => {
+		const same = await requestsWith('bug');
+		const other = await requestsWith('Bug');
+
+		expect(other.requests).toBe(same.requests);
+		expect(other.added).toBe(1);
+		expect(same.added).toBe(1);
+	});
+});

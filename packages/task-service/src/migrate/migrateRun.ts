@@ -290,7 +290,10 @@ async function fillFields(
 		});
 	}
 	for (const label of mapped.labels) {
-		const held = (record.labels ?? []).includes(label);
+		// A creation that carried the labels was answered by a backend that compares them its own way (GitHub: case-insensitively): the
+		// label it holds under another case is the label, not a missing one.
+		const wanted = label.toLowerCase();
+		const held = (record.labels ?? []).some(name => (carried ? name.toLowerCase() === wanted : name === label));
 		if (held && !carried) continue;
 		if (!held) record = await backend.addLabel(targetId, label);
 		run.emit({ name: 'onTaskLabelAdded', payload: { taskId: targetId, label, ...env } });
@@ -537,7 +540,12 @@ async function commentPass(run: Run): Promise<void> {
  * with no link and no comment to check, since the check compares nothing else; every other task, and every other backend, is read whole
  * (a remote backend answers a whole chunk in one request).
  */
-async function readBack(run: Run, chunk: readonly PlannedTask[]): Promise<Observed[]> {
+/** A task of the check that could not be read back: reported as a difference of its own, the others are still compared. */
+interface UnreadableTask {
+	unreadable: string;
+}
+
+async function readBack(run: Run, chunk: readonly PlannedTask[]): Promise<Array<Observed | UnreadableTask>> {
 	const backend = run.target.backend;
 	const cost = run.target.traits.cost;
 	const cheap = cost?.resolve !== undefined && cost.read !== undefined && cost.resolve.requests < cost.read.requests;
@@ -548,10 +556,17 @@ async function readBack(run: Run, chunk: readonly PlannedTask[]): Promise<Observ
 		chunk.filter(needsWhole).map(planned => run.targetOf(planned.mapped.sourceId))
 	);
 	let next = 0;
-	const answers: Observed[] = [];
+	const answers: Array<Observed | UnreadableTask> = [];
 	for (const planned of chunk) {
-		if (needsWhole(planned)) answers.push(whole[next++]!);
-		else answers.push((await backend.resolve(run.targetOf(planned.mapped.sourceId))) as ResolvedTask);
+		if (needsWhole(planned)) {
+			answers.push(whole[next++]!);
+			continue;
+		}
+		try {
+			answers.push((await backend.resolve(run.targetOf(planned.mapped.sourceId))) as ResolvedTask);
+		} catch (error) {
+			answers.push({ unreadable: error instanceof Error ? error.message : String(error) });
+		}
 	}
 	return answers;
 }
@@ -582,7 +597,18 @@ async function verifyPass(run: Run): Promise<MigrationMismatch[]> {
 				keepsCreatedAt: target.traits.keepsCreatedAt,
 				links: planned.mapped.links.map(link => ({ type: link.type, target: run.targetOf(link.sourceTarget) })),
 			};
-			mismatches.push(...compare(expectation, records[index]!));
+			const read = records[index]!;
+			if ('unreadable' in read) {
+				mismatches.push({
+					sourceId,
+					targetId: expectation.targetId,
+					field: 'read-back',
+					expected: 'the task, readable on the target',
+					actual: `could not be read: ${read.unreadable}`,
+				});
+			} else {
+				mismatches.push(...compare(expectation, read));
+			}
 			run.progress({
 				stage: 'verify',
 				done: start + index + 1,

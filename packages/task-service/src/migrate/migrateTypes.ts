@@ -106,6 +106,8 @@ export interface MigrationEstimate {
 	hours?: number;
 	/** The cap on requests that change the target, per hour, when it has one (GitHub: 500). */
 	contentCapPerHour?: number;
+	/** The cap on requests that change the target, per minute, when it has one (GitHub: 80). */
+	contentCapPerMinute?: number;
 }
 
 /** `stopped`: in place, everything was written but the source changed meanwhile: nothing was switched, `--resume` continues. */

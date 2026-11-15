@@ -47,14 +47,36 @@ export function githubCostModel(
 		let markerLabels = 0;
 
 		for (const task of tasks) {
-			// A task the run creates carries its fields in the create call; one an earlier run created gets what it lacks field by field.
+			// A task the run creates carries its fields in the create call; one an earlier run created gets what it lacks field by field,
+			// and only what its journal phase has not done yet (created: fields, links, comments; fielded: links, comments; linked: comments).
 			const carried = task.state === 'new';
+			if (!carried && task.phase === undefined) {
+				throw new Error(
+					`githubCostModel: the resumed task has no journal phase (state resume needs phase created, fielded or linked); the estimate would be a guess`
+				);
+			}
+			const fieldsLeft = carried || task.phase === 'created';
+			const linksLeft = carried || task.phase !== 'linked';
 			let separate = 0;
 			const rule = settings.statusMap[task.status];
+			if (rule === undefined) {
+				throw new Error(
+					`githubCostModel: the status "${task.status}" is not in strategy.options.statusMap (known: ${Object.keys(settings.statusMap).join(', ')}); the cost of closing or labelling it cannot be counted`
+				);
+			}
+			if (
+				(Object.keys(task.meta).length > 0 || task.marker) &&
+				metaMode !== 'labels' &&
+				metaMode !== 'body-block'
+			) {
+				throw new Error(
+					`githubCostModel: the task has metadata (or the migration marker) but the project declares no meta fill (fills.meta: labels or body-block); the migration would be refused, not free`
+				);
+			}
 			if (carried) {
 				writes += 1;
 				requests += CREATE_REQUESTS;
-				if (rule?.state === 'closed') {
+				if (rule.state === 'closed') {
 					writes += 1;
 					requests += CLOSE_REQUESTS;
 				}
@@ -62,28 +84,30 @@ export function githubCostModel(
 					writes += 1;
 					requests += ATTACH_REQUESTS;
 				}
-				if (rule?.label !== undefined) labels.add(lower(rule.label));
+				if (rule.label !== undefined) labels.add(lower(rule.label));
 			}
-			if (task.type !== undefined) {
+			if (fieldsLeft && task.type !== undefined) {
 				const typeRule = Object.hasOwn(settings.typeMap, task.type) ? settings.typeMap[task.type] : undefined;
 				if (typeRule?.issueType !== undefined || !carried) separate++;
 				else labels.add(lower(typeRule?.label ?? `${settings.typePrefix}${task.type}`));
 			}
-			if (task.priority !== undefined) {
+			if (fieldsLeft && task.priority !== undefined) {
 				if (carried && priorityStorage === 'label') labels.add(lower(priorityLabel(task.priority)));
 				else {
 					separate++;
 					if (priorityStorage === 'auto') autoPriority = true;
 				}
 			}
-			if (task.assignee !== undefined) separate++;
-			for (const label of task.labels) {
+			if (fieldsLeft && task.assignee !== undefined) separate++;
+			for (const label of fieldsLeft ? task.labels : []) {
 				if (carried) labels.add(lower(label));
 				else separate++;
 			}
 			// Metadata: labels (one per entry, the marker's is unique to its task) or entries of the body block (no cost in the create).
-			const entries = Object.entries(task.meta);
-			if (metaMode === 'labels') {
+			const entries = fieldsLeft ? Object.entries(task.meta) : [];
+			if (!fieldsLeft) {
+				// Nothing left to write: the metadata and the marker were set by the phase the earlier run reached.
+			} else if (metaMode === 'labels') {
 				for (const [key, value] of entries) {
 					if (carried) labels.add(lower(`${settings.metaPrefix}${key}${value === '' ? '' : `=${value}`}`));
 					else separate++;
@@ -98,8 +122,10 @@ export function githubCostModel(
 			writes += separate;
 			requests += separate * SEPARATE_WRITE_REQUESTS;
 
-			writes += task.links.length;
-			requests += task.links.length * LINK_REQUESTS;
+			if (linksLeft) {
+				writes += task.links.length;
+				requests += task.links.length * LINK_REQUESTS;
+			}
 			writes += task.comments;
 			requests += task.comments * COMMENT_REQUESTS;
 

@@ -4,8 +4,13 @@
 
 /** What the plan decided for one task of a migration: the facts a backend's cost model needs to count the calls the task will cost. */
 export interface MigrationTaskFacts {
-	/** `new`: the run creates the task; `resume`: it is already on the target (counted as everything but its creation, an upper bound). */
+	/** `new`: the run creates the task; `resume`: it is already on the target (what is left to do depends on `phase`). */
 	state: 'new' | 'resume';
+	/**
+	 * Required for `resume`, how far the earlier run got (the journal's phase): `created` = the fields, links and comments are left (fields
+	 * counted as writes of their own, an upper bound), `fielded` = links and comments, `linked` = comments. Absent for `new`.
+	 */
+	phase?: 'created' | 'fielded' | 'linked';
 	/** The status the task ends in on the target. */
 	status: string;
 	/** The task has a parent (it is attached to it after it is created). */
