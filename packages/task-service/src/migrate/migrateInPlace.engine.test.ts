@@ -39,6 +39,7 @@ const PROJECT_ID = 'cccc3333';
 function hooks(target: LocalSide, switchConfig: InPlaceHooks['switchConfig']): InPlaceHooks {
 	return {
 		target: { hash: 'hash-1', parts: { type: 'a' }, location: 'kind:local' },
+		source: { kind: 'local', location: 'kind:local' },
 		idMapFile: path.join(target.dataDir, 'idmap.json'),
 		switchConfig,
 	};
@@ -111,7 +112,7 @@ describe('runMigration in place', () => {
 		expect(switchConfig).toHaveBeenCalledTimes(1);
 	});
 
-	it('writes the id map atomically through the SDK, after every creation, in creation order', async () => {
+	it('writes the id map atomically through the SDK, on the journal throttle, flushed before the switch, in creation order', async () => {
 		const source = side({ id: PROJECT_ID });
 		await seedSource(source.endpoint.backend);
 		const target = side({ id: PROJECT_ID });
@@ -123,14 +124,16 @@ describe('runMigration in place', () => {
 			journalDir: target.dataDir,
 			options: optionsWith({ allowLoss: ['history'] }),
 			resumeCommand: 'resume',
+			// A fixed clock: every creation falls inside one throttle interval, whatever the speed of the machine.
+			now: () => 1_000,
 			inPlace: hooks(target, () => undefined),
 		});
 
 		const sizes = atomicWrites
 			.filter(write => write.file === idMapFile)
 			.map(write => (JSON.parse(write.content) as unknown[]).length);
-		// 0 at the start, then 1..6 as the tasks are created, then the final one before the switch.
-		expect(sizes.slice(0, 8)).toEqual([0, 1, 2, 3, 4, 5, 6, 6]);
+		// 0 at the start; the creations come within one throttle interval so they wait; the whole map is written before the switch.
+		expect(sizes).toEqual([0, 6]);
 		const map = JSON.parse(fs.readFileSync(idMapFile, 'utf8')) as Array<{ from: string; to: string }>;
 		expect(map).toHaveLength(6);
 	});

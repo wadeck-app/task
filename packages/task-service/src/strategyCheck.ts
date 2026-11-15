@@ -109,6 +109,7 @@ async function backendLines(
 			fidelity: strategy.fidelity,
 			fills: strategy.fills,
 			log: taskLogWriter(),
+			...(target.memoryCache === true ? { memoryCache: true } : {}),
 			...(opener === undefined ? {} : { openTransport: opener }),
 		});
 	} catch (error) {

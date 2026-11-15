@@ -12,7 +12,7 @@ import { PriorityResolver } from './githubPriorityStorage.js';
 import type { GitHubSettings } from './githubOptions.js';
 import { resolveToken } from './githubToken.js';
 import { githubTraits } from './githubTraits.js';
-import { DiskResponseCache } from './responseCache.js';
+import { DiskResponseCache, MemoryResponseCache } from './responseCache.js';
 import { StatusMapper } from './statusMapping.js';
 
 /** The page of the repository on the web, derived from the API address: github.com, a GHES `https://HOST/api/v3`, or a test server. */
@@ -143,22 +143,25 @@ export const githubPlugin: StrategyPlugin = {
 			notices.push(next);
 		};
 		const cacheDir = path.join(context.dataDir, 'cache', 'github');
-		const cache = new DiskResponseCache(
-			cacheDir,
-			context.writeFile,
-			(error, file) =>
-				context.log(
-					'warn',
-					`github cache: ${file} could not be written (${error instanceof Error ? error.message : String(error)})`
-				),
-			{
-				onPurgeError: (error, file) =>
-					context.log(
-						'warn',
-						`github cache: ${file} could not be purged (entries older than 30 days are deleted at the first access; ${error instanceof Error ? error.message : String(error)}). Delete it by hand if this keeps happening.`
-					),
-			}
-		);
+		const cache =
+			context.memoryCache === true
+				? new MemoryResponseCache()
+				: new DiskResponseCache(
+						cacheDir,
+						context.writeFile,
+						(error, file) =>
+							context.log(
+								'warn',
+								`github cache: ${file} could not be written (${error instanceof Error ? error.message : String(error)})`
+							),
+						{
+							onPurgeError: (error, file) =>
+								context.log(
+									'warn',
+									`github cache: ${file} could not be purged (entries older than 30 days are deleted at the first access; ${error instanceof Error ? error.message : String(error)}). Delete it by hand if this keeps happening.`
+								),
+						}
+					);
 		const debug = context.env['TASK_DEBUG'] === '1';
 		const client = new GitHubClient({
 			baseUrl: settings.baseUrl,

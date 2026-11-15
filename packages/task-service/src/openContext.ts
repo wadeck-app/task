@@ -29,6 +29,8 @@ export interface OpenTaskContextInput {
 	env?: NodeJS.ProcessEnv;
 	/** Every read comes from the system itself, never from a cache (the source of a migration). Default: the plugin's own policy. */
 	freshReads?: boolean;
+	/** Keep the response caches of the strategy in memory: nothing is written under the data folder (a dry run). Default: the plugin's own place. */
+	memoryCache?: boolean;
 	/** The writes must raise no queue event (a migration): a remote strategy asks its server to stay silent. Default: events as usual. */
 	suppressEvents?: boolean;
 	/**
@@ -83,6 +85,7 @@ export function openTaskContext(input: OpenTaskContextInput): TaskServiceContext
 				fills: strategy.fills,
 				log: taskLogWriter(),
 				...(input.freshReads === true ? { freshReads: true } : {}),
+				...(input.memoryCache === true ? { memoryCache: true } : {}),
 				...(input.suppressEvents === true ? { suppressEvents: true } : {}),
 				...(opener === undefined ? {} : { openTransport: opener }),
 			}),
@@ -119,7 +122,10 @@ export function openTaskContext(input: OpenTaskContextInput): TaskServiceContext
 export function openResolvedProject(
 	resolved: ResolvedProject,
 	globalConfigDir?: string,
-	extra: Pick<OpenTaskContextInput, 'env' | 'registry' | 'freshReads' | 'suppressEvents' | 'ownLayer'> = {}
+	extra: Pick<
+		OpenTaskContextInput,
+		'env' | 'registry' | 'freshReads' | 'memoryCache' | 'suppressEvents' | 'ownLayer'
+	> = {}
 ): TaskServiceContext {
 	return openTaskContext({
 		storage: resolved.storage,

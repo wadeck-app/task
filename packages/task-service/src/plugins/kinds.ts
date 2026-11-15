@@ -92,6 +92,11 @@ export interface StrategyContext {
 	 */
 	freshReads?: boolean;
 	/**
+	 * Keep every response cache in memory: nothing is created or written under the data folder (a dry run writes nothing at all).
+	 * Absent: the plugin keeps its cache where it always does.
+	 */
+	memoryCache?: boolean;
+	/**
 	 * Opens the transport the project's `strategy.options.transport` slot selects (a remote strategy talks through it; the host resolved
 	 * and validated the slot at load). Absent when the strategy has no transport slot.
 	 */

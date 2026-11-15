@@ -145,6 +145,9 @@ export function parseMigrateArgs(rest: readonly string[], jsonMode: boolean): Pa
 			case '--accept-draft-change':
 				options.acceptDraftChange = true;
 				break;
+			case '--allow-non-empty-target':
+				options.allowNonEmptyTarget = true;
+				break;
 			default:
 				if (arg.startsWith('-')) return errorOutput(jsonMode, `unknown option: ${arg}`, USAGE);
 				return errorOutput(jsonMode, `unexpected argument: ${arg}`, USAGE);
@@ -163,6 +166,13 @@ export function parseMigrateArgs(rest: readonly string[], jsonMode: boolean): Pa
 			jsonMode,
 			`${flag} only goes with --in-place`,
 			'It accepts a read-back difference or a changed draft of an in-place migration: task migrate --in-place --to-config <file> ...'
+		);
+	}
+	if (!inPlace && options.allowNonEmptyTarget === true) {
+		return errorOutput(
+			jsonMode,
+			'--allow-non-empty-target only goes with --in-place',
+			'It accepts tasks that already are on the target of an in-place migration: task migrate --in-place --to-config <file> ...'
 		);
 	}
 	if (options.acceptDraftChange === true && !options.resume) {
@@ -279,6 +289,12 @@ function inPlaceLines(result: MigrationResult, report: NonNullable<MigrationResu
 		}
 		if (report.checksNote !== undefined) lines.push(`  not checked: ${report.checksNote}`);
 	}
+	if (result.targetNotEmpty !== undefined) {
+		lines.push(
+			`BLOCKED:   the target already holds ${result.targetNotEmpty.count} task${result.targetNotEmpty.count === 1 ? '' : 's'} that this migration did not create (${result.targetNotEmpty.ids.join(', ')}${result.targetNotEmpty.count > result.targetNotEmpty.ids.length ? ', ...' : ''}): a real run refuses`,
+			`           ${result.targetNotEmpty.hint}`
+		);
+	}
 	if (report.draft !== undefined) lines.push(`Draft:     ${report.draft}`);
 	if (report.acceptedDifferences !== undefined && report.acceptedDifferences.length > 0) {
 		lines.push(
@@ -291,14 +307,19 @@ function inPlaceLines(result: MigrationResult, report: NonNullable<MigrationResu
 	}
 	lines.push(`Id map:    ${report.idMapFile}`);
 	const backup = report.backup === undefined ? '' : `; the previous one is kept as ${report.backup}`;
-	if (report.switched) {
+	if (report.bookkeepingPending === true) {
+		lines.push(
+			`Switch:    DONE: ${config} now is the draft, BUT the journal could not be saved: run the same command with --resume to finish the bookkeeping`,
+			...(report.rollback === undefined ? [] : [`Rollback:  ${report.rollback}`])
+		);
+	} else if (report.switched) {
 		lines.push(
 			`Switch:    DONE: ${config} now is the draft${backup}`,
 			`Rollback:  ${report.rollback ?? 'restore the previous config.yml'}`
 		);
 	} else if (result.status === 'dry-run') {
 		lines.push(
-			`Switch:    would replace ${config} by the draft after the read-back${backup.replace('; the previous one is kept as', ', keeping the old one as')}`
+			`Switch:    would replace ${config} by the draft after the read-back, keeping the old one (when there is one) as ${config}.before-migration`
 		);
 	} else if (result.failure?.step === 'switch') {
 		lines.push(
@@ -498,7 +519,10 @@ export async function runMigrate(
 			await sink.flush?.();
 		}
 	}
-	const exitCode = result.status === 'dry-run' || result.status === 'completed' ? 0 : 1;
+	const exitCode =
+		(result.status === 'dry-run' || result.status === 'completed') && result.inPlace?.bookkeepingPending !== true
+			? 0
+			: 1;
 	const { events: _events, ...printed } = result;
 	return jsonMode
 		? { exitCode, output: JSON.stringify(printed, null, 2) }

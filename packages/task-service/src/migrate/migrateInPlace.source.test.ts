@@ -28,6 +28,7 @@ const PROJECT_ID = 'dddd4444';
 function hooks(target: LocalSide, switchConfig: InPlaceHooks['switchConfig']): InPlaceHooks {
 	return {
 		target: { hash: 'hash-1', parts: { type: 'a' }, location: 'kind:local' },
+		source: { kind: 'local', location: 'kind:local' },
 		idMapFile: path.join(target.dataDir, 'idmap.json'),
 		switchConfig,
 	};

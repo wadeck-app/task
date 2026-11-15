@@ -227,6 +227,12 @@ Usage:
                         and defaults.priority), when the storage location is the same. Connection-only options (tokenEnv, tokenFile,
                         timeoutSeconds, cache, pageSize, maxPages, writeSpacingSeconds, rateLimit) and comments never need it. Another
                         location is always refused. Never copied into printed commands either.
+  --allow-non-empty-target
+                        (in place) Go on although the target already holds tasks that nothing of this migration claims (no journal entry,
+                        no marker): a copy of an earlier migration that was rolled back, the old local files still in the data folder, an
+                        existing repository. Without it a real run refuses before writing anything (the count, the ids, what to check) and a
+                        dry run reports it as BLOCKED. Recorded in the journal, so a resume does not need it again. Never copied into printed
+                        commands.
   --dry-run             Read both sides, print the plan, the loss table and the estimate, and stop: nothing is written (no task, no journal,
                         no lock, no request that changes anything); exit 0 even when the plan is blocked.
   --allow-loss <kinds>  Accept losses by kind (comma separated, repeatable). Without it a plan that loses anything is BLOCKED (exit 1,
@@ -282,9 +288,14 @@ In place: the copy is the one above (journal, marker meta migratedFrom=<project 
     the project is about to write its first task (a refused or blocked run leaves both files). An unfinished run is resumed only with the same target (see --accept-draft-change): another
     option at the same location needs --resume --accept-draft-change, another location is refused; a dry run only prints a note.
   - --dry-run also prints the strategy checks that need no write (token readable, repository reachable, statuses mapped); a check that cannot
-    run without a write is listed as not checked. It writes nothing: no journal, lock, id map or config.
+    run without a write is listed as not checked. It writes nothing: no journal, lock, id map or config, and no response cache under the data folder
+    (the caches of the dry run live in memory).
   - Events: unchanged (none per task unless --emit-events). The one summary event onTasksMigrated (from and to project are the same) is raised
     after the switch.
+  - The journal records the storage the tasks are read from: a --resume while config.yml points to another source is refused. The read-back and the
+    last source check read fresh; a read answered from a cache (the system was unreachable) stops the run (step stale-read), never a switch. An
+    archive a crash interrupted is completed at the start of the next run. If the journal cannot be saved after the switch, the answer says so and
+    the exit code is 1: run the same command with --resume.
 
 Journal and idempotence: <target data folder>/migrate-journal-<source id>-<target id>.json (migrate-journal-<project id>-inplace.json for --in-place; atomic writes; a damaged file is a loud error, never
 replaced). A second run recognises the tasks it already migrated by the journal, else by the marker in the target, and creates nothing. A lock

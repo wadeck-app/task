@@ -3,7 +3,6 @@
 // the second time with the draft in place of its own config layer (nothing is written until the switch). The engine does the copy, the
 // read-back and the journal; this file reads the draft ONCE, takes the lock, decides what an earlier journal means, refuses what cannot
 // work, hands the engine the switch and releases both contexts.
-import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -21,10 +20,12 @@ import type { OwnLayerOverride } from '../projectConfig.js';
 import type { ResolvedProject } from '../resolveProject.js';
 import { ownConfigFile } from '../storage.js';
 import { checkStrategy } from '../strategyCheck.js';
+import { canonical, sha256Hex } from './canonicalJson.js';
 import { MigrationRefusedError } from './migrateErrors.js';
 import {
 	acquireLock,
 	archiveFiles,
+	recoverArchives,
 	idMapFileName,
 	inPlaceJournalFileName,
 	readJournal,
@@ -63,24 +64,10 @@ export interface MigrateInPlaceInput {
 	writeFile?: (file: string, content: string) => void;
 }
 
-function sha256(text: string): string {
-	return crypto.createHash('sha256').update(text).digest('hex');
-}
+const sha256 = sha256Hex;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-/** JSON with the keys of every object sorted: the same content always gives the same text. */
-function canonical(value: unknown): string {
-	if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-	if (isRecord(value)) {
-		return `{${Object.keys(value)
-			.sort()
-			.map(key => `${JSON.stringify(key)}:${canonical(value[key])}`)
-			.join(',')}}`;
-	}
-	return JSON.stringify(value) ?? 'null';
 }
 
 function endpointOf(ctx: TaskServiceContext, resolved: ResolvedProject): MigrationEndpoint {
@@ -313,6 +300,7 @@ interface Locked extends MigrateInPlaceInput {
 
 async function migrateLocked(input: Locked): Promise<MigrationResult> {
 	const { project, options, draft, configFile, backupFile, journalFile, idMapFile, definition, clock } = input;
+	const dataDir = project.storage.dataDir;
 	const write = input.writeFile ?? writeFileAtomic;
 	const notes: string[] = [];
 	const warnings: string[] = [];
@@ -320,6 +308,17 @@ async function migrateLocked(input: Locked): Promise<MigrationResult> {
 	// What config.yml is NOW (the snapshot the switch is judged against), and what an earlier run left.
 	const snapshot = readText(configFile);
 	const backup = readText(backupFile);
+	// An archive a crash interrupted is finished before anything reads the journal; a dry run only says so.
+	if (options.dryRun) {
+		const stray = fs.existsSync(dataDir) && fs.readdirSync(dataDir).some(name => name.includes('.archiving-'));
+		if (stray) {
+			notes.push(
+				'an interrupted archive of an earlier migration is in the data folder (*.archiving-*): a real run completes it first'
+			);
+		}
+	} else {
+		notes.push(...recoverArchives([journalFile, idMapFile]));
+	}
 	const journal = readJournal(journalFile, { fromId: project.id, toId: project.id });
 	let ignoreJournal = false;
 	let archiveBeforeWrite: (() => void) | undefined;
@@ -440,10 +439,17 @@ async function migrateLocked(input: Locked): Promise<MigrationResult> {
 	let checks: Pick<InPlaceReport, 'checks' | 'checksNote'> = {};
 	try {
 		// The source is the project as it is now, read fresh; the target is the project as it will be (the draft in place of its config).
-		const source = openResolvedProject(project, input.globalConfigDir, { ...open, freshReads: true });
+		const source = openResolvedProject(project, input.globalConfigDir, {
+			...open,
+			freshReads: true,
+			...(options.dryRun ? { memoryCache: true } : {}),
+		});
 		contexts.push(source);
 		const target = openResolvedProject(project, input.globalConfigDir, {
 			...open,
+			// Fresh too: the read-back and the last check before the switch must see what the system holds now, not a cache still valid.
+			freshReads: true,
+			...(options.dryRun ? { memoryCache: true } : {}),
 			...(options.emitEvents ? {} : { suppressEvents: true }),
 			ownLayer: draft.layer,
 		});
@@ -478,6 +484,7 @@ async function migrateLocked(input: Locked): Promise<MigrationResult> {
 						...(project.path === undefined ? {} : { path: project.path }),
 					},
 					ownLayer: draft.layer,
+					memoryCache: true,
 					...(input.globalConfigDir === undefined ? {} : { globalConfigDir: input.globalConfigDir }),
 					...(input.registry === undefined ? {} : { registry: input.registry }),
 					...(input.env === undefined ? {} : { env: input.env }),
@@ -545,6 +552,10 @@ async function migrateLocked(input: Locked): Promise<MigrationResult> {
 			...input.engine,
 			inPlace: {
 				target: definition,
+				source: {
+					kind: sourcePlugin?.backendKind ?? 'local',
+					location: sourceWhere ?? `kind:${sourcePlugin?.backendKind ?? 'local'}`,
+				},
 				idMapFile,
 				...(ignoreJournal ? { ignoreJournal: true } : {}),
 				...(archiveBeforeWrite === undefined ? {} : { beforeWrite: archiveBeforeWrite }),
@@ -629,11 +640,15 @@ function assembleResult(input: Locked, engineResult: MigrationResult, extra: Ass
 		result = { ...result, events: [] };
 	}
 
+	// Backup and rollback are reported only when they are true: the config was replaced and the old one is on disk.
+	const switched = result.inPlace?.switched ?? false;
+	const backupKept = switched && extra.original !== undefined && readText(backupFile) !== undefined;
 	// What the draft drops from the config it replaces, and whether the draft file moved under the run.
 	const dropped = keysDropped(extra.original, draft);
 	if (dropped.length > 0) {
+		const one = dropped.length === 1;
 		warnings.push(
-			`the draft replaces config.yml as a whole and does not have ${dropped.join(', ')}: ${dropped.length === 1 ? 'that key is' : 'those keys are'} gone after the switch (${extra.original === undefined ? '' : `the old file is kept as ${backupFile}; `}to keep ${dropped.length === 1 ? 'it' : 'them'}: copy the current config.yml, add the strategy section, and use that file as the draft)`
+			`the draft replaces config.yml as a whole and does not have ${dropped.join(', ')}: ${one ? 'that key' : 'those keys'} ${switched ? (one ? 'is' : 'are') : one ? 'would be' : 'would be'} gone after the switch (${backupKept ? `the old file is kept as ${backupFile}; ` : switched ? '' : `the old file would be kept as ${backupFile}; `}to keep ${dropped.length === 1 ? 'it' : 'them'}: copy the current config.yml, add the strategy section, and use that file as the draft)`
 		);
 	}
 	const moved = readText(draft.file) !== draft.text;
@@ -658,8 +673,11 @@ function assembleResult(input: Locked, engineResult: MigrationResult, extra: Ass
 			...(accepted === undefined ? {} : { acceptedDifferences: accepted }),
 			draft: draft.file,
 			config: configFile,
-			...(extra.original === undefined ? {} : { backup: backupFile }),
-			rollback: rollbackText(extra.original, configFile, backupFile, result.from.kind, result.to.kind),
+			...(backupKept ? { backup: backupFile } : {}),
+			...(switched && (backupKept || extra.original === undefined)
+				? { rollback: rollbackText(extra.original, configFile, backupFile, result.from.kind, result.to.kind) }
+				: {}),
+			...(result.inPlace?.bookkeepingPending ? { bookkeepingPending: true } : {}),
 			...(dropped.length === 0 ? {} : { configKeysDropped: dropped }),
 			...(moved ? { draftChangedOnDisk: true } : {}),
 			...extra.checks,

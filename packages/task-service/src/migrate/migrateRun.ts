@@ -35,6 +35,7 @@ import type {
 	MigrationProgress,
 	MigrationResult,
 	MigrationStatus,
+	TargetNotEmpty,
 } from './migrateTypes.js';
 import { compare } from './migrateVerify.js';
 import type { Expectation } from './migrateVerify.js';
@@ -46,6 +47,8 @@ import type { Expectation } from './migrateVerify.js';
 export interface InPlaceHooks {
 	/** What the run migrates to: hash, parts, storage location (stored in the journal; the caller decides what a change of it means). */
 	target: { hash: string; parts: Record<string, string>; location: string };
+	/** Where the tasks are read from (kind and storage location), stored in the journal: a resume with another source is refused. */
+	source: { kind: string; location: string };
 	/** Where the persistent id map is written (atomically, after every creation). */
 	idMapFile: string;
 	/** Do not read the journal on disk (a dry run next to a finished run, or to one of another target). */
@@ -125,6 +128,37 @@ class Run {
 	/** True when this run replaced the config (in-place). */
 	switchedNow = false;
 	private lastSave = 0;
+	private lastMapSave = 0;
+	/** The id map file is behind the journal (true at the start: the first write repairs a map an earlier crash left behind). */
+	private mapDirty = true;
+	/** In place: the journal could not be saved after the config was replaced. */
+	bookkeepingPending = false;
+
+	/** The journal holds a task the id map file does not: the next {@link saveIdMap} writes it. */
+	markMapDirty(): void {
+		this.mapDirty = true;
+	}
+
+	/**
+	 * Reads the notices both sides kept since the last call. The ones that are not `stale` become warnings; the texts of the `stale` ones
+	 * (a cached answer served because the system could not be reached) are returned.
+	 */
+	collectNotices(): string[] {
+		const stale: string[] = [];
+		for (const [label, endpoint] of [
+			['source', this.input.source],
+			['target', this.input.target],
+		] as const) {
+			for (const notice of endpoint.takeNotices?.() ?? []) {
+				if (notice.kind === 'stale') {
+					stale.push(`${label}: ${notice.text}`);
+				} else if (!this.warnings.includes(`${label}: ${notice.text}`)) {
+					this.warnings.push(`${label}: ${notice.text}`);
+				}
+			}
+		}
+		return stale;
+	}
 
 	constructor(
 		readonly input: RunMigrationInput,
@@ -164,9 +198,15 @@ class Run {
 	}
 
 	/** In-place: the id map as the journal knows it now, written whole and atomically (creation order). */
-	saveIdMap(): void {
+	saveIdMap(force = false): void {
 		const file = this.input.inPlace?.idMapFile;
 		if (file === undefined) return;
+		const now = (this.input.now ?? Date.now)();
+		// The same throttle as the journal; nothing to write when the journal holds nothing new since the last write.
+		if (!force && now - this.lastMapSave < JOURNAL_INTERVAL_MS) return;
+		if (!this.mapDirty) return;
+		this.lastMapSave = now;
+		this.mapDirty = false;
 		writeIdMap(
 			file,
 			Object.entries(this.journal.tasks).map(([from, entry]) => ({ from, to: entry.target }))
@@ -310,6 +350,7 @@ async function createPass(run: Run): Promise<void> {
 			delete run.journal.pending;
 			if (run.targetClock === undefined || record.createdAt > run.targetClock) run.targetClock = record.createdAt;
 			run.save(true);
+			run.markMapDirty();
 			run.saveIdMap();
 			run.fresh.add(sourceId);
 			run.counts.created++;
@@ -639,7 +680,46 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 			));
 	let releaseWarning: string | undefined;
 	try {
+		const knownSource = existing?.inPlace?.source;
+		if (
+			input.inPlace !== undefined &&
+			knownSource !== undefined &&
+			(knownSource.kind !== input.inPlace.source.kind || knownSource.location !== input.inPlace.source.location)
+		) {
+			throw new MigrationRefusedError(
+				`this migration started reading the tasks of ${source.project.name} from ${knownSource.location} (${knownSource.kind}), and its config.yml now points to ${input.inPlace.source.location} (${input.inPlace.source.kind}): the tasks it copied are not the ones that source holds`,
+				`Put config.yml back as it was when the run started (the storage it read the tasks from), then run the same command with --resume. If that run is abandoned, move ${journalFile} away and run again.`
+			);
+		}
 		const plan = await buildPlan({ source, target, options, journal: existing, onProgress: input.onProgress });
+		// In place, the target is the storage the project is about to use: tasks already there that this migration did not create (no journal
+		// entry, no marker) would be duplicated by the copy.
+		let targetNotEmpty: TargetNotEmpty | undefined;
+		let nonEmptyAccepted = false;
+		if (input.inPlace !== undefined) {
+			const claimed = new Set<string>([
+				...Object.values(existing?.tasks ?? {}).map(entry => entry.target),
+				...plan.tasks.flatMap(planned => (planned.targetId === undefined ? [] : [planned.targetId])),
+			]);
+			const foreign = (await listAll(target.backend)).filter(summary => !claimed.has(summary.id));
+			if (foreign.length > 0) {
+				if (options.allowNonEmptyTarget === true || existing?.inPlace?.nonEmptyTargetAccepted === true) {
+					nonEmptyAccepted = true;
+				} else {
+					targetNotEmpty = {
+						count: foreign.length,
+						ids: foreign.slice(0, 10).map(summary => summary.id),
+						hint: 'They may be the copy of an earlier migration that was rolled back, the old local files still in the data folder after a rollback, or the tasks of an existing repository or project. Copying now would duplicate them. Remove them from the target, or accept the duplicates with --allow-non-empty-target (recorded in the journal).',
+					};
+					if (!options.dryRun) {
+						throw new MigrationRefusedError(
+							`the target already holds ${foreign.length} task${foreign.length === 1 ? '' : 's'} that this migration did not create and nothing claims (${targetNotEmpty.ids.join(', ')}${foreign.length > 10 ? ', ...' : ''})`,
+							targetNotEmpty.hint
+						);
+					}
+				}
+			}
+		}
 		const base = {
 			dryRun: options.dryRun,
 			from: side(source),
@@ -673,6 +753,7 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 						: [{ source: planned.mapped.sourceId, target: planned.targetId }]
 				),
 				events: [],
+				...(targetNotEmpty === undefined ? {} : { targetNotEmpty }),
 			};
 		}
 
@@ -709,6 +790,8 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 				verified: false,
 				// Reset: a run that comes back to the full path has not started a switch yet.
 				switchStarted: false,
+				source: input.inPlace.source,
+				...(nonEmptyAccepted ? { nonEmptyTargetAccepted: true } : {}),
 			};
 		}
 		delete journal.lastError;
@@ -717,7 +800,7 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 		const run = new Run(input, plan, journal, journalFile);
 		if (lock?.tookOver !== undefined) run.warnings.push(lock.tookOver);
 		run.save(true);
-		run.saveIdMap();
+		run.saveIdMap(true);
 
 		let status: MigrationStatus = 'completed';
 		let failure: MigrationFailure | undefined;
@@ -737,7 +820,16 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 				run.currentSourceId = undefined;
 				// The source is read again, whole, before the read-back result is judged: it is the cause when both differ.
 				const changes = await sourceChanges(run);
-				if (changes !== undefined) {
+				// A read answered from a cache (the system was unreachable) proves nothing: never switch on it.
+				const stale = run.collectNotices();
+				if (stale.length > 0) {
+					status = 'stopped';
+					failure = {
+						step: 'stale-read',
+						message: `a read was answered from a cache because the system could not be reached, so the copy cannot be trusted yet (${stale.join('; ')})`,
+						hint: 'Nothing was switched. Retry when the system is reachable: run the same command with --resume, every task is read back again.',
+					};
+				} else if (changes !== undefined) {
 					if (changes.added.length > 0 || !accept) {
 						status = 'stopped';
 						failure = changes.failure;
@@ -768,7 +860,7 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 				];
 				journal.inPlace!.verified = true;
 				if (accepted.length > 0) journal.inPlace!.acceptedDifferences = accepted;
-				run.saveIdMap();
+				run.saveIdMap(true);
 				run.save(true);
 				await inPlace.switchConfig(started => {
 					journal.inPlace!.switchStarted = started;
@@ -797,7 +889,18 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 				message: failure.message,
 			};
 		}
-		run.save(true);
+		try {
+			run.save(true);
+			run.saveIdMap(true);
+		} catch (error) {
+			if (!run.switchedNow) throw error;
+			// The config is already the draft: the answer must say so, and how to finish. The journal on disk still says verified and
+			// switchStarted, with every task done: the next --resume completes the bookkeeping.
+			run.bookkeepingPending = true;
+			run.warnings.push(
+				`the configuration was switched but the journal could not be saved: run the same command with --resume to finish the bookkeeping (${error instanceof Error ? error.message : String(error)})`
+			);
+		}
 
 		// Counts, from what the journal ends up holding: a task an earlier run had created and this one finished is "resumed".
 		for (const planned of plan.tasks) {
@@ -806,7 +909,7 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 			else if (!finished) run.counts.remaining++;
 			else if (planned.state === 'resume') run.counts.resumed++;
 		}
-		for (const notice of target.takeNotices?.() ?? []) run.warnings.push(`target: ${notice.text}`);
+		for (const text of run.collectNotices()) run.warnings.push(text);
 		if (run.counts.created + run.counts.resumed + run.counts.failed > 0 || run.switchedNow) {
 			run.events.push({
 				name: 'onTasksMigrated',
@@ -845,6 +948,7 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 						inPlace: {
 							switched: run.switchedNow,
 							idMapFile: input.inPlace.idMapFile,
+							...(run.bookkeepingPending ? { bookkeepingPending: true } : {}),
 							...(run.switchedNow && journal.inPlace?.acceptedDifferences !== undefined
 								? { acceptedDifferences: journal.inPlace.acceptedDifferences }
 								: {}),

@@ -1,8 +1,8 @@
 // What a migration maps of a source task, as comparable hashes: an in-place run reads the source again right before it switches and must
 // notice an edit to anything the copy carries (not only the title and the status).
-import * as crypto from 'node:crypto';
-
 import type { VersionedRecord } from '@wadeck-app/task-core';
+
+import { canonical, sha256Hex } from './canonicalJson.js';
 
 /** The parts of a task a migration carries, in the order they are reported. */
 export const CONTENT_PARTS = [
@@ -19,20 +19,8 @@ export const CONTENT_PARTS = [
 	'comments',
 ] as const;
 
-function canonical(value: unknown): string {
-	if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-	if (typeof value === 'object' && value !== null) {
-		const record = value as Record<string, unknown>;
-		return `{${Object.keys(record)
-			.sort()
-			.map(key => `${JSON.stringify(key)}:${canonical(record[key])}`)
-			.join(',')}}`;
-	}
-	return JSON.stringify(value) ?? 'null';
-}
-
 function hashOf(value: unknown): string {
-	return crypto.createHash('sha256').update(canonical(value)).digest('hex').slice(0, 12);
+	return sha256Hex(canonical(value)).slice(0, 12);
 }
 
 /** One short hash per part of the task a migration maps (the lease and the activity log are not carried, so they are not here). */

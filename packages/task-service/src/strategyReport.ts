@@ -20,6 +20,8 @@ export interface StrategyTarget {
 	env?: NodeJS.ProcessEnv;
 	/** Read the config with this layer in place of the project's own file (the draft of `task migrate --in-place`). */
 	ownLayer?: OwnLayerOverride;
+	/** Keep the response caches in memory: the check leaves nothing under the data folder. */
+	memoryCache?: boolean;
 }
 
 export interface CapabilityRow {

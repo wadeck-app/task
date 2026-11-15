@@ -61,6 +61,10 @@ export interface InPlaceState {
 	verified: boolean;
 	/** The write of config.yml began (set right before it, cleared when it failed without writing): the only state a bookkeeping-only resume trusts. */
 	switchStarted: boolean;
+	/** The storage the tasks were read from when the run started: a resume with another source is refused. Absent in journals of older runs. */
+	source?: { kind: string; location: string };
+	/** `--allow-non-empty-target` was given: the tasks already on the target were accepted. */
+	nonEmptyTargetAccepted?: boolean;
 	acceptedDifferences?: MigrationMismatch[];
 }
 
@@ -228,7 +232,14 @@ function readInPlaceState(file: string, raw: unknown): InPlaceState | undefined 
 		typeof kinds['to'] !== 'string' ||
 		typeof switched !== 'boolean' ||
 		typeof verified !== 'boolean' ||
-		(switchStarted !== undefined && typeof switchStarted !== 'boolean')
+		(switchStarted !== undefined && typeof switchStarted !== 'boolean') ||
+		(raw['source'] !== undefined &&
+			!(
+				isRecord(raw['source']) &&
+				typeof raw['source']['kind'] === 'string' &&
+				typeof raw['source']['location'] === 'string'
+			)) ||
+		(raw['nonEmptyTargetAccepted'] !== undefined && typeof raw['nonEmptyTargetAccepted'] !== 'boolean')
 	) {
 		throw bad();
 	}
@@ -252,6 +263,10 @@ function readInPlaceState(file: string, raw: unknown): InPlaceState | undefined 
 		switched,
 		verified,
 		switchStarted: switchStarted === true,
+		...(isRecord(raw['source'])
+			? { source: { kind: raw['source']['kind'] as string, location: raw['source']['location'] as string } }
+			: {}),
+		...(raw['nonEmptyTargetAccepted'] === true ? { nonEmptyTargetAccepted: true } : {}),
 		...(accepted === undefined ? {} : { acceptedDifferences: accepted }),
 	};
 }
@@ -271,7 +286,8 @@ export function archiveFiles(
 	const present = files.filter(file => fs.existsSync(file));
 	const plan = present.map(file => ({
 		file,
-		temp: `${file}.archiving-${process.pid}`,
+		// The stamp is in the temp name: a crash between the two renames leaves enough to finish the job (recoverArchives).
+		temp: `${file}.archiving-${safe}`,
 		target: file.replace(/\.json$/, `.archived-${safe}.json`),
 	}));
 	for (const { file, target } of plan) {
@@ -305,6 +321,53 @@ export function archiveFiles(
 		);
 	}
 	return plan.map(entry => entry.target);
+}
+
+/**
+ * Completes an archive a crash interrupted: a `<file>.archiving-<stamp>` left by {@link archiveFiles} becomes
+ * `<file>.archived-<stamp>.json`, and the other file of the pair, still under its canonical name, is archived with the same stamp (the
+ * pair is never split). Returns what was done, one sentence each. An archived name that already exists is an error: nothing is overwritten.
+ */
+export function recoverArchives(
+	files: readonly string[],
+	rename: (from: string, to: string) => void = fs.renameSync
+): string[] {
+	const found: Array<{ file: string; stray: string; stamp: string }> = [];
+	for (const file of files) {
+		const dir = path.dirname(file);
+		const prefix = `${path.basename(file)}.archiving-`;
+		let names: string[] = [];
+		try {
+			names = fs.readdirSync(dir);
+		} catch {
+			continue;
+		}
+		for (const name of names) {
+			if (name.startsWith(prefix))
+				found.push({ file, stray: path.join(dir, name), stamp: name.slice(prefix.length) });
+		}
+	}
+	if (found.length === 0) return [];
+	const stamp = found[0]!.stamp;
+	const archivedOf = (file: string): string => file.replace(/\.json$/, `.archived-${stamp}.json`);
+	const moves = [
+		...found.map(entry => ({ from: entry.stray, to: archivedOf(entry.file) })),
+		...files
+			.filter(file => fs.existsSync(file) && !found.some(entry => entry.file === file))
+			.map(file => ({ from: file, to: archivedOf(file) })),
+	];
+	for (const move of moves) {
+		if (fs.existsSync(move.to)) {
+			throw new MigrationStateError(
+				`cannot finish the interrupted archive of ${move.from}: ${move.to} already exists`,
+				'Move that file away, then run again.'
+			);
+		}
+	}
+	return moves.map(move => {
+		rename(move.from, move.to);
+		return `an interrupted archive was completed: ${move.from} -> ${move.to}`;
+	});
 }
 
 /** Writes the journal whole or not at all. */

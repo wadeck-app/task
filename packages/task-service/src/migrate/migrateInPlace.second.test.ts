@@ -145,7 +145,7 @@ describe('item 2: the archive happens late, as a pair, and only for a run that r
 	it('a plan blocked by a loss does not archive either', async () => {
 		const { shop, draft } = await completedThenRolledBack();
 
-		const blocked = await migrate(shop, draft, {});
+		const blocked = await migrate(shop, draft, { allowNonEmptyTarget: true });
 
 		expect(blocked.status).toBe('blocked');
 		expect(fs.existsSync(journalFileOf(shop))).toBe(true);

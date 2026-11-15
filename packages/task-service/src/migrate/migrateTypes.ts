@@ -66,6 +66,8 @@ export interface MigrationOptions {
 	acceptDifferences?: boolean;
 	/** In place only, with resume: continue an unfinished run with a draft whose target definition changed, when the storage location is the same. */
 	acceptDraftChange?: boolean;
+	/** In place only: go on although the target already holds tasks nothing of this migration claims (they stay, the copies may duplicate them). Recorded in the journal. */
+	allowNonEmptyTarget?: boolean;
 }
 
 export const DEFAULT_MIGRATION_OPTIONS: MigrationOptions = {
@@ -169,6 +171,8 @@ export interface MigrationResult {
 	events: TaskEvent[];
 	/** In-place migration: what the switch of the config did (the engine's part; the entry adds the paths). */
 	inPlace?: InPlaceReport;
+	/** In place, dry run: the target holds unclaimed tasks; a real run refuses (see `--allow-non-empty-target`). */
+	targetNotEmpty?: TargetNotEmpty;
 }
 
 /** What an in-place migration says about the switch of the config (the engine fills the first two, the entry the rest). */
@@ -195,6 +199,16 @@ export interface InPlaceReport {
 	checks?: CheckLine[];
 	/** Dry run: what could not be checked, and why. */
 	checksNote?: string;
+	/** The config WAS replaced but the journal could not be saved afterwards: run the same command with --resume to finish the bookkeeping (the CLI exits non-zero). */
+	bookkeepingPending?: boolean;
+}
+
+/** In place: tasks already on the target that nothing of this migration claims (no journal entry, no marker). */
+export interface TargetNotEmpty {
+	count: number;
+	/** The first ids, at most ten. */
+	ids: string[];
+	hint: string;
 }
 
 /** What the run is doing, for the progress lines. */

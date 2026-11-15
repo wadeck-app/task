@@ -179,7 +179,8 @@ describe('finding 2: a finished migration is archived, never overwritten', () =>
 		// A resume of a completed run has nothing to resume.
 		await expect(migrate(shop, draft, { allowLoss: ALLOW, resume: true })).rejects.toThrow(/nothing to resume/);
 
-		const second = await migrate(shop, draft, { allowLoss: ALLOW });
+		// The 3 issues of the first migration are still on GitHub: a second copy is a deliberate duplicate.
+		const second = await migrate(shop, draft, { allowLoss: ALLOW, allowNonEmptyTarget: true });
 
 		expect(second.status).toBe('completed');
 		expect(second.inPlace!.switched).toBe(true);

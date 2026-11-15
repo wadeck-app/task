@@ -113,6 +113,13 @@ function show(label: string, text: string): void {
 }
 
 describe('task migrate --in-place: printed commands never carry a sticky flag', () => {
+	it('--allow-non-empty-target is not copied into a printed command either', () => {
+		const parsed = parseMigrateArgs(['--in-place', '--to-config', 'x.yml', '--allow-non-empty-target'], false);
+		if ('exitCode' in parsed) throw new Error(parsed.output);
+
+		expect(commandLine(parsed, { resume: true })).not.toContain('--allow-non-empty-target');
+	});
+
 	it('--accept-differences and --accept-draft-change are not copied into the resume or next command', () => {
 		const parsed = parseMigrateArgs(
 			['--in-place', '--to-config', 'x.yml', '--resume', '--accept-differences', '--accept-draft-change'],
@@ -192,6 +199,10 @@ describe('task migrate --in-place: the command line', () => {
 		[
 			['migrate', '--from', 'a', '--to', 'b', '--accept-draft-change'],
 			/--accept-draft-change only goes with --in-place/,
+		],
+		[
+			['migrate', '--from', 'a', '--to', 'b', '--allow-non-empty-target'],
+			/--allow-non-empty-target only goes with --in-place/,
 		],
 		[
 			['migrate', '--in-place', '--to-config', 'x.yml', '--accept-draft-change'],
@@ -284,7 +295,9 @@ describe('task migrate --in-place over a GitHub draft (the fake server)', () => 
 		const text = await run(project.dir, 'migrate', '--in-place', '--to-config', draft, '--dry-run');
 		const json = await run(project.dir, 'migrate', '--in-place', '--to-config', draft, '--dry-run', '--json');
 
-		expect(text.output).toMatch(/Warnings:[\s\S]*does not have priorities: that key is gone after the switch/);
+		expect(text.output).toMatch(
+			/Warnings:[\s\S]*does not have priorities: that key would be gone after the switch/
+		);
 		expect(text.output).toContain('copy the current config.yml, add the strategy section');
 		expect(text.output).toContain(`-p ${project.id}`);
 		expect(
@@ -389,5 +402,67 @@ describe('task migrate --in-place over a GitHub draft (the fake server)', () => 
 			});
 		}
 		expect(fake!.writes()).toEqual([]);
+	});
+});
+
+describe('task migrate --in-place: the new answers of the third review', () => {
+	function resultWith(change: Record<string, unknown>): MigrationResult {
+		return {
+			status: 'completed',
+			dryRun: false,
+			from: { id: 'a', name: 'shop', kind: 'local' },
+			to: { id: 'a', name: 'shop', kind: 'github' },
+			counts: { source: 1, created: 1, resumed: 0, skipped: 0, failed: 0, remaining: 0 },
+			losses: [],
+			blocking: [],
+			notes: [],
+			warnings: [],
+			estimate: { writes: 0, requests: 0, seconds: 0 },
+			idMap: [],
+			journal: 'j.json',
+			events: [],
+			inPlace: { switched: true, idMapFile: 'm.json' },
+			...change,
+		} as unknown as MigrationResult;
+	}
+	const parsedInPlace = (): NonNullable<ReturnType<typeof parseMigrateArgs>> => {
+		const parsed = parseMigrateArgs(['--in-place', '--to-config', 'x.yml'], false);
+		if ('exitCode' in parsed) throw new Error(parsed.output);
+		return parsed;
+	};
+
+	it('a dry run says the target is not empty and that a real run refuses', () => {
+		const text = formatMigration(
+			resultWith({
+				status: 'dry-run',
+				dryRun: true,
+				inPlace: { switched: false, idMapFile: 'm.json' },
+				targetNotEmpty: { count: 3, ids: ['1', '2', '3'], hint: 'Use --allow-non-empty-target to accept.' },
+			}),
+			parsedInPlace() as never
+		);
+
+		expect(text).toMatch(/BLOCKED:.*3 tasks.*a real run refuses/);
+		expect(text).toContain('--allow-non-empty-target');
+	});
+
+	it('a switch whose journal could not be saved is said, with the way to finish', () => {
+		const text = formatMigration(
+			resultWith({ inPlace: { switched: true, idMapFile: 'm.json', bookkeepingPending: true } }),
+			parsedInPlace() as never
+		);
+
+		expect(text).toMatch(
+			/now is the draft, BUT the journal could not be saved: run the same command with --resume/
+		);
+	});
+
+	it('a stopped run prints no rollback line', () => {
+		const text = formatMigration(
+			resultWith({ status: 'stopped', inPlace: { switched: false, idMapFile: 'm.json' } }),
+			parsedInPlace() as never
+		);
+
+		expect(text).not.toMatch(/Rollback:/);
 	});
 });
