@@ -231,7 +231,10 @@ describe('npm install -g killed halfway (real npm, fake registry, isolated tree)
 			const repair = await runIsolated(path.join(updaterDir, 'task-updater.cjs'), [], explicitUpdateEnv(e), {
 				timeout: 120000,
 			});
-			expect(repair.status, out(repair)).toBe(0);
+			// shared-updater >= 2026.11.15-023: an explicit update exits 1 as soon as an error line is logged, and the interruption itself is one
+			// ("was interrupted"), so a successful repair still exits 1 and says why on stderr.
+			expect(repair.status, out(repair)).toBe(1);
+			expect(repair.stderr, out(repair)).toContain('was interrupted');
 			expect(installedVersion(e)).toBe(OLD);
 			expect(retiredDirs(e)).toEqual([]);
 			const after = readJournal(e.configDir)!;
