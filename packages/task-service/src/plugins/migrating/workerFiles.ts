@@ -7,4 +7,6 @@ export interface WorkerFiles extends WalFiles {
 	createExclusive(file: string, text: string): boolean;
 	/** Removes the file; a file that is not there is fine. Any other failure throws. */
 	remove(file: string): void;
+	/** The names directly inside a folder, sorted; `undefined` when it does not exist. Any other failure throws. */
+	entries(dir: string): string[] | undefined;
 }

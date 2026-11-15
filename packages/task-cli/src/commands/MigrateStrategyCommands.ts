@@ -1,8 +1,25 @@
 // task strategy migrate <sub>: arguments and printing over the task-service use cases of a migrating project (`openMigration`,
 // `openMigrationControl`). start / status / pause / resume / log are for people; `worker` is the INTERNAL subcommand the detached
-// process runs (`start` and `resume` launch it); `finalize` and `abort` are announced and refused until their phase is built.
-import { openMigration, openMigrationControl, openResolvedProject, describeError } from '@wadeck-app/task-service';
-import type { LogEntry, MigrationStatusReport, PlanLoss, ResolvedProject, StartResult } from '@wadeck-app/task-service';
+// process runs (`start` and `resume` launch it); `finalize` and `abort` end the migration (the project switches to "new" alone, or goes back to "current").
+import {
+	abortProjectMigration,
+	deliverEvents,
+	describeError,
+	finalizeProjectMigration,
+	openMigration,
+	openMigrationControl,
+	openResolvedProject,
+} from '@wadeck-app/task-service';
+import type {
+	AbortResult,
+	EventSink,
+	FinalizeResult,
+	LogEntry,
+	MigrationStatusReport,
+	PlanLoss,
+	ResolvedProject,
+	StartResult,
+} from '@wadeck-app/task-service';
 
 import { pollUntilAborted } from '../cli/follow.js';
 import { MIGRATE_STRATEGY_HELP } from '../cli/help.js';
@@ -31,11 +48,14 @@ export interface MigrateStrategyDeps {
 	followIntervalMs?: number;
 	/** How long start and resume wait for the worker to take its lock. Default 10 s. */
 	workerStartTimeoutMs?: number;
+	/** The sink the summary event of `finalize` goes to (built lazily: nothing else raises an event). */
+	makeSink?: () => EventSink;
+	/** How long `abort` waits for a worker that was asked to stop. Default 60 s. */
+	abortWaitMs?: number;
 }
 
-const SUBCOMMANDS = ['start', 'status', 'pause', 'resume', 'log'] as const;
+const SUBCOMMANDS = ['start', 'status', 'pause', 'resume', 'log', 'finalize', 'abort'] as const;
 type Subcommand = (typeof SUBCOMMANDS)[number] | 'worker';
-const NOT_YET = ['finalize', 'abort'] as const;
 
 const USAGE: Record<Subcommand, string> = {
 	start: 'Usage: task strategy migrate start [-p <project>] [--allow-loss <kinds>] [--dry-run] [--json]',
@@ -43,6 +63,8 @@ const USAGE: Record<Subcommand, string> = {
 	pause: 'Usage: task strategy migrate pause [-p <project>] [--json]',
 	resume: 'Usage: task strategy migrate resume [-p <project>] [--json]',
 	log: 'Usage: task strategy migrate log [-p <project>] [--follow] [--tail <n>] [--json]',
+	finalize: 'Usage: task strategy migrate finalize [-p <project>] [--json]',
+	abort: 'Usage: task strategy migrate abort [-p <project>] [--keep-moved] [--json]',
 	worker: 'Usage: task strategy migrate worker -p <project>   (internal: the background process runs it)',
 };
 
@@ -247,16 +269,6 @@ function formatLogEntry(entry: LogEntry): string {
 	return `${entry.at ?? ''}  ${(entry.level ?? 'info').padEnd(5)}${task}  ${entry.message ?? JSON.stringify(entry)}`;
 }
 
-function notAvailable(sub: (typeof NOT_YET)[number], jsonMode: boolean): CommandResult {
-	return errorOutput(
-		jsonMode,
-		`task strategy migrate ${sub} is not available yet`,
-		sub === 'finalize'
-			? `It is phase P4 of the migrating strategy (.claude/plans/2026-11-15_migrating-wrapper.md). Until then the project keeps working through both strategies and no copy is deleted; ${STATUS} shows when every task is moved (ready-to-finalize). To stop the background move: task strategy migrate pause.`
-			: `It is phase P4 of the migrating strategy (.claude/plans/2026-11-15_migrating-wrapper.md). Until then "current" keeps every task it had (nothing is deleted there) and a task already moved is in "new"; to stop the background move and leave every task where it is: task strategy migrate pause.`
-	);
-}
-
 export async function runMigrateStrategy(
 	rest: readonly string[],
 	jsonMode: boolean,
@@ -264,13 +276,11 @@ export async function runMigrateStrategy(
 	deps: MigrateStrategyDeps
 ): Promise<CommandResult> {
 	const [sub, ...args] = rest;
-	if (sub !== undefined && (NOT_YET as readonly string[]).includes(sub))
-		return notAvailable(sub as (typeof NOT_YET)[number], jsonMode);
 	if (sub === undefined || !([...SUBCOMMANDS, 'worker'] as string[]).includes(sub)) {
 		return errorOutput(
 			jsonMode,
 			`unknown task strategy migrate subcommand: ${sub ?? ''}`,
-			`Valid subcommands: ${SUBCOMMANDS.join(', ')} (finalize and abort are not available yet)`
+			`Valid subcommands: ${SUBCOMMANDS.join(', ')}`
 		);
 	}
 	try {
@@ -285,6 +295,10 @@ export async function runMigrateStrategy(
 				return await resume(args, jsonMode, resolved, deps);
 			case 'log':
 				return await log(args, jsonMode, resolved, deps);
+			case 'finalize':
+				return await finalize(args, jsonMode, resolved, deps);
+			case 'abort':
+				return await abort(args, jsonMode, resolved, deps);
 			case 'worker':
 				return await worker(args, jsonMode, resolved, deps);
 		}
@@ -537,6 +551,104 @@ async function log(
 		deps.signal?.removeEventListener('abort', stop);
 	}
 	return { exitCode: 0, output: '' };
+}
+
+function formatFinalize(result: FinalizeResult): string {
+	const lines: string[] = [];
+	if (result.outcome === 'already-finished') {
+		lines.push('The migration is finished already: the project uses the new strategy alone. Nothing was changed.');
+	} else {
+		lines.push(
+			result.outcome === 'bookkeeping-completed'
+				? 'The migration is finished: the project config already was the new one (an earlier finalize stopped right after writing it); only its bookkeeping was completed.'
+				: `Finalized: ${plural(result.moved, 'moved task')} and ${plural(result.madeInNew, 'task')} made in "new" are now the project: it uses the new strategy alone.`
+		);
+		if (result.config !== undefined) lines.push(`Config:  ${result.config}`);
+		if (result.backup !== undefined) {
+			lines.push(
+				`Backup:  ${result.backup} (the config before the switch: copy it back to go back; ${'the tasks of "current" were NOT deleted'})`
+			);
+		}
+	}
+	lines.push(
+		`Id map:  ${result.idMap.file} (${plural(result.idMap.entries, 'entry')}, ${result.idMap.changed} with a new id)`
+	);
+	for (const note of result.notes) lines.push(`note: ${note}`);
+	for (const warning of result.warnings) lines.push(`WARNING: ${warning}`);
+	if (result.outcome !== 'already-finished') {
+		lines.push(
+			'Next: check the project with: task strategy check   |   the copies in "current" are kept; delete them yourself when you no longer need them.'
+		);
+	}
+	return lines.join('\n');
+}
+
+async function finalize(
+	args: readonly string[],
+	jsonMode: boolean,
+	resolved: ResolvedProject,
+	deps: MigrateStrategyDeps
+): Promise<CommandResult> {
+	const parsed = parseOptions('finalize', args, { flags: [], values: [] }, jsonMode);
+	if (isResult(parsed)) return parsed;
+	const result = await finalizeProjectMigration({
+		project: resolved,
+		...(deps.configDir === undefined ? {} : { globalConfigDir: deps.configDir }),
+	});
+	// The summary event goes out after the switch, like the events of any other command; a failure to deliver is reported by the sink.
+	if (result.events.length > 0 && deps.makeSink !== undefined) {
+		const sink = deps.makeSink();
+		try {
+			await deliverEvents(sink, result.events);
+		} finally {
+			await sink.flush?.();
+		}
+	}
+	const { events: _events, ...printed } = result;
+	void _events;
+	return jsonMode ? jsonResult(printed) : { exitCode: 0, output: formatFinalize(result) };
+}
+
+function formatAbort(result: AbortResult): string {
+	const lines: string[] = [];
+	if (result.outcome === 'already-aborted') {
+		lines.push('The migration is aborted already: the project uses "current" again. Nothing was changed.');
+	} else {
+		lines.push(
+			result.outcome === 'bookkeeping-completed'
+				? 'The migration is aborted: the project config already was the old one (an earlier abort stopped right after writing it); only its bookkeeping was completed.'
+				: 'Aborted: the project uses its "current" strategy again. NOTHING was deleted, in "current" or in "new".'
+		);
+		if (result.config !== undefined) lines.push(`Config:  ${result.config}`);
+		if (result.backup !== undefined)
+			lines.push(`Backup:  ${result.backup} (the migrating config; copy it back to resume the migration set-up)`);
+	}
+	for (const note of result.notes) lines.push(`note: ${note}`);
+	for (const warning of result.warnings) lines.push(`WARNING: ${warning}`);
+	if (result.outcome !== 'already-aborted') {
+		lines.push(
+			'Next: check the project with: task strategy check. To migrate again, move the files of <data>/migrating aside first (nothing starts over a finished or aborted migration).'
+		);
+	}
+	return lines.join('\n');
+}
+
+async function abort(
+	args: readonly string[],
+	jsonMode: boolean,
+	resolved: ResolvedProject,
+	deps: MigrateStrategyDeps
+): Promise<CommandResult> {
+	const parsed = parseOptions('abort', args, { flags: ['--keep-moved'], values: [] }, jsonMode);
+	if (isResult(parsed)) return parsed;
+	const result = await abortProjectMigration({
+		project: resolved,
+		...(deps.configDir === undefined ? {} : { globalConfigDir: deps.configDir }),
+		keepMoved: parsed.flags.has('--keep-moved'),
+		sleep: deps.sleep,
+		...(deps.abortWaitMs === undefined ? {} : { waitMs: deps.abortWaitMs }),
+	});
+	return jsonMode ? jsonResult(result) : { exitCode: 0, output: formatAbort(result) };
 }
 
 async function worker(

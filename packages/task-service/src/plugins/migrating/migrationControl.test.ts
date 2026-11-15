@@ -198,11 +198,72 @@ describe('readMigrationStatus', () => {
 			STATE({ status: 'stopped', stop: { text: '3 failures in a row', fix: 'Fix the API token, then run: x' } }),
 			/Fix the API token/,
 		],
-		['ready to finalize', STATE({ status: 'ready-to-finalize' }), /finalize` is not available yet/],
+		[
+			'ready to finalize',
+			STATE({ status: 'ready-to-finalize' }),
+			/task strategy migrate finalize.*task strategy migrate abort/s,
+		],
+		[
+			'finished',
+			STATE({
+				status: 'finished',
+				finalize: {
+					startedAt: iso(NOW),
+					original: 'a',
+					target: 'b',
+					switchStarted: true,
+					moved: 3,
+					madeInNew: 0,
+					idMapFile: '/data/migrating/idmap.json',
+				},
+			}),
+			/finished.*idmap.json/s,
+		],
+		[
+			'aborted',
+			STATE({
+				status: 'aborted',
+				abort: {
+					startedAt: iso(NOW),
+					keepMoved: false,
+					original: 'a',
+					target: 'b',
+					switchStarted: true,
+					leftovers: [{ task: 't1', copy: 'b1' }],
+					moved: [],
+					unsettled: [],
+				},
+			}),
+			/aborted.*1 copy.*in "new".*not deleted/s,
+		],
 	])('gives the next action for a migration that is %s', (_name, state, expected) => {
 		const { input } = setup(state);
 		expect(readMigrationStatus(input).next).toMatch(expected);
 	});
+
+	it.each([
+		['finalize', 'finalize', /finalize was interrupted.*task strategy migrate finalize/s],
+		['abort', 'abort', /abort was interrupted.*task strategy migrate abort/s],
+	] as const)(
+		'says a %s that stopped after it began the config switch, and what completes it',
+		(_name, key, expected) => {
+			const record = {
+				startedAt: iso(NOW),
+				original: 'a',
+				target: 'b',
+				switchStarted: true,
+				...(key === 'finalize'
+					? { moved: 1, madeInNew: 0, idMapFile: '/x' }
+					: { keepMoved: false, leftovers: [], moved: [], unsettled: [] }),
+			};
+			const { input } = setup(STATE({ status: 'ready-to-finalize', [key]: record } as Partial<MigrationState>));
+
+			const report = readMigrationStatus(input);
+
+			expect(report.problems.join(' ')).toMatch(expected);
+			expect(report.next).toMatch(expected);
+		}
+	);
 
 	it('reports what was asked of the running worker, and says it stops after its task', () => {
 		const { input, store, holdLock } = setup();

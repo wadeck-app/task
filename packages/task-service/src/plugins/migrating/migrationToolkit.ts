@@ -17,6 +17,8 @@ export interface MigrationToolkit {
 	files: WorkerFiles;
 	/** The side the tasks are in (read to plan and to order the moves). */
 	current: TaskBackend;
+	/** The side they move to (read to verify before the project switches to it). */
+	next: TaskBackend;
 	/** What the side they move to can do and keeps and costs. */
 	nextCapabilities: BackendCapabilities;
 	nextTraits: BackendTraits;

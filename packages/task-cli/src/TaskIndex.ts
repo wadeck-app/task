@@ -169,6 +169,11 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 `),
 					sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
 					signal: stop.signal,
+					makeSink: () =>
+						declareBeforeFirstDelivery(
+							createQueueEventSink({ getLogDir: () => getTaskLogDir(ConfigDir.get('task')) }),
+							{ configDir: ConfigDir.get('task'), taskVersion: VERSION }
+						),
 				});
 			} finally {
 				process.off('SIGINT', onSignal);

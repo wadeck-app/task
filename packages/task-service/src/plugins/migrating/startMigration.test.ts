@@ -141,6 +141,32 @@ describe.each(PAIR_KINDS)('startMigration over $name', kind => {
 		});
 	});
 
+	it.each(['finished', 'aborted'] as const)(
+		'a start over a %s migration says the migration ended and what to do (nothing is overwritten), not "continue it"',
+		async status => {
+			await setup();
+			await seedCurrent(pair.a);
+			const toolkit = toolkitOf(wrapped, pair, { clock });
+			await startMigration(toolkit, { acceptedLosses: ['all'] });
+			new MigrationStateStore({ dir: MIGRATING_DIR, files: toolkit.files, now: clock.now }).updateState(
+				state => ({
+					...state,
+					status,
+				})
+			);
+
+			const error = await startMigration(toolkit, { acceptedLosses: ['all'] }).then(
+				() => undefined,
+				(caught: unknown) => caught as { message: string; hint: string }
+			);
+
+			expect(error?.message).toContain(`is ${status}`);
+			expect(error?.hint).not.toMatch(/resume/);
+			expect(error?.hint).toContain('move the files of');
+			expect(error?.hint).toContain(MIGRATING_DIR);
+		}
+	);
+
 	it('keeps the routing rows that exist: a task made in new before the start is not a task to move', async () => {
 		await setup();
 		await seedCurrent(pair.a);

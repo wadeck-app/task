@@ -99,6 +99,38 @@ function readText(file: string): string | undefined {
 	}
 }
 
+/** The text of a config file, `undefined` when it does not exist (any other failure throws). Shared with the end of a background migration. */
+export const readConfigText = readText;
+
+/**
+ * The one way a project config is replaced by another, for `task migrate --in-place` and for the end of a background migration: the old
+ * text is kept first (never over an existing backup), then `markStarted(true)` is called right BEFORE the atomic write, and `markStarted
+ * (false)` when the write failed and left the old config in place. A `markStarted` that throws stops the switch before anything is written.
+ */
+export function writeConfigWithBackup(input: {
+	configFile: string;
+	backupFile: string;
+	/** What the config file holds now (undefined: none: no backup is made). */
+	old: string | undefined;
+	text: string;
+	write: (file: string, content: string) => void;
+	markStarted: (started: boolean) => void;
+}): void {
+	const { configFile, backupFile, old, text, write, markStarted } = input;
+	fs.mkdirSync(path.dirname(configFile), { recursive: true });
+	// The old config is kept first (the text that is there now); the new one replaces it whole or not at all.
+	if (old !== undefined && readText(backupFile) === undefined) write(backupFile, old);
+	// Recorded right BEFORE the write: a crash during or after it leaves the journal saying the switch began. A write that
+	// failed and left the old config in place says it did not.
+	markStarted(true);
+	try {
+		write(configFile, text);
+	} catch (error) {
+		if (readText(configFile) !== text) markStarted(false);
+		throw error;
+	}
+}
+
 interface Draft {
 	file: string;
 	/** What the switch writes, byte for byte, and what everything below was validated from: the file is read once. */
@@ -582,18 +614,15 @@ async function migrateLocked(input: Locked): Promise<MigrationResult> {
 							'internal error: the draft text no longer parses to the content that was validated'
 						);
 					}
-					fs.mkdirSync(path.dirname(configFile), { recursive: true });
-					// The old config is kept first (the text that is there now: it equals the snapshot); the new one replaces it whole or not at all.
-					if (fresh !== undefined && readText(backupFile) === undefined) write(backupFile, fresh);
-					// Recorded right BEFORE the write: a crash during or after it leaves the journal saying the switch began. A write that
-					// failed and left the old config in place says it did not.
-					markStarted(true);
-					try {
-						write(configFile, draft.text);
-					} catch (error) {
-						if (readText(configFile) !== draft.text) markStarted(false);
-						throw error;
-					}
+					// The text that is there now equals the snapshot: it is the one kept as the backup.
+					writeConfigWithBackup({
+						configFile,
+						backupFile,
+						old: fresh,
+						text: draft.text,
+						write,
+						markStarted,
+					});
 				},
 			},
 		});

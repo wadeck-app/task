@@ -37,11 +37,13 @@ The wrapper works for ANY pair (A, B) of strategies and knows none by name: it r
 | P1 (DONE 2026-11-15, reads only) | index + states + merged reads (list, get, tree, links across stores), identity block, index rebuild            | reads correct in every state, rebuild test                                   |
 | P2 (DONE 2026-11-15)             | writes in every state, move state machine, WAL, crash/fault-injection matrix, deletion during move             | contract suite passes with tasks in every state; crash at each step recovers |
 | P3 (DONE 2026-11-15)             | background worker, budget, rate pause, `status/pause/resume/log`                                               | worker moves N tasks under the fake with rate limits; status exact           |
-| P4                               | `finalize` / `abort`, config switch, backup                                                                    | end-to-end local -> fake GitHub, finalize, normal project afterwards         |
-| P5                               | live smoke script (not CI), docs, CLAUDE.md digest                                                             | run by the owner with a throwaway repo: UNVERIFIED until then                |
+| P4 (DONE 2026-11-15)             | `finalize` / `abort`, config switch, backup                                                                    | end-to-end local -> fake GitHub, finalize, normal project afterwards         |
+| P5 (script + docs DONE, NOT RUN) | live smoke script (not CI), docs, CLAUDE.md digest                                                             | run by the owner with a throwaway repo: UNVERIFIED until then                |
 
 P2 leftovers: trait enforcement on writes (depth, text limits, comment authors); a trait for write lag of a side; claim semantics in `new`; `prepare` forwarding; cross-process lock; docs of the `task strategy migrate` commands (P3). Fault tests of P2 ran on fakes only.
 
 P3 leftovers: `abort`/`finalize` (P4); refine the per-move cost from measured requests; cross-process lock stronger than a pid file; `pause` race right after launch; progress ETA with the hourly cap shown as a range; `log --follow` by offset; live Windows/macOS launch check beyond one spawn.
+
+P4 leftovers: old ids do not resolve after finalize (id map file only, D19); finalize refuses a `new` that keeps task files in the project folder (relocating them was judged too large: needs a crash-safe rename plan); a new migration over a finished/aborted one needs the `migrating` files moved aside by hand; `abort --keep-moved` leaves tasks of `new` out of the project; YAML comments of config.yml are lost on the switch (backup keeps them); identity hash not compared with content at finalize; `scripts/live-migrating-smoke.mjs` (with `--mock`) written, not run.
 
 Risks: cross-store hierarchy; GitHub write cap (500 content writes/hour) makes moves slow by nature (status shows the ETA); a task edited ON GitHub during the move is not seen (R7).

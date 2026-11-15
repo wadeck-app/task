@@ -371,16 +371,34 @@ Usage:
   task strategy migrate log [-p <project>] [--follow] [--tail <n>] [--json]
       The migration log (<data>/migrating/log.ndjson): every move, step, rate pause and error. Last 50 lines by default; --follow keeps printing
       what is added until Ctrl+C; --json prints a list (one JSON object a line with --follow).
-  task strategy migrate finalize               NOT AVAILABLE YET (phase P4): exits 1 and says so. Until then no copy in "current" is deleted.
-  task strategy migrate abort                  NOT AVAILABLE YET (phase P4): exits 1 and says so; pause stops the background move meanwhile.
+  task strategy migrate finalize [-p <project>] [--json]
+      Ends the migration on "new": the project then uses the new strategy ALONE. Allowed only when status says ready-to-finalize (every task
+      is in "new", no unfinished transaction, no worker, no stale copy); each refusal names the blocker and the command that fixes it. It
+      re-reads both stores (not the index): every task has its copy in "new" with an identity block that says "new" holds the truth, "new"
+      holds no task the index does not know, and "current" holds no task created there meanwhile (it would be lost). Then it writes
+      <data>/migrating/idmap.json (old id -> new id), keeps the config as config.yml.before-migration (refused when that file exists with
+      other content), replaces the strategy section of config.yml by the "new" block (every other key is kept; comments are not), and raises
+      the onTasksMigrated summary event once. NO task, copy or file is deleted: the copies in "current" stay. After it the OLD ids of the moved
+      tasks no longer resolve (task show <old id> says not found): look them up in idmap.json. A run that died right after the config write is
+      completed by running finalize again (it opens no store). A "new" strategy that keeps its task files in the project folder is refused:
+      use task migrate --in-place for that move.
+  task strategy migrate abort [-p <project>] [--keep-moved] [--json]
+      Goes back to "current": stops the worker (control file, waits up to 60 s), replaces the strategy section of config.yml by the "current"
+      block (the migrating config is kept as config.yml.before-abort). It opens no store, so it works when a token is missing or a server is
+      down. NOTHING is deleted: the copies in "new" of tasks that were being moved are listed as leftovers (in the answer and under "abort" in
+      state.json). Tasks whose truth is already in "new" (moved, or created there) are NOT copied back: abort is refused while there are
+      any, unless --keep-moved, which leaves them in "new", lists them with their ids and warns that they are no longer part of the project
+      (a moved one shows its older copy kept in "current", without what changed in "new" since). A finished or aborted migration cannot be
+      aborted again; to migrate again later, move the files of <data>/migrating aside first.
   task strategy migrate worker -p <project>    INTERNAL: what the background process runs; run it in a terminal to move the tasks in the foreground.
 
 The pace: strategy.options.budget.requestsPerMinute is the share of requests the worker may use; a cap on writes that "new" documents is kept
 too. A side that answers "rate limited until <time>" makes the worker sleep until then (a line in the log), never fail. A claimed task is
 skipped and retried when its lease ends. After 5 failures in a row the worker stops with a status and the fix (task strategy migrate status).
 
-Files (<data>/migrating/): index.json (which side holds which task), state.json (accepted losses, counters, status), control.json (pause and
-stop asks), worker.json (heartbeat), worker.lock (one worker per project), worker.out.log (the process's own output), wal.ndjson, log.ndjson.
+Files (<data>/migrating/): index.json (which side holds which task), state.json (accepted losses, counters, status, and what finalize or
+abort recorded before touching config.yml), control.json (pause and stop asks), worker.json (heartbeat), worker.lock (one worker per project),
+worker.out.log (the process's own output), wal.ndjson, log.ndjson (every step of finalize and abort too), idmap.json (written by finalize).
 `;
 
 export const STRATEGY_HELP = `task strategy - where the tasks of this project are stored

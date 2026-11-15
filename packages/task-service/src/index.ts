@@ -184,7 +184,12 @@ export { DEFAULT_TOKEN_ENV, resolveServerToken } from './server/serverToken.js';
 
 // task strategy migrate: the background move of the tasks of a migrating project (phase P3 of the migrating wrapper).
 export { openMigration, openMigrationControl } from './migrationService.js';
+export type { AbortInput, AbortResult, FinalizeResult, MigrationEndInput } from './migrationEnd.js';
+export { ABORT_BACKUP_SUFFIX, abortProjectMigration, finalizeProjectMigration } from './migrationEnd.js';
 export type {
+	AbortOutcome,
+	Blocker as MigrationBlocker,
+	FinalizeOutcome,
 	ControlInput,
 	LogEntry,
 	MigrationApi,

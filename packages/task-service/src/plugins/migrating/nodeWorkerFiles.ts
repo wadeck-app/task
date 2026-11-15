@@ -21,6 +21,14 @@ export function nodeWorkerFiles(writeAtomic: (file: string, content: string) => 
 		remove(file) {
 			fs.rmSync(file, { force: true });
 		},
+		entries(dir) {
+			try {
+				return fs.readdirSync(dir).sort();
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+				throw error;
+			}
+		},
 	};
 }
 

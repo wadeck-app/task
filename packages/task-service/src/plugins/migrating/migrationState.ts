@@ -14,7 +14,7 @@ import type { RateUse, RateWindowSpec } from './moveRate.js';
 import type { WorkerFiles } from './workerFiles.js';
 
 export const MIGRATION_STATUSES = ['running', 'paused', 'stopped', 'ready-to-finalize', 'finished', 'aborted'] as const;
-/** `finished` and `aborted` are written by `finalize` and `abort` (a later phase); the worker never writes them. */
+/** `finished` and `aborted` are written by `finalize` and `abort`; the worker never writes them. */
 export type MigrationStatus = (typeof MIGRATION_STATUSES)[number];
 
 export interface ErrorNote {
@@ -23,6 +23,46 @@ export interface ErrorNote {
 	kind: string;
 	message: string;
 	fix?: string;
+}
+
+/**
+ * What `finalize` records BEFORE it changes the project config (write-ahead): the fingerprints of the config it found and of the one it
+ * will write, so a run that dies between the config write and the state update is recognised and only completes its bookkeeping.
+ */
+export interface FinalizeRecord {
+	startedAt: string;
+	/** Fingerprint of the project config before the switch (`absent`: the project had none) and of what the switch writes. */
+	original: string;
+	target: string;
+	/** True from right before the config is written until the state says `finished`. */
+	switchStarted: boolean;
+	/** Tasks that were moved (a copy was made out of "current"), and tasks created in "new" during the migration. */
+	moved: number;
+	madeInNew: number;
+	idMapFile: string;
+	/** Set when the summary event was handed to the caller: a bookkeeping run never hands it twice. */
+	summaryEventRaised?: boolean;
+}
+
+export interface AbortedTask {
+	task: string;
+	/** Its id in "new". */
+	copy: string;
+}
+
+/** What `abort` found and decided, kept in the state so `status` can still list the copies left in "new" after the config switch. */
+export interface AbortRecord {
+	startedAt: string;
+	keepMoved: boolean;
+	original: string;
+	target: string;
+	switchStarted: boolean;
+	/** Copies in "new" of tasks that were being moved: "current" stays the truth, the copies are leftovers. */
+	leftovers: AbortedTask[];
+	/** Tasks whose truth is in "new" (moved, or created there): they are not visible in the project any more (a moved one shows its older copy of "current"). */
+	moved: Array<AbortedTask & { madeInNew: boolean }>;
+	/** Transactions that were open: a copy may exist in "new" that the index does not list. */
+	unsettled: Array<{ task: string; op: string }>;
 }
 
 export interface MigrationState {
@@ -45,6 +85,10 @@ export interface MigrationState {
 	parked: Array<{ task: string; reason: string }>;
 	/** The latest per-task errors, oldest first. */
 	lastErrors: ErrorNote[];
+	/** Written by `finalize` (see FinalizeRecord). */
+	finalize?: FinalizeRecord;
+	/** Written by `abort` (see AbortRecord). */
+	abort?: AbortRecord;
 }
 
 export type ControlCommand = 'run' | 'pause' | 'stop';
@@ -231,6 +275,36 @@ export class MigrationStateStore {
 			!isObject(value['plan'])
 		) {
 			throw this.damaged(file, 'plan, pace, parked and lastErrors are missing or of the wrong shape');
+		}
+		const finalize = value['finalize'];
+		if (
+			finalize !== undefined &&
+			!(
+				isObject(finalize) &&
+				typeof finalize['original'] === 'string' &&
+				typeof finalize['target'] === 'string' &&
+				typeof finalize['switchStarted'] === 'boolean'
+			)
+		) {
+			throw this.damaged(file, 'finalize must be { original, target, switchStarted, ... } (written by finalize)');
+		}
+		const abort = value['abort'];
+		if (
+			abort !== undefined &&
+			!(
+				isObject(abort) &&
+				typeof abort['original'] === 'string' &&
+				typeof abort['target'] === 'string' &&
+				typeof abort['switchStarted'] === 'boolean' &&
+				Array.isArray(abort['leftovers']) &&
+				Array.isArray(abort['moved']) &&
+				Array.isArray(abort['unsettled'])
+			)
+		) {
+			throw this.damaged(
+				file,
+				'abort must be { original, target, switchStarted, leftovers, moved, unsettled, ... } (written by abort)'
+			);
 		}
 		return value as unknown as MigrationState;
 	}

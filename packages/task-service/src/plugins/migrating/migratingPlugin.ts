@@ -20,6 +20,7 @@ import type {
 } from '../kinds.js';
 import { heldBackBy, intersectCapabilities, NOTHING_PROMISED } from './capabilityIntersection.js';
 import { MigratingBackend } from './MigratingBackend.js';
+import { finalizeMigration } from './migrationFinish.js';
 import { MigrationJournal } from './migrationJournal.js';
 import { migrationControlApi } from './migrationControlApi.js';
 import type { MigrationToolkit } from './migrationToolkit.js';
@@ -230,6 +231,7 @@ export const migratingPlugin: StrategyPlugin = {
 			dir: indexDir,
 			files: nodeWorkerFiles(context.writeFile),
 			current: current.backend,
+			next: next.backend,
 			nextCapabilities: next.backend.capabilities,
 			nextTraits,
 			index: routingIndex,
@@ -254,6 +256,7 @@ export const migratingPlugin: StrategyPlugin = {
 				dir: toolkit.dir,
 				start: input => startMigration(toolkit, input),
 				runWorker: options => runMigrationWorker(toolkit, options),
+				finalize: config => finalizeMigration(toolkit, config),
 			},
 			describe: () => [
 				'state: writes follow the routing index (in-a: "current", moving: "current" then mirrored to "new", in-b: "new"); a new task is created in "new"',

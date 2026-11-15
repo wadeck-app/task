@@ -205,6 +205,11 @@ export class TaskConfigLoader {
 	}
 
 	/** Parses the TEXT of a config file (read once by the caller); `name` is what errors call it. Same rules as {@link readConfigFile}. */
+	/** The YAML text of a config (the values of a file, written back). Comments of the file it replaces are not carried over. */
+	static renderConfig(values: Record<string, unknown>): string {
+		return yaml.dump(values);
+	}
+
 	static parseConfigText<T = Record<string, unknown>>(text: string, name: string): T | undefined {
 		return parseYamlText<T>(text, name);
 	}

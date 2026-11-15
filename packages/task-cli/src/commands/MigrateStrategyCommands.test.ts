@@ -97,14 +97,16 @@ describe('task strategy migrate: usage', () => {
 		expect(isMigrateStrategyHelp(['migrate', 'status'])).toBe(false);
 	});
 
-	it('the help lists every subcommand and says plainly which ones are not available yet', () => {
+	it('the help lists every subcommand, including how a migration ends, and no longer says anything is unavailable', () => {
 		const { exitCode, output } = migrateStrategyHelp();
 
 		expect(exitCode).toBe(0);
-		for (const sub of ['start', 'status', 'pause', 'resume', 'log'])
+		for (const sub of ['start', 'status', 'pause', 'resume', 'log', 'finalize', 'abort'])
 			expect(output).toContain(`task strategy migrate ${sub}`);
-		expect(output).toMatch(/finalize\s+NOT AVAILABLE YET/);
-		expect(output).toMatch(/abort\s+NOT AVAILABLE YET/);
+		expect(output).not.toMatch(/NOT AVAILABLE|phase P4/i);
+		expect(output).toContain('--keep-moved');
+		expect(output).toContain('config.yml.before-migration');
+		expect(output).toContain('idmap.json');
 		expect(output).toContain('worker');
 		expect(output).toMatch(/internal/i);
 	});
@@ -113,23 +115,11 @@ describe('task strategy migrate: usage', () => {
 		const text = await run(['bogus']);
 		expect(text.exitCode).toBe(1);
 		expect(text.output).toContain('unknown task strategy migrate subcommand: bogus');
-		expect(text.output).toContain('start, status, pause, resume, log');
+		expect(text.output).toContain('start, status, pause, resume, log, finalize, abort');
 
 		const json = await run(['bogus'], {}, true);
 		expect(JSON.parse(json.output)).toMatchObject({ error: expect.stringContaining('bogus') as unknown });
 	});
-
-	it.each(['finalize', 'abort'])(
-		'%s is not available yet: exit 1, saying which phase brings it and what to do meanwhile',
-		async sub => {
-			const result = await run([sub]);
-
-			expect(result.exitCode).toBe(1);
-			expect(result.output).toContain(`task strategy migrate ${sub} is not available yet`);
-			expect(result.output).toMatch(/phase P4/);
-			expect(result.output).toContain('task strategy migrate pause');
-		}
-	);
 
 	it('an unknown option or an extra argument is refused with the usage', async () => {
 		const option = await run(['start', '--bogus']);
@@ -144,6 +134,141 @@ describe('task strategy migrate: usage', () => {
 		const missing = await run(['start', '--allow-loss']);
 		expect(missing.exitCode).toBe(1);
 		expect(missing.output).toContain('--allow-loss needs a value');
+	});
+});
+
+describe('task strategy migrate finalize and abort', () => {
+	const stateOf = (): { status: string } =>
+		JSON.parse(fs.readFileSync(path.join(project.storage.dataDir, 'migrating', 'state.json'), 'utf8')) as {
+			status: string;
+		};
+	const config = (): string => fs.readFileSync(ownConfigFile(project.storage), 'utf8');
+	/** The worker ran to the end, in this process: every task is in "new". */
+	const moveEverything = async (): Promise<void> => {
+		await seedTasks();
+		await run(['start', '--allow-loss', 'all']);
+		fs.rmSync(lockFile(), { force: true });
+		const worker = await run(['worker']);
+		expect(worker.output).toContain('ready-to-finalize');
+	};
+
+	it('finalize and abort take no argument but --json (abort also --keep-moved): the usage names it', async () => {
+		const finalizeExtra = await run(['finalize', '--keep-moved']);
+		expect(finalizeExtra.exitCode).toBe(1);
+		expect(finalizeExtra.output).toContain('unknown option: --keep-moved');
+		expect(finalizeExtra.output).toContain('Usage: task strategy migrate finalize');
+
+		const abortExtra = await run(['abort', 'now']);
+		expect(abortExtra.output).toContain('unexpected argument: now');
+		expect(abortExtra.output).toContain(
+			'Usage: task strategy migrate abort [-p <project>] [--keep-moved] [--json]'
+		);
+	});
+
+	it.each(['finalize', 'abort'])(
+		'%s with no migration started: exit 1, the command that plans one, in text and in json',
+		async sub => {
+			const text = await run([sub]);
+			expect(text.exitCode).toBe(1);
+			expect(text.output).toMatch(/no migration was started/);
+			expect(text.output).toContain('task strategy migrate start --dry-run');
+
+			const json = JSON.parse((await run([sub], {}, true)).output) as { error: string; hint: string };
+			expect(json.error).toMatch(/no migration was started/);
+			expect(json.hint).toContain('task strategy migrate start');
+		}
+	);
+
+	it('finalize while the worker runs: refused, naming the worker and the fix, nothing written', async () => {
+		await seedTasks();
+		await run(['start', '--allow-loss', 'all']);
+		const before = config();
+
+		const result = await run(['finalize']);
+
+		expect(result.exitCode).toBe(1);
+		expect(result.output).toMatch(/a worker is running \(pid \d+\)/);
+		expect(result.output).toContain('task strategy migrate pause');
+		expect(config()).toBe(before);
+		expect(fs.existsSync(`${ownConfigFile(project.storage)}.before-migration`)).toBe(false);
+	});
+
+	it('finalize of a "new" strategy that keeps its task files in the project folder is refused with the way out, and nothing is written', async () => {
+		await moveEverything();
+		const before = config();
+
+		const result = await run(['finalize']);
+
+		expect(result.exitCode).toBe(1);
+		expect(result.output).toContain('keeps its task files');
+		expect(result.output).toContain('task migrate --in-place');
+		expect(config()).toBe(before);
+		expect(stateOf().status).toBe('ready-to-finalize');
+		expect(fs.existsSync(path.join(project.storage.dataDir, 'migrating', 'idmap.json'))).toBe(false);
+	});
+
+	it('abort with nothing moved: the project goes back to "current", the migrating config is kept, nothing is deleted, exit 0', async () => {
+		await seedTasks();
+		await run(['start', '--allow-loss', 'all']);
+		fs.rmSync(lockFile(), { force: true });
+		const before = config();
+
+		const result = await run(['abort']);
+
+		expect(result.exitCode).toBe(0);
+		expect(result.output).toContain('Aborted');
+		expect(result.output).toContain('NOTHING was deleted');
+		expect(result.output).toContain('config.yml.before-abort');
+		expect(config()).not.toContain('migrating');
+		expect(fs.readFileSync(`${ownConfigFile(project.storage)}.before-abort`, 'utf8')).toBe(before);
+		expect(stateOf().status).toBe('aborted');
+		expect((await run(['status'])).output).toMatch(/Migration:\s+aborted/);
+		// repeated: nothing changes, still exit 0
+		const again = await run(['abort']);
+		expect(again.exitCode).toBe(0);
+		expect(again.output).toContain('aborted already');
+	});
+
+	it('abort --json answers the outcome as data', async () => {
+		await seedTasks();
+		await run(['start', '--allow-loss', 'all']);
+		fs.rmSync(lockFile(), { force: true });
+
+		const answer = JSON.parse((await run(['abort'], {}, true)).output) as { outcome: string; keepMoved: boolean };
+
+		expect(answer).toMatchObject({ outcome: 'aborted', keepMoved: false });
+	});
+
+	it('abort with tasks already in "new": refused naming --keep-moved; with it, exit 0 and a WARNING that says they left the project', async () => {
+		await moveEverything();
+		const before = config();
+
+		const refused = await run(['abort']);
+		expect(refused.exitCode).toBe(1);
+		expect(refused.output).toContain('--keep-moved');
+		expect(refused.output).toContain('task strategy migrate finalize');
+		expect(config()).toBe(before);
+
+		const kept = await run(['abort', '--keep-moved']);
+		expect(kept.exitCode).toBe(0);
+		expect(kept.output).toMatch(/WARNING: 3 task\(s\) have their truth in "new"/);
+		expect(kept.output).toMatch(/no longer part of this project/);
+		expect(config()).not.toContain('migrating');
+	});
+
+	it('abort while a worker that does not stop is running: refused naming its pid, exit 1, the stop request stays', async () => {
+		await seedTasks();
+		await run(['start', '--allow-loss', 'all']);
+
+		const result = await run(['abort'], { abortWaitMs: 20 });
+
+		expect(result.exitCode).toBe(1);
+		expect(result.output).toMatch(/did not stop/);
+		expect(result.output).toContain(String(process.pid));
+		expect(fs.readFileSync(path.join(project.storage.dataDir, 'migrating', 'control.json'), 'utf8')).toContain(
+			'stop'
+		);
+		expect(config()).toContain('migrating');
 	});
 });
 

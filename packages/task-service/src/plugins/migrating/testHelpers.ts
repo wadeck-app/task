@@ -129,6 +129,15 @@ export function memoryWorkerFiles(): WorkerFiles & {
 		remove(file: string): void {
 			base.texts.delete(file);
 		},
+		entries(dir: string): string[] | undefined {
+			const prefix = `${dir.replace(/\\/g, '/')}/`;
+			const names = new Set<string>();
+			for (const file of base.texts.keys()) {
+				const normal = file.replace(/\\/g, '/');
+				if (normal.startsWith(prefix)) names.add(normal.slice(prefix.length).split('/')[0]!);
+			}
+			return names.size === 0 ? undefined : [...names].sort();
+		},
 	});
 	const replace = base.replace.bind(base);
 	files.replace = (file: string, text: string): void => {
@@ -556,6 +565,7 @@ export function toolkitOf(
 		dir: MIGRATING_DIR,
 		files,
 		current: wrapped.current,
+		next: wrapped.next,
 		nextCapabilities: options.nextCapabilities ?? pair.b.capabilities,
 		nextTraits: options.nextTraits ?? pair.bTraits,
 		index: wrapped.index,

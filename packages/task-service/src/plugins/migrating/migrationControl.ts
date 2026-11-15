@@ -27,6 +27,8 @@ export interface ControlInput {
 	/** Whether a process of this host exists. */
 	isAlive: (pid: number) => boolean;
 	host: string;
+	/** The pid that takes the worker lock (finalize, abort). Default: this process. */
+	pid?: number;
 }
 
 export interface MigrationStatusReport {
@@ -99,7 +101,11 @@ function lockOf(input: ControlInput): WorkerLock {
 }
 
 /** Whether a worker holds the lock: a holder on this host is judged by its pid, one on another host cannot be and counts as running. */
-function liveWorker(input: ControlInput): { holder: LockHolder | undefined; alive: boolean; otherHost: boolean } {
+export function liveWorker(input: ControlInput): {
+	holder: LockHolder | undefined;
+	alive: boolean;
+	otherHost: boolean;
+} {
 	const holder = lockOf(input).holder();
 	if (holder === undefined) return { holder, alive: false, otherHost: false };
 	if (holder.host !== input.host) return { holder, alive: true, otherHost: true };
@@ -125,6 +131,21 @@ function countRows(rows: readonly IndexRow[]): NonNullable<MigrationStatusReport
 	};
 }
 
+/** The rows of the routing index, read only: this never writes (a worker or a command may be writing it). A damaged index is a loud error. */
+export function readIndexRows(input: ControlInput): readonly IndexRow[] {
+	const index = new RoutingIndex({
+		file: path.join(input.dir, 'index.json'),
+		files: {
+			read: file => input.files.read(file),
+			write: () => {
+				throw new Error('a read never writes the routing index');
+			},
+			ensureDir: () => undefined,
+		},
+	});
+	return index.snapshot().rows;
+}
+
 export function readMigrationStatus(input: ControlInput): MigrationStatusReport {
 	const store = storeOf(input);
 	const state = store.readState();
@@ -140,17 +161,7 @@ export function readMigrationStatus(input: ControlInput): MigrationStatusReport 
 
 	let counts: MigrationStatusReport['counts'];
 	try {
-		const index = new RoutingIndex({
-			file: path.join(input.dir, 'index.json'),
-			files: {
-				read: file => input.files.read(file),
-				write: () => {
-					throw new Error('status never writes the routing index');
-				},
-				ensureDir: () => undefined,
-			},
-		});
-		counts = { ...countRows(index.snapshot().rows), total: state.totals.tasks, openTransactions: 0 };
+		counts = { ...countRows(readIndexRows(input)), total: state.totals.tasks, openTransactions: 0 };
 	} catch (error) {
 		problems.push(describeProblem(error));
 	}
@@ -186,6 +197,9 @@ export function readMigrationStatus(input: ControlInput): MigrationStatusReport 
 			`the status says running but no worker is alive${holder === undefined ? '' : ` (the last one, pid ${holder.pid}, is gone: it crashed or was killed)`}`
 		);
 	}
+	// A finalize or an abort that began switching the project config and did not say it finished: the next run only completes it.
+	const interrupted = interruptedEnd(state);
+	if (interrupted !== undefined) problems.push(interrupted.problem);
 	const control = store.readControl();
 	const asked = control !== undefined && control.command !== 'run' ? control : undefined;
 
@@ -223,8 +237,22 @@ export function readMigrationStatus(input: ControlInput): MigrationStatusReport 
 		report.percent = counts.total === 0 ? 100 : Math.round((counts.moved / counts.total) * 100);
 	}
 	report.eta = etaOf(state, heartbeat, counts);
-	report.next = nextAction(state, { alive, starting, asked: asked?.command });
+	report.next = interrupted?.next ?? nextAction(state, { alive, starting, asked: asked?.command });
 	return report;
+}
+
+function interruptedEnd(state: MigrationState): { problem: string; next: string } | undefined {
+	if (state.finalize?.switchStarted === true && state.status !== 'finished') {
+		const next =
+			'The finalize was interrupted after the project config switch began. Complete it with: task strategy migrate finalize (it checks the config and only completes the bookkeeping when the switch happened).';
+		return { problem: next, next };
+	}
+	if (state.abort?.switchStarted === true && state.status !== 'aborted') {
+		const next =
+			'The abort was interrupted after the project config switch began. Complete it with: task strategy migrate abort (it checks the config and only completes the bookkeeping when the switch happened).';
+		return { problem: next, next };
+	}
+	return undefined;
 }
 
 function etaOf(
@@ -275,11 +303,14 @@ function nextAction(
 				'The worker stopped. See the errors with: task strategy migrate log, then: task strategy migrate resume'
 			);
 		case 'ready-to-finalize':
-			return 'Every task is moved. `task strategy migrate finalize` is not available yet: until it is, the project keeps working through both strategies and the copies in "current" are kept.';
+			return 'Every task is moved. Switch the project to the new strategy with: task strategy migrate finalize (the copies in "current" are kept, the old config is backed up). To go back instead: task strategy migrate abort --keep-moved';
 		case 'finished':
-			return 'The migration is finished: the project uses the new strategy alone.';
-		case 'aborted':
-			return 'The migration was aborted: "current" is the truth again.';
+			return `The migration is finished: the project uses the new strategy alone. The copies in "current" were kept, nothing was deleted. Old id -> new id: ${state.finalize?.idMapFile ?? 'idmap.json in the migrating folder'}`;
+		case 'aborted': {
+			const copies = state.abort?.leftovers.length ?? 0;
+			const moved = state.abort?.moved.length ?? 0;
+			return `The migration was aborted: "current" is the truth again. ${copies} copy(ies) in "new" of tasks that were being moved and ${moved} task(s) whose truth is in "new" were left there, not deleted (the list is in state.json under "abort"). To migrate again, move the files of the migrating folder aside first.`;
+		}
 	}
 }
 

@@ -111,6 +111,14 @@ export async function startMigration(toolkit: MigrationToolkit, input: StartInpu
 	const store = new MigrationStateStore({ dir: toolkit.dir, files: toolkit.files, now: toolkit.now });
 
 	const existing = store.readState();
+	if (existing !== undefined && (existing.status === 'finished' || existing.status === 'aborted')) {
+		throw new BackendRejectedError(
+			'migrating',
+			'start',
+			`the migration of this project is ${existing.status} (since ${existing.statusSince}): a new one does not start over its files`,
+			`To migrate again, move the files of ${toolkit.dir} (state.json, index.json, idmap.json, the logs) to a folder of your own first: they are the record of the earlier migration, and the routing index in them describes tasks that are no longer where it says. See: ${STATUS_COMMAND}. Nothing was written.`
+		);
+	}
 	if (existing !== undefined) {
 		throw new BackendRejectedError(
 			'migrating',

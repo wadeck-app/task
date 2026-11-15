@@ -14,6 +14,13 @@ import type { MigrationApi, MigrationControlApi } from './migrating/migrationApi
 
 // What the migrating strategy offers through the seam (see migrating/migrationApi.ts): the rest of the service imports these from here.
 export type {
+	AbortOptions,
+	AbortOutcome,
+	AbortStage,
+	Blocker,
+	ConfigSwitch,
+	FinalizeOutcome,
+	FinalizeStage,
 	ControlInput,
 	LogEntry,
 	MigrationApi,

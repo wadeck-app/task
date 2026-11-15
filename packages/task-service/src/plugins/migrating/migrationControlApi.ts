@@ -3,6 +3,7 @@
 import * as path from 'node:path';
 
 import type { MigrationControlApi } from './migrationApi.js';
+import { abortMigration, abortStage, completeAbort, completeFinalize, finalizeStage } from './migrationFinish.js';
 import {
 	pauseMigration,
 	readMigrationLog,
@@ -21,6 +22,7 @@ export const migrationControlApi: MigrationControlApi = {
 			now: facts.now,
 			isAlive: facts.isAlive,
 			host: facts.host,
+			pid: facts.pid,
 		};
 	},
 	status: readMigrationStatus,
@@ -28,4 +30,9 @@ export const migrationControlApi: MigrationControlApi = {
 	resume: resumeMigration,
 	log: readMigrationLog,
 	waitForWorker,
+	finalizeStage,
+	completeFinalize,
+	abortStage,
+	abort: abortMigration,
+	completeAbort,
 };
