@@ -8,6 +8,8 @@ import type { BackendCapabilities, TaskBackend } from '@wadeck-app/task-core';
 import { openTaskContext } from '../../openContext.js';
 import { FakeGitHub } from '../github/fakeGitHub.testkit.js';
 import { MigratingBackend } from './MigratingBackend.js';
+import { memoryIndexFiles, INDEX_FILE } from './testHelpers.js';
+import { RoutingIndex } from './routingIndex.js';
 
 let root: string;
 
@@ -28,6 +30,8 @@ function wrapperOver(
 ): MigratingBackend {
 	return new MigratingBackend({
 		current,
+		next: createLocalBackend(path.join(root, 'next-tasks')),
+		index: new RoutingIndex({ file: INDEX_FILE, files: memoryIndexFiles() }),
 		capabilities: { ...LOCAL_CAPABILITIES, ...capabilities },
 		heldBackBy,
 		statuses: STATUSES,

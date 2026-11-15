@@ -2,7 +2,7 @@
 // `new` is opened and checked and nothing is ever written to it. The wrapper promises only what BOTH sides do (the intersection of their
 // capabilities): an operation whose capability one side lacks is refused here, loudly, even though `current` could do it, because a task
 // made that way could not be moved to `new` later. It reads capabilities, traits and the TaskBackend port only; it knows no storage kind.
-import { UnsupportedByBackendError } from '@wadeck-app/task-core';
+import { BackendRejectedError, UnsupportedByBackendError } from '@wadeck-app/task-core';
 import type {
 	BackendCapabilities,
 	BackendClaimInput,
@@ -28,9 +28,16 @@ import type {
 	WriteOptions,
 } from '@wadeck-app/task-core';
 
+import { RoutedReads } from './routedReads.js';
+import type { RoutingIndex } from './routingIndex.js';
+
 export interface MigratingBackendInput {
 	/** Where the tasks are. Every operation goes here. */
 	current: TaskBackend;
+	/** Where the tasks go. Read for the tasks whose row says they are authoritative there; never written in this phase. */
+	next: TaskBackend;
+	/** Which side holds which task (see routingIndex.ts). */
+	index: RoutingIndex;
 	/** The intersection of the capabilities of both sides: what this backend declares and enforces. */
 	capabilities: BackendCapabilities;
 	/**
@@ -51,11 +58,13 @@ export class MigratingBackend implements TaskBackend {
 	syncLabels?: (options: { dryRun?: boolean }) => Promise<LabelSyncReport>;
 
 	private readonly a: TaskBackend;
+	private readonly reads: RoutedReads;
 	private readonly heldBackBy: MigratingBackendInput['heldBackBy'];
 	private readonly statuses: ReadonlySet<string>;
 
 	constructor(input: MigratingBackendInput) {
 		this.a = input.current;
+		this.reads = new RoutedReads({ current: input.current, next: input.next, index: input.index });
 		this.capabilities = input.capabilities;
 		this.heldBackBy = input.heldBackBy;
 		this.statuses = new Set(input.statuses);
@@ -120,82 +129,101 @@ export class MigratingBackend implements TaskBackend {
 		return operation.bind(this.a) as NonNullable<TaskBackend[K]>;
 	}
 
-	// ---- reads: records ----
+	/**
+	 * Phase P1 routes READS only. A write to a task whose truth is not plainly in `current` (it is moving, it is in `new`, it was made
+	 * there) would land on a copy nobody reads, or on a stale one, and look done: it is refused, naming the state. A deleted task is not
+	 * found. Tasks with no row, or `in-a`, are written in `current` exactly as before.
+	 */
+	private guard(operation: string, ...ids: readonly (string | undefined)[]): void {
+		for (const id of ids) {
+			if (id === undefined) continue;
+			const row = this.reads.writeBlocker(id);
+			if (row === undefined) continue;
+			throw new BackendRejectedError(
+				this.kind,
+				operation,
+				`Cannot ${operation} on task ${id}: it is "${row.state}" in the migrating strategy and writes to such a task are not available yet`,
+				'This phase of the migrating strategy only reads tasks that are moving or in "new" (phase P2 adds the writes). Change the task once it is back in "current", or after the move is finished.'
+			);
+		}
+	}
+
+	// ---- reads: every one is routed by the index (see routedReads.ts); with nothing routed to `new` it is current's own answer ----
 
 	async list(): Promise<TaskSummary[]> {
-		return this.a.list();
+		return this.reads.list();
 	}
 
 	async listPage(query?: ListQuery): Promise<Page<TaskSummary>> {
 		if (query?.text !== undefined && this.capabilities.search === 'none')
 			this.refuse('search', 'searching by text');
-		return this.a.listPage(query);
+		return this.reads.listPage(query);
 	}
 
 	async get(id: string): Promise<VersionedRecord> {
-		return this.a.get(id);
+		return this.reads.get(id);
 	}
 
 	async getMany(ids: readonly string[]): Promise<VersionedRecord[]> {
-		return this.a.getMany(ids);
+		return this.reads.getMany(ids);
 	}
 
 	async findByPrefix(prefix: string): Promise<VersionedRecord> {
-		return this.a.findByPrefix(prefix);
+		return this.reads.findByPrefix(prefix);
 	}
 
 	async resolve(prefix: string): Promise<ResolvedTask> {
-		return this.a.resolve(prefix);
+		return this.reads.resolve(prefix);
 	}
 
 	async listLabels(): Promise<LabelCount[]> {
 		if (!this.capabilities.labels) this.refuse('labels', 'listing labels');
-		return this.a.listLabels();
+		return this.reads.listLabels();
 	}
 
 	// ---- reads: graph ----
 
 	async getLinks(id: string): Promise<TaskLinks> {
-		return this.a.getLinks(id);
+		return this.reads.getLinks(id);
 	}
 
 	async getLinksLenient(id: string): Promise<{ links: TaskLinks; dangling: TaskLink[] }> {
-		return this.a.getLinksLenient(id);
+		return this.reads.getLinksLenient(id);
 	}
 
 	async getOpenBlockers(id: string, isTerminal: (status: TaskStatus) => boolean): Promise<TaskSummary[]> {
-		return this.a.getOpenBlockers(id, isTerminal);
+		return this.reads.getOpenBlockers(id, isTerminal);
 	}
 
 	async getUnblockedBy(blockerId: string, isTerminal: (status: TaskStatus) => boolean): Promise<TaskSummary[]> {
-		return this.a.getUnblockedBy(blockerId, isTerminal);
+		return this.reads.getUnblockedBy(blockerId, isTerminal);
 	}
 
 	async getChildren(id: string): Promise<TaskSummary[]> {
-		return this.a.getChildren(id);
+		return this.reads.getChildren(id);
 	}
 
 	async getTree(id: string): Promise<TaskTreeNode> {
-		return this.a.getTree(id);
+		return this.reads.getTree(id);
 	}
 
 	async getForest(options?: {
 		parentId?: string;
 		predicate?: (task: TaskSummary) => boolean;
 	}): Promise<TaskTreeNode[]> {
-		return this.a.getForest(options);
+		return this.reads.getForest(options);
 	}
 
 	async getDescendants(id: string): Promise<TaskSummary[]> {
-		return this.a.getDescendants(id);
+		return this.reads.getDescendants(id);
 	}
 
 	async getFullTree(id: string): Promise<TaskTreeNode> {
-		return this.a.getFullTree(id);
+		return this.reads.getFullTree(id);
 	}
 
 	async getAncestors(id: string): Promise<TaskSummary[]> {
-		return this.a.getAncestors(id);
+		return this.reads.getAncestors(id);
 	}
 
 	// ---- writes: fields ----
@@ -206,6 +234,7 @@ export class MigratingBackend implements TaskBackend {
 		if (input.parentId !== undefined && this.capabilities.hierarchy === 'none') {
 			this.refuse('hierarchy', 'creating a task under a parent');
 		}
+		this.guard('create', input.parentId);
 		return this.a.create(input);
 	}
 
@@ -213,54 +242,63 @@ export class MigratingBackend implements TaskBackend {
 		this.needsWrites('changing a status');
 		this.checkStatus(status, 'changing a status');
 		this.checkRevision(options, 'changing a status');
+		this.guard('updateStatus', id);
 		return this.a.updateStatus(id, status, options);
 	}
 
 	async setTitle(id: string, title: string, options?: WriteOptions): Promise<VersionedRecord> {
 		this.needsWrites('changing a title');
 		this.checkRevision(options, 'changing a title');
+		this.guard('setTitle', id);
 		return this.a.setTitle(id, title, options);
 	}
 
 	async setDescription(id: string, description: string, options?: WriteOptions): Promise<VersionedRecord> {
 		this.needsWrites('changing a description');
 		this.checkRevision(options, 'changing a description');
+		this.guard('setDescription', id);
 		return this.a.setDescription(id, description, options);
 	}
 
 	async setType(id: string, type: string, options?: WriteOptions): Promise<VersionedRecord> {
 		this.needsWrites('setting a type');
 		this.checkRevision(options, 'setting a type');
+		this.guard('setType', id);
 		return this.a.setType(id, type, options);
 	}
 
 	async clearType(id: string, options?: WriteOptions): Promise<VersionedRecord> {
 		this.needsWrites('clearing a type');
 		this.checkRevision(options, 'clearing a type');
+		this.guard('clearType', id);
 		return this.a.clearType(id, options);
 	}
 
 	async addLabel(id: string, label: string, options?: WriteOptions): Promise<VersionedRecord> {
 		this.needs('labels', 'adding a label');
 		this.checkRevision(options, 'adding a label');
+		this.guard('addLabel', id);
 		return this.a.addLabel(id, label, options);
 	}
 
 	async removeLabel(id: string, label: string, options?: WriteOptions): Promise<VersionedRecord> {
 		this.needs('labels', 'removing a label');
 		this.checkRevision(options, 'removing a label');
+		this.guard('removeLabel', id);
 		return this.a.removeLabel(id, label, options);
 	}
 
 	async setMeta(id: string, key: string, value: string, options?: WriteOptions): Promise<VersionedRecord> {
 		this.needs('meta', 'setting metadata');
 		this.checkRevision(options, 'setting metadata');
+		this.guard('setMeta', id);
 		return this.a.setMeta(id, key, value, options);
 	}
 
 	async removeMeta(id: string, key: string, options?: WriteOptions): Promise<VersionedRecord> {
 		this.needs('meta', 'removing metadata');
 		this.checkRevision(options, 'removing metadata');
+		this.guard('removeMeta', id);
 		return this.a.removeMeta(id, key, options);
 	}
 
@@ -270,12 +308,14 @@ export class MigratingBackend implements TaskBackend {
 		this.needsWrites('setting a parent');
 		if (this.capabilities.hierarchy === 'none') this.refuse('hierarchy', 'setting a parent');
 		this.checkRevision(options, 'setting a parent');
+		this.guard('setParent', id, parentId);
 		return this.a.setParent(id, parentId, options);
 	}
 
 	async removeParent(id: string, options?: WriteOptions): Promise<VersionedRecord> {
 		this.needsWrites('removing a parent');
 		this.checkRevision(options, 'removing a parent');
+		this.guard('removeParent', id);
 		return this.a.removeParent(id, options);
 	}
 
@@ -283,6 +323,7 @@ export class MigratingBackend implements TaskBackend {
 		this.needsWrites('adding a link');
 		this.checkLinkType(type, 'adding a link');
 		this.checkRevision(options, 'adding a link');
+		this.guard('addLink', id, targetId);
 		return this.a.addLink(id, type, targetId, options);
 	}
 
@@ -290,6 +331,7 @@ export class MigratingBackend implements TaskBackend {
 		this.needsWrites('removing a link');
 		this.checkLinkType(type, 'removing a link');
 		this.checkRevision(options, 'removing a link');
+		this.guard('removeLink', id, targetId);
 		return this.a.removeLink(id, type, targetId, options);
 	}
 
@@ -302,6 +344,7 @@ export class MigratingBackend implements TaskBackend {
 	): Promise<BackendCommentChange> {
 		this.needs('comments', 'adding a comment');
 		this.checkRevision(options, 'adding a comment');
+		this.guard('addComment', id);
 		return this.a.addComment(id, text, options);
 	}
 
@@ -313,12 +356,14 @@ export class MigratingBackend implements TaskBackend {
 	): Promise<BackendCommentEdit> {
 		this.needs('comments', 'editing a comment');
 		this.checkRevision(options, 'editing a comment');
+		this.guard('editComment', id);
 		return this.a.editComment(id, commentId, text, options);
 	}
 
 	async removeComment(id: string, commentId: string, options?: WriteOptions): Promise<BackendCommentChange> {
 		this.needs('comments', 'removing a comment');
 		this.checkRevision(options, 'removing a comment');
+		this.guard('removeComment', id);
 		return this.a.removeComment(id, commentId, options);
 	}
 
@@ -327,36 +372,42 @@ export class MigratingBackend implements TaskBackend {
 	async setPriority(id: string, priority: string, options?: WriteOptions): Promise<VersionedRecord> {
 		this.needsField('priority', 'setting a priority');
 		this.checkRevision(options, 'setting a priority');
+		this.guard('setPriority', id);
 		return this.optional('setPriority')(id, priority, options);
 	}
 
 	async clearPriority(id: string, options?: WriteOptions): Promise<VersionedRecord> {
 		this.needsField('priority', 'clearing a priority');
 		this.checkRevision(options, 'clearing a priority');
+		this.guard('clearPriority', id);
 		return this.optional('clearPriority')(id, options);
 	}
 
 	async setAssignee(id: string, assignee: string, options?: WriteOptions): Promise<VersionedRecord> {
 		this.needsField('assignee', 'setting an assignee');
 		this.checkRevision(options, 'setting an assignee');
+		this.guard('setAssignee', id);
 		return this.optional('setAssignee')(id, assignee, options);
 	}
 
 	async clearAssignee(id: string, options?: WriteOptions): Promise<VersionedRecord> {
 		this.needsField('assignee', 'clearing an assignee');
 		this.checkRevision(options, 'clearing an assignee');
+		this.guard('clearAssignee', id);
 		return this.optional('clearAssignee')(id, options);
 	}
 
 	async claim(id: string, input: BackendClaimInput): Promise<BackendClaimResult> {
 		this.needsField('claim', 'claiming a task');
 		this.checkRevision(input, 'claiming a task');
+		this.guard('claim', id);
 		return this.optional('claim')(id, input);
 	}
 
 	async release(id: string, options?: ReleaseOptions): Promise<BackendReleaseResult> {
 		this.needsField('claim', 'releasing a task');
 		this.checkRevision(options, 'releasing a task');
+		this.guard('release', id);
 		return this.optional('release')(id, options);
 	}
 
@@ -366,6 +417,7 @@ export class MigratingBackend implements TaskBackend {
 		this.needsWrites('deleting a task');
 		if (this.capabilities.delete === 'no') this.refuse('delete', 'deleting a task');
 		this.checkRevision(options, 'deleting a task');
+		this.guard('deleteTask', id);
 		return this.a.deleteTask(id, options);
 	}
 }

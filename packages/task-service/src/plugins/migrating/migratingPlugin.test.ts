@@ -2,10 +2,11 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { LOCAL_CAPABILITIES, LOCAL_TRAITS, NO_TRAITS } from '@wadeck-app/task-core';
+import { LOCAL_CAPABILITIES, LOCAL_TRAITS, NO_TRAITS, createLocalBackend } from '@wadeck-app/task-core';
 import type { BackendCapabilities, BackendTraits } from '@wadeck-app/task-core';
 
 import { openTaskContext } from '../../openContext.js';
+import { checkStrategy } from '../../strategyCheck.js';
 import { StrategyConfigError, parseStrategySection } from '../../strategyConfig.js';
 import { resolveStrategy, subStrategyViews } from '../../strategyResolve.js';
 import type { ProjectFacts, StrategyPlugin, TaskPluginRegistry } from '../kinds.js';
@@ -304,5 +305,108 @@ describe('the migrating strategy once opened (state in-a)', () => {
 		await expect(ctx.store.list()).rejects.toThrow(
 			/plugins\.migrating\.default.*plugins\.broken\.default.*cannot open it/s
 		);
+	});
+});
+
+describe('the migrating strategy and its routing index (phase P1)', () => {
+	let root: string;
+
+	beforeEach(() => {
+		root = fs.mkdtempSync(path.join(os.tmpdir(), 'task-service-open-'));
+	});
+
+	afterEach(() => {
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	const indexFile = (): string => path.join(root, 'data', 'migrating', 'index.json');
+
+	function target() {
+		const configFile = path.join(root, 'config', 'config.yml');
+		fs.mkdirSync(path.dirname(configFile), { recursive: true });
+		fs.writeFileSync(
+			configFile,
+			'strategy:\n    type: migrating\n    options:\n        current: { type: local }\n        new: { type: local }\n',
+			'utf8'
+		);
+		return {
+			storage: { dataDir: path.join(root, 'data'), configFiles: [configFile] },
+			globalConfigDir: path.join(root, 'global'),
+			project: { name: 'shop', path: root },
+		};
+	}
+
+	it('reads the index of the project data folder: a task it sends to new is read there, under its public id', async () => {
+		const ctx = openTaskContext(target());
+		const created = await ctx.store.create({ title: 'in current', status: 'backlog' });
+		const side = createLocalBackend(path.join(root, 'data', 'migrating', 'new', 'tasks'));
+		const copy = await side.create({ title: 'in new', status: 'backlog' });
+		fs.mkdirSync(path.dirname(indexFile()), { recursive: true });
+		fs.writeFileSync(
+			indexFile(),
+			JSON.stringify({
+				format: 1,
+				rows: [
+					{
+						publicId: created.id,
+						a: created.id,
+						b: copy.id,
+						state: 'in-b',
+						since: '2026-11-15T10:00:00.000Z',
+						version: 1,
+					},
+				],
+			}),
+			'utf8'
+		);
+
+		const read = await ctx.store.get(created.id);
+
+		expect(read.title).toBe('in new');
+		expect(read.id).toBe(created.id);
+		expect((await ctx.store.list()).map(task => task.title)).toEqual(['in new']);
+		await ctx.dispose?.();
+	});
+
+	it('a damaged index makes every read fail naming the file, and the file is left as it was', async () => {
+		fs.mkdirSync(path.dirname(indexFile()), { recursive: true });
+		fs.writeFileSync(indexFile(), '{ broken', 'utf8');
+		const ctx = openTaskContext(target());
+
+		await expect(ctx.store.list()).rejects.toThrow(indexFile());
+
+		expect(fs.readFileSync(indexFile(), 'utf8')).toBe('{ broken');
+		await ctx.dispose?.();
+	});
+
+	it('strategy check reports the index: no file is fine, a healthy one is counted, a damaged one is an error with its fix', async () => {
+		const names = (check: Awaited<ReturnType<typeof checkStrategy>>) =>
+			check.lines.filter(line => line.name === 'index');
+
+		const none = names(await checkStrategy(target()));
+		expect(none).toHaveLength(1);
+		expect(none[0]?.status).toBe('ok');
+		expect(none[0]?.text).toContain('no task is routed away from current');
+
+		fs.mkdirSync(path.dirname(indexFile()), { recursive: true });
+		fs.writeFileSync(
+			indexFile(),
+			JSON.stringify({
+				format: 1,
+				rows: [{ publicId: 'n1', b: '1', state: 'in-b', since: '2026-11-15T10:00:00.000Z', version: 1 }],
+			}),
+			'utf8'
+		);
+		const healthy = names(await checkStrategy(target()));
+		expect(healthy[0]?.status).toBe('ok');
+		expect(healthy[0]?.text).toContain('1 task');
+		expect(healthy[0]?.text).toContain('in-b 1');
+
+		fs.writeFileSync(indexFile(), '{ broken', 'utf8');
+		const damaged = names(await checkStrategy(target()));
+		expect(damaged[0]?.status).toBe('error');
+		expect(damaged[0]?.text).toContain(indexFile());
+		expect(damaged[0]?.fix).toContain('Do not delete it');
+		expect(fs.readFileSync(indexFile(), 'utf8')).toBe('{ broken');
 	});
 });

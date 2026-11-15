@@ -5,6 +5,7 @@
 // capabilities, traits and locations.
 import * as path from 'node:path';
 
+import { BackendDataError, ProjectWriteLock } from '@wadeck-app/task-core';
 import type { BackendCapabilities, BackendTraits } from '@wadeck-app/task-core';
 
 import type {
@@ -18,6 +19,8 @@ import type {
 } from '../kinds.js';
 import { heldBackBy, intersectCapabilities, NOTHING_PROMISED } from './capabilityIntersection.js';
 import { MigratingBackend } from './MigratingBackend.js';
+import { nodeIndexFiles } from './nodeIndexFiles.js';
+import { ROW_STATES, RoutingIndex } from './routingIndex.js';
 import { combineTraits } from './traitsCombination.js';
 
 const SLOTS = ['current', 'new'] as const;
@@ -25,6 +28,8 @@ const KNOWN_OPTIONS = [...SLOTS, 'budget'] as const;
 const BUDGET_OPTIONS = ['requestsPerMinute'] as const;
 /** Where the second side keeps what it stores itself, under the data folder of the project. */
 const NEW_SIDE_FOLDER = path.join('migrating', 'new');
+/** The routing index and its lock, under the data folder of the project. */
+const INDEX_FOLDER = 'migrating';
 
 function isMapping(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -172,8 +177,17 @@ export const migratingPlugin: StrategyPlugin = {
 		const budget = options['budget'];
 		const perMinute = isMapping(budget) ? (budget['requestsPerMinute'] as number | undefined) : undefined;
 
+		// The routing index lives in the data folder of the project; writes go through the host's atomic writer and the index lock.
+		const indexDir = path.join(context.dataDir, INDEX_FOLDER);
+		const routingIndex = new RoutingIndex({
+			file: path.join(indexDir, 'index.json'),
+			files: nodeIndexFiles(context.writeFile),
+			lock: new ProjectWriteLock(path.join(indexDir, 'index.lock')),
+		});
 		const backend = new MigratingBackend({
 			current: current.backend,
+			next: next.backend,
+			index: routingIndex,
 			capabilities,
 			heldBackBy: held,
 			statuses: context.statuses.map(status => status.name),
@@ -189,13 +203,18 @@ export const migratingPlugin: StrategyPlugin = {
 					: `budget: ${perMinute} requests a minute for the background move`,
 			],
 			check: async () => {
+				const index = indexLine(routingIndex, path.join(indexDir, 'index.json'));
+				const routed = index.status === 'ok' && !index.text.startsWith('no task is routed');
 				const lines: CheckLine[] = [
 					{
 						name: 'state',
 						status: 'warn',
-						text: 'in-a: every operation goes to "current"; "new" is opened and checked, nothing is written to it and no task is moved',
+						text: routed
+							? 'reads follow the routing index (see the index line); nothing is written to "new" and no task is moved by this version'
+							: 'in-a: every operation goes to "current"; "new" is opened and checked, nothing is written to it and no task is moved',
 						fix: 'This version does not move tasks yet. Keep this section to validate the pair, or remove it (keep only the "current" block as the strategy) to stop using it.',
 					},
+					index,
 				];
 				lines.push(...prefixed('current', await current.check()), ...prefixed('new', await next.check()));
 				return lines;
@@ -216,3 +235,27 @@ export const migratingPlugin: StrategyPlugin = {
 		return instance;
 	},
 };
+
+/** The `index` line of the check: what the routing index holds, or why it cannot be read (never fixed by recreating it). */
+function indexLine(index: RoutingIndex, file: string): CheckLine {
+	try {
+		const { rows } = index.snapshot();
+		if (rows.length === 0) {
+			return { name: 'index', status: 'ok', text: `no task is routed away from current (${file} has no row)` };
+		}
+		const counts = ROW_STATES.map(state => `${state} ${rows.filter(row => row.state === state).length}`);
+		return {
+			name: 'index',
+			status: 'ok',
+			text: `${rows.length} task(s) in the routing index: ${counts.join(', ')}`,
+		};
+	} catch (error) {
+		const { message, hint } = describeIndexProblem(error);
+		return { name: 'index', status: 'error', text: message, ...(hint === undefined ? {} : { fix: hint }) };
+	}
+}
+
+function describeIndexProblem(error: unknown): { message: string; hint?: string } {
+	if (error instanceof BackendDataError) return { message: error.message, hint: error.hint };
+	return { message: error instanceof Error ? error.message : String(error) };
+}
