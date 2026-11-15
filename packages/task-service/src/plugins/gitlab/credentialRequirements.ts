@@ -1,6 +1,6 @@
 // What the gitlab strategy needs from the token, per capability, in ONE table. `task strategy check` prints one line per row (enabled, or
 // disabled with the exact permission to add), the 403 mapping of the client names the permission a denied call needs, and the "How to
-// create the token" section of CLAUDE.md is written from the same rows. A new GitLab call that needs a new permission adds a row here.
+// create the token" section of docs/claude/storage-gitlab.md is written from the same rows. A new GitLab call that needs a new permission adds a row here.
 //
 // Sources: VERIFIED-LIVE 2026-11-09 on gitlab.com Free with a fine-grained personal access token (storage plan, "2.3.1 Live GitLab
 // findings"): a denied call answers 403 `{"error":"insufficient_granular_scope","error_description":"Access denied: This operation

@@ -1,5 +1,5 @@
 // What the remote strategy needs, per check, in ONE table: `task strategy check` prints one line per row (enabled, disabled with the
-// fix, or not tested), and the "How to create the token" section of CLAUDE.md is written from the same rows. The credential is ONE
+// fix, or not tested), and the "How to create the token" section of docs/claude/storage-remote.md is written from the same rows. The credential is ONE
 // shared bearer token (protocol v1): whoever holds it can read and write every task of the served project, so there is no
 // per-capability permission to list, only the conditions below.
 //

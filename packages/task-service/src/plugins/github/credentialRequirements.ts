@@ -1,6 +1,6 @@
 // What the github strategy needs from the token, per capability, in ONE table. `task strategy check` prints one line per row (enabled,
 // disabled with the exact permission to add, or not tested), the 403 mapping of the client names the permission a denied call needs, and
-// the "How to create the token" section of CLAUDE.md is written from the same rows. A new GitHub call that needs a new permission adds
+// the "How to create the token" section of docs/claude/storage-github.md is written from the same rows. A new GitHub call that needs a new permission adds
 // a row here.
 //
 // Evidence of each row (field `evidence`):
