@@ -223,6 +223,7 @@ sections:
     items:
       - $type: task:WidthFrame
         width: wide
+        expandable: true
         items:
           - $type: VerticalStack
             gap: gap-4

@@ -1,6 +1,6 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import React from 'react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WidthFrame } from './WidthFrame.js';
 
 const frame = () => screen.getByTestId('width-frame');
@@ -51,5 +51,64 @@ describe('WidthFrame text wrapping', () => {
 		render(<WidthFrame items={<p>content</p>} />);
 
 		expect(frame().className).toContain('[overflow-wrap:anywhere]');
+	});
+});
+
+describe('WidthFrame expandable', () => {
+	const STORAGE_KEY = 'task.page.width';
+	const toggle = () => screen.getByRole('button', { name: /full width|standard width/i });
+
+	beforeEach(() => localStorage.clear());
+	afterEach(() => localStorage.clear());
+
+	it('shows no toggle unless the design asks for it', () => {
+		render(<WidthFrame width="wide" items={<p>content</p>} />);
+
+		expect(screen.queryByRole('button')).toBeNull();
+	});
+
+	it('starts at the width of the design with a button offering the full width', () => {
+		render(<WidthFrame width="wide" expandable items={<p>content</p>} />);
+
+		expect(frame()).toHaveAttribute('data-width', 'wide');
+		expect(toggle()).toHaveAccessibleName('Use the full width');
+		expect(toggle()).toHaveAttribute('aria-pressed', 'false');
+	});
+
+	it('goes to the full width on click, says so, and remembers the choice', () => {
+		render(<WidthFrame width="wide" expandable items={<p>content</p>} />);
+
+		fireEvent.click(toggle());
+
+		expect(frame()).toHaveAttribute('data-width', 'full');
+		expect(frame()).toHaveClass('max-w-full');
+		expect(toggle()).toHaveAccessibleName('Use the standard width');
+		expect(toggle()).toHaveAttribute('aria-pressed', 'true');
+		expect(localStorage.getItem(STORAGE_KEY)).toBe('full');
+	});
+
+	it('goes back to the width of the design and forgets the choice', () => {
+		localStorage.setItem(STORAGE_KEY, 'full');
+		render(<WidthFrame width="wide" expandable items={<p>content</p>} />);
+		expect(frame()).toHaveAttribute('data-width', 'full');
+
+		fireEvent.click(toggle());
+
+		expect(frame()).toHaveAttribute('data-width', 'wide');
+		expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+	});
+
+	it('ignores a stored value other than full (a stale or hand-edited value never changes the width)', () => {
+		localStorage.setItem(STORAGE_KEY, 'narrow');
+		render(<WidthFrame width="wide" expandable items={<p>content</p>} />);
+
+		expect(frame()).toHaveAttribute('data-width', 'wide');
+	});
+
+	it('keeps the content inside the frame, the button is not part of the content', () => {
+		render(<WidthFrame width="wide" expandable items={<p>content</p>} />);
+
+		expect(within(frame()).getByText('content')).toBeInTheDocument();
+		expect(within(frame()).getByRole('button')).toBe(toggle());
 	});
 });

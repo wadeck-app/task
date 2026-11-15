@@ -571,8 +571,9 @@ export const WidthFrameEntry: ComponentRegistryEntry = {
 	nodeSchema: null as never,
 	render: ({ node, registry, ctx }: RegistryRenderProps) => {
 		const width = coerceProp(resolveExpressionValue(node['width'], ctx), 'WidthFrame.width', 'primitive', false) as import('../components/WidthFrame.js').WidthFrameProps['width']
+		const expandable = coerceProp(resolveExpressionValue(node['expandable'], ctx), 'WidthFrame.expandable', 'primitive', false) as import('../components/WidthFrame.js').WidthFrameProps['expandable']
 		const items = node['items'] as unknown[] | undefined
-		return <WidthFrame width={width} items={items ? renderChildren(items, registry, ctx) : null} />
+		return <WidthFrame width={width} expandable={expandable} items={items ? renderChildren(items, registry, ctx) : null} />
 	},
 }
 // ─── All entries ──────────────────────────────────────────────────────────────
@@ -655,4 +656,4 @@ TaskRowListEntry.knownKeys = ["actionPending","appearance","density","emptyText"
 TimelineEntry.knownKeys = ["emptyText","entries","groupByDay","order","showIcons"];
 TitleTextEntry.knownKeys = ["expandable","lines","size","text","tooltip"];
 WidthFrameEntry.allowedChildren = {"items":["layout","table","form","display","composite","atomic"]};
-WidthFrameEntry.knownKeys = ["items","width"];
+WidthFrameEntry.knownKeys = ["expandable","items","width"];
