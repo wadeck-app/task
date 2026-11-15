@@ -180,6 +180,22 @@ describe('MigrationJournal: the write-ahead log and the log of a migration', () 
 			expect(problems.join('\n')).toContain('torn');
 		});
 
+		it('read only: a torn last line is left alone (a worker may be in the middle of that append), never cut off the file', () => {
+			const files = memoryWal();
+			open(files).journal.begin('move', '2');
+			const torn = `${files.texts.get(WAL) ?? ''}{"seq":2,"at":"2026-11`;
+			files.texts.set(WAL, torn);
+			files.replaced.length = 0;
+			const problems: string[] = [];
+
+			const unfinished = open(files, problems).journal.openTransactions({ readOnly: true });
+
+			expect(unfinished.map(tx => tx.task)).toEqual(['2']);
+			expect(files.replaced).toEqual([]);
+			expect(files.texts.get(WAL)).toBe(torn);
+			expect(problems).toEqual([]);
+		});
+
 		it('is a loud error naming the file and the line for a damaged line that is not the last', () => {
 			const files = memoryWal();
 			files.texts.set(

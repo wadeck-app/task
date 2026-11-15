@@ -8,6 +8,8 @@ export interface LazyBackend {
 	backend: TaskBackend;
 	/** The instance, once a call created it. */
 	opened(): StrategyInstance | undefined;
+	/** The instance, created now when no call did yet (what a command that needs more than the port asks for). */
+	instance(): Promise<StrategyInstance>;
 	/** Disposes the instance once if it was created; creates nothing. A call after this is refused. */
 	dispose(): Promise<void>;
 }
@@ -52,6 +54,7 @@ export function createLazyBackend(
 	return {
 		backend,
 		opened: () => created,
+		instance,
 		dispose() {
 			if (disposal !== undefined) return disposal;
 			disposed = true;

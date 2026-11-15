@@ -155,6 +155,8 @@ export { migrateProjects } from './migrate/migrateProjects.js';
 export type { MigrateInPlaceInput } from './migrate/migrateInPlace.js';
 export { BACKUP_SUFFIX as IN_PLACE_BACKUP_SUFFIX, migrateInPlace } from './migrate/migrateInPlace.js';
 export type {
+	CommentsMode,
+	CommentsReport,
 	LossKind,
 	LossRow,
 	InPlaceReport,
@@ -165,10 +167,12 @@ export type {
 	MigrationOptions,
 	MigrationProgress,
 	MigrationResult,
+	MigrationSelection,
 	MigrationSide,
 	MigrationStatus,
+	SelectionReport,
 } from './migrate/migrateTypes.js';
-export { DEFAULT_MIGRATION_OPTIONS, LOSS_GROUPS, LOSS_KINDS } from './migrate/migrateTypes.js';
+export { COMMENTS_MODES, DEFAULT_MIGRATION_OPTIONS, LOSS_GROUPS, LOSS_KINDS } from './migrate/migrateTypes.js';
 export { MigrationRefusedError, MigrationStateError } from './migrate/migrateErrors.js';
 // `task serve`: the server side of the remote strategy (stage 4).
 export type { RunningTaskServer, TaskServerOptions } from './server/taskServer.js';
@@ -177,3 +181,26 @@ export { MIN_TOKEN_LENGTH } from './server/serverAuth.js';
 export { eventSinkFor, eventsRaisedByServer } from './eventsRaisedByServer.js';
 export type { ServerTokenInput, TokenOrigin } from './server/serverToken.js';
 export { DEFAULT_TOKEN_ENV, resolveServerToken } from './server/serverToken.js';
+
+// task strategy migrate: the background move of the tasks of a migrating project (phase P3 of the migrating wrapper).
+export { openMigration, openMigrationControl } from './migrationService.js';
+export type {
+	ControlInput,
+	LogEntry,
+	MigrationApi,
+	MigrationControlApi,
+	MigrationState as BackgroundMigrationState,
+	MigrationStatus as BackgroundMigrationStatus,
+	MigrationStatusReport,
+	PauseResult,
+	PlanLoss,
+	ResumeResult,
+	StartEstimate,
+	StartInput,
+	StartPlan,
+	StartResult,
+	WorkerOptions,
+	WorkerResult,
+} from './plugins/kinds.js';
+export { launchWorker, windowsLaunchScript } from './workerLaunch.js';
+export type { LaunchDeps, LaunchSpec, SpawnOptions, SpawnedProcess } from './workerLaunch.js';

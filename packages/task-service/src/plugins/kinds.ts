@@ -10,6 +10,27 @@ import type {
 } from '@wadeck-app/task-core';
 
 import type { Plugin, PluginInstance, PluginRegistry } from '../plugin-host/index.js';
+import type { MigrationApi, MigrationControlApi } from './migrating/migrationApi.js';
+
+// What the migrating strategy offers through the seam (see migrating/migrationApi.ts): the rest of the service imports these from here.
+export type {
+	ControlInput,
+	LogEntry,
+	MigrationApi,
+	MigrationControlApi,
+	MigrationState,
+	MigrationStatus,
+	MigrationStatusReport,
+	PauseResult,
+	PlanLoss,
+	ResumeResult,
+	StartEstimate,
+	StartInput,
+	StartPlan,
+	StartResult,
+	WorkerOptions,
+	WorkerResult,
+} from './migrating/migrationApi.js';
 
 /** One finding of `task strategy check`: the layout of the block is fixed by the command, the plugin only supplies lines. */
 export interface CheckLine {
@@ -49,6 +70,11 @@ export interface StrategyInstance extends PluginInstance {
 	 * protocol). Absent: the plugin's own, which never change.
 	 */
 	currentCapabilities?(): BackendCapabilities;
+	/**
+	 * A strategy that moves tasks between two others offers the start of a migration and its background worker (see
+	 * plugins/migrating/migrationApi.ts). Absent for every other strategy.
+	 */
+	migration?: MigrationApi;
 }
 
 /** The fills (design 2A) as declared in the project config: capability -> technique, with its own fidelity when it has one. */
@@ -245,6 +271,11 @@ export interface StrategyPlugin extends Plugin<'strategy', StrategyInstance, Str
 	 * never imports another plugin: it opens a sub-strategy through `StrategyContext.openStrategy`.
 	 */
 	readonly strategySlots?: readonly string[];
+	/**
+	 * A strategy that moves tasks between two others: the commands on a migration that need no side opened (status, pause, resume, log).
+	 * Absent for every other strategy.
+	 */
+	readonly migrationControl?: MigrationControlApi;
 	/**
 	 * Checks what the sub-strategies together cannot do (a pair that cannot be combined), always, whether or not the project facts are
 	 * known: the same single-sentence shape as `validate` (a problem about one slot starts with its key and ": ").

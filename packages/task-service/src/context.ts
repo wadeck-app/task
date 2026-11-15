@@ -1,7 +1,7 @@
 import type { TaskBackend, TaskResolvedConfig } from '@wadeck-app/task-core';
 
 import type { TaskProjectEnv } from './events.js';
-import type { ReadNotice, TaskPluginRegistry } from './plugins/kinds.js';
+import type { ReadNotice, StrategyInstance, TaskPluginRegistry } from './plugins/kinds.js';
 import type { ResolvedStrategy } from './strategyResolve.js';
 import type { TaskStorage } from './storage.js';
 
@@ -35,6 +35,11 @@ export interface TaskServiceContext {
 	 * them as warnings, the module adds them to its answers. Forgets them; empty for the local store and on a hand-built context.
 	 */
 	takeNotices?: () => ReadNotice[];
+	/**
+	 * The strategy instance behind `store` (created now when no call did yet): for the commands that need more than the port, such as
+	 * the start of a migration. Absent on a hand-built context.
+	 */
+	openStrategyInstance?: () => Promise<StrategyInstance>;
 	/**
 	 * The plugin registry the project was opened with (orderings are looked up in it). Absent on a hand-built context: the built-ins.
 	 */

@@ -30,7 +30,14 @@ import { isMigrateHelp, migrateHelp, projectFlagRefusal, runMigrate } from './co
 import { runProjectsCommand } from './commands/ProjectsCommand.js';
 import { isServeHelp, runServe, serveHelp } from './commands/ServeCommand.js';
 import { isStatusHelp } from './commands/StatusCommand.js';
+import {
+	isMigrateStrategy,
+	isMigrateStrategyHelp,
+	migrateStrategyHelp,
+	runMigrateStrategy,
+} from './commands/MigrateStrategyCommands.js';
 import { isStrategyHelp, parseStrategyInvocation, runStrategy, strategyHelp } from './commands/StrategyCommand.js';
+import { launchWorkerProcess } from './commands/workerProcess.js';
 import { PROJECT_COMMANDS, VALID_COMMANDS_HINT } from './commands/projectCommands.js';
 import { VERSION } from './version.js';
 
@@ -78,7 +85,7 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 		command === 'cli' ||
 		command === 'projects' ||
 		(command === 'status' && isStatusHelp(rest)) ||
-		(command === 'strategy' && isStrategyHelp(rest)) ||
+		(command === 'strategy' && (isStrategyHelp(rest) || isMigrateStrategyHelp(rest))) ||
 		(command === 'serve' && isServeHelp(rest));
 	if (notScoped && projectOptionError === undefined && projectOption.flag !== undefined) {
 		const typed = typedProjectFlag(args);
@@ -132,6 +139,42 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 	// before the command ran. The subcommand is validated first, so a typo fails the same in any folder.
 	if (command === 'strategy') {
 		if (isStrategyHelp(rest)) return strategyHelp(rest, jsonMode);
+		if (isMigrateStrategyHelp(rest)) return migrateStrategyHelp();
+		if (isMigrateStrategy(rest)) {
+			let migrating: ResolvedProject;
+			try {
+				if (projectOptionError !== undefined) throw projectOptionError;
+				migrating = resolveProjectFromArgs({ cwd, argv: args }).project;
+				announceResolution(migrating);
+			} catch (error) {
+				return failure(jsonMode, error);
+			}
+			// The worker and `log --follow` end cleanly when the process is asked to (Ctrl+C, SIGTERM): the worker finishes its move and pauses.
+			const stop = new AbortController();
+			const onSignal = (): void => stop.abort();
+			const endless = rest[1] === 'worker' || rest[1] === 'log';
+			if (endless) {
+				process.once('SIGINT', onSignal);
+				process.once('SIGTERM', onSignal);
+			}
+			try {
+				return await runMigrateStrategy(rest.slice(1), jsonMode, migrating, {
+					configDir,
+					launch: launchWorkerProcess,
+					out: text =>
+						process.stdout.write(`${text}
+`),
+					warn: text =>
+						process.stderr.write(`${text}
+`),
+					sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
+					signal: stop.signal,
+				});
+			} finally {
+				process.off('SIGINT', onSignal);
+				process.off('SIGTERM', onSignal);
+			}
+		}
 		const invocation = parseStrategyInvocation(rest, jsonMode);
 		if ('exitCode' in invocation) return invocation;
 		let resolved: ResolvedProject;

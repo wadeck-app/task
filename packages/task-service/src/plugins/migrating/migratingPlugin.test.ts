@@ -425,3 +425,84 @@ describe('the migrating strategy and its routing index (phase P1)', () => {
 		expect(fs.readFileSync(indexFile(), 'utf8')).toBe('{ broken');
 	});
 });
+
+describe('the migrating strategy offers the start of a migration and its worker (phase P3)', () => {
+	let root: string;
+
+	beforeEach(() => {
+		root = fs.mkdtempSync(path.join(os.tmpdir(), 'task-service-open-'));
+	});
+
+	afterEach(() => {
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	function target(budget = '') {
+		const configFile = path.join(root, 'config', 'config.yml');
+		fs.mkdirSync(path.dirname(configFile), { recursive: true });
+		fs.writeFileSync(
+			configFile,
+			`strategy:\n    type: migrating\n    options:\n        current: { type: local }\n        new: { type: local }\n${budget}`,
+			'utf8'
+		);
+		return {
+			storage: { dataDir: path.join(root, 'data'), configFiles: [configFile] },
+			globalConfigDir: path.join(root, 'global'),
+			project: { name: 'shop', path: root },
+		};
+	}
+
+	it('puts the migration on the instance, bound by the budget of the config and working in the data folder of the project', async () => {
+		const before = createLocalBackend(path.join(root, 'data', 'tasks'));
+		await before.create({ title: 'One', status: 'backlog' });
+		const ctx = openTaskContext(target('        budget: { requestsPerMinute: 12 }\n'));
+
+		const instance = await ctx.openStrategyInstance!();
+
+		expect(instance.migration?.dir).toBe(path.join(root, 'data', 'migrating'));
+		const plan = await instance.migration!.start({ acceptedLosses: ['all'], dryRun: true });
+		expect(plan.plan.estimate.limitedBy).toBe('budget');
+		await ctx.dispose?.();
+	});
+
+	it('offers the commands that need no side opened through the plugin', () => {
+		expect(migratingPlugin.migrationControl).toBeDefined();
+		const input = migratingPlugin.migrationControl!.input(path.join(root, 'data'), () => undefined);
+		expect(input.dir).toBe(path.join(root, 'data', 'migrating'));
+	});
+
+	it('runs start and the worker over real files: every task of current ends in new, and the log and the state are on disk', async () => {
+		// The tasks that are in current before the migration (a task made through the wrapper goes to new).
+		const before = createLocalBackend(path.join(root, 'data', 'tasks'));
+		const parent = await before.create({ title: 'Parent', status: 'backlog' });
+		await before.create({ title: 'Child', status: 'backlog', parentId: parent.id });
+		const ctx = openTaskContext(target());
+		const { migration } = await ctx.openStrategyInstance!();
+
+		await migration!.start({ acceptedLosses: ['all'] });
+		const result = await migration!.runWorker({ sleep: ms => new Promise(resolve => setTimeout(resolve, ms)) });
+
+		expect(result).toMatchObject({ status: 'ready-to-finalize', moved: 2 });
+		const dir = path.join(root, 'data', 'migrating');
+		expect(JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf8'))).toMatchObject({
+			status: 'ready-to-finalize',
+		});
+		expect(fs.existsSync(path.join(dir, 'worker.lock'))).toBe(false);
+		expect(fs.readFileSync(path.join(dir, 'log.ndjson'), 'utf8')).toContain('"outcome":"moved"');
+		const rows = JSON.parse(fs.readFileSync(path.join(dir, 'index.json'), 'utf8')) as {
+			rows: Array<{ state: string }>;
+		};
+		expect(rows.rows.map(row => row.state)).toEqual(['in-b', 'in-b']);
+		await ctx.dispose?.();
+	});
+
+	it('a plain strategy has no migration toolkit', async () => {
+		const ctx = openTaskContext({
+			storage: { dataDir: path.join(root, 'data'), configFiles: [] },
+			globalConfigDir: path.join(root, 'global'),
+			project: { name: 'shop', path: root },
+		});
+		expect((await ctx.openStrategyInstance!()).migration).toBeUndefined();
+		await ctx.dispose?.();
+	});
+});

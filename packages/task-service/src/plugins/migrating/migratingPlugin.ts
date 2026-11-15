@@ -1,7 +1,7 @@
 // The built-in strategy `migrating` (plugins.migrating.default, alias migrating): a strategy made of two others. `current` is where the
 // tasks are, `new` is where they will go. Phase P2 of .claude/plans/2026-11-15_migrating-wrapper.md: writes route by the state of
 // the task (in-a: current, moving: current then mirrored to new, in-b: new), a creation goes to `new`, and `moveTask` moves one task
-// (the background worker that calls it is phase P3). It works for ANY pair of
+// (the background worker that calls it is phase P3: migrationWorker.ts, started by startMigration.ts). It works for ANY pair of
 // strategies and knows none by name: the host opens each side (`StrategyContext.openStrategy`), and the plugin reads only their
 // capabilities, traits and locations.
 import * as path from 'node:path';
@@ -21,8 +21,13 @@ import type {
 import { heldBackBy, intersectCapabilities, NOTHING_PROMISED } from './capabilityIntersection.js';
 import { MigratingBackend } from './MigratingBackend.js';
 import { MigrationJournal } from './migrationJournal.js';
+import { migrationControlApi } from './migrationControlApi.js';
+import type { MigrationToolkit } from './migrationToolkit.js';
+import { runMigrationWorker } from './migrationWorker.js';
+import { startMigration } from './startMigration.js';
 import { nodeIndexFiles } from './nodeIndexFiles.js';
 import { nodeWalFiles } from './nodeWalFiles.js';
+import { nodeProcessFacts, nodeWorkerFiles } from './nodeWorkerFiles.js';
 import { ROW_STATES, RoutingIndex } from './routingIndex.js';
 import { combineTraits } from './traitsCombination.js';
 
@@ -90,6 +95,7 @@ export const migratingPlugin: StrategyPlugin = {
 	// A fill enables what ONE backend cannot do natively; this one has no capability of its own to fill (declare the fill on the side).
 	fillTechniques: {},
 	strategySlots: SLOTS,
+	migrationControl: migrationControlApi,
 
 	validate(options) {
 		for (const key of Object.keys(options)) {
@@ -202,6 +208,11 @@ export const migratingPlugin: StrategyPlugin = {
 			files: nodeWalFiles(context.writeFile),
 			onLogProblem: text => context.log('warn', text),
 		});
+		const copier = context.copyTasks(
+			{ slot: 'current', backend: current.backend },
+			{ slot: 'new', backend: next.backend }
+		);
+		const nextTraits = nextView.traits(facts);
 		const backend = new MigratingBackend({
 			current: current.backend,
 			next: next.backend,
@@ -209,13 +220,25 @@ export const migratingPlugin: StrategyPlugin = {
 			capabilities,
 			heldBackBy: held,
 			statuses: context.statuses.map(status => status.name),
-			nextTraits: nextView.traits(facts),
+			nextTraits,
 			journal,
-			copier: context.copyTasks(
-				{ slot: 'current', backend: current.backend },
-				{ slot: 'new', backend: next.backend }
-			),
+			copier,
 		});
+		// What the start of a migration and its background worker use: the sides' port, the index, the journal, the files of the worker.
+		const processFacts = nodeProcessFacts();
+		const toolkit: MigrationToolkit = {
+			dir: indexDir,
+			files: nodeWorkerFiles(context.writeFile),
+			current: current.backend,
+			nextCapabilities: next.backend.capabilities,
+			nextTraits,
+			index: routingIndex,
+			journal,
+			copier,
+			moves: backend.moves,
+			...(perMinute === undefined ? {} : { budget: { requestsPerMinute: perMinute } }),
+			...processFacts,
+		};
 		// What a crash left half done is settled before the first command runs; what was done is said, loudly.
 		const recovered = await backend.moves.recover();
 		for (const action of recovered.actions) context.log('warn', `migrating: recovery: ${action}`);
@@ -227,6 +250,11 @@ export const migratingPlugin: StrategyPlugin = {
 		}
 		const instance: StrategyInstance = {
 			backend,
+			migration: {
+				dir: toolkit.dir,
+				start: input => startMigration(toolkit, input),
+				runWorker: options => runMigrationWorker(toolkit, options),
+			},
 			describe: () => [
 				'state: writes follow the routing index (in-a: "current", moving: "current" then mirrored to "new", in-b: "new"); a new task is created in "new"',
 				...current.describe().map(line => `current: ${line}`),
@@ -267,7 +295,7 @@ export const migratingPlugin: StrategyPlugin = {
 								? 'Fix the problem named in the task log (line "could not be settled"), then open the project again: recovery runs at the opening.'
 								: stale > 0 || open > 0
 									? 'A move or a recovery settles them: moves.moveTask / moves.catchUp, or open the project again. Nothing is lost: the copies in "current" are kept.'
-									: 'Nothing to do. No background worker moves tasks yet (phase P3): a task moves only when something calls moveTask.',
+									: 'Nothing to do. To move the tasks in the background: task strategy migrate start (see task strategy migrate status).',
 					},
 					index,
 				];

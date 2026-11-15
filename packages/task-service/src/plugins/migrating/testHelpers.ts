@@ -6,12 +6,12 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { LOCAL_TRAITS, createLocalBackend } from '@wadeck-app/task-core';
-import type { BackendTraits, TaskBackend, VersionedRecord } from '@wadeck-app/task-core';
+import type { BackendCapabilities, BackendTraits, TaskBackend, VersionedRecord } from '@wadeck-app/task-core';
 
 import { createTaskCopier } from '../../migrate/taskCopier.js';
 import { openTaskContext } from '../../openContext.js';
 import type { ResolvedStrategy } from '../../strategyResolve.js';
-import type { ProjectFacts } from '../kinds.js';
+import type { ProjectFacts, TaskCopier } from '../kinds.js';
 import { FakeGitHub } from '../github/fakeGitHub.testkit.js';
 import { intersectCapabilities, heldBackBy } from './capabilityIntersection.js';
 import { contentHash, identityMeta } from './identityBlock.js';
@@ -19,9 +19,11 @@ import type { Authority } from './identityBlock.js';
 import { MigratingBackend } from './MigratingBackend.js';
 import type { MigratingBackendInput } from './MigratingBackend.js';
 import { MigrationJournal } from './migrationJournal.js';
+import type { MigrationToolkit } from './migrationToolkit.js';
 import type { WalFiles } from './migrationJournal.js';
 import { RoutingIndex } from './routingIndex.js';
 import type { IndexFiles, IndexRow, RowState } from './routingIndex.js';
+import type { WorkerFiles } from './workerFiles.js';
 
 export const SINCE = '2026-11-15T10:00:00.000Z';
 export const INDEX_FILE = '/virtual/data/migrating/index.json';
@@ -100,6 +102,44 @@ export function memoryWalFiles(): WalFiles & {
 		replace(file: string, text: string): void {
 			files.texts.set(file, text);
 		},
+	};
+	return files;
+}
+
+/**
+ * The files of the worker (state, control, heartbeat, lock) in memory, over the journal's. `writes` records every replacement and
+ * `failReplace` makes the next that many replacements of a file with that name fail.
+ */
+export function memoryWorkerFiles(): WorkerFiles & {
+	texts: Map<string, string>;
+	failAppend: Set<string>;
+	skipAppends: number;
+	writes: string[];
+	failReplace: Map<string, number>;
+} {
+	const base = memoryWalFiles();
+	const files = Object.assign(base, {
+		writes: [] as string[],
+		failReplace: new Map<string, number>(),
+		createExclusive(file: string, text: string): boolean {
+			if (base.texts.has(file)) return false;
+			base.texts.set(file, text);
+			return true;
+		},
+		remove(file: string): void {
+			base.texts.delete(file);
+		},
+	});
+	const replace = base.replace.bind(base);
+	files.replace = (file: string, text: string): void => {
+		for (const [name, remaining] of files.failReplace) {
+			if (file.endsWith(name) && remaining > 0) {
+				files.failReplace.set(name, remaining - 1);
+				throw new Error(`injected fault: ${file} cannot be written`);
+			}
+		}
+		files.writes.push(file);
+		replace(file, text);
 	};
 	return files;
 }
@@ -293,6 +333,10 @@ export interface Wrapped {
 	journal: MigrationJournal;
 	wal: ReturnType<typeof memoryWalFiles>;
 	faults: Faults;
+	/** The sides as the wrapper holds them (under the fault plan). */
+	current: TaskBackend;
+	next: TaskBackend;
+	copier: TaskCopier;
 	/** The log notes a problem of the human log or of a recovery was reported to. */
 	problems: string[];
 }
@@ -321,9 +365,15 @@ export function wrap(pair: Pair, options: WrapOptions = {}): Wrapped {
 	const journal = new MigrationJournal({
 		dir: path.dirname(INDEX_FILE),
 		files: wal,
-		now: () => new Date().toISOString(),
+		now: () => new Date(options.clock?.() ?? Date.now()).toISOString(),
 		newTx: () => `tx${++tx}-${Math.random().toString(36).slice(2, 8)}`,
 		onLogProblem: text => problems.push(text),
+	});
+	const copier = createTaskCopier({
+		project: { id: 'abcd1234', name: 'shop' },
+		facts: FACTS,
+		from: { backend: a, traits: pair.aTraits },
+		to: { backend: b, traits: pair.bTraits },
 	});
 	const backend = new MigratingBackend({
 		current: a,
@@ -334,16 +384,11 @@ export function wrap(pair: Pair, options: WrapOptions = {}): Wrapped {
 		statuses: STATUSES,
 		nextTraits: pair.bTraits,
 		journal,
-		copier: createTaskCopier({
-			project: { id: 'abcd1234', name: 'shop' },
-			facts: FACTS,
-			from: { backend: a, traits: pair.aTraits },
-			to: { backend: b, traits: pair.bTraits },
-		}),
+		copier,
 		...(options.clock === undefined ? {} : { now: options.clock }),
 		...(options.boundary === undefined ? {} : { boundary: options.boundary }),
 	});
-	return { backend, index, files, journal, wal, faults, problems };
+	return { backend, index, files, journal, wal, faults, current: a, next: b, copier, problems };
 }
 
 /** What a MigratingBackend over two plain backends needs besides them (tests that do not use a pair). */
@@ -459,4 +504,68 @@ export function rowInCurrent(id: string, state: 'in-a' | 'deleted' = 'in-a'): In
 /** Test-only seeding of the index (phase P1 has no writer of its own). */
 export function seedRows(wrapped: Wrapped, rows: readonly IndexRow[]): void {
 	wrapped.index.mutate(() => rows);
+}
+
+/** A clock a test drives: `sleep` advances it (nothing waits), and every pause the worker asked for is recorded in `sleeps`. */
+export class FakeClock {
+	readonly sleeps: number[] = [];
+	/** Told after every sleep (a test acts "while the worker sleeps": a pause request, a lease that ends...). */
+	onSleep?: (ms: number) => void | Promise<void>;
+	constructor(private t = Date.UTC(2026, 10, 16, 9, 0, 0)) {}
+	readonly now = (): number => this.t;
+	advance(ms: number): void {
+		this.t += ms;
+	}
+	readonly sleep = async (ms: number): Promise<void> => {
+		this.sleeps.push(ms);
+		this.t += ms;
+		await this.onSleep?.(ms);
+	};
+}
+
+export const MIGRATING_DIR = path.dirname(INDEX_FILE);
+
+export interface ToolkitOptions {
+	clock?: FakeClock;
+	files?: ReturnType<typeof memoryWorkerFiles>;
+	budget?: { requestsPerMinute?: number };
+	/** What the process table says about a pid (default: every pid is alive). */
+	isAlive?: (pid: number) => boolean;
+	pid?: number;
+	host?: string;
+	nextCapabilities?: BackendCapabilities;
+	nextTraits?: BackendTraits;
+}
+
+/**
+ * The toolkit of an opened migrating strategy, over a wrapped pair, with the files of the worker in memory. The journal's own files
+ * are the wrapper's (`wrapped.wal`), so the log the commands read is the one the moves write.
+ */
+export type MemoryWorkerFiles = ReturnType<typeof memoryWorkerFiles>;
+
+export function toolkitOf(
+	wrapped: Wrapped,
+	pair: Pair,
+	options: ToolkitOptions = {}
+): MigrationToolkit & { files: MemoryWorkerFiles } {
+	const clock = options.clock ?? new FakeClock();
+	const files = options.files ?? memoryWorkerFiles();
+	// The journal writes into `wrapped.wal`; the worker's files must show the same log, so the two share their texts.
+	files.texts = wrapped.wal.texts;
+	return {
+		dir: MIGRATING_DIR,
+		files,
+		current: wrapped.current,
+		nextCapabilities: options.nextCapabilities ?? pair.b.capabilities,
+		nextTraits: options.nextTraits ?? pair.bTraits,
+		index: wrapped.index,
+		journal: wrapped.journal,
+		copier: wrapped.copier,
+		moves: wrapped.backend.moves,
+		...(options.budget === undefined ? {} : { budget: options.budget }),
+		now: clock.now,
+		isAlive: options.isAlive ?? (() => true),
+		host: options.host ?? 'box',
+		pid: options.pid ?? 4242,
+	};
 }

@@ -165,6 +165,8 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 					'the migrating strategy reads its routing index (a project data file: which side holds which task); task data goes through the backends',
 				'packages/task-service/src/plugins/migrating/nodeWalFiles.ts':
 					'the migrating strategy appends to its write-ahead log and its migration log (project data files, flushed to the disk before each step); task data goes through the backends',
+				'packages/task-service/src/plugins/migrating/nodeWorkerFiles.ts':
+					'the background worker of the migrating strategy keeps its state, its control file, its heartbeat and its lock as files of the project data folder (exclusive creation for the lock); task data goes through the backends',
 				'packages/task-service/src/plugins/github/responseCache.ts':
 					'the read-through cache of the github strategy: answers of GitHub as files in the project data folder; entries older than 30 days are deleted at the first access',
 				'packages/task-service/src/migrate/migrateJournal.ts':
@@ -205,6 +207,8 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 				'packages/task-cli/src/cli/readText.ts': '--description-file / standard input',
 				'packages/task-cli/src/commands/TaskCliCommand.ts': 'self-check temp dir, update state and logs',
 				'packages/task-cli/src/commands/updateLog.ts': 'the updater log files',
+				'packages/task-cli/src/commands/workerProcess.ts':
+					'the launch of the background migration worker: the hidden-window script in the temp folder and the log file the worker process appends to',
 				'packages/task-cli/src/isolatedCliEnv.ts': 'the temp tree of spawned test processes',
 				'packages/task-cli/src/QueueEventsDeclaration.ts': 'the queue-events marker file',
 				'packages/task-cli/src/registerAfterUpdate.ts': 'the app-module registration after an update',

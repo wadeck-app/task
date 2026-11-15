@@ -247,9 +247,9 @@ export class MigrationJournal {
 	}
 
 	/** The transactions that began and did not end, oldest first. Throws loudly for a damaged log; a torn last line is dropped and said. */
-	openTransactions(): OpenTx[] {
+	openTransactions(options: { readOnly?: boolean } = {}): OpenTx[] {
 		const open = new Map<string, { begin: WalEntry; steps: WalEntry[] }>();
-		for (const entry of this.load()) {
+		for (const entry of this.load(options.readOnly === true)) {
 			if (entry.event === 'begin') open.set(entry.tx, { begin: entry, steps: [] });
 			else if (entry.event === 'end') open.delete(entry.tx);
 			else open.get(entry.tx)?.steps.push(entry);
@@ -321,7 +321,7 @@ export class MigrationJournal {
 	}
 
 	/** Reads the write-ahead log: every line checked; a torn last line (a crash during an append) is cut off the file and reported. */
-	private load(): WalEntry[] {
+	private load(readOnly = false): WalEntry[] {
 		const text = this.files.read(this.walFile);
 		if (text === undefined || text === '') {
 			this.seq ??= 0;
@@ -350,7 +350,8 @@ export class MigrationJournal {
 			}
 			entries.push(parsed);
 		}
-		if (torn) {
+		// Read only (status, while a worker may be appending): the torn tail is ignored and left in the file, nothing is rewritten.
+		if (torn && !readOnly) {
 			const kept = entries.map(entry => JSON.stringify(entry)).join('\n');
 			this.files.replace(this.walFile, kept === '' ? '' : `${kept}\n`);
 			const note = `${this.walFile}: the last line was cut short (a crash during a write); it is torn and was dropped, nothing before it was touched`;

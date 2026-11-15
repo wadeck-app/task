@@ -100,6 +100,7 @@ export function openTaskContext(input: OpenTaskContextInput): TaskServiceContext
 		strategy,
 		registry,
 		dispose: lazy.dispose,
+		openStrategyInstance: lazy.instance,
 		takeNotices: () => [...forwarded.splice(0), ...(lazy.opened()?.takeNotices?.() ?? [])],
 		openFresh: () => {
 			const fresh = openTaskContext({ ...input, registry, freshReads: true });

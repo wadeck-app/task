@@ -103,6 +103,7 @@ Detail: `docs/claude/storage-remote.md`
 ## Migration (`task migrate`, stage 3 of the storage design)
 
 - `task migrate --from <project> --to <project> [--dry-run] [--allow-loss <kind>] [--resume] [--history-comment] [--emit-events] [--json]` copies tasks between any two backends through the async port; both sides are registered projects; `-p` is refused, there is no `task import`.
+- Subsets (phase 2, both forms): `--only-open`, `--status a,b`, `--ids a,b`, `--limit n` pick NEW tasks (journal-known ones always stay); relations to tasks left out are losses `links:excluded` / `hierarchy:excluded`, kept in the journal (`deferred`) and written by the later run that copies the other end; `--comments each|digest|none` (digest = one comment per task, none = loss `comments`). In place with a subset: status `partial`, config never switched until a run covers every task. See `docs/claude/migration.md`.
 - In place: `task migrate --in-place --to-config <file> [-p]`: the same project switches storage; `config.yml` is replaced only after every task is read back with no difference; backup `config.yml.before-migration`.
 - Losses are explicit (`--allow-loss <kind>|all`); a blocked plan writes nothing; a dry run writes nothing (no journal, no lock).
 - Idempotent through the journal (`<data>/migrate-journal-*.json`) then the `migratedFrom` marker; an unfinished journal needs `--resume`; a damaged journal is never replaced (`MigrationStateError`).
