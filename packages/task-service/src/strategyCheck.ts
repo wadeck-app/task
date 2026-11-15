@@ -142,7 +142,11 @@ async function backendLines(
  * Checks the strategy of a project. Never throws for a problem of the project: the config error, a missing token, an unreachable
  * backend are lines. Creates nothing and writes no task.
  */
-export async function checkStrategy(target: StrategyTarget): Promise<StrategyCheck> {
+export async function checkStrategy(
+	target: StrategyTarget,
+	/** `backend: false` leaves out the lines that ask the backend (a check that may send a write must not run in a dry run). */
+	options: { backend?: boolean } = {}
+): Promise<StrategyCheck> {
 	let strategy: ResolvedStrategy;
 	let report: StrategyReport;
 	let facts: ProjectFacts;
@@ -150,6 +154,7 @@ export async function checkStrategy(target: StrategyTarget): Promise<StrategyChe
 		const setup = loadProjectSetup(target.storage, {
 			globalConfigDir: target.globalConfigDir,
 			registry: target.registry,
+			...(target.ownLayer === undefined ? {} : { ownLayer: target.ownLayer }),
 		});
 		strategy = setup.strategy;
 		facts = projectFactsOf(setup.config);
@@ -171,7 +176,7 @@ export async function checkStrategy(target: StrategyTarget): Promise<StrategyChe
 		...fillWarnings(strategy),
 		...tokens,
 		...securityLines(strategy),
-		...(await backendLines(strategy, target, facts)),
+		...(options.backend === false ? [] : await backendLines(strategy, target, facts)),
 	];
 	return summarize(lines, report);
 }

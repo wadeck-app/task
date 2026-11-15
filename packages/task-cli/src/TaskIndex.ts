@@ -106,9 +106,20 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 	// TASK_PROJECT is not read. The events (one summary, the per-task ones with --emit-events) go through the same queue sink.
 	if (command === 'migrate') {
 		if (isMigrateHelp(rest)) return migrateHelp();
-		if (projectOptionError !== undefined || projectOption.flag !== undefined) return projectFlagRefusal(jsonMode);
+		// `--in-place` is the exception: one project changes storage, so it is the project in scope (-p, TASK_PROJECT, the cwd).
+		const inPlace = rest.includes('--in-place');
+		if (!inPlace && (projectOptionError !== undefined || projectOption.flag !== undefined)) {
+			return projectFlagRefusal(jsonMode);
+		}
 		return runMigrate(rest, jsonMode, {
 			configDir,
+			cwd,
+			resolveOwnProject: () => {
+				if (projectOptionError !== undefined) throw projectOptionError;
+				const resolved = resolveProjectFromArgs({ cwd, argv: args }).project;
+				announceResolution(resolved);
+				return resolved;
+			},
 			makeSink: () =>
 				declareBeforeFirstDelivery(
 					createQueueEventSink({ getLogDir: () => getTaskLogDir(ConfigDir.get('task')) }),

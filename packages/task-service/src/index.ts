@@ -144,9 +144,12 @@ export { RemovedConfigKeyError, HOOKS_REMOVED_HINT } from './removedConfigKey.js
 // task migrate (design 1.8): the engine over any two backends, and the entry over two registered projects.
 export type { MigrateProjectsInput } from './migrate/migrateProjects.js';
 export { migrateProjects } from './migrate/migrateProjects.js';
+export type { MigrateInPlaceInput } from './migrate/migrateInPlace.js';
+export { BACKUP_SUFFIX as IN_PLACE_BACKUP_SUFFIX, migrateInPlace } from './migrate/migrateInPlace.js';
 export type {
 	LossKind,
 	LossRow,
+	InPlaceReport,
 	MigrationCounts,
 	MigrationEstimate,
 	MigrationFailure,

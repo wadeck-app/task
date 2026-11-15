@@ -6,6 +6,7 @@ import { createInstance } from './plugin-host/index.js';
 import { createBuiltinRegistry } from './plugins/builtinPlugins.js';
 import type { ReadNotice, TaskPluginRegistry } from './plugins/kinds.js';
 import { loadProjectSetup, projectFactsOf } from './projectConfig.js';
+import type { OwnLayerOverride } from './projectConfig.js';
 import type { ResolvedProject } from './resolveProject.js';
 import { taskLogWriter } from './strategyLog.js';
 import { tasksDirOf } from './storage.js';
@@ -30,6 +31,11 @@ export interface OpenTaskContextInput {
 	freshReads?: boolean;
 	/** The writes must raise no queue event (a migration): a remote strategy asks its server to stay silent. Default: events as usual. */
 	suppressEvents?: boolean;
+	/**
+	 * Use this layer instead of the project's own config file (nothing is written): the project as it will be once the file is replaced
+	 * (`task migrate --in-place`). Statuses, types and strategy then come from it; the parent layers stay the project's.
+	 */
+	ownLayer?: OwnLayerOverride;
 }
 
 /** Task files are written whole or not at all (temp file, fsync, rename): a crash never leaves half a task. */
@@ -51,6 +57,7 @@ export function openTaskContext(input: OpenTaskContextInput): TaskServiceContext
 	const { config, strategy } = loadProjectSetup(storage, {
 		globalConfigDir: input.globalConfigDir,
 		registry,
+		...(input.ownLayer === undefined ? {} : { ownLayer: input.ownLayer }),
 	});
 	const project = {
 		...(id === undefined ? {} : { id }),
@@ -112,7 +119,7 @@ export function openTaskContext(input: OpenTaskContextInput): TaskServiceContext
 export function openResolvedProject(
 	resolved: ResolvedProject,
 	globalConfigDir?: string,
-	extra: Pick<OpenTaskContextInput, 'env' | 'registry' | 'freshReads' | 'suppressEvents'> = {}
+	extra: Pick<OpenTaskContextInput, 'env' | 'registry' | 'freshReads' | 'suppressEvents' | 'ownLayer'> = {}
 ): TaskServiceContext {
 	return openTaskContext({
 		storage: resolved.storage,

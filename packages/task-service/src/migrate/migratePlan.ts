@@ -7,6 +7,7 @@ import { LossLedger, isLossAllowed } from './lossLedger.js';
 import { MIGRATED_FROM_KEY, mapTask } from './mapTask.js';
 import type { MappedTask } from './mapTask.js';
 import { MigrationRefusedError } from './migrateErrors.js';
+import { contentHash, contentParts } from './sourceContent.js';
 import { PHASES } from './migrateJournal.js';
 import type { Journal, Phase } from './migrateJournal.js';
 import type {
@@ -55,6 +56,8 @@ export interface MigrationPlan {
 	vanished: string[];
 	/** The latest creation instant among the tasks the target holds (its own clock); absent for an empty target. */
 	targetClock?: string;
+	/** What the source held when the plan was made (id -> content hash and per-part hashes): an in-place run compares it again before it switches. */
+	sourceContent: Map<string, { hash: string; parts: Record<string, string> }>;
 }
 
 export interface PlanInput {
@@ -317,6 +320,12 @@ export async function buildPlan(input: PlanInput): Promise<MigrationPlan> {
 		estimate,
 		vanished,
 		targetClock: latestInstant(targetSummaries),
+		sourceContent: new Map(
+			records.map(record => {
+				const parts = contentParts(record);
+				return [record.id, { hash: contentHash(parts), parts }] as const;
+			})
+		),
 	};
 }
 

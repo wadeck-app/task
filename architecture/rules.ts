@@ -165,6 +165,8 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 					'the read-through cache of the github strategy: answers of GitHub as files in the project data folder; entries older than 30 days are deleted at the first access',
 				'packages/task-service/src/migrate/migrateJournal.ts':
 					'the journal and the lock of a migration: files in the data folder of the target project (task data goes through the backends)',
+				'packages/task-service/src/migrate/migrateInPlace.ts':
+					'the in-place migration reads the draft config file the person names and replaces the project config file (with its .before-migration copy) at the switch; task data goes through the backends',
 				'packages/task-service/src/migrate/migrate.testkit.ts':
 					'test fixture of the migration tests (disposable folders, folder snapshots); nothing shipped imports it',
 				'packages/task-service/src/projectsHealth.ts': 'existence of the registered folders',

@@ -3,7 +3,7 @@
 import type { BackendTraits, TaskBackend } from '@wadeck-app/task-core';
 
 import type { TaskEvent } from '../events.js';
-import type { ProjectFacts, ReadNotice } from '../plugins/kinds.js';
+import type { CheckLine, ProjectFacts, ReadNotice } from '../plugins/kinds.js';
 
 /**
  * Every kind of loss the plan can report, by the name `--allow-loss` takes. A kind with a colon belongs to a group (`links`, `hierarchy`):
@@ -62,6 +62,10 @@ export interface MigrationOptions {
 	emitEvents: boolean;
 	/** Write one note comment per task with its creation instant and its status history (so those are not lost). */
 	historyComment: boolean;
+	/** In place only: switch even when the read-back finds differences that cannot clear (a forge normalising a text). They are recorded. */
+	acceptDifferences?: boolean;
+	/** In place only, with resume: continue an unfinished run with a draft whose target definition changed, when the storage location is the same. */
+	acceptDraftChange?: boolean;
 }
 
 export const DEFAULT_MIGRATION_OPTIONS: MigrationOptions = {
@@ -98,7 +102,8 @@ export interface MigrationEstimate {
 	quotaPerHour?: number;
 }
 
-export type MigrationStatus = 'dry-run' | 'blocked' | 'completed' | 'rate-limited' | 'failed';
+/** `stopped`: in place, everything was written but the source changed meanwhile: nothing was switched, `--resume` continues. */
+export type MigrationStatus = 'dry-run' | 'blocked' | 'completed' | 'rate-limited' | 'failed' | 'stopped';
 
 export interface MigrationCounts {
 	/** Tasks read from the source. */
@@ -162,6 +167,34 @@ export interface MigrationResult {
 	failure?: MigrationFailure;
 	/** The events to deliver (the summary one, and the per-task ones with `emitEvents`); never part of the printed result. */
 	events: TaskEvent[];
+	/** In-place migration: what the switch of the config did (the engine's part; the entry adds the paths). */
+	inPlace?: InPlaceReport;
+}
+
+/** What an in-place migration says about the switch of the config (the engine fills the first two, the entry the rest). */
+export interface InPlaceReport {
+	/** The config of the project now is the draft. */
+	switched: boolean;
+	/** The persistent id map (`[{from, to}]`, creation order). */
+	idMapFile: string;
+	/** The draft file as typed, made absolute. */
+	draft?: string;
+	/** The project's own config file: replaced by the draft at the switch. */
+	config?: string;
+	/** Where the config it replaced is kept (absent when the project had no config file). */
+	backup?: string;
+	/** How to go back, in one sentence. */
+	rollback?: string;
+	/** The read-back differences the person accepted with --accept-differences (also stored in the journal). */
+	acceptedDifferences?: MigrationMismatch[];
+	/** Top-level keys of the config being replaced that the draft does not have: they are gone after the switch (the backup keeps them). */
+	configKeysDropped?: string[];
+	/** The draft file changed on disk after it was read: what was migrated and written is the text read at the start. */
+	draftChangedOnDisk?: boolean;
+	/** Dry run: the strategy checks that need no write, as `task strategy check` prints them. */
+	checks?: CheckLine[];
+	/** Dry run: what could not be checked, and why. */
+	checksNote?: string;
 }
 
 /** What the run is doing, for the progress lines. */

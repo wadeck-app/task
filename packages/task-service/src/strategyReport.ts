@@ -5,6 +5,7 @@ import type { BackendCapabilities, BackendKind } from '@wadeck-app/task-core';
 
 import type { DeclaredFills, TaskPluginRegistry } from './plugins/kinds.js';
 import { loadProjectSetup } from './projectConfig.js';
+import type { OwnLayerOverride } from './projectConfig.js';
 import type { Fidelity } from './strategyConfig.js';
 import { techniquesOf } from './strategyFills.js';
 import type { ResolvedStrategy } from './strategyResolve.js';
@@ -17,6 +18,8 @@ export interface StrategyTarget {
 	globalConfigDir?: string;
 	registry?: TaskPluginRegistry;
 	env?: NodeJS.ProcessEnv;
+	/** Read the config with this layer in place of the project's own file (the draft of `task migrate --in-place`). */
+	ownLayer?: OwnLayerOverride;
 }
 
 export interface CapabilityRow {
@@ -188,6 +191,7 @@ export function showStrategy(target: StrategyTarget): StrategyReport {
 	const { strategy } = loadProjectSetup(target.storage, {
 		globalConfigDir: target.globalConfigDir,
 		registry: target.registry,
+		...(target.ownLayer === undefined ? {} : { ownLayer: target.ownLayer }),
 	});
 	const env = target.env ?? process.env;
 	return {

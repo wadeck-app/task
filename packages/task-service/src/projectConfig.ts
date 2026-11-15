@@ -33,6 +33,15 @@ export const TASK_CONFIG_SCHEMA: ConfigSchema = {
 	},
 };
 
+/**
+ * A config layer to use IN PLACE OF the project's own file, without writing it (`task migrate --in-place`: the context of the
+ * strategy the project is about to switch to). `name` is what errors call the layer (the draft file).
+ */
+export interface OwnLayerOverride {
+	name: string;
+	values: Record<string, unknown>;
+}
+
 /** An `outcome` on a non-terminal status, or another value than positive / negative, is a schema error naming the file. */
 function checkStatusOutcomes(layer: NamedLayer): void {
 	const statuses = (layer.values as TaskProjectConfig).statuses;
@@ -142,12 +151,15 @@ function checkGlobalConfig(globalConfigDir: string | undefined): void {
 /** Reads, validates and merges the layers of a project; the config is the result, `strategy` the merged section of the own layer. */
 function readSetup(
 	storage: TaskStorage,
-	globalConfigDir: string | undefined
+	globalConfigDir: string | undefined,
+	ownLayer?: OwnLayerOverride
 ): { config: TaskResolvedConfig; strategy: StrategySection | undefined } {
 	const layers: NamedLayer[] = storage.configFiles.map(file => ({
 		name: file,
 		values: TaskConfigLoader.readConfigFile(file) ?? {},
 	}));
+	if (ownLayer !== undefined) layers[layers.length - 1] = { name: ownLayer.name, values: ownLayer.values };
+	const ownName = ownLayer?.name ?? ownConfigFile(storage);
 	for (const layer of layers) {
 		// Before the schema check: its generic "unknown key" message would not say what replaces hooks.
 		assertNoHooks(layer.name, layer.values);
@@ -163,10 +175,10 @@ function readSetup(
 	const config = TaskConfigLoader.resolve({
 		global: TaskConfigLoader.loadGlobal(globalConfigDir),
 		project: merged.values as TaskProjectConfig,
-		source: ownConfigFile(storage),
+		source: ownName,
 	});
 	checkDefaultPriority(config, layers);
-	return { config, strategy: parseStrategySection(ownConfigFile(storage), merged.values['strategy']) };
+	return { config, strategy: parseStrategySection(ownName, merged.values['strategy']) };
 }
 
 /**
@@ -187,14 +199,14 @@ export function loadTaskConfig(storage: TaskStorage, globalConfigDir?: string): 
  */
 export function loadProjectSetup(
 	storage: TaskStorage,
-	options: { globalConfigDir?: string; registry?: TaskPluginRegistry } = {}
+	options: { globalConfigDir?: string; registry?: TaskPluginRegistry; ownLayer?: OwnLayerOverride } = {}
 ): { config: TaskResolvedConfig; strategy: ResolvedStrategy } {
-	const { config, strategy } = readSetup(storage, options.globalConfigDir);
+	const { config, strategy } = readSetup(storage, options.globalConfigDir, options.ownLayer);
 	return {
 		config,
 		strategy: resolveStrategy(
 			strategy,
-			ownConfigFile(storage),
+			options.ownLayer?.name ?? ownConfigFile(storage),
 			options.registry ?? createBuiltinRegistry(),
 			projectFactsOf(config)
 		),

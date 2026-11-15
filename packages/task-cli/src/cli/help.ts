@@ -132,6 +132,9 @@ Usage:
                                              Copy every task of one registered project into another, between any two storages (local files, github):
                                              plan and loss table first (--dry-run stops there), then create, link, comment and read back; resumable and
                                              idempotent, never changes the source. Needs no project of its own: see task migrate --help
+  task migrate --in-place --to-config <file> [-p <project>] [--dry-run] [--allow-loss <kinds>] [--resume] [--history-comment] [--emit-events] [--json]
+                                             Move THIS project to another storage: copy its tasks to the strategy of a draft config.yml, read them back,
+                                             then replace config.yml by the draft (the old one is kept as config.yml.before-migration). See task migrate --help
 
 Global flags:
   --config <dir>       Global config directory (default: ~/.task)
@@ -194,16 +197,36 @@ Environment variables:
 }
 
 /** `task migrate --help`. */
-export const MIGRATE_HELP = `task migrate - copy the tasks of one registered project into another
+export const MIGRATE_HELP = `task migrate - copy the tasks of one registered project into another, or move one project to another storage
 
 Usage:
   task migrate --from <project> --to <project> [--dry-run] [--allow-loss <kind>[,<kind>...]] [--resume] [--history-comment] [--emit-events] [--json]
+  task migrate --in-place --to-config <file> [-p <project>] [--dry-run] [--allow-loss <kind>[,<kind>...]] [--resume] [--history-comment] [--emit-events] [--json]
 
   --from <project>      The source: a registered project (id, unique id prefix of 4 or more, name or alias; never a path). Only read.
   --to <project>        The target: another registered project. Its own strategy (config.yml) decides where its tasks go: local files or
-                        github. To move a project onto GitHub, register a second project with the project CLI (project add <dir>), give it
-                        a strategy section (task strategy show/check) and migrate into it. The same project on both sides, or two projects
-                        on the same repository, is refused. TASK_PROJECT and -p are not read: the two sides are these options.
+                        github. The same project on both sides, or two projects on the same repository, is refused. TASK_PROJECT and -p
+                        are not read: the two sides are these options. To move ONE project to GitHub without a second project, use
+                        --in-place (below); the alternative is to register a second project with the project CLI (project add <dir>),
+                        give it a strategy section (task strategy show/check) and migrate into it.
+  --in-place            The project in scope (-p, TASK_PROJECT, else the registered folder you are in) changes storage, and stays the same
+                        registered project (id, name, aliases, paths unchanged). Source = its current config.yml (usually local files).
+                        Target = the strategy of --to-config. Does not take --from / --to.
+  --to-config <file>    The draft: the WHOLE new config.yml of the project (it replaces the current file entirely: statuses, types, priorities,
+                        defaults... must be in it; the keys it lacks are listed as a warning and are gone after the switch, the old file is
+                        kept). Checked like a project config (schema, no secrets in it: tokenEnv / tokenFile, strategy section; it must hold
+                        a strategy). It is read ONCE; what is migrated and written is that text, even if the file changes meanwhile (said in
+                        the output). A status or type the draft lacks is a loss, reported before anything is written. Source and target on
+                        the same storage (a draft still local, the same repository, a task server that serves this project) are refused.
+  --accept-differences  (in place) Switch even when the read-back finds differences that can never clear (a forge normalising a text), or when
+                        the source changed or lost a task that was already copied. They are printed in full and stored in the journal
+                        (acceptedDifferences) and in --json. A task ADDED to the source is never accepted (--resume copies it). Without it the
+                        run stops before the switch. Never copied into the commands the output prints: type it each time you mean it.
+  --accept-draft-change (in place, with --resume) Continue an unfinished run with a draft whose target definition changed (strategy type,
+                        fidelity, fills and every option that changes the stored data; the statuses with their flags, the types, the priorities
+                        and defaults.priority), when the storage location is the same. Connection-only options (tokenEnv, tokenFile,
+                        timeoutSeconds, cache, pageSize, maxPages, writeSpacingSeconds, rateLimit) and comments never need it. Another
+                        location is always refused. Never copied into printed commands either.
   --dry-run             Read both sides, print the plan, the loss table and the estimate, and stop: nothing is written (no task, no journal,
                         no lock, no request that changes anything); exit 0 even when the plan is blocked.
   --allow-loss <kinds>  Accept losses by kind (comma separated, repeatable). Without it a plan that loses anything is BLOCKED (exit 1,
@@ -242,7 +265,28 @@ Loss kinds (--dry-run lists the ones that apply):
   links:blockedBy, links:duplicateOf, links:causedBy, links:dangling
                            link types the target cannot store (causedBy on GitHub), links to tasks that are not in the source
 
-Journal and idempotence: <target data folder>/migrate-journal-<source id>-<target id>.json (atomic writes; a damaged file is a loud error, never
+In place: the copy is the one above (journal, marker meta migratedFrom=<project id>/<old id>, loss table, read-back), with these additions.
+  - Id map: <data folder>/migrate-idmap-<project id>.json, a list of {from, to}, saved after every task is created and before the switch; it is
+    printed as 'old id -> new id' (and as idMap in --json). References to old ids in texts are not rewritten: use the map.
+  - The SWITCH comes last: only when every task is written AND read back with no difference, config.yml (the project's own layer) is replaced by
+    the draft, atomically, and the old one is kept as config.yml.before-migration next to it. If that file already exists the run stops before
+    anything is written (--dry-run too): it is your rollback copy, move it away first. A run that stops or fails leaves config.yml untouched;
+    --resume continues it. If only the switch failed, or the process died right after replacing config.yml, --resume does just what is left
+    (the journal says every task was verified: nothing is read or created). A config.yml edited during the run is never overwritten: the switch
+    stops and --resume re-takes the snapshot. If the source gets a task added, removed or changed after the plan, the run stops (status stopped)
+    before the switch, says which ids and which parts changed (title, description, status, type, labels, meta, parent, links, priority,
+    assignee, comments), and --resume copies the added ones. A changed task keeps the version that was copied and a removed one keeps its copy;
+    the next runs stop on them again until you fix the target by hand or add --accept-differences.
+  - Afterwards the local task files are NOT deleted. Rollback = copy config.yml.before-migration back over config.yml.
+  - A finished migration's journal and id map are ARCHIVED (renamed <name>.archived-<time>.json, never deleted) when a new in-place migration of
+    the project is about to write its first task (a refused or blocked run leaves both files). An unfinished run is resumed only with the same target (see --accept-draft-change): another
+    option at the same location needs --resume --accept-draft-change, another location is refused; a dry run only prints a note.
+  - --dry-run also prints the strategy checks that need no write (token readable, repository reachable, statuses mapped); a check that cannot
+    run without a write is listed as not checked. It writes nothing: no journal, lock, id map or config.
+  - Events: unchanged (none per task unless --emit-events). The one summary event onTasksMigrated (from and to project are the same) is raised
+    after the switch.
+
+Journal and idempotence: <target data folder>/migrate-journal-<source id>-<target id>.json (migrate-journal-<project id>-inplace.json for --in-place; atomic writes; a damaged file is a loud error, never
 replaced). A second run recognises the tasks it already migrated by the journal, else by the marker in the target, and creates nothing. A lock
 file (migrate.lock) keeps two runs from writing the same target. Only one run at a time; a lock left by a dead process is taken over.
 Rate limits: the run stops cleanly, prints when the limit lifts and the exact command to continue. Any other failure stops at the first one,
@@ -255,7 +299,9 @@ Exit codes:
 Examples:
   task migrate --from shop --to shop-github --dry-run
   task migrate --from shop --to shop-github --allow-loss history,created-at,marker
-  task migrate --from shop --to shop-github --allow-loss history,created-at,marker --resume`;
+  task migrate --from shop --to shop-github --allow-loss history,created-at,marker --resume
+  task migrate --in-place --to-config ./github-config.yml -p shop --dry-run
+  task migrate --in-place --to-config ./github-config.yml -p shop --allow-loss history,created-at,marker`;
 
 /** `task projects --help`. */
 export const PROJECTS_HELP = `task projects - figures over the projects of the shared project registry

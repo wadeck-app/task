@@ -12,9 +12,18 @@ import type { TaskEvent, TaskProjectEnv } from '../events.js';
 import { checkAllowLoss } from './lossLedger.js';
 import { MIGRATED_FROM_KEY, commentMarker } from './mapTask.js';
 import { MigrationRefusedError } from './migrateErrors.js';
-import { PHASES, acquireLock, journalFileName, readJournal, writeJournal } from './migrateJournal.js';
-import type { Journal, Phase } from './migrateJournal.js';
-import { before, buildPlan, readRecords } from './migratePlan.js';
+import {
+	PHASES,
+	acquireLock,
+	inPlaceJournalFileName,
+	journalFileName,
+	readJournal,
+	writeIdMap,
+	writeJournal,
+} from './migrateJournal.js';
+import type { HeldLock, Journal, Phase } from './migrateJournal.js';
+import { before, buildPlan, listAll, readRecords } from './migratePlan.js';
+import { contentHash, contentParts, differingParts } from './sourceContent.js';
 import type { MigrationPlan, PlannedTask } from './migratePlan.js';
 import { LOSS_GROUPS, LOSS_KINDS } from './migrateTypes.js';
 import type {
@@ -30,14 +39,42 @@ import type {
 import { compare } from './migrateVerify.js';
 import type { Expectation } from './migrateVerify.js';
 
+/**
+ * In-place migration (one project, its storage changes): what the engine needs besides the two endpoints. The two endpoints carry the
+ * SAME project id; the journal is the in-place one; the id map is saved before the switch; the switch comes last.
+ */
+export interface InPlaceHooks {
+	/** What the run migrates to: hash, parts, storage location (stored in the journal; the caller decides what a change of it means). */
+	target: { hash: string; parts: Record<string, string>; location: string };
+	/** Where the persistent id map is written (atomically, after every creation). */
+	idMapFile: string;
+	/** Do not read the journal on disk (a dry run next to a finished run, or to one of another target). */
+	ignoreJournal?: boolean;
+	/**
+	 * Replaces the config of the project by the draft. Called once, after every task is written and read back with no difference (or the
+	 * differences accepted), the source is unchanged since the plan, and the id map and the journal are saved; idempotent (a config
+	 * already replaced is left alone). A throw is a failure of step `switch`.
+	 */
+	switchConfig: (markStarted: (started: boolean) => void) => void | Promise<void>;
+	/**
+	 * Called once, right before the run's FIRST write (after the plan, the loss check and the lock): where the caller moves the files of
+	 * an earlier finished migration out of the way. A dry run, a refused or a blocked run never gets here.
+	 */
+	beforeWrite?: () => void | Promise<void>;
+}
+
 export interface RunMigrationInput {
 	source: MigrationEndpoint;
 	target: MigrationEndpoint;
 	/** The folder of the journal and the lock: the data folder of the target project. */
 	journalDir: string;
 	options: MigrationOptions;
+	/** Set for `task migrate --in-place`: see {@link InPlaceHooks}. */
+	inPlace?: InPlaceHooks;
 	/** The command that continues a stopped run, printed in the result. */
 	resumeCommand: string;
+	/** A lock the caller already holds (it took it before its own checks); the caller releases it, the engine never does. Default: take it here and release it. */
+	heldLock?: HeldLock;
 	onProgress?: (progress: MigrationProgress) => void;
 	/** Clock for the journal (ms). Default Date.now. */
 	now?: () => number;
@@ -85,6 +122,8 @@ class Run {
 	step = 'create';
 	/** The latest creation instant on the target (its own clock): what a lost creation is not older than. */
 	targetClock: string | undefined;
+	/** True when this run replaced the config (in-place). */
+	switchedNow = false;
 	private lastSave = 0;
 
 	constructor(
@@ -122,6 +161,16 @@ class Run {
 		this.lastSave = now;
 		this.journal.updatedAt = new Date(now).toISOString();
 		writeJournal(this.journalFile, this.journal);
+	}
+
+	/** In-place: the id map as the journal knows it now, written whole and atomically (creation order). */
+	saveIdMap(): void {
+		const file = this.input.inPlace?.idMapFile;
+		if (file === undefined) return;
+		writeIdMap(
+			file,
+			Object.entries(this.journal.tasks).map(([from, entry]) => ({ from, to: entry.target }))
+		);
 	}
 
 	targetOf(sourceId: string): string {
@@ -253,10 +302,15 @@ async function createPass(run: Run): Promise<void> {
 				...(mapped.createdAt === undefined ? {} : { createdAt: mapped.createdAt }),
 			});
 			// Written at once: from here on a second run knows this task exists.
-			run.journal.tasks[sourceId] = { target: record.id, phase: 'created' };
+			run.journal.tasks[sourceId] = {
+				target: record.id,
+				phase: 'created',
+				...(run.input.inPlace === undefined ? {} : contentOf(run.plan, sourceId)),
+			};
 			delete run.journal.pending;
 			if (run.targetClock === undefined || record.createdAt > run.targetClock) run.targetClock = record.createdAt;
 			run.save(true);
+			run.saveIdMap();
 			run.fresh.add(sourceId);
 			run.counts.created++;
 			action = 'created';
@@ -396,7 +450,10 @@ async function verifyPass(run: Run): Promise<MigrationMismatch[]> {
 	const target = run.target;
 	run.step = 'verify';
 	run.currentSourceId = undefined;
-	const checked = plan.tasks.filter(planned => run.touched.has(planned.mapped.sourceId));
+	// The switch of an in-place migration is the point of no return: every task is read back, not only what this run wrote.
+	const checked = plan.tasks.filter(
+		planned => run.input.inPlace !== undefined || run.touched.has(planned.mapped.sourceId)
+	);
 	const mismatches: MigrationMismatch[] = [];
 	for (let start = 0; start < checked.length; start += VERIFY_CHUNK) {
 		const chunk = checked.slice(start, start + VERIFY_CHUNK);
@@ -430,6 +487,88 @@ async function verifyPass(run: Run): Promise<MigrationMismatch[]> {
 	return mismatches;
 }
 
+function contentOf(plan: MigrationPlan, sourceId: string): { content?: string; parts?: Record<string, string> } {
+	const known = plan.sourceContent.get(sourceId);
+	return known === undefined ? {} : { content: known.hash, parts: known.parts };
+}
+
+interface SourceChanges {
+	added: string[];
+	failure: MigrationFailure;
+	/** What `--accept-differences` records for the changed and removed tasks (never for an added one). */
+	accepted: MigrationMismatch[];
+}
+
+/**
+ * In place: what changed in the source since it was planned or copied, or undefined when nothing did. Every task is read again in full
+ * and its content (everything a migration maps) is compared with what the journal remembers of the copy, else with the plan.
+ */
+async function sourceChanges(run: Run): Promise<SourceChanges | undefined> {
+	const planned = run.plan.sourceContent;
+	const source = run.input.source.backend;
+	const summaries = await listAll(source);
+	const records = await readRecords(
+		source,
+		summaries.map(summary => summary.id)
+	);
+	const added: string[] = [];
+	const changed: Array<{ id: string; parts: string[] }> = [];
+	const seen = new Set<string>();
+	for (const record of records) {
+		seen.add(record.id);
+		const was = planned.get(record.id);
+		if (was === undefined) {
+			added.push(record.id);
+			continue;
+		}
+		const now = contentParts(record);
+		const entry = run.journal.tasks[record.id];
+		const copied = entry?.content ?? was.hash;
+		if (copied === contentHash(now)) continue;
+		const copiedParts = entry?.parts ?? was.parts;
+		changed.push({ id: record.id, parts: differingParts(copiedParts, now) });
+	}
+	const removed = [...planned.keys()].filter(id => !seen.has(id));
+	if (added.length + changed.length + removed.length === 0) return undefined;
+	const ids = (list: readonly string[]): string =>
+		`${list.slice(0, 10).join(', ')}${list.length > 10 ? `, and ${list.length - 10} more` : ''}`;
+	const changedText = changed
+		.slice(0, 10)
+		.map(entry => `${entry.id} (${entry.parts.join(', ')})`)
+		.join(', ');
+	const parts = [
+		...(added.length === 0 ? [] : [`added: ${ids(added)}`]),
+		...(changed.length === 0
+			? []
+			: [`changed: ${changedText}${changed.length > 10 ? `, and ${changed.length - 10} more` : ''}`]),
+		...(removed.length === 0 ? [] : [`removed: ${ids(removed)}`]),
+	];
+	return {
+		added,
+		failure: {
+			step: 'source-changed',
+			message: `the source changed while the migration ran, so the config was NOT switched (${parts.join('; ')})`,
+			hint: 'Nothing was switched. --resume copies the tasks that were added. A task that was already copied is never overwritten, so a CHANGED one keeps the version that was copied (re-migrate it by hand on the target) and a REMOVED one keeps its copy; the next runs stop on them again. To switch anyway, explicitly, add --accept-differences: the target keeps what was copied and the list is recorded in the journal.',
+		},
+		accepted: [
+			...changed.map(entry => ({
+				sourceId: entry.id,
+				targetId: run.journal.tasks[entry.id]?.target ?? '',
+				field: `source-changed: ${entry.parts.join(', ')}`,
+				expected: 'the task as the source holds it now',
+				actual: 'the task as it was copied',
+			})),
+			...removed.map(id => ({
+				sourceId: id,
+				targetId: run.journal.tasks[id]?.target ?? '',
+				field: 'source-removed',
+				expected: 'no task',
+				actual: 'the copy made earlier stays on the target',
+			})),
+		],
+	};
+}
+
 function failureOf(error: unknown, sourceId: string | undefined, step: string): MigrationFailure {
 	const described = describeError(error);
 	return {
@@ -447,7 +586,7 @@ function failureOf(error: unknown, sourceId: string | undefined, step: string): 
  */
 export async function runMigration(input: RunMigrationInput): Promise<MigrationResult> {
 	const { source, target, options } = input;
-	if (source.project.id === target.project.id) {
+	if (input.inPlace === undefined && source.project.id === target.project.id) {
 		throw new MigrationRefusedError(
 			`the source and the target are the same project (${source.project.name})`,
 			'Migrate between two registered projects: --from <source project> --to <other project>. Register the second with the project CLI: project add <dir>.'
@@ -456,8 +595,16 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 	checkOptions(options);
 
 	const clock = input.now ?? Date.now;
-	const journalFile = path.join(input.journalDir, journalFileName(source.project.id, target.project.id));
-	const existing = readJournal(journalFile, { fromId: source.project.id, toId: target.project.id });
+	const journalFile = path.join(
+		input.journalDir,
+		input.inPlace === undefined
+			? journalFileName(source.project.id, target.project.id)
+			: inPlaceJournalFileName(source.project.id)
+	);
+	const existing =
+		input.inPlace?.ignoreJournal === true
+			? undefined
+			: readJournal(journalFile, { fromId: source.project.id, toId: target.project.id });
 	if (!options.dryRun) {
 		if (options.resume && existing === undefined) {
 			throw new MigrationRefusedError(
@@ -475,9 +622,12 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 		}
 	}
 
+	// Only the caller that took a lock releases it: a lock handed in stays until the caller is done with its contexts and its events.
+	const ownLock = !options.dryRun && input.heldLock === undefined;
 	const lock = options.dryRun
 		? undefined
-		: acquireLock(
+		: (input.heldLock ??
+			acquireLock(
 				input.journalDir,
 				{
 					pid: input.pid ?? process.pid,
@@ -486,7 +636,7 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 					to: target.project.id,
 				},
 				input.isAlive
-			);
+			));
 	let releaseWarning: string | undefined;
 	try {
 		const plan = await buildPlan({ source, target, options, journal: existing, onProgress: input.onProgress });
@@ -526,6 +676,7 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 			};
 		}
 
+		await input.inPlace?.beforeWrite?.();
 		const journal: Journal = existing ?? {
 			version: 1,
 			from: { id: source.project.id, name: source.project.name },
@@ -542,16 +693,31 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 				journal.tasks[planned.mapped.sourceId] = {
 					target: planned.targetId,
 					phase: planned.phase ?? 'created',
+					...(input.inPlace === undefined ? {} : contentOf(plan, planned.mapped.sourceId)),
 				};
 			}
 		}
 		journal.status = 'running';
+		if (input.inPlace !== undefined) {
+			// Once, here: a journal that is reused keeps what it knew of the switch (the caller sends a finished run elsewhere first).
+			journal.inPlace = {
+				targetHash: input.inPlace.target.hash,
+				parts: input.inPlace.target.parts,
+				location: input.inPlace.target.location,
+				kinds: { from: source.backend.kind, to: target.backend.kind },
+				switched: journal.inPlace?.switched ?? false,
+				verified: false,
+				// Reset: a run that comes back to the full path has not started a switch yet.
+				switchStarted: false,
+			};
+		}
 		delete journal.lastError;
 		// The plan resolved the creation the last run left open (taken back, or never happened).
 		delete journal.pending;
 		const run = new Run(input, plan, journal, journalFile);
 		if (lock?.tookOver !== undefined) run.warnings.push(lock.tookOver);
 		run.save(true);
+		run.saveIdMap();
 
 		let status: MigrationStatus = 'completed';
 		let failure: MigrationFailure | undefined;
@@ -562,16 +728,59 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 			await linkPass(run);
 			await commentPass(run);
 			const mismatches = await verifyPass(run);
-			verification = { checked: run.touched.size, mismatches };
-			if (mismatches.length > 0) {
+			verification = { checked: input.inPlace === undefined ? run.touched.size : plan.tasks.length, mismatches };
+			const inPlace = input.inPlace;
+			const accept = inPlace !== undefined && options.acceptDifferences === true;
+			let acceptedSource: MigrationMismatch[] = [];
+			if (inPlace !== undefined) {
+				run.step = 'switch';
+				run.currentSourceId = undefined;
+				// The source is read again, whole, before the read-back result is judged: it is the cause when both differ.
+				const changes = await sourceChanges(run);
+				if (changes !== undefined) {
+					if (changes.added.length > 0 || !accept) {
+						status = 'stopped';
+						failure = changes.failure;
+					} else {
+						acceptedSource = changes.accepted;
+					}
+				}
+			}
+			if (failure === undefined && mismatches.length > 0 && !accept) {
 				status = 'failed';
 				failure = {
 					step: 'verify',
 					message: `${mismatches.length} difference(s) between what was written and what the target holds`,
-					hint: 'The migration wrote everything it was asked to; the differences are listed. A forge may normalise a text; check those tasks and fix by hand where it matters.',
+					hint:
+						inPlace === undefined
+							? 'The migration wrote everything it was asked to; the differences are listed. A forge may normalise a text; check those tasks and fix by hand where it matters.'
+							: 'The config of the project was NOT switched. The differences are listed: fix those tasks by hand where it matters, then run again with --resume (every task is read back again before the switch). A difference that can never clear (a forge normalising a text) can be accepted with --accept-differences: the switch then happens, the target keeps the text as the forge holds it, and the differences are recorded in the journal and printed.',
 				};
 			}
-			journal.status = 'completed';
+			if (failure === undefined && inPlace !== undefined) {
+				// Point of no return: everything is written and read back, the id map and the journal are saved; only now does the
+				// project change storage.
+				// A task whose source changed is recorded once, by that: its read-back differences are the same fact.
+				const changedIds = new Set(acceptedSource.map(item => item.sourceId));
+				const accepted = [
+					...(accept ? mismatches.filter(item => !changedIds.has(item.sourceId)) : []),
+					...acceptedSource,
+				];
+				journal.inPlace!.verified = true;
+				if (accepted.length > 0) journal.inPlace!.acceptedDifferences = accepted;
+				run.saveIdMap();
+				run.save(true);
+				await inPlace.switchConfig(started => {
+					journal.inPlace!.switchStarted = started;
+					run.save(true);
+				});
+				journal.inPlace!.switched = true;
+				run.switchedNow = true;
+			}
+			journal.status = failure !== undefined && inPlace !== undefined ? 'stopped' : 'completed';
+			if (journal.status === 'stopped' && failure !== undefined) {
+				journal.lastError = { step: failure.step, message: failure.message };
+			}
 		} catch (error) {
 			failure = failureOf(error, run.currentSourceId, run.step);
 			if (error instanceof RateLimitedError) {
@@ -579,7 +788,7 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 				retryAt = error.retryAt?.toISOString();
 			} else {
 				status = 'failed';
-				run.counts.failed = 1;
+				if (run.step !== 'switch') run.counts.failed = 1;
 			}
 			journal.status = 'stopped';
 			journal.lastError = {
@@ -598,7 +807,7 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 			else if (planned.state === 'resume') run.counts.resumed++;
 		}
 		for (const notice of target.takeNotices?.() ?? []) run.warnings.push(`target: ${notice.text}`);
-		if (run.counts.created + run.counts.resumed + run.counts.failed > 0) {
+		if (run.counts.created + run.counts.resumed + run.counts.failed > 0 || run.switchedNow) {
 			run.events.push({
 				name: 'onTasksMigrated',
 				payload: {
@@ -616,7 +825,7 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 				},
 			});
 		}
-		releaseWarning = lock?.release();
+		releaseWarning = ownLock ? lock?.release() : undefined;
 		if (releaseWarning !== undefined) run.warnings.push(releaseWarning);
 		return {
 			...base,
@@ -630,11 +839,24 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
 			events: run.events,
 			...(verification === undefined ? {} : { verification }),
 			...(retryAt === undefined ? {} : { retryAt }),
-			...(failure !== undefined && failure.step !== 'verify' ? { resumeCommand: input.resumeCommand } : {}),
+			...(input.inPlace === undefined
+				? {}
+				: {
+						inPlace: {
+							switched: run.switchedNow,
+							idMapFile: input.inPlace.idMapFile,
+							...(run.switchedNow && journal.inPlace?.acceptedDifferences !== undefined
+								? { acceptedDifferences: journal.inPlace.acceptedDifferences }
+								: {}),
+						},
+					}),
+			...(failure !== undefined && (failure.step !== 'verify' || input.inPlace !== undefined)
+				? { resumeCommand: input.resumeCommand }
+				: {}),
 			...(failure === undefined ? {} : { failure }),
 		};
 	} finally {
-		// Idempotent: the success path already released it.
-		lock?.release();
+		// Idempotent: the success path already released it. A lock the caller holds is the caller's to release.
+		if (ownLock) lock?.release();
 	}
 }

@@ -1,9 +1,12 @@
 // task migrate: arguments and printing over the task-service migration (`migrateProjects`). The engine, the loss table and the journal
 // live in task-service; this file parses the command line, resolves the two registered projects and prints the result.
+import * as path from 'node:path';
+
 import {
 	DEFAULT_MIGRATION_OPTIONS,
 	deliverEvents,
 	describeError,
+	migrateInPlace,
 	migrateProjects,
 	resolveProjectReference,
 } from '@wadeck-app/task-service';
@@ -22,6 +25,7 @@ import type { CommandResult } from '../cli/output.js';
 
 const USAGE =
 	'Usage: task migrate --from <project> --to <project> [--dry-run] [--allow-loss <kind>[,<kind>...]] [--resume] [--history-comment] [--emit-events] [--json]\n' +
+	'   or: task migrate --in-place --to-config <file> [-p <project>] [--dry-run] [--allow-loss <kind>[,<kind>...]] [--resume] [--history-comment] [--emit-events] [--json]\n' +
 	'Run `task migrate --help` for what each option does.';
 
 /** `task migrate --help` needs no project. */
@@ -42,8 +46,11 @@ export function projectFlagRefusal(jsonMode: boolean): CommandResult {
 }
 
 export interface ParsedMigrate {
+	/** The two projects of a migration between projects (empty for an in-place one). */
 	from: string;
 	to: string;
+	/** `--in-place --to-config <file>`: the project changes storage; `draft` is the file path, `project` the name it resolved to. */
+	inPlace?: { draft: string; project?: string };
 	options: MigrationOptions;
 }
 
@@ -51,6 +58,8 @@ export interface ParsedMigrate {
 export function parseMigrateArgs(rest: readonly string[], jsonMode: boolean): ParsedMigrate | CommandResult {
 	let from: string | undefined;
 	let to: string | undefined;
+	let inPlace = false;
+	let toConfig: string | undefined;
 	const options: MigrationOptions = { ...DEFAULT_MIGRATION_OPTIONS };
 	const allow: string[] = [];
 	let allowGiven = false;
@@ -80,6 +89,23 @@ export function parseMigrateArgs(rest: readonly string[], jsonMode: boolean): Pa
 					if (to !== undefined) return errorOutput(jsonMode, '--to is given twice', USAGE);
 					to = value;
 				}
+				break;
+			}
+			case '--in-place':
+				inPlace = true;
+				break;
+			case '--to-config': {
+				const value = inline ?? valueOf(index);
+				if (value === undefined || value === '') {
+					return errorOutput(
+						jsonMode,
+						'--to-config needs the path of the draft config.yml',
+						'Write the config.yml the project should have after the migration (with its strategy section), then: task migrate --in-place --to-config <file>'
+					);
+				}
+				if (inline === undefined) index++;
+				if (toConfig !== undefined) return errorOutput(jsonMode, '--to-config is given twice', USAGE);
+				toConfig = value;
 				break;
 			}
 			case '--allow-loss': {
@@ -113,6 +139,12 @@ export function parseMigrateArgs(rest: readonly string[], jsonMode: boolean): Pa
 			case '--history-comment':
 				options.historyComment = true;
 				break;
+			case '--accept-differences':
+				options.acceptDifferences = true;
+				break;
+			case '--accept-draft-change':
+				options.acceptDraftChange = true;
+				break;
 			default:
 				if (arg.startsWith('-')) return errorOutput(jsonMode, `unknown option: ${arg}`, USAGE);
 				return errorOutput(jsonMode, `unexpected argument: ${arg}`, USAGE);
@@ -123,6 +155,48 @@ export function parseMigrateArgs(rest: readonly string[], jsonMode: boolean): Pa
 			jsonMode,
 			'--allow-loss needs a list of loss kinds, for example --allow-loss history,created-at',
 			USAGE
+		);
+	}
+	if (!inPlace && (options.acceptDifferences === true || options.acceptDraftChange === true)) {
+		const flag = options.acceptDifferences === true ? '--accept-differences' : '--accept-draft-change';
+		return errorOutput(
+			jsonMode,
+			`${flag} only goes with --in-place`,
+			'It accepts a read-back difference or a changed draft of an in-place migration: task migrate --in-place --to-config <file> ...'
+		);
+	}
+	if (options.acceptDraftChange === true && !options.resume) {
+		return errorOutput(
+			jsonMode,
+			'--accept-draft-change only continues an unfinished run: it needs --resume',
+			'task migrate --in-place --to-config <file> --resume --accept-draft-change'
+		);
+	}
+	if (inPlace) {
+		if (from !== undefined || to !== undefined) {
+			const named =
+				from !== undefined && to !== undefined ? '--from and --to' : from !== undefined ? '--from' : '--to';
+			return errorOutput(
+				jsonMode,
+				`--in-place migrates the project in scope into the storage of a draft config: it does not take ${named}`,
+				'To copy into ANOTHER registered project use: task migrate --from <project> --to <project>. To change the storage of one project use: task migrate --in-place --to-config <file> [-p <project>]'
+			);
+		}
+		if (toConfig === undefined) {
+			return errorOutput(
+				jsonMode,
+				'--in-place needs --to-config <file>: the draft config.yml with the strategy the project moves to',
+				USAGE
+			);
+		}
+		options.allowLoss = [...new Set(allow)];
+		return { from: '', to: '', inPlace: { draft: toConfig }, options };
+	}
+	if (toConfig !== undefined) {
+		return errorOutput(
+			jsonMode,
+			'--to-config only goes with --in-place',
+			'To change the storage of one project use: task migrate --in-place --to-config <file>. To copy into another registered project use --to <project>.'
 		);
 	}
 	if (from === undefined && to === undefined) {
@@ -145,9 +219,17 @@ export function commandLine(
 ): string {
 	const { options } = parsed;
 	const allow = [...new Set([...options.allowLoss, ...(change.allow ?? [])])];
-	const parts = ['task migrate', '--from', quoted(parsed.from), '--to', quoted(parsed.to)];
+	const parts =
+		parsed.inPlace === undefined
+			? ['task migrate', '--from', quoted(parsed.from), '--to', quoted(parsed.to)]
+			: [
+					'task migrate --in-place --to-config',
+					quoted(parsed.inPlace.draft),
+					...(parsed.inPlace.project === undefined ? [] : ['-p', quoted(parsed.inPlace.project)]),
+				];
 	if (allow.length > 0) parts.push('--allow-loss', allow.join(','));
 	if (options.historyComment) parts.push('--history-comment');
+	// --accept-differences and --accept-draft-change are never copied: each is a decision about ONE run, not a habit to repeat.
 	if (options.emitEvents) parts.push('--emit-events');
 	if (change.resume === true || options.resume) parts.push('--resume');
 	return parts.join(' ');
@@ -165,6 +247,7 @@ const HEADLINES: Record<MigrationResult['status'], string> = {
 	blocked: 'BLOCKED, nothing was written',
 	completed: 'done',
 	'rate-limited': 'STOPPED on the rate limit',
+	stopped: 'STOPPED, the source changed meanwhile (the config was NOT switched)',
 	failed: 'FAILED',
 };
 
@@ -184,11 +267,63 @@ function lossLines(rows: readonly LossRow[]): string[] {
 	];
 }
 
+/** The in-place part of a result: strategy checks of a dry run, id map, the state of the switch, how to go back. */
+function inPlaceLines(result: MigrationResult, report: NonNullable<MigrationResult['inPlace']>): string[] {
+	const lines: string[] = [];
+	const config = report.config ?? 'config.yml';
+	if (report.checks !== undefined) {
+		lines.push('Strategy checks of the draft (nothing is written):');
+		for (const line of report.checks) {
+			lines.push(`  [${line.status}] ${line.name}: ${line.text}`);
+			if (line.fix !== undefined && line.status !== 'ok') lines.push(`        fix: ${line.fix}`);
+		}
+		if (report.checksNote !== undefined) lines.push(`  not checked: ${report.checksNote}`);
+	}
+	if (report.draft !== undefined) lines.push(`Draft:     ${report.draft}`);
+	if (report.acceptedDifferences !== undefined && report.acceptedDifferences.length > 0) {
+		lines.push(
+			`ACCEPTED differences (${report.acceptedDifferences.length}, by --accept-differences, which is never copied into a printed command; also in the journal):`,
+			...report.acceptedDifferences.map(
+				m =>
+					`  - ${m.sourceId} -> ${m.targetId} ${m.field}: expected ${JSON.stringify(m.expected)}, found ${JSON.stringify(m.actual)}`
+			)
+		);
+	}
+	lines.push(`Id map:    ${report.idMapFile}`);
+	const backup = report.backup === undefined ? '' : `; the previous one is kept as ${report.backup}`;
+	if (report.switched) {
+		lines.push(
+			`Switch:    DONE: ${config} now is the draft${backup}`,
+			`Rollback:  ${report.rollback ?? 'restore the previous config.yml'}`
+		);
+	} else if (result.status === 'dry-run') {
+		lines.push(
+			`Switch:    would replace ${config} by the draft after the read-back${backup.replace('; the previous one is kept as', ', keeping the old one as')}`
+		);
+	} else if (result.failure?.step === 'switch') {
+		lines.push(
+			`Switch:    FAILED, every task is written and verified: ${config} is NOT replaced yet (the project still reads its previous storage)`
+		);
+	} else {
+		lines.push(`Switch:    NOT done: ${config} is unchanged, the project still reads its previous storage`);
+	}
+	if (result.idMap.length > 0 && result.status !== 'dry-run') {
+		const width = Math.max(...result.idMap.map(entry => entry.source.length));
+		lines.push(
+			'Id map (old id -> new id):',
+			...result.idMap.map(entry => `  ${entry.source.padEnd(width)} -> ${entry.target}`)
+		);
+	}
+	return lines;
+}
+
 /** The text of a result: what was done or would be, what is lost, what to type next. */
 export function formatMigration(result: MigrationResult, parsed: ParsedMigrate): string {
 	const { counts } = result;
 	const lines = [
-		`Migration ${result.from.name} (${result.from.kind}) -> ${result.to.name} (${result.to.kind}): ${HEADLINES[result.status]}`,
+		parsed.inPlace === undefined
+			? `Migration ${result.from.name} (${result.from.kind}) -> ${result.to.name} (${result.to.kind}): ${HEADLINES[result.status]}`
+			: `In-place migration of ${result.from.name}, storage ${result.from.kind} -> ${result.to.kind}: ${HEADLINES[result.status]}`,
 		'',
 		result.dryRun
 			? `Tasks:     ${counts.source} read; would create ${counts.created}, finish ${counts.resumed}, skip ${counts.skipped}`
@@ -220,23 +355,31 @@ export function formatMigration(result: MigrationResult, parsed: ParsedMigrate):
 		}
 	}
 	lines.push(`Journal:   ${result.journal}`);
+	if (result.inPlace !== undefined) lines.push(...inPlaceLines(result, result.inPlace));
 
 	if (result.status === 'rate-limited') {
 		lines.push(
 			'',
 			`Retry after ${result.retryAt ?? '(the service gave no time: wait a few minutes)'}, then continue with: ${result.resumeCommand ?? commandLine(parsed, { resume: true })}`
 		);
-	} else if (result.status === 'failed' && result.failure !== undefined) {
+	} else if ((result.status === 'failed' || result.status === 'stopped') && result.failure !== undefined) {
 		const { failure: stopped } = result;
+		const label = result.status === 'stopped' ? 'Stopped' : 'Failed';
 		lines.push(
 			'',
-			stopped.step === 'verify'
-				? `Failed: ${stopped.message}`
-				: `Failed${stopped.sourceId === undefined ? '' : ` on task ${stopped.sourceId}`} (${stopped.step}): ${stopped.message}`
+			['verify', 'switch', 'source-changed'].includes(stopped.step)
+				? `${label}: ${stopped.message}`
+				: `${label}${stopped.sourceId === undefined ? '' : ` on task ${stopped.sourceId}`} (${stopped.step}): ${stopped.message}`
 		);
 		if (stopped.hint !== undefined) lines.push(stopped.hint);
 		if (result.resumeCommand !== undefined) {
-			lines.push(`Fix the cause, then continue with: ${result.resumeCommand} (nothing is created twice)`);
+			lines.push(
+				stopped.step === 'switch'
+					? `Fix the cause, then run: ${result.resumeCommand} (it only replaces the config: every task is already written and verified)`
+					: stopped.step === 'source-changed'
+						? `Then run: ${result.resumeCommand} (what was added is copied, then everything is read back again before the switch)`
+						: `Fix the cause, then continue with: ${result.resumeCommand} (nothing is created twice)`
+			);
 		}
 	} else if (result.status === 'blocked' || (result.status === 'dry-run' && result.blocking.length > 0)) {
 		lines.push(
@@ -269,6 +412,10 @@ export function progressLine(progress: MigrationProgress, source: string): strin
 }
 
 export interface MigrateDeps {
+	/** The directory the command runs in: a relative `--to-config` is taken from it. */
+	cwd: string;
+	/** The project of this command (`-p`, `TASK_PROJECT`, the cwd), for `--in-place`; throws the error to print. */
+	resolveOwnProject: () => ResolvedProject;
 	/** Global config directory (`--config`). */
 	configDir: string | undefined;
 	/** The sink events go to (built lazily: a dry run or a blocked plan never creates one). */
@@ -290,28 +437,56 @@ export async function runMigrate(
 	jsonMode: boolean,
 	deps: MigrateDeps
 ): Promise<CommandResult> {
-	const parsed = parseMigrateArgs(rest, jsonMode);
-	if ('exitCode' in parsed) return parsed;
-	const from = resolveSide('--from', parsed.from, jsonMode);
-	if ('exitCode' in from) return from;
-	const to = resolveSide('--to', parsed.to, jsonMode);
-	if ('exitCode' in to) return to;
+	const typed = parseMigrateArgs(rest, jsonMode);
+	if ('exitCode' in typed) return typed;
+	let parsed: ParsedMigrate = typed;
 
 	let result: MigrationResult;
-	try {
-		result = await migrateProjects({
-			from,
-			to,
-			options: parsed.options,
-			resumeCommand: commandLine(parsed, { resume: true }),
-			globalConfigDir: deps.configDir,
-			onProgress: progress => {
-				const line = progressLine(progress, from.name);
-				if (line !== undefined) process.stderr.write(`${line}\n`);
-			},
-		});
-	} catch (error) {
-		return failure(jsonMode, error);
+	if (parsed.inPlace !== undefined) {
+		// One project: the one in scope. The draft is taken from the cwd, and the resume command names both absolutely.
+		let project: ResolvedProject;
+		try {
+			project = deps.resolveOwnProject();
+		} catch (error) {
+			return failure(jsonMode, error);
+		}
+		const draftFile = path.resolve(deps.cwd, parsed.inPlace.draft);
+		parsed = { ...parsed, inPlace: { draft: draftFile, project: project.id } };
+		try {
+			result = await migrateInPlace({
+				project,
+				draftFile,
+				options: parsed.options,
+				resumeCommand: commandLine(parsed, { resume: true }),
+				globalConfigDir: deps.configDir,
+				onProgress: progress => {
+					const line = progressLine(progress, project.name);
+					if (line !== undefined) process.stderr.write(`${line}\n`);
+				},
+			});
+		} catch (error) {
+			return failure(jsonMode, error);
+		}
+	} else {
+		const from = resolveSide('--from', parsed.from, jsonMode);
+		if ('exitCode' in from) return from;
+		const to = resolveSide('--to', parsed.to, jsonMode);
+		if ('exitCode' in to) return to;
+		try {
+			result = await migrateProjects({
+				from,
+				to,
+				options: parsed.options,
+				resumeCommand: commandLine(parsed, { resume: true }),
+				globalConfigDir: deps.configDir,
+				onProgress: progress => {
+					const line = progressLine(progress, from.name);
+					if (line !== undefined) process.stderr.write(`${line}\n`);
+				},
+			});
+		} catch (error) {
+			return failure(jsonMode, error);
+		}
 	}
 
 	// The summary (and with --emit-events the per-task events) go out after the last write, like the events of any other command.

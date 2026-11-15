@@ -7,6 +7,7 @@ import * as path from 'node:path';
 import { writeFileAtomic } from '@wadeck-app/project-sdk';
 
 import { MigrationStateError } from './migrateErrors.js';
+import type { MigrationMismatch } from './migrateTypes.js';
 
 /** How far a source task got: created (and recorded), fields set, links set, comments written (done). */
 export const PHASES = ['created', 'fielded', 'linked', 'done'] as const;
@@ -16,6 +17,10 @@ export interface JournalTask {
 	/** The id of the task on the target. */
 	target: string;
 	phase: Phase;
+	/** In-place: the hash of what the source task held when it was copied (see sourceContent.ts), to notice a later edit. */
+	content?: string;
+	/** The hash of each part (see sourceContent.ts), to name what changed. */
+	parts?: Record<string, string>;
 }
 
 export type JournalStatus = 'running' | 'stopped' | 'completed';
@@ -35,6 +40,28 @@ export interface Journal {
 	 * exist on the target without the journal knowing. The next run looks for it before creating anything.
 	 */
 	pending?: PendingCreate;
+	/** In-place migration only: what the run migrates to, and how far the switch of the config got. */
+	inPlace?: InPlaceState;
+}
+
+/**
+ * The target an in-place run is for: a hash of what defines it (the strategy section, the status and type names; not comments or
+ * other keys), the same split per part to say what changed, and its storage location (a changed definition at the same location may be
+ * accepted, another location never). `verified`: every task was read back with no difference (or the differences accepted) and the
+ * id map saved, so only the switch is left. `switched`: config.yml is the draft.
+ */
+export interface InPlaceState {
+	targetHash: string;
+	parts: Record<string, string>;
+	location: string;
+	kinds: { from: string; to: string };
+	/** The config is replaced (or was, and the journal knows). */
+	switched: boolean;
+	/** Everything is written, read back and the source unchanged: only the switch is left. */
+	verified: boolean;
+	/** The write of config.yml began (set right before it, cleared when it failed without writing): the only state a bookkeeping-only resume trusts. */
+	switchStarted: boolean;
+	acceptedDifferences?: MigrationMismatch[];
 }
 
 export interface PendingCreate {
@@ -52,6 +79,28 @@ export interface PendingCreate {
 
 export function journalFileName(fromId: string, toId: string): string {
 	return `migrate-journal-${fromId}-${toId}.json`;
+}
+
+/** The journal of an in-place migration of a project (one project, no second side). */
+export function inPlaceJournalFileName(projectId: string): string {
+	return `migrate-journal-${projectId}-inplace.json`;
+}
+
+/** The persistent id map of an in-place migration, next to its journal. */
+export function idMapFileName(projectId: string): string {
+	return `migrate-idmap-${projectId}.json`;
+}
+
+export interface IdMapEntry {
+	from: string;
+	to: string;
+	url?: string;
+}
+
+/** Writes the id map whole or not at all, in the order the tasks were created. */
+export function writeIdMap(file: string, entries: readonly IdMapEntry[]): void {
+	fs.mkdirSync(path.dirname(file), { recursive: true });
+	writeFileAtomic(file, JSON.stringify(entries, null, 2));
 }
 
 export const LOCK_FILE_NAME = 'migrate.lock';
@@ -116,7 +165,12 @@ export function readJournal(file: string, expected: { fromId: string; toId: stri
 		) {
 			throw corrupt(file, `the entry of task ${sourceId} is not {target, phase}`);
 		}
-		tasks[sourceId] = { target: entry['target'], phase: entry['phase'] as Phase };
+		tasks[sourceId] = {
+			target: entry['target'],
+			phase: entry['phase'] as Phase,
+			...(typeof entry['content'] === 'string' ? { content: entry['content'] } : {}),
+			...(isRecord(entry['parts']) ? { parts: entry['parts'] as Record<string, string> } : {}),
+		};
 	}
 	const last = value['lastError'];
 	const rawPending = value['pending'];
@@ -133,6 +187,7 @@ export function readJournal(file: string, expected: { fromId: string; toId: stri
 		}
 		pending = { sourceId, title, at, ...(after === undefined ? {} : { after }) };
 	}
+	const inPlace = readInPlaceState(file, value['inPlace']);
 	return {
 		version: 1,
 		from,
@@ -151,7 +206,105 @@ export function readJournal(file: string, expected: { fromId: string; toId: stri
 				}
 			: {}),
 		...(pending === undefined ? {} : { pending }),
+		...(inPlace === undefined ? {} : { inPlace }),
 	};
+}
+
+const MISMATCH_KEYS = ['sourceId', 'targetId', 'field', 'expected', 'actual'] as const;
+
+function readInPlaceState(file: string, raw: unknown): InPlaceState | undefined {
+	if (raw === undefined) return undefined;
+	const bad = (): MigrationStateError =>
+		corrupt(file, '"inPlace" is not {targetHash, parts, location, kinds, switched, verified}');
+	if (!isRecord(raw)) throw bad();
+	const { targetHash, parts, location, kinds, switched, verified, switchStarted, acceptedDifferences } = raw;
+	if (
+		typeof targetHash !== 'string' ||
+		!isRecord(parts) ||
+		!Object.values(parts).every(part => typeof part === 'string') ||
+		typeof location !== 'string' ||
+		!isRecord(kinds) ||
+		typeof kinds['from'] !== 'string' ||
+		typeof kinds['to'] !== 'string' ||
+		typeof switched !== 'boolean' ||
+		typeof verified !== 'boolean' ||
+		(switchStarted !== undefined && typeof switchStarted !== 'boolean')
+	) {
+		throw bad();
+	}
+	let accepted: MigrationMismatch[] | undefined;
+	if (acceptedDifferences !== undefined) {
+		if (
+			!Array.isArray(acceptedDifferences) ||
+			!acceptedDifferences.every(
+				item => isRecord(item) && MISMATCH_KEYS.every(key => typeof item[key] === 'string')
+			)
+		) {
+			throw corrupt(file, '"inPlace.acceptedDifferences" is not a list of differences');
+		}
+		accepted = acceptedDifferences as MigrationMismatch[];
+	}
+	return {
+		targetHash,
+		parts: parts as Record<string, string>,
+		location,
+		kinds: { from: kinds['from'], to: kinds['to'] },
+		switched,
+		verified,
+		switchStarted: switchStarted === true,
+		...(accepted === undefined ? {} : { acceptedDifferences: accepted }),
+	};
+}
+
+/**
+ * Renames files (journal, id map) of a finished in-place migration to `<name>.archived-<stamp>.json` so the next migration of the project
+ * starts clean and the old-id -> new-id mapping is never overwritten nor deleted. All or nothing: every file first moves to a temporary
+ * name, then to its archived name; a failure puts everything back where it was. Returns the new names, in the order given; a file that
+ * is not there is skipped. `rename` is injectable for tests.
+ */
+export function archiveFiles(
+	files: readonly string[],
+	stamp: string,
+	rename: (from: string, to: string) => void = fs.renameSync
+): string[] {
+	const safe = stamp.replaceAll(':', '-').replaceAll('.', '-');
+	const present = files.filter(file => fs.existsSync(file));
+	const plan = present.map(file => ({
+		file,
+		temp: `${file}.archiving-${process.pid}`,
+		target: file.replace(/\.json$/, `.archived-${safe}.json`),
+	}));
+	for (const { file, target } of plan) {
+		if (fs.existsSync(target)) {
+			throw new MigrationStateError(
+				`cannot archive ${file}: ${target} already exists`,
+				'Move that file away, then run again.'
+			);
+		}
+	}
+	const done: Array<[string, string]> = [];
+	const move = (from: string, to: string): void => {
+		rename(from, to);
+		done.push([from, to]);
+	};
+	try {
+		for (const { file, temp } of plan) move(file, temp);
+		for (const { temp, target } of plan) move(temp, target);
+	} catch (error) {
+		// Put everything back, newest move first, with the real rename: a half-archived pair would lose the link between the two files.
+		for (const [from, to] of done.reverse()) {
+			try {
+				fs.renameSync(to, from);
+			} catch {
+				/* what could not be put back is named below */
+			}
+		}
+		throw new MigrationStateError(
+			`cannot archive the files of the finished migration (${present.join(', ')}): ${(error as Error).message}`,
+			'Nothing was changed: they are where they were. Fix the cause, then run again.'
+		);
+	}
+	return plan.map(entry => entry.target);
 }
 
 /** Writes the journal whole or not at all. */
@@ -197,6 +350,7 @@ export function acquireLock(
 	fs.mkdirSync(dir, { recursive: true });
 	const file = path.join(dir, LOCK_FILE_NAME);
 	let tookOver: string | undefined;
+	let released = false;
 	for (let attempt = 0; attempt < 2; attempt++) {
 		try {
 			const fd = fs.openSync(file, 'wx');
@@ -209,6 +363,9 @@ export function acquireLock(
 				file,
 				...(tookOver === undefined ? {} : { tookOver }),
 				release: () => {
+					// Idempotent: a second call must never remove the lock of the run that took it after us.
+					if (released) return undefined;
+					released = true;
 					try {
 						fs.rmSync(file, { force: true });
 						return undefined;

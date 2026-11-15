@@ -83,7 +83,11 @@ const DEFAULT_PRIORITY = 'medium';
 /** Parses a config file: absent or empty is undefined; invalid YAML and a top level that is not a mapping throw, naming the file. */
 function loadYamlFile<T>(filePath: string): T | undefined {
 	if (!fs.existsSync(filePath)) return undefined;
-	const raw = fs.readFileSync(filePath, 'utf8');
+	return parseYamlText<T>(fs.readFileSync(filePath, 'utf8'), filePath);
+}
+
+/** Parses the text of a config file called `filePath` in the errors: empty is undefined; invalid YAML or a top level that is not a mapping throw. */
+function parseYamlText<T>(raw: string, filePath: string): T | undefined {
 	let parsed: unknown;
 	try {
 		parsed = yaml.load(raw);
@@ -183,6 +187,11 @@ export class TaskConfigLoader {
 	/** Parses one config file (absent or empty: undefined). Invalid YAML or a top level that is not a mapping throws, naming the file. */
 	static readConfigFile<T = Record<string, unknown>>(filePath: string): T | undefined {
 		return loadYamlFile<T>(filePath);
+	}
+
+	/** Parses the TEXT of a config file (read once by the caller); `name` is what errors call it. Same rules as {@link readConfigFile}. */
+	static parseConfigText<T = Record<string, unknown>>(text: string, name: string): T | undefined {
+		return parseYamlText<T>(text, name);
 	}
 
 	/** The global config (`config.yml` of the global config dir): defaults; empty when absent. A `hooks` key is refused by task-service (`RemovedConfigKeyError`), which reads this file for every project. */
