@@ -21,7 +21,7 @@ function plural(count: number, word: string): string {
 export function registerHealthRoutes(kit: RouteKit): void {
 	kit.route('GET', '/health', async () => {
 		const { entries, registryProblem } = inspectKnownProjects();
-		for (const entry of entries) await entry.context?.dispose();
+		for (const entry of entries) await entry.context?.dispose?.();
 		const checks: HealthCheck[] = [];
 		if (registryProblem !== null) {
 			checks.push({ name: 'registry', ok: false, detail: registryProblem });
