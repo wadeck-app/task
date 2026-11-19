@@ -6,6 +6,7 @@ import { createBoardHub, registerBoardEventRoutes } from './boardEvents.js';
 import { registerBoardRoutes } from './routes/boardRoutes.js';
 import { registerFieldRoutes } from './routes/fieldRoutes.js';
 import { registerFigureRoutes } from './routes/figureRoutes.js';
+import { registerHealthRoutes } from './routes/healthRoutes.js';
 import { registerCommentRoutes } from './routes/commentRoutes.js';
 import { registerProjectRoutes } from './routes/projectRoutes.js';
 import { registerRelatedRoutes } from './routes/relatedRoutes.js';
@@ -54,6 +55,7 @@ export function registerTaskRoutes(ctx: ModuleContext, options: TaskRoutesOption
 	registerBoardRoutes(kit);
 	registerBoardEventRoutes(kit, ctx, boardHub, text => writeStderr(`warning: ${text}`));
 	registerFigureRoutes(kit);
+	registerHealthRoutes(kit);
 	registerRelatedRoutes(kit);
 	registerTaskReadRoutes(kit);
 	registerTaskWriteRoutes(kit);
