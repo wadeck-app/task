@@ -71,6 +71,8 @@ export function ColumnsEditor({
 	);
 	const drag = useRef<{ kind: 'column'; id: number } | { kind: 'status'; name: string } | null>(null);
 	const [overKey, setOverKey] = useState<string | null>(null);
+	// The column just added: its name field takes the focus (name selected) as soon as it is drawn, wherever the list was scrolled.
+	const focusId = useRef<number | null>(null);
 
 	const byName = new Map<string, BoardStatusData>(layout.allStatuses.map(status => [status.name, status]));
 	const placed = new Set(draft.flatMap(column => column.statuses));
@@ -81,6 +83,7 @@ export function ColumnsEditor({
 
 	const addColumn = (): void => {
 		counter.current += 1;
+		focusId.current = counter.current;
 		setDraft(current => [
 			...current,
 			{ id: counter.current, name: freshColumnName(current.map(column => column.name)), statuses: [] },
@@ -142,13 +145,13 @@ export function ColumnsEditor({
 					drag.current = null;
 					setOverKey(null);
 				}}
-				className={`inline-flex ${CONTROL_H} cursor-grab items-center ${GAP_CONTROLS} ${PILL_RADIUS} ${CONTROL_BORDER} bg-surface pl-3 pr-1 ${CONTROL_TEXT} text-content`}
+				className={`inline-flex ${CONTROL_H} min-w-0 max-w-full cursor-grab items-center ${GAP_CONTROLS} ${PILL_RADIUS} ${CONTROL_BORDER} bg-surface pl-3 pr-1 ${CONTROL_TEXT} text-content`}
 			>
 				<span
 					aria-hidden="true"
 					className={`inline-block h-2 w-2 shrink-0 ${PILL_RADIUS} ${TONE_DOT[toneOf(info?.tone)]}`}
 				/>
-				{status}
+				<span className="min-w-0 truncate">{status}</span>
 				<select
 					aria-label={`Column of status ${status}`}
 					value={String(current)}
@@ -156,7 +159,7 @@ export function ColumnsEditor({
 						const value = event.target.value;
 						assign(status, value === UNMAPPED ? UNMAPPED : Number(value));
 					}}
-					className={`h-6 max-w-[8rem] ${CONTROL_RADIUS} border-0 bg-muted-bg px-1 text-xs text-content ${FOCUS_RING}`}
+					className={`h-6 min-w-0 max-w-[8rem] truncate ${CONTROL_RADIUS} border-0 bg-muted-bg px-1 text-xs text-content ${FOCUS_RING}`}
 				>
 					{draft.map(column => (
 						<option key={column.id} value={String(column.id)}>
@@ -221,8 +224,9 @@ export function ColumnsEditor({
 					<li
 						key={column.id}
 						data-testid="columns-editor-column"
+						{...(column.statuses.length === 0 ? { 'data-empty': 'true' } : {})}
 						{...dropOn(`col-${column.id}`, column.id)}
-						className={`flex flex-col ${GAP_CONTROLS} ${CONTROL_RADIUS} ${CONTROL_BORDER} p-2 ${highlight(`col-${column.id}`)}`}
+						className={`flex flex-col ${GAP_CONTROLS} ${CONTROL_RADIUS} ${CONTROL_BORDER} p-2 ${column.statuses.length === 0 ? 'border-warning-text bg-warning-bg' : ''} ${highlight(`col-${column.id}`)}`}
 					>
 						<div className={`flex flex-wrap items-center ${GAP_CONTROLS}`}>
 							<span
@@ -250,6 +254,14 @@ export function ColumnsEditor({
 								type="text"
 								value={column.name}
 								aria-label={`Name of column ${index + 1}`}
+								ref={element => {
+									if (element !== null && focusId.current === column.id) {
+										focusId.current = null;
+										element.focus();
+										element.select();
+										element.scrollIntoView?.({ block: 'nearest' });
+									}
+								}}
 								onChange={event => rename(column.id, event.target.value)}
 								className={`${FIELD_CLASS} min-w-[9rem] flex-1`}
 							/>
@@ -286,7 +298,7 @@ export function ColumnsEditor({
 						</div>
 						<div className={`flex flex-wrap items-center ${GAP_CONTROLS}`}>
 							{column.statuses.length === 0 ? (
-								<span className="text-xs text-muted">
+								<span data-testid="columns-editor-column-empty" className="text-xs font-medium text-content">
 									No status yet: drag one here or pick this column in a status list.
 								</span>
 							) : (
@@ -344,10 +356,16 @@ export function ColumnsEditor({
 				<button type="button" onClick={onCancel} disabled={busy} className={SECONDARY_BUTTON_CLASS}>
 					Cancel
 				</button>
+				{empty.length > 0 ? (
+					<span id="columns-editor-save-why" className="sr-only">
+						{`${empty.length} ${empty.length === 1 ? 'column has' : 'columns have'} no status: fill or delete ${empty.length === 1 ? 'it' : 'them'} to save`}
+					</span>
+				) : null}
 				<button
 					type="button"
 					onClick={() => onSave(draft.map(column => ({ name: column.name, statuses: column.statuses })))}
 					disabled={busy || empty.length > 0}
+					aria-describedby={empty.length > 0 ? 'columns-editor-save-why' : undefined}
 					title={empty.length > 0 ? 'A column with no status cannot be saved: fill or delete it' : undefined}
 					className={BUTTON_PRIMARY_CLASS}
 				>

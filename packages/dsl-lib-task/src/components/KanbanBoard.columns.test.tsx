@@ -447,6 +447,44 @@ describe('Configure columns', () => {
 		expect(screen.queryByTestId('columns-editor-empty')).toBeNull();
 	});
 
+	it('a new column is focused with its name selected, so the user types the name at once', async () => {
+		const user = await open();
+		await user.click(screen.getByRole('button', { name: 'Add column' }));
+
+		const name = within(screen.getAllByTestId('columns-editor-column')[3]!).getByRole('textbox') as HTMLInputElement;
+		expect(name).toHaveFocus();
+		expect(name.selectionStart).toBe(0);
+		expect(name.selectionEnd).toBe(name.value.length);
+	});
+
+	it('the empty column itself says it, where the user looks (not only a message at the bottom), and Save says why it is off', async () => {
+		const user = await open();
+		await user.click(screen.getByRole('button', { name: 'Add column' }));
+
+		const row = screen.getAllByTestId('columns-editor-column')[3]!;
+		expect(within(row).getByTestId('columns-editor-column-empty')).toHaveTextContent(
+			'No status yet: drag one here or pick this column in a status list.'
+		);
+		expect(row).toHaveAttribute('data-empty', 'true');
+		expect(screen.getByRole('button', { name: 'Save' })).toHaveAccessibleDescription(
+			'1 column has no status: fill or delete it to save'
+		);
+		// a filled column is not marked
+		expect(screen.getAllByTestId('columns-editor-column')[0]).not.toHaveAttribute('data-empty');
+	});
+
+	it('a status chip never grows wider than its column: a long column name is cut, not overflowing', async () => {
+		const user = await open();
+		await user.click(screen.getByRole('button', { name: 'Add column' }));
+		const name = within(screen.getAllByTestId('columns-editor-column')[3]!).getByRole('textbox');
+		await user.clear(name);
+		await user.type(name, 'A very long column name that goes on and on');
+
+		const chip = screen.getByTestId('columns-editor-chip-todo');
+		expect(chip.className).toContain('max-w-full');
+		expect(within(chip).getByRole('combobox').className).toContain('truncate');
+	});
+
 	it('several empty columns are all named; deleting them lifts the block', async () => {
 		const user = await open();
 		await user.click(screen.getByRole('button', { name: 'Add column' }));
