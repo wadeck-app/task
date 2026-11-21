@@ -61,6 +61,10 @@ export function registerTypeRoutes(kit: RouteKit): void {
 	});
 }
 
+// Deleting tasks is irreversible: the host asks the user for the PIN (app-core-cli >= 2026.11.20-209), so a script that reaches the module
+// port cannot do it with the confirmation flag alone. The preview route stays open.
+const SENSITIVE = { effect: 'sensitive' } as const;
+
 export function registerDeleteRoutes(kit: RouteKit): void {
 	const { route, open, deliver } = kit;
 
@@ -71,38 +75,43 @@ export function registerDeleteRoutes(kit: RouteKit): void {
 		return { status: 200, body: planBody(ctx.project, plan, body) };
 	});
 
-	route('POST', '/tasks/delete', async req => {
-		const ctx = open(req);
-		const body = bodyObject(req.body, DELETE_USAGE);
-		const plan = await planDelete(ctx, deleteInput(body));
-		// Deletion is irreversible: only an explicit boolean true goes through; otherwise the preview is the answer.
-		if (body['confirm'] !== true) {
-			throw new RequestError(
-				400,
-				'confirm must be true to delete: nothing was deleted',
-				'Review "plan", then resend the same body with "confirm": true.',
-				{ plan: planBody(ctx.project, plan, body) }
-			);
-		}
-		let result: ExecuteDeleteResult;
-		try {
-			result = await executeDelete(ctx, plan);
-		} catch (error) {
-			if (!(error instanceof PartialDeleteError)) throw error;
-			// The tasks deleted before the failure are gone: their events are delivered, and the 5xx says what happened.
-			const undelivered = await deliver(error.events);
-			throw new RequestError(500, error.message, error.hint, {
-				deletedCount: error.deletedCount,
-				plannedCount: error.plannedCount,
-				partial: true,
-				...undeliveredFields(undelivered),
-			});
-		}
-		const { deletedCount, events } = result;
-		const undelivered = await deliver(events);
-		return {
-			status: 200,
-			body: { ...outcomeBody(ctx.project, plan, deletedCount), ...undeliveredFields(undelivered) },
-		};
-	});
+	route(
+		'POST',
+		'/tasks/delete',
+		async req => {
+			const ctx = open(req);
+			const body = bodyObject(req.body, DELETE_USAGE);
+			const plan = await planDelete(ctx, deleteInput(body));
+			// Deletion is irreversible: only an explicit boolean true goes through; otherwise the preview is the answer.
+			if (body['confirm'] !== true) {
+				throw new RequestError(
+					400,
+					'confirm must be true to delete: nothing was deleted',
+					'Review "plan", then resend the same body with "confirm": true.',
+					{ plan: planBody(ctx.project, plan, body) }
+				);
+			}
+			let result: ExecuteDeleteResult;
+			try {
+				result = await executeDelete(ctx, plan);
+			} catch (error) {
+				if (!(error instanceof PartialDeleteError)) throw error;
+				// The tasks deleted before the failure are gone: their events are delivered, and the 5xx says what happened.
+				const undelivered = await deliver(error.events);
+				throw new RequestError(500, error.message, error.hint, {
+					deletedCount: error.deletedCount,
+					plannedCount: error.plannedCount,
+					partial: true,
+					...undeliveredFields(undelivered),
+				});
+			}
+			const { deletedCount, events } = result;
+			const undelivered = await deliver(events);
+			return {
+				status: 200,
+				body: { ...outcomeBody(ctx.project, plan, deletedCount), ...undeliveredFields(undelivered) },
+			};
+		},
+		SENSITIVE
+	);
 }

@@ -356,22 +356,21 @@ describe('the packaged module through a real app-core server', () => {
 			expect(detail.body['metaRows']).toEqual([{ key: 'owner', value: 'ann' }]);
 		});
 
-		it('POST /tasks/delete/plan previews, and POST /tasks/delete without confirm deletes nothing (400 with the plan)', async () => {
+		it('POST /tasks/delete/plan previews (open), and the sensitive POST /tasks/delete is refused by the host without the PIN token', async () => {
 			const plan = await call('POST', `/tasks/delete/plan?${q()}`, { ids: [childId] });
 			expect(plan.status).toBe(200);
 			expect(plan.body).toMatchObject({ count: 1 });
+			// The host gates the route before the module sees it: no PIN set on this test server (403 pin-not-set), or a PIN and no token (401).
 			const refused = await call('POST', `/tasks/delete?${q()}`, { ids: [childId] });
-			expect(refused.status).toBe(400);
-			expect(refused.body['plan']).toMatchObject({ count: 1 });
-			const still = await call('GET', `/tasks/${childId}?${q()}`);
-			expect(still.status).toBe(200);
+			expect([401, 403], JSON.stringify(refused.body)).toContain(refused.status);
+			expect(JSON.stringify(refused.body)).toMatch(/pin-not-set|elevation-required/);
 		});
 
-		it('POST /tasks/delete with confirm:true deletes the child (the static /tasks/delete wins over /tasks/:id)', async () => {
-			const done = await call('POST', `/tasks/delete?${q()}`, { ids: [childId], confirm: true });
-			expect(done.status).toBe(200);
-			expect(done.body['deletedCount']).toBe(1);
-			expect((await call('GET', `/tasks/${childId}?${q()}`)).status).toBe(404);
+		it('POST /tasks/delete with confirm:true and no token deletes nothing: the child is still there', async () => {
+			const refused = await call('POST', `/tasks/delete?${q()}`, { ids: [childId], confirm: true });
+			expect([401, 403], JSON.stringify(refused.body)).toContain(refused.status);
+			expect((await call('GET', `/tasks/${childId}?${q()}`)).status).toBe(200);
+			// The handler behind the gate (confirmation, deletion, 404 afterwards) is covered at handler level: sensitive.routes.test.ts and backend.test.ts.
 		});
 	});
 });

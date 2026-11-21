@@ -24,14 +24,21 @@ export interface Harness {
 	world: TestWorld;
 	sink: RecordingSink;
 	routes: Map<string, ModuleRouteHandler>;
+	/** The `effect` each route was registered with (absent = the host default: read for GET, write otherwise). */
+	effects: Map<string, string>;
 	call(
 		route: string,
 		request?: { params?: Record<string, string>; query?: Record<string, unknown>; body?: unknown }
 	): Promise<Answer>;
 }
 
-export function collectRoutes(dataDir: string): { routes: Map<string, ModuleRouteHandler>; ctx: ModuleContext } {
+export function collectRoutes(dataDir: string): {
+	routes: Map<string, ModuleRouteHandler>;
+	effects: Map<string, string>;
+	ctx: ModuleContext;
+} {
 	const routes = new Map<string, ModuleRouteHandler>();
+	const effects = new Map<string, string>();
 	const ctx: ModuleContext = {
 		dataDir,
 		setInterval: vi.fn(),
@@ -41,12 +48,15 @@ export function collectRoutes(dataDir: string): { routes: Map<string, ModuleRout
 		on: vi.fn(),
 		off: vi.fn(),
 		emit: vi.fn(),
-		registerRoute: (method, subPath, handler) => routes.set(`${method} ${subPath}`, handler),
+		registerRoute: (method, subPath, handler, options) => {
+			routes.set(`${method} ${subPath}`, handler);
+			if (options?.effect !== undefined) effects.set(`${method} ${subPath}`, options.effect);
+		},
 		fileVersion: vi.fn(() => Promise.resolve('v')),
 		unchanged: vi.fn(() => false),
 		dispose: vi.fn(),
 	};
-	return { routes, ctx };
+	return { routes, effects, ctx };
 }
 
 // `'default'` registers the routes WITHOUT an injected sink, so that the real queue sink (and `extra.createPublisher`) is used.
@@ -54,7 +64,7 @@ export function setup(eventSink?: EventSink | 'default', extra: Partial<TaskRout
 	const world = createTestWorld();
 	const sink = createRecordingSink();
 	// The module's own persistent folder (ctx.dataDir): per world, so a test never sees the state of another.
-	const { routes, ctx } = collectRoutes(path.join(world.root, 'module-data'));
+	const { routes, effects, ctx } = collectRoutes(path.join(world.root, 'module-data'));
 	const injected = eventSink === 'default' ? {} : { eventSink: eventSink ?? sink };
 	const instance = registerTaskRoutes(ctx, { configDir: world.configDir, ...injected, ...extra });
 	return {
@@ -62,6 +72,7 @@ export function setup(eventSink?: EventSink | 'default', extra: Partial<TaskRout
 		world,
 		sink,
 		routes,
+		effects,
 		async call(route, request = {}) {
 			const handler = routes.get(route);
 			if (!handler) throw new Error(`route not registered: ${route}`);

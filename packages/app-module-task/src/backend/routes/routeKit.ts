@@ -27,8 +27,17 @@ export interface TaskRoutesOptions {
 export interface RouteKit {
 	/** The module's own persistent folder (ModuleContext.dataDir): state of the views, not of the projects. */
 	dataDir: string;
-	/** Registers a route; every error thrown by `run` becomes its HTTP answer (see errors.ts). */
-	route(method: string, subPath: string, run: (req: RouteRequest) => RouteAnswer | Promise<RouteAnswer>): void;
+	/**
+	 * Registers a route; every error thrown by `run` becomes its HTTP answer (see errors.ts). `effect: 'sensitive'`
+	 * (app-core-cli >= 2026.11.20-209) makes the host ask the user for the PIN before the handler runs: for what only the user,
+	 * in the browser, may trigger.
+	 */
+	route(
+		method: string,
+		subPath: string,
+		run: (req: RouteRequest) => RouteAnswer | Promise<RouteAnswer>,
+		options?: { effect: 'sensitive' }
+	): void;
 	/** The service context of the project the request targets (`?project=`). */
 	open(req: RouteRequest): OpenedProject;
 	/** Delivers the events; those the queue did not get are returned for the body, the change is not failed. */
@@ -107,21 +116,24 @@ export function createRouteKit(
 	};
 	return {
 		dataDir: ctx.dataDir,
-		route(method, subPath, run) {
-			ctx.registerRoute(method, subPath, async (req, reply) => {
-				const out = reply as unknown as Reply;
+		route(method, subPath, run, options) {
+			const handler = async (req: unknown, reply: unknown): Promise<unknown> => {
+				const out = reply as Reply;
 				try {
 					// The contexts the handler opens are released when the answer is ready (or the handler failed): a project on a
 					// remote strategy may hold a connection or a cache.
 					const { value: answer, notices } = await runInRequestScope(
-						() => run(req as unknown as RouteRequest),
+						() => run(req as RouteRequest),
 						message => writeStderr(`warning: ${message}\n`)
 					);
 					return out.code(answer.status).send(withReadNotices(jsonBody(answer.body), notices));
 				} catch (error) {
-					return failWith(error, method, subPath, wantsInlineErrors(req as unknown as RouteRequest), out);
+					return failWith(error, method, subPath, wantsInlineErrors(req as RouteRequest), out);
 				}
-			});
+			};
+			// The options are passed only when asked for: every other route keeps the call it always had.
+			if (options === undefined) ctx.registerRoute(method, subPath, handler as never);
+			else ctx.registerRoute(method, subPath, handler as never, options);
 		},
 		stream<T>(
 			subPath: string,
