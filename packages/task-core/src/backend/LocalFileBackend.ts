@@ -77,9 +77,21 @@ export class LocalFileBackend implements TaskBackend {
 		});
 	}
 
+	/** Set once an index of an older version has been given its `statusSince` (a read of the history of each task file, once). */
+	private statusSinceChecked = false;
+
+	/** The index entries; the first call of this backend fills the `statusSince` an older index lacks. */
+	private summaries(): TaskSummary[] {
+		if (!this.statusSinceChecked) {
+			this.statusSinceChecked = true;
+			if (this.store.list().some(entry => entry.statusSince === undefined)) this.store.backfillStatusSince();
+		}
+		return this.store.list();
+	}
+
 	// ---- reads: records ----
 	async list(): Promise<TaskSummary[]> {
-		return this.store.list();
+		return this.summaries();
 	}
 
 	async listPage(query: ListQuery = {}): Promise<Page<TaskSummary>> {
@@ -97,7 +109,7 @@ export class LocalFileBackend implements TaskBackend {
 			offset = Number(cursor);
 		}
 		const needle = text?.toLowerCase();
-		const matching = this.store.list().filter(task => {
+		const matching = this.summaries().filter(task => {
 			if (parentId === null && task.parentId !== undefined) return false;
 			if (typeof parentId === 'string' && task.parentId !== parentId) return false;
 			if (statusIn !== undefined && !statusIn.includes(task.status)) return false;

@@ -25,6 +25,11 @@ describe('manifest.json (source manifest of the app-core-cli layout)', () => {
 		expect(manifest.id).toBe('task');
 	});
 
+	it('asks the shell for a dsl-ui that has the shared A/B dock API (useAbTest, useRegisterAbTests, useAbExperiments: the board uses them)', () => {
+		const shared = (manifest as { dslLib?: { shared?: Record<string, string> } }).dslLib?.shared ?? {};
+		expect(shared['@wadeck-app/dsl-ui']).toBe('>=2026.10.25-260-0');
+	});
+
 	it('holds neither version nor backendEntryPath: `app-core-cli package` stamps the first and fixes the second', () => {
 		expect(manifest).not.toHaveProperty('version');
 		expect(manifest).not.toHaveProperty('backendEntryPath');
@@ -1301,9 +1306,10 @@ describe('board: page and project-module contribution', () => {
 			version: '$sources.board.version',
 			projectParam: '$sources.board.projectParam',
 			moveAction: 'moveCard',
-			variantSwitcher: '$sources.board.abSwitcher',
 			defaultVariant: 'columns',
 		});
+		// The A/B rows of the board are in the shell's shared dock: the page passes no switcher prop.
+		expect(component).not.toHaveProperty('variantSwitcher');
 		// The component waits for data: with the blank answer there is no `columns`.
 		expect(component['$if']).toBe('$sources.board.columns');
 	});

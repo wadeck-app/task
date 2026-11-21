@@ -41,16 +41,26 @@ export interface TaskGlobalConfig {
 export const BOARD_COLUMN_SORTS = ['status', 'priority', 'assignee', 'oldest', 'newest'] as const;
 export type BoardColumnSort = (typeof BOARD_COLUMN_SORTS)[number];
 
-/** One column of the Kanban board: a name, the statuses whose tasks it shows and, optionally, how its cards are ordered. */
+/** How the groups of a sorted column are drawn (decision D23); absent = `label`, the thin rule with the group name. */
+export const BOARD_GROUP_STYLES = ['label', 'bar', 'gap', 'tint', 'border', 'boxed', 'pill', 'divider'] as const;
+export type BoardGroupStyle = (typeof BOARD_GROUP_STYLES)[number];
+
+/** One column of the Kanban board: a name, the statuses whose tasks it shows and, optionally, how its cards are ordered and grouped. */
 export interface BoardColumnConfig {
 	name: string;
 	statuses: string[];
 	sort?: BoardColumnSort;
+	groupStyle?: BoardGroupStyle;
 }
+
+/** How long a task stays on the board after it entered a terminal status; absent = always shown. */
+export const BOARD_FINISHED_FOR = ['1h', '4h', '8h', '1d', '2d', '7d', '14d'] as const;
+export type BoardFinishedFor = (typeof BOARD_FINISHED_FOR)[number];
 
 /** The `board` key of config.yml (validated by task-service). Absent = one column per status. */
 export interface BoardConfig {
 	columns: BoardColumnConfig[];
+	finishedFor?: BoardFinishedFor;
 }
 
 export interface TaskProjectConfig {

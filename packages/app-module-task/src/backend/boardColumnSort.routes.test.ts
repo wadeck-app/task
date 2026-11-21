@@ -199,6 +199,27 @@ describe('the sort travels with the layout', () => {
 		expect(refused.body['error']).toContain('Valid sorts: status, priority, assignee, oldest, newest');
 	});
 
+	it('PUT /board/config saves a groupStyle; the column and config.columns echo it; an unknown style is a 400 naming the valid ones', async () => {
+		const { project } = await seeded('status');
+		const columns = [
+			{ name: 'Doing', statuses: ['integrating', 'in-progress'], sort: 'status', groupStyle: 'tint' },
+			{ name: 'Rest', statuses: ['backlog', 'done'] },
+		];
+
+		const saved = await h.call('PUT /board/config', { query: { project }, body: { columns } });
+
+		expect(saved.status).toBe(200);
+		const column = (saved.body['columns'] as Array<Column & { groupStyle?: string }>).find(col => col.name === 'Doing')!;
+		expect(column.groupStyle).toBe('tint');
+		expect(saved.body['config']).toMatchObject({ columns });
+		const refused = await h.call('PUT /board/config', {
+			query: { project },
+			body: { columns: [{ name: 'Doing', statuses: ['in-progress'], groupStyle: 'neon' }] },
+		});
+		expect(refused.status).toBe(400);
+		expect(refused.body['error']).toContain('Valid styles: label, bar, gap, tint, border, boxed, pill, divider');
+	});
+
 	it('the board version changes when only the sort changes', async () => {
 		const { project } = await seeded(undefined);
 		const before = (await h.call('GET /tasks/board', { query: { project } })).body['version'];

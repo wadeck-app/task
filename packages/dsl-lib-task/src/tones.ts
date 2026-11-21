@@ -31,6 +31,26 @@ export const TONE_TEXT: Record<Tone, string> = {
 	purple: 'text-primary',
 };
 
+/** Background only of a tone (a tinted panel holding other content). */
+export const TONE_BG: Record<Tone, string> = {
+	neutral: 'bg-muted-bg',
+	info: 'bg-info-bg',
+	success: 'bg-success-bg',
+	warning: 'bg-warning-bg',
+	danger: 'bg-danger-bg',
+	purple: 'bg-primary-light',
+};
+
+/** Border colour of a tone (the same colours as the dots). */
+export const TONE_BORDER: Record<Tone, string> = {
+	neutral: 'border-muted',
+	info: 'border-info-text',
+	success: 'border-success',
+	warning: 'border-warning-text',
+	danger: 'border-danger',
+	purple: 'border-primary',
+};
+
 /** The six label colours, defined in styles/task.css with light and dark values. */
 export const CHIP_PALETTE: readonly string[] = [
 	'bg-task-chip-1-bg text-task-chip-1',
@@ -41,6 +61,9 @@ export const CHIP_PALETTE: readonly string[] = [
 	'bg-task-chip-6-bg text-task-chip-6',
 ];
 // @formatter:on
+
+/** Every tone, in a fixed order (a stable colour picked by hash among them). */
+export const TONES: readonly Tone[] = ['neutral', 'info', 'success', 'warning', 'danger', 'purple'];
 
 /** Whether a value is one of the known tones. */
 export function isTone(value: unknown): value is Tone {

@@ -7,8 +7,8 @@
 //         statuses: [in-progress, review]
 // Scope local (the project's own layer). A status in no column is allowed: the board shows it in an implicit "Unmapped" column.
 import { ConfigSchemaError, writeFileAtomic } from '@wadeck-app/project-sdk';
-import { BOARD_COLUMN_SORTS, TaskConfigLoader } from '@wadeck-app/task-core';
-import type { BoardColumnConfig, BoardColumnSort, BoardConfig, TaskResolvedConfig } from '@wadeck-app/task-core';
+import { BOARD_COLUMN_SORTS, BOARD_FINISHED_FOR, BOARD_GROUP_STYLES, TaskConfigLoader } from '@wadeck-app/task-core';
+import type { BoardColumnConfig, BoardColumnSort, BoardFinishedFor, BoardGroupStyle, BoardConfig, TaskResolvedConfig } from '@wadeck-app/task-core';
 
 import { ownConfigFile } from './storage.js';
 import type { TaskStorage } from './storage.js';
@@ -51,8 +51,8 @@ export function validateBoard(file: string, value: unknown, statuses?: readonly 
 		return fail('board', `must be a mapping with a "columns" list, found ${found(value)}.`);
 	}
 	for (const key of Object.keys(value)) {
-		if (key !== 'columns') {
-			fail(`board.${key}`, 'unknown key (only "columns" is allowed).');
+		if (key !== 'columns' && key !== 'finishedFor') {
+			fail(`board.${key}`, 'unknown key (only "columns" and "finishedFor" are allowed).');
 		}
 	}
 	const raw = value['columns'];
@@ -75,8 +75,11 @@ export function validateBoard(file: string, value: unknown, statuses?: readonly 
 			return fail(at, `must be a mapping with a name and statuses, found ${found(entry)}.`);
 		}
 		for (const key of Object.keys(entry)) {
-			if (key !== 'name' && key !== 'statuses' && key !== 'sort') {
-				fail(`${at}.${key}`, 'unknown key (a column has "name", "statuses" and optionally "sort").');
+			if (key !== 'name' && key !== 'statuses' && key !== 'sort' && key !== 'groupStyle') {
+				fail(
+					`${at}.${key}`,
+					'unknown key (a column has "name", "statuses" and optionally "sort" and "groupStyle").'
+				);
 			}
 		}
 		const name = entry['name'];
@@ -142,9 +145,30 @@ export function validateBoard(file: string, value: unknown, statuses?: readonly 
 				'Write sort: priority (or another valid sort), or remove the sort key for the usual order.'
 			);
 		}
-		columns.push({ name, statuses: names, ...(sort === undefined ? {} : { sort: sort as BoardColumnSort }) });
+		const groupStyle = entry['groupStyle'];
+		if (groupStyle !== undefined && !BOARD_GROUP_STYLES.includes(groupStyle as BoardGroupStyle)) {
+			return fail(
+				`${at}.groupStyle`,
+				`${found(groupStyle)} is not a group style of column "${name}". Valid styles: ${BOARD_GROUP_STYLES.join(', ')}.`,
+				'Write groupStyle: label (or another valid style), or remove the key for the usual thin rule.'
+			);
+		}
+		columns.push({
+			name,
+			statuses: names,
+			...(sort === undefined ? {} : { sort: sort as BoardColumnSort }),
+			...(groupStyle === undefined ? {} : { groupStyle: groupStyle as BoardGroupStyle }),
+		});
 	});
-	return { columns };
+	const finishedFor = value['finishedFor'];
+	if (finishedFor !== undefined && !BOARD_FINISHED_FOR.includes(finishedFor as BoardFinishedFor)) {
+		return fail(
+			'board.finishedFor',
+			`${found(finishedFor)} is not a window. Valid values: ${BOARD_FINISHED_FOR.join(', ')}.`,
+			'Write finishedFor: 7d (or another valid value), or remove the key to show every finished task.'
+		);
+	}
+	return { columns, ...(finishedFor === undefined ? {} : { finishedFor: finishedFor as BoardFinishedFor }) };
 }
 
 /** Statuses of the project that no column lists (the board shows them in its implicit "Unmapped" column). */
@@ -162,9 +186,9 @@ interface BoardContext {
  * Writes the columns to the project's OWN config file (created, with its folder, when missing), atomically, after the same
  * validation a load does: nothing is written for an invalid layout. `ctx.config` is a snapshot: reload to see the change.
  */
-export function saveBoardColumns(ctx: BoardContext, columns: unknown): BoardConfig {
+export function saveBoardColumns(ctx: BoardContext, columns: unknown, finishedFor?: unknown): BoardConfig {
 	const file = ownConfigFile(ctx.storage);
-	const board = validateBoard(file, { columns }, ctx.config.statuses);
+	const board = validateBoard(file, { columns, ...(finishedFor === undefined ? {} : { finishedFor }) }, ctx.config.statuses);
 	TaskConfigLoader.updateSection(file, 'board', board, writeFileAtomic, { createDirectory: true });
 	return board;
 }

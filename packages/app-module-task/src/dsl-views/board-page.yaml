@@ -5,7 +5,7 @@
 # are those of every status change. The component also watches GET /board/events (Server-Sent Events: the shell has no push bus)
 # and re-reads the board (boardPath) when the version changes, so a change made from the CLI shows without a reload; without
 # the stream it polls. The source below gives the first paint and is reloaded by the action.
-# The variant switcher is shown only when the module runs with TASK_KANBAN_AB=1 (dev server): `abSwitcher` of the answer.
+# The A/B rows of the board (layout, sort control, group style) are in the shell's shared dock (app-core --ab-tests).
 # The `board` source is fed by `projectQuery`: the project, else `blank=true` (an empty answer that replaces the board of a
 # previous project instead of leaving it on screen), see tasks-page.yaml.
 # inlineErrors on every source: one failing source discards the answers of all the others (the page stays blank), so a
@@ -83,6 +83,7 @@ sections:
       version: $sources.board.version
       projectParam: $sources.board.projectParam
       moveAction: moveCard
-      variantSwitcher: $sources.board.abSwitcher
       defaultVariant: columns
+      hiddenNote: $sources.board.hiddenNote
+      finishedNote: $sources.board.finishedNote
       emptyText: $sources.board.emptyText

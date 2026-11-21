@@ -117,7 +117,7 @@ describe('board key: errors name the FILE and the key and carry a fix', () => {
 
 	it('an unknown key under board', async () => {
 		const { error, file } = await bad('board:\n  columns:\n    - name: A\n      statuses: [backlog]\n  lanes: 3\n');
-		expect(error.message).toBe(`${file}: board.lanes: unknown key (only "columns" is allowed).`);
+		expect(error.message).toBe(`${file}: board.lanes: unknown key (only "columns" and "finishedFor" are allowed).`);
 	});
 
 	it('columns missing, not a list or empty', async () => {
@@ -255,6 +255,87 @@ describe('board column sort (optional, decision D22)', () => {
 			{ name: 'Open', statuses: ['backlog'], sort: 'assignee' },
 			{ name: 'Closed', statuses: ['done'] },
 		];
+		saveBoardColumns({ storage, config: load(storage) }, columns);
+		expect(load(storage).board).toEqual({ columns });
+	});
+});
+
+describe('board finishedFor (optional, decision D23)', () => {
+	const WINDOWS = ['1h', '4h', '8h', '1d', '2d', '7d', '14d'];
+	const yml = (value: string): string =>
+		`${STATUSES}board:\n  finishedFor: ${value}\n  columns:\n    - name: A\n      statuses: [backlog, done]\n`;
+
+	it.each(WINDOWS)('reads finishedFor: %s as written', async value => {
+		const storage = await single();
+		write(ownConfigFile(storage), yml(value));
+		expect(load(storage).board).toEqual({
+			columns: [{ name: 'A', statuses: ['backlog', 'done'] }],
+			finishedFor: value,
+		});
+	});
+
+	it('no finishedFor key: none (every finished task is shown)', async () => {
+		const storage = await single();
+		write(ownConfigFile(storage), `${STATUSES}board:\n  columns:\n    - name: A\n      statuses: [backlog]\n`);
+		expect(load(storage).board).toEqual({ columns: [{ name: 'A', statuses: ['backlog'] }] });
+	});
+
+	it('an unknown window names the key and the valid ones, with the fix', async () => {
+		const storage = await single();
+		const file = ownConfigFile(storage);
+		write(file, yml('3d'));
+		const error = failure(storage);
+		expect(error.message).toBe(`${file}: board.finishedFor: "3d" is not a window. Valid values: ${WINDOWS.join(', ')}.`);
+		expect(error.hint).toEqual(expect.stringContaining('finishedFor: 7d'));
+	});
+
+	it('saveBoardColumns takes the window and writes it with the columns; none removes it', async () => {
+		const storage = await single();
+		write(ownConfigFile(storage), STATUSES);
+		const columns = [{ name: 'A', statuses: ['backlog', 'done'] }];
+		saveBoardColumns({ storage, config: load(storage) }, columns, '2d');
+		expect(load(storage).board).toEqual({ columns, finishedFor: '2d' });
+		saveBoardColumns({ storage, config: load(storage) }, columns, undefined);
+		expect(load(storage).board).toEqual({ columns });
+	});
+});
+
+describe('board column groupStyle (optional, decision D23)', () => {
+	const STYLES = ['label', 'bar', 'gap', 'tint', 'border', 'boxed', 'pill', 'divider'];
+	const withStyle = (style: string): string =>
+		`${STATUSES}board:
+  columns:
+    - name: Doing
+      statuses: [in-progress, done]
+      sort: status
+      groupStyle: ${style}
+`;
+
+	it.each(STYLES)('reads groupStyle: %s as written', async style => {
+		const storage = await single();
+		write(ownConfigFile(storage), withStyle(style));
+		expect(load(storage).board?.columns[0]).toEqual({
+			name: 'Doing',
+			statuses: ['in-progress', 'done'],
+			sort: 'status',
+			groupStyle: style,
+		});
+	});
+
+	it('an unknown style names the column, the key and the eight valid styles', async () => {
+		const storage = await single();
+		const file = ownConfigFile(storage);
+		write(file, withStyle('neon'));
+		const error = failure(storage);
+		expect(error.message).toBe(
+			`${file}: board.columns[0].groupStyle: "neon" is not a group style of column "Doing". Valid styles: ${STYLES.join(', ')}.`
+		);
+	});
+
+	it('saveBoardColumns keeps the style', async () => {
+		const storage = await single();
+		write(ownConfigFile(storage), STATUSES);
+		const columns = [{ name: 'Open', statuses: ['backlog'], sort: 'assignee', groupStyle: 'tint' }];
 		saveBoardColumns({ storage, config: load(storage) }, columns);
 		expect(load(storage).board).toEqual({ columns });
 	});

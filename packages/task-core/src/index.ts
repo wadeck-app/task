@@ -6,6 +6,8 @@ export type {
 	TaskProjectConfig,
 	BoardColumnConfig,
 	BoardColumnSort,
+	BoardGroupStyle,
+	BoardFinishedFor,
 	BoardConfig,
 	TaskResolvedConfig,
 	StatusOutcome,
@@ -13,6 +15,8 @@ export type {
 export {
 	TaskConfigLoader,
 	BOARD_COLUMN_SORTS,
+	BOARD_GROUP_STYLES,
+	BOARD_FINISHED_FOR,
 	statusOutcomeProblem,
 	DEFAULT_PRIORITIES,
 	DEFAULT_LEASE_MINUTES,

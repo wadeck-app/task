@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 
 import { listStatuses, listTasks, unmappedStatuses } from '@wadeck-app/task-service';
 import type { StatusInfo } from '@wadeck-app/task-service';
-import type { BoardColumnSort, TaskSummary } from '@wadeck-app/task-core';
+import type { BoardColumnSort, BoardGroupStyle, TaskSummary } from '@wadeck-app/task-core';
 
 import { shortTitle } from './display.js';
 import { detailHref, tasksPageHref } from './hrefs.js';
@@ -47,12 +47,8 @@ export interface BoardColumnStatus {
 	count: number;
 }
 
-/** The key of the implicit column of the statuses no column lists. */
-export const UNMAPPED_COLUMN_KEY = '__unmapped__';
-const UNMAPPED_COLUMN_NAME = 'Unmapped';
-
 export interface BoardColumn {
-	/** Identifies the column: its name, or UNMAPPED_COLUMN_KEY. */
+	/** Identifies the column: its name. */
 	key: string;
 	name: string;
 	/** What the header shows (the name). */
@@ -69,6 +65,8 @@ export interface BoardColumn {
 	statuses: BoardColumnStatus[];
 	/** How the cards are ordered; absent = the usual order (status, then priority and age) with no group. */
 	sort?: BoardColumnSort;
+	/** How its groups are drawn; absent = the thin rule with the group name. */
+	groupStyle?: BoardGroupStyle;
 	/** The tasks in this status, the hidden ones included. */
 	count: number;
 	hiddenCount: number;
@@ -135,6 +133,75 @@ function newestFirst(a: TaskSummary, b: TaskSummary): number {
 	return b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id);
 }
 
+/** One muted line when tasks are in a status that no column lists (they are hidden on purpose); null when nothing is hidden. */
+function hiddenNote(ctx: OpenedProject, tasks: readonly TaskSummary[]): string | null {
+	if (ctx.config.board === undefined) return null;
+	const unmapped = new Set(unmappedStatuses(ctx.config));
+	const counts = new Map<string, number>();
+	for (const task of tasks) {
+		if (unmapped.has(task.status)) counts.set(task.status, (counts.get(task.status) ?? 0) + 1);
+	}
+	const total = [...counts.values()].reduce((sum, count) => sum + count, 0);
+	if (total === 0) return null;
+	const named = [...counts.entries()].map(([status, count]) => `${status} (${count})`).join(', ');
+	return `${total} task${total === 1 ? ' is' : 's are'} in a status with no column and ${total === 1 ? 'is' : 'are'} not shown: ${named}. Add the status to a column in Configure columns to show it.`;
+}
+
+const HOUR_MS = 3_600_000;
+/** The windows of `board.finishedFor`: milliseconds, and the words the note uses. */
+const FINISHED_WINDOWS: Record<string, { ms: number; words: string }> = {
+	'1h': { ms: HOUR_MS, words: '1 hour' },
+	'4h': { ms: 4 * HOUR_MS, words: '4 hours' },
+	'8h': { ms: 8 * HOUR_MS, words: '8 hours' },
+	'1d': { ms: 24 * HOUR_MS, words: '1 day' },
+	'2d': { ms: 48 * HOUR_MS, words: '2 days' },
+	'7d': { ms: 168 * HOUR_MS, words: '7 days' },
+	'14d': { ms: 336 * HOUR_MS, words: '14 days' },
+};
+
+/**
+ * Applies `board.finishedFor`: a task in a TERMINAL status that entered it longer ago than the window is left out. The date is
+ * `statusSince` (when it entered the status), never `updatedAt`. A finished task with no known date stays shown and is counted in
+ * the note, so nothing disappears without being said. Without the setting nothing is filtered and there is no note.
+ */
+function applyFinishedWindow(
+	ctx: OpenedProject,
+	statuses: readonly StatusInfo[],
+	tasks: readonly TaskSummary[],
+	now: number
+): { visible: TaskSummary[]; note: string | null } {
+	const setting = ctx.config.board?.finishedFor;
+	const window = setting === undefined ? undefined : FINISHED_WINDOWS[setting];
+	if (window === undefined) return { visible: [...tasks], note: null };
+	const terminal = new Set(statuses.filter(status => status.terminal).map(status => status.name));
+	let tooOld = 0;
+	let undated = 0;
+	const visible = tasks.filter(task => {
+		if (!terminal.has(task.status)) return true;
+		if (task.statusSince === undefined || Number.isNaN(Date.parse(task.statusSince))) {
+			undated += 1;
+			return true;
+		}
+		if (now - Date.parse(task.statusSince) > window.ms) {
+			tooOld += 1;
+			return false;
+		}
+		return true;
+	});
+	const parts: string[] = [];
+	if (tooOld > 0) {
+		parts.push(
+			`${tooOld} finished task${tooOld === 1 ? '' : 's'} older than ${window.words} ${tooOld === 1 ? 'is' : 'are'} not shown. Change "Show finished tasks for" in Configure columns, or find ${tooOld === 1 ? 'it' : 'them'} on the Tasks page.`
+		);
+	}
+	if (undated > 0) {
+		parts.push(
+			`${undated} finished task${undated === 1 ? '' : 's'} ${undated === 1 ? 'has' : 'have'} no date and ${undated === 1 ? 'is' : 'are'} shown (this storage cannot tell when ${undated === 1 ? 'it was' : 'they were'} finished).`
+		);
+	}
+	return { visible, note: parts.length === 0 ? null : parts.join(' ') };
+}
+
 function unknownStatusWarning(unknown: readonly TaskSummary[]): string | null {
 	if (unknown.length === 0) return null;
 	const named = unknown
@@ -152,9 +219,10 @@ interface ColumnSpec {
 	statuses: string[];
 	implicit?: true;
 	sort?: BoardColumnSort;
+	groupStyle?: BoardGroupStyle;
 }
 
-/** The columns of the board: the `board` key of the config (one column per status without it), plus Unmapped when a status is in none. */
+/** The columns of the board: the `board` key of the config (one column per status without it). A status in no column is not shown. */
 function columnSpecs(ctx: OpenedProject, statuses: readonly StatusInfo[]): ColumnSpec[] {
 	const board = ctx.config.board;
 	if (board === undefined) {
@@ -165,11 +233,8 @@ function columnSpecs(ctx: OpenedProject, statuses: readonly StatusInfo[]): Colum
 		name: column.name,
 		statuses: column.statuses,
 		...(column.sort === undefined ? {} : { sort: column.sort }),
+		...(column.groupStyle === undefined ? {} : { groupStyle: column.groupStyle }),
 	}));
-	const unmapped = unmappedStatuses(ctx.config);
-	if (unmapped.length > 0) {
-		specs.push({ key: UNMAPPED_COLUMN_KEY, name: UNMAPPED_COLUMN_NAME, statuses: unmapped, implicit: true });
-	}
 	return specs;
 }
 
@@ -240,6 +305,7 @@ function buildColumn(
 			count: tasks.filter(task => task.status === info.name).length,
 		})),
 		...(spec.sort === undefined ? {} : { sort: spec.sort }),
+		...(spec.groupStyle === undefined ? {} : { groupStyle: spec.groupStyle }),
 		count: ordered.length,
 		hiddenCount: Math.max(ordered.length - BOARD_COLUMN_CAP, 0),
 		cards: ordered
@@ -252,23 +318,26 @@ function buildColumn(
 export function boardBody(
 	ctx: OpenedProject,
 	tasks: readonly TaskSummary[],
-	options: { abSwitcher: boolean; projectParam: string }
+	options: { projectParam: string }
 ): Record<string, unknown> {
 	const statuses = listStatuses(ctx);
 	const known = new Set(statuses.map(status => status.name));
-	const columns = columnSpecs(ctx, statuses).map(spec => buildColumn(ctx, spec, statuses, tasks));
+	const { visible, note: finishedNote } = applyFinishedWindow(ctx, statuses, tasks, Date.now());
+	const columns = columnSpecs(ctx, statuses).map(spec => buildColumn(ctx, spec, statuses, visible));
 	const configured = ctx.config.board;
 	return {
 		columns,
 		// What the "Configure columns" editor starts from: the stored layout, or one column per status.
 		config: {
 			isDefault: configured === undefined,
+			...(configured?.finishedFor === undefined ? {} : { finishedFor: configured.finishedFor }),
 			columns: (
 				configured?.columns ?? statuses.map(status => ({ name: status.name, statuses: [status.name] }))
 			).map(column => ({
 				name: column.name,
 				statuses: [...column.statuses],
 				...('sort' in column && column.sort !== undefined ? { sort: column.sort } : {}),
+				...('groupStyle' in column && column.groupStyle !== undefined ? { groupStyle: column.groupStyle } : {}),
 			})),
 		},
 		// Every status of the project: the editor offers them.
@@ -278,18 +347,14 @@ export function boardBody(
 			terminal: status.terminal,
 			...(status.outcome === undefined ? {} : { outcome: status.outcome }),
 		})),
-		version: boardVersion(ctx, tasks),
+		version: boardVersion(ctx, visible),
 		hasCards: tasks.length > 0,
 		emptyText:
 			tasks.length === 0 ? 'No task yet. Create the first one with the New task button of the Tasks page.' : null,
 		warning: unknownStatusWarning(tasks.filter(task => !known.has(task.status))),
+		hiddenNote: hiddenNote(ctx, tasks),
+		finishedNote,
 		tasksHref: tasksPageHref(ctx.project),
 		projectParam: options.projectParam,
-		abSwitcher: options.abSwitcher,
 	};
-}
-
-/** True when the module process runs with TASK_KANBAN_AB=1 (the dev server): the page then shows the variant switcher. */
-export function abSwitcherEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-	return env['TASK_KANBAN_AB'] === '1';
 }

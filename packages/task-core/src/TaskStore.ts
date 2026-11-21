@@ -65,6 +65,11 @@ export interface TaskSummary {
 	priority?: string;
 	assignee?: string;
 	leaseUntil?: string;
+	/**
+	 * ISO instant the task entered its CURRENT status (creation, then every status change); not `updatedAt`, which any edit moves.
+	 * Absent in an index written before the field existed (see `TaskStore.backfillStatusSince`) and on a backend that cannot tell.
+	 */
+	statusSince?: string;
 }
 
 export interface TaskTreeNode extends TaskSummary {
@@ -256,6 +261,7 @@ export class TaskStore {
 				title,
 				status: initialStatus,
 				createdAt: now,
+				statusSince: now,
 				...(parentId !== undefined && { parentId }),
 			});
 
@@ -600,7 +606,7 @@ export class TaskStore {
 			record.history.push({ status, timestamp: now });
 
 			this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
-			this.updateIndexEntry(id, status);
+			this.updateIndexEntry(id, status, now);
 
 			return record;
 		});
@@ -1256,13 +1262,41 @@ export class TaskStore {
 		this.writeIndex(index);
 	}
 
-	private updateIndexEntry(id: string, status: TaskStatus): void {
+	/**
+	 * Fills `statusSince` of the index entries that have none (an index written before the field existed) from the last entry of the
+	 * history of their task file. Returns how many entries it filled; an entry whose file cannot be read is left as it is and the
+	 * others are still filled. Writes the index once, under the write lock, and only when something changed.
+	 */
+	backfillStatusSince(): number {
+		return this.withWriteLock(() => {
+			const index = this.readIndex();
+			let filled = 0;
+			for (const entry of index.tasks) {
+				if (entry.statusSince !== undefined) continue;
+				try {
+					const record = JSON.parse(fs.readFileSync(this.taskFilePath(entry.id), 'utf8')) as Pick<TaskRecord, 'history'>;
+					const last = record.history.at(-1)?.timestamp;
+					if (last !== undefined) {
+						entry.statusSince = last;
+						filled += 1;
+					}
+				} catch {
+					// An unreadable task file keeps its entry without a date: the caller says that, it is not this method's failure.
+				}
+			}
+			if (filled > 0) this.writeIndex(index);
+			return filled;
+		});
+	}
+
+	private updateIndexEntry(id: string, status: TaskStatus, since: string): void {
 		const index = this.readIndex();
 		const entry = index.tasks.find(t => t.id === id);
 		if (!entry) {
 			throw new Error(`Task index out of sync: entry for "${id}" not found. The index may be corrupted.`);
 		}
 		entry.status = status;
+		entry.statusSince = since;
 		this.writeIndex(index);
 	}
 

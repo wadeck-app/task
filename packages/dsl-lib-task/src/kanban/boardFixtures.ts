@@ -83,7 +83,7 @@ export function sampleColumns(): BoardColumnData[] {
 
 /**
  * A board whose columns GROUP statuses: "To do" holds `todo`, "Doing" holds `doing` and `review`, "Closed" holds `done` and
- * `rejected`; `parked` is in no column (the implicit Unmapped column).
+ * `rejected`; `parked` is in no column, so it is not on the board (the answer's `hiddenNote` counts its tasks).
  */
 export function groupedColumns(): BoardColumnData[] {
 	return [
@@ -127,17 +127,6 @@ export function groupedColumns(): BoardColumnData[] {
 			count: 1,
 			hiddenCount: 0,
 			cards: [{ id: 'ddd44444', headline: 'Ship v1', href: '/t/ddd44444', status: 'done', tone: 'success' }],
-		},
-		{
-			key: '__unmapped__',
-			label: 'Unmapped',
-			implicit: true,
-			tone: 'neutral',
-			terminal: false,
-			statuses: [{ name: 'parked', tone: 'neutral', terminal: false, count: 0 }],
-			count: 0,
-			hiddenCount: 0,
-			cards: [],
 		},
 	];
 }

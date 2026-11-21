@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sampleColumns } from '../kanban/boardFixtures.js';
 import { FakeEventSource, jsonResponse, stubFetch } from '../testHelpers.js';
@@ -117,33 +117,6 @@ describe('KanbanBoard compact cards', () => {
 		expect(headline.className).not.toMatch(/\btruncate\b/);
 		// The line may wrap so the headline gets its own row when the id, pill and menu take the width.
 		expect(headline.parentElement!.className).toMatch(/flex-wrap/);
-	});
-});
-
-describe('KanbanBoard switcher on a narrow screen', () => {
-	it('wraps in rows inside the viewport, every button at least 40px high', () => {
-		setup({ variantSwitcher: true });
-
-		const bar = screen.getByRole('toolbar', { name: 'Kanban variant' });
-		expect(bar.className).toMatch(/flex-wrap/);
-		expect(bar.className).toMatch(/\bw-max\b/);
-		expect(bar.className).toMatch(/max-w-\[calc\(100vw-1rem\)\]/);
-		expect(bar.className).not.toMatch(/overflow-x/);
-		const buttons = within(bar).getAllByRole('button');
-		expect(buttons).toHaveLength(5);
-		for (const button of buttons) {
-			expect(button.className).toMatch(/\bh-10\b/);
-		}
-	});
-
-	it('leaves room under the board for the two bars (layout and sort), only while they are shown', () => {
-		const { unmount } = setup({ variantSwitcher: true });
-		expect(screen.getByTestId('kanban-board').className).toMatch(/\bpb-72\b/);
-		expect(screen.getByTestId('kanban-board').className).toMatch(/\bsm:pb-48\b/);
-		unmount();
-
-		setup({ variantSwitcher: false });
-		expect(screen.getByTestId('kanban-board').className).not.toMatch(/\bpb-/);
 	});
 });
 

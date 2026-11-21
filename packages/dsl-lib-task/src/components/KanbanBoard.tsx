@@ -1,11 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Settings2 } from 'lucide-react';
+import { useAbExperiments, useAbTest, useRegisterAbTests } from '@wadeck-app/dsl-ui';
 import { deleteJson, isAbort, postJson, problemText, putJson } from '../apiFetch.js';
 import { getApiBase } from '../runtime-config.js';
 import { isUnreadableAnswer } from '../actionProblem.js';
 import { TONE_PILL } from '../tones.js';
 import {
 	CONTROL_BORDER,
+	FIELD_CLASS,
 	CONTROL_H,
 	CONTROL_RADIUS,
 	FOCUS_RING,
@@ -20,40 +22,42 @@ import { Notice } from './Notice.js';
 import type { BoardView, ZoneProps } from '../kanban/BoardParts.js';
 import {
 	applyMoves,
+	FINISHED_FOR_OPTIONS,
+	GROUP_STYLES,
 	isBoardEmpty,
+	isFinishedFor,
 	isVariant,
 	normalizeColumns,
 	statusOfCard,
 	unknownVariantText,
 	VARIANT_LABELS,
-	VARIANTS,
 	withSort,
 } from '../kanban/boardModel.js';
 import type {
 	BoardCardData,
+	BoardConfigBody,
 	BoardColumnData,
 	BoardLayoutData,
 	BoardStatusData,
+	FinishedChoice,
+	GroupStyle,
 	KanbanVariant,
 	LayoutColumn,
 	PendingMove,
 	SortChoice,
 } from '../kanban/boardModel.js';
 import {
-	isSortVariant,
 	MIXED_SORT,
+	SORT_VARIANT_OPTIONS,
 	SORT_VARIANT_PLACE,
-	SORT_VARIANT_SEPARATOR,
-	SORT_VARIANTS,
 	SortBadge,
 	SortChips,
 	SortHeaderMenu,
-	SortVariantDock,
 	ToolbarSegmented,
 	ToolbarSortSelect,
 } from '../kanban/sortControls.js';
 import type { SortVariant, ToolbarSortValue } from '../kanban/sortControls.js';
-import { ColumnsEditor } from '../kanban/ColumnsEditor.js';
+import { ColumnsEditor, FINISHED_HINT } from '../kanban/ColumnsEditor.js';
 import { useLiveBoard } from '../kanban/useLiveBoard.js';
 import { ColumnsLayout, CompactLayout, RailsLayout, SwimlanesLayout, TabsLayout } from '../kanban/variants.js';
 
@@ -67,7 +71,7 @@ export interface KanbanBoardProps {
 	 */
 	columns?: BoardColumnData[];
 	/** The stored layout of the board (`config` of the answer: `{ isDefault, columns: [{ name, statuses, sort? }] }`), for the "Configure columns" editor and the sort controls of the board. Only the first value matters; absent in contribution mode (the fetched answer has it). */
-	config?: { isDefault?: boolean; columns?: LayoutColumn[] };
+	config?: { isDefault?: boolean; columns?: LayoutColumn[]; finishedFor?: string };
 	/** Every status of the project (`allStatuses` of the answer), for the editor. */
 	allStatuses?: BoardStatusData[];
 	/** The version of that answer; a `version` event with another value makes the board fetch again. */
@@ -92,10 +96,15 @@ export interface KanbanBoardProps {
 	eventsPath?: string;
 	/** Where the module API is mounted; defaults to the one `configureTaskUi` set. */
 	apiBase?: string;
-	/** Shows the large floating bar that switches the variant (A/B testing); the choice is kept in localStorage. Left out: the `abSwitcher` of the board answer decides; a value given here wins. */
-	variantSwitcher?: boolean;
-	/** `columns`, `swimlanes`, `compact`, `rails` or `tabs`. Initial variant (the stored choice wins when the switcher is on). */
+	/**
+	 * `columns`, `swimlanes`, `compact`, `rails` or `tabs`. The layout, and the initial option of the "Board layout" row of the
+	 * shell's A/B dock (app-core `--ab-tests`); the dock choice wins only while that dock is on.
+	 */
 	defaultVariant?: KanbanVariant;
+	/** The `hiddenNote` of the first answer (tasks in statuses no column lists, which the board does not show); then the board follows the server. */
+	hiddenNote?: string | null;
+	/** The `finishedNote` of the first answer (finished tasks hidden by `finishedFor`, or shown for want of a date); then the board follows the server. */
+	finishedNote?: string | null;
 	/** No drag, no "Move to" menu. Left out: the `readOnly` of the board answer, else false. */
 	readOnly?: boolean;
 	/** Shown when no task exists. Left out: the `emptyText` of the board answer, else "No tasks yet". */
@@ -128,10 +137,31 @@ const LAYOUTS = {
 	rails: RailsLayout,
 	tabs: TabsLayout,
 } as const;
-const STORAGE_KEY = 'task.kanban.variant';
-const SORT_STORAGE_KEY = 'task.board.sortVariant';
-const DEFAULT_SORT_VARIANT: SortVariant = 'a';
+const DEFAULT_SORT_VARIANT: SortVariant = 'header-menu';
+/** The option of the group style row that keeps the style of each column. */
+const AS_CONFIGURED = 'config';
+type GroupStyleChoice = GroupStyle | typeof AS_CONFIGURED;
+/** A control of the board that saves the board setting. */
+type BoardSave = 'sort' | 'finished';
 const DEFAULT_POLL_SECONDS = 20;
+
+const LAYOUT_HINTS: Record<KanbanVariant, string> = {
+	columns: 'Columns side by side',
+	swimlanes: 'Rows by priority',
+	compact: 'One-line cards',
+	rails: 'One open column, the others as rails',
+	tabs: 'One column per tab, no drag',
+};
+const LAYOUT_OPTIONS = Object.fromEntries(
+	(Object.keys(VARIANT_LABELS) as KanbanVariant[]).map(variant => [
+		variant,
+		{ label: VARIANT_LABELS[variant], hint: LAYOUT_HINTS[variant] },
+	])
+) as Record<KanbanVariant, { label: string; hint: string }>;
+const GROUP_STYLE_OPTIONS = {
+	[AS_CONFIGURED]: { label: 'As configured', hint: "Each column's own group style" },
+	...Object.fromEntries(GROUP_STYLES.map(style => [style.value, { label: style.label, hint: style.hint }])),
+} as Record<GroupStyleChoice, { label: string; hint: string }>;
 const LIVE_TEXT = { live: 'Live', reconnecting: 'Reconnecting', polling: 'Polling' } as const;
 const LIVE_TONE = { live: 'success', reconnecting: 'warning', polling: 'info' } as const;
 const LIVE_HINT = {
@@ -148,57 +178,11 @@ function initialLayout(
 	if (config === undefined || !Array.isArray(config.columns) || !Array.isArray(allStatuses)) {
 		return null;
 	}
-	return { isDefault: config.isDefault === true, columns: config.columns, allStatuses };
-}
-
-interface StoredVariant {
-	variant: string;
-	note: string | null;
-}
-
-/** The saved choice of the switcher; a stale or unreadable one is reported and the default is used. */
-function storedVariant(fallback: string): StoredVariant {
-	let stored: string | null;
-	try {
-		stored = window.localStorage.getItem(STORAGE_KEY);
-	} catch (error) {
-		return {
-			variant: fallback,
-			note: `The saved variant could not be read (${error instanceof Error ? error.message : String(error)}); using "${fallback}".`,
-		};
-	}
-	if (stored === null) {
-		return { variant: fallback, note: null };
-	}
-	if (isVariant(stored)) {
-		return { variant: stored, note: null };
-	}
 	return {
-		variant: fallback,
-		note: `The saved variant "${stored}" is not known (valid: ${VARIANTS.join(', ')}); using "${fallback}".`,
-	};
-}
-
-/** The saved choice of the sort dock; a stale or unreadable one is reported and `a` is used. */
-function storedSortVariant(): { variant: SortVariant; note: string | null } {
-	let stored: string | null;
-	try {
-		stored = window.localStorage.getItem(SORT_STORAGE_KEY);
-	} catch (error) {
-		return {
-			variant: DEFAULT_SORT_VARIANT,
-			note: `The saved sort variant could not be read (${error instanceof Error ? error.message : String(error)}); using "${DEFAULT_SORT_VARIANT}".`,
-		};
-	}
-	if (stored === null) {
-		return { variant: DEFAULT_SORT_VARIANT, note: null };
-	}
-	if (isSortVariant(stored)) {
-		return { variant: stored, note: null };
-	}
-	return {
-		variant: DEFAULT_SORT_VARIANT,
-		note: `The saved sort variant "${stored}" is not known (valid: ${SORT_VARIANTS.join(', ')}); using "${DEFAULT_SORT_VARIANT}".`,
+		isDefault: config.isDefault === true,
+		columns: config.columns,
+		allStatuses,
+		...(isFinishedFor(config.finishedFor) ? { finishedFor: config.finishedFor } : {}),
 	};
 }
 
@@ -228,40 +212,13 @@ async function moveByRequest(
 	}
 }
 
-function VariantSwitcher({
-	active,
-	onPick,
-}: {
-	active: string;
-	onPick: (variant: KanbanVariant) => void;
-}): React.ReactElement {
-	return (
-		<div
-			role="toolbar"
-			aria-label="Kanban variant"
-			className="fixed bottom-4 left-1/2 z-[1000] flex w-max max-w-[calc(100vw-1rem)] -translate-x-1/2 flex-wrap justify-center gap-2 rounded-xl border border-border bg-surface p-2 shadow-lg"
-		>
-			{VARIANTS.map((variant, index) => (
-				<button
-					key={variant}
-					type="button"
-					aria-pressed={variant === active}
-					onClick={() => onPick(variant)}
-					className={`h-10 shrink-0 cursor-pointer rounded-md border px-3 sm:px-4 text-sm font-semibold focus-visible:ring-2 focus-visible:ring-primary ${variant === active ? 'border-primary bg-[var(--color-primary-solid)] text-white' : 'border-border bg-surface text-content hover:bg-muted-bg'}`}
-				>
-					{`${index + 1} ${VARIANT_LABELS[variant]}`}
-				</button>
-			))}
-		</div>
-	);
-}
-
 /**
  * A kanban board of the tasks of one project: a column per status, cards moved by drag and drop or with a "Move to"
  * menu on every card, kept up to date by itself (an event stream tells when the board changed, a poll takes over when
  * there is none). Five layouts (`columns`, `swimlanes`, `compact`, `rails`, `tabs`); a move shows at once and goes back,
  * with the reason, when the server refuses it. A column can be sorted (status, priority, assignee, oldest, newest); a sort
- * that forms groups draws a separator before each group.
+ * that forms groups introduces each group in the column's group style (label, bar, gap, tint, border, boxed, pill, divider).
+ * Statuses no column lists are not on the board; one muted line (`hiddenNote`) counts their tasks.
  *
  * IN SCOPE: showing and moving the cards of one project, the sort of each column. OUT OF SCOPE: editing a task (a card
  * links to its page), changing the statuses, placing a card by hand inside a column.
@@ -282,8 +239,9 @@ export function KanbanBoard({
 	eventsPath = '/board/events',
 	configPath = '/board/config',
 	apiBase,
-	variantSwitcher,
 	defaultVariant = 'columns',
+	hiddenNote,
+	finishedNote,
 	readOnly,
 	emptyText,
 	pollSeconds = DEFAULT_POLL_SECONDS,
@@ -315,14 +273,34 @@ export function KanbanBoard({
 		apiBase: apiBase ?? getApiBase(),
 		pollSeconds: validPoll ? pollSeconds : DEFAULT_POLL_SECONDS,
 		layout: initialLayout(config, allStatuses),
+		hiddenNote: hiddenNote ?? null,
+		finishedNote: finishedNote ?? null,
 	});
 	const mover = useAction('KanbanBoard', moveAction, onAction, actionPending);
 
-	const switcherOn = variantSwitcher ?? live.meta.abSwitcher === true;
-	// Read only when the switcher is on, which a contribution only learns from the first answer.
-	const stored = useMemo(() => (switcherOn ? storedVariant(defaultVariant) : null), [switcherOn, defaultVariant]);
-	const [picked, setPicked] = useState<KanbanVariant | null>(null);
-	const [storageNote, setStorageNote] = useState<string | null>(null);
+	// The A/B rows of the board, in the shell's shared dock. Their choice applies only while that dock is on: without it
+	// (no host, or the shell runs without --ab-tests) the board shows the initial options, whatever a past session stored.
+	const layoutTest = useAbTest<KanbanVariant>({
+		id: 'board-layout',
+		label: 'Board layout',
+		options: LAYOUT_OPTIONS,
+		initial: isVariant(defaultVariant) ? defaultVariant : 'columns',
+	});
+	const sortTest = useAbTest<SortVariant>({
+		id: 'board-sort-control',
+		label: 'Board columns: sort control',
+		options: SORT_VARIANT_OPTIONS,
+		initial: DEFAULT_SORT_VARIANT,
+	});
+	const groupTest = useAbTest<GroupStyleChoice>({
+		id: 'board-group-style',
+		label: 'Board columns: group style',
+		options: GROUP_STYLE_OPTIONS,
+		initial: AS_CONFIGURED,
+	});
+	useRegisterAbTests([layoutTest, sortTest, groupTest]);
+	const abOn = useAbExperiments()?.enabled === true;
+
 	const [moves, setMoves] = useState<Record<string, PendingMove>>({});
 	const [moveNote, setMoveNote] = useState<{ text: string; short: boolean } | null>(null);
 	const [overStatus, setOverStatus] = useState<string | null>(null);
@@ -333,9 +311,8 @@ export function KanbanBoard({
 	const [configError, setConfigError] = useState<string | null>(null);
 	// The last refused save of a sort picked on the board (the editor shows its own error).
 	const [sortError, setSortError] = useState<string | null>(null);
-	const storedSort = useMemo(() => (switcherOn ? storedSortVariant() : null), [switcherOn]);
-	const [pickedSort, setPickedSort] = useState<SortVariant | null>(null);
-	const [sortStorageNote, setSortStorageNote] = useState<string | null>(null);
+	// Which control of the board is saving (its own pending text), null when none is.
+	const [boardSave, setBoardSave] = useState<BoardSave | null>(null);
 
 	const movesRef = useRef(moves);
 	movesRef.current = moves;
@@ -491,21 +468,27 @@ export function KanbanBoard({
 		move: (id, status) => void move(id, status),
 	};
 
-	/** Stores the whole layout: from the editor, or with one changed sort from the board (`from: 'board'`). */
-	const saveLayout = async (columns: LayoutColumn[], from: 'editor' | 'board' = 'editor'): Promise<void> => {
+	/**
+	 * Stores the whole board setting (columns and `finishedFor`, one PUT): from the editor, or from a control of the board with
+	 * one changed sort (`sort`) or a changed window of the finished tasks (`finished`).
+	 */
+	const saveLayout = async (body: BoardConfigBody, from: 'editor' | BoardSave = 'editor'): Promise<void> => {
 		setConfigBusy(true);
+		setBoardSave(from === 'editor' ? null : from);
 		setConfigError(null);
 		setSortError(null);
 		try {
-			await putJson(configPath, { project: projectParam }, { columns }, { apiBase: apiBase ?? getApiBase() });
+			await putJson(configPath, { project: projectParam }, body, { apiBase: apiBase ?? getApiBase() });
 			await live.refetch(true);
 			if (mounted.current) {
 				setConfiguring(false);
 			}
 		} catch (error) {
 			if (mounted.current) {
-				if (from === 'board') {
+				if (from === 'sort') {
 					setSortError(`The sort was not saved: ${problemText(error)}`);
+				} else if (from === 'finished') {
+					setSortError(`The finished tasks setting was not saved: ${problemText(error)}`);
 				} else {
 					setConfigError(`The columns were not saved: ${problemText(error)}`);
 				}
@@ -513,6 +496,7 @@ export function KanbanBoard({
 		} finally {
 			if (mounted.current) {
 				setConfigBusy(false);
+				setBoardSave(null);
 			}
 		}
 	};
@@ -537,34 +521,10 @@ export function KanbanBoard({
 		}
 	};
 
-	const pickVariant = (variant: KanbanVariant): void => {
-		setPicked(variant);
-		try {
-			window.localStorage.setItem(STORAGE_KEY, variant);
-			setStorageNote(null);
-		} catch (error) {
-			setStorageNote(
-				`The variant could not be saved (${error instanceof Error ? error.message : String(error)}); it is back to "${defaultVariant}" after a reload.`
-			);
-		}
-	};
-
-	const pickSortVariant = (next: SortVariant): void => {
-		setPickedSort(next);
-		try {
-			window.localStorage.setItem(SORT_STORAGE_KEY, next);
-			setSortStorageNote(null);
-		} catch (error) {
-			setSortStorageNote(
-				`The sort variant could not be saved (${error instanceof Error ? error.message : String(error)}); it is back to "${DEFAULT_SORT_VARIANT}" after a reload.`
-			);
-		}
-	};
-
 	if (!isVariant(defaultVariant)) {
 		return <Notice variant="danger" label={unknownVariantText(defaultVariant, 'defaultVariant')} />;
 	}
-	const variant = picked ?? stored?.variant ?? defaultVariant;
+	const variant: string = abOn ? layoutTest.value : defaultVariant;
 	if (!isVariant(variant)) {
 		return <Notice variant="danger" label={unknownVariantText(variant, 'variant')} />;
 	}
@@ -621,31 +581,64 @@ export function KanbanBoard({
 			: `KanbanBoard: pollSeconds must be a positive number (got ${String(pollSeconds)}); using ${DEFAULT_POLL_SECONDS}.`,
 		'warning'
 	);
-	addNote('storage', switcherOn ? (storageNote ?? stored?.note ?? null) : null, 'warning');
-	addNote('sort-storage', switcherOn ? (sortStorageNote ?? storedSort?.note ?? null) : null, 'warning');
 	addNote('sort', configuring ? null : sortError, 'danger');
 
 	// The layout is the project's config: offered where the cards can be moved, once the answer carried it.
 	const canConfigure = !isReadOnly && hasProject && live.loaded && live.meta.layout !== null;
 
-	// The sort controls: the dock picks the variant (dev switcher only), else `a`.
-	const sortVariant: SortVariant = switcherOn
-		? (pickedSort ?? storedSort?.variant ?? DEFAULT_SORT_VARIANT)
-		: DEFAULT_SORT_VARIANT;
+	// The sort control and the group style: the dock picks them while it is on, else the initial options.
+	const sortVariant: SortVariant = abOn ? sortTest.value : DEFAULT_SORT_VARIANT;
+	const groupChoice: GroupStyleChoice = abOn ? groupTest.value : AS_CONFIGURED;
+	view.groupStyleOverride = groupChoice === AS_CONFIGURED ? null : groupChoice;
 	const layoutColumns = live.meta.layout?.columns ?? [];
+	const finishedFor = live.meta.layout?.finishedFor;
+	// Any save started from the board disables every board control until it ends.
 	const sortBusy = configBusy && !configuring;
 	const pickSort = (names: string[] | null, choice: SortChoice): void => {
 		if (!canConfigure || configBusy) {
 			return;
 		}
-		void saveLayout(withSort(layoutColumns, names, choice), 'board');
+		// The window of the finished tasks travels with the columns: a PUT without it would remove it.
+		void saveLayout(
+			{ columns: withSort(layoutColumns, names, choice), ...(finishedFor === undefined ? {} : { finishedFor }) },
+			'sort'
+		);
 	};
-	// Only a column of the stored layout has a sort to change (not the implicit Unmapped one).
+	const pickFinished = (choice: FinishedChoice): void => {
+		if (!canConfigure || configBusy) {
+			return;
+		}
+		void saveLayout({ columns: layoutColumns, ...(choice === 'none' ? {} : { finishedFor: choice }) }, 'finished');
+	};
+	const finishedControl =
+		canConfigure && !configuring ? (
+			<label className={`inline-flex items-center ${GAP_CONTROLS} ${PILL_TEXT} text-content`}>
+				<span className="text-xs text-muted">Finished</span>
+				<select
+					aria-label="Finished tasks shown for"
+					title={FINISHED_HINT}
+					value={finishedFor ?? 'none'}
+					disabled={sortBusy}
+					aria-busy={boardSave === 'finished' || undefined}
+					onChange={event => {
+						const value = event.target.value;
+						pickFinished(isFinishedFor(value) ? value : 'none');
+					}}
+					className={`${FIELD_CLASS} cursor-pointer text-xs`}
+				>
+					{FINISHED_FOR_OPTIONS.map(option => (
+						<option key={option.value} value={option.value}>
+							{option.label}
+						</option>
+					))}
+				</select>
+			</label>
+		) : null;
+	// Only a column of the stored layout has a sort to change.
 	const sortable = (column: BoardColumnData): boolean =>
-		canConfigure && column.implicit !== true && layoutColumns.some(entry => entry.name === column.key);
+		canConfigure && layoutColumns.some(entry => entry.name === column.key);
 	const place = SORT_VARIANT_PLACE[sortVariant];
-	view.separator = SORT_VARIANT_SEPARATOR[sortVariant];
-	if (sortVariant === 'a') {
+	if (sortVariant === 'header-menu') {
 		view.headerControl = column =>
 			sortable(column) ? (
 				<SortHeaderMenu
@@ -655,7 +648,7 @@ export function KanbanBoard({
 					onPick={choice => pickSort([column.key], choice)}
 				/>
 			) : null;
-	} else if (sortVariant === 'c') {
+	} else if (sortVariant === 'chips') {
 		view.belowHeader = column =>
 			sortable(column) ? (
 				<SortChips
@@ -665,12 +658,12 @@ export function KanbanBoard({
 					onPick={choice => pickSort([column.key], choice)}
 				/>
 			) : null;
-	} else if (sortVariant === 'd') {
+	} else if (sortVariant === 'editor-only') {
 		view.headerControl = column => <SortBadge sort={column.sort} />;
 	}
 	const toolbarSort =
 		place === 'toolbar' && canConfigure && !configuring && layoutColumns.length > 0 ? (
-			sortVariant === 'b' ? (
+			sortVariant === 'toolbar-select' ? (
 				<ToolbarSortSelect
 					value={sharedSort(layoutColumns)}
 					busy={sortBusy}
@@ -703,7 +696,7 @@ export function KanbanBoard({
 				layout={live.meta.layout}
 				busy={configBusy}
 				error={configError}
-				onSave={columns => void saveLayout(columns, 'editor')}
+				onSave={body => void saveLayout(body, 'editor')}
 				onReset={() => void resetLayout()}
 				onCancel={() => {
 					setConfiguring(false);
@@ -722,7 +715,8 @@ export function KanbanBoard({
 			data-testid="kanban-board"
 			data-variant={variant}
 			data-sort-variant={sortVariant}
-			className={`flex min-w-0 flex-col gap-4 ${switcherOn ? 'pb-72 sm:pb-48' : ''}`}
+			data-group-style={groupChoice}
+			className="flex min-w-0 flex-col gap-4"
 		>
 			<div className="flex flex-wrap items-center justify-between gap-2">
 				{live.meta.tasksHref !== null ? (
@@ -734,9 +728,15 @@ export function KanbanBoard({
 				)}
 				<div className="flex flex-wrap items-center gap-2">
 					{toolbarSort}
-					{sortBusy ? (
+					{finishedControl}
+					{sortBusy && boardSave === 'sort' ? (
 						<span role="status" data-testid="kanban-sort-pending" className="text-xs text-muted">
 							Saving the sort
+						</span>
+					) : null}
+					{sortBusy && boardSave === 'finished' ? (
+						<span role="status" data-testid="kanban-finished-pending" className="text-xs text-muted">
+							Saving the finished tasks setting
 						</span>
 					) : null}
 					{canConfigure && !configuring ? (
@@ -764,10 +764,18 @@ export function KanbanBoard({
 					) : null}
 				</div>
 			</div>
+			{live.meta.hiddenNote !== null && !live.meta.blank ? (
+				<p role="status" data-testid="kanban-hidden-note" className="m-0 text-xs text-muted">
+					{live.meta.hiddenNote}
+				</p>
+			) : null}
+			{live.meta.finishedNote !== null && !live.meta.blank ? (
+				<p role="status" data-testid="kanban-finished-note" className="m-0 text-xs text-muted">
+					{live.meta.finishedNote}
+				</p>
+			) : null}
 			{notes.length > 0 ? <div className="flex flex-col gap-2">{notes}</div> : null}
 			{content}
-			{switcherOn ? <SortVariantDock active={sortVariant} onPick={pickSortVariant} /> : null}
-			{switcherOn ? <VariantSwitcher active={variant} onPick={pickVariant} /> : null}
 		</div>
 	);
 }

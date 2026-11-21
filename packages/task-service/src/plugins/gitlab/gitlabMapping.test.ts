@@ -86,6 +86,14 @@ function failure(call: () => unknown): BackendDataError {
 }
 
 describe('summaries and status', () => {
+	it('statusSince is the closing instant of a closed issue, and absent for an open one (no other date tells it)', () => {
+		const ctx = contextOf();
+		expect(toSummary(issue({ state: 'closed', closed_at: '2026-11-09T08:30:00Z' }), ctx).statusSince).toBe(
+			'2026-11-09T08:30:00.000Z'
+		);
+		expect(toSummary(issue({ state: 'opened', closed_at: null }), ctx)).not.toHaveProperty('statusSince');
+	});
+
 	it('uses the iid as the id, ISO dates, and the status from state and labels', () => {
 		const ctx = contextOf();
 		expect(toSummary(issue({ labels: ['status:wip'] }), ctx)).toEqual({

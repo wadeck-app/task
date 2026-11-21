@@ -41,6 +41,8 @@ export interface ApiIssue {
 	type?: { name: string } | null;
 	created_at: string;
 	updated_at: string;
+	/** When the issue was closed; null while it is open. */
+	closed_at?: string | null;
 	comments: number;
 	parent_issue_url?: string | null;
 	sub_issues_summary?: { total: number; completed: number };
@@ -181,6 +183,8 @@ export function toSummary(issue: ApiIssue, ctx: MapContext): TaskSummary {
 		title: issue.title,
 		status: statusOfIssue(issue, ctx),
 		createdAt: iso(issue.created_at),
+		// Only the closing instant: GitHub does not tell when a label status was set, and updated_at moves with every edit.
+		...(issue.state === 'closed' && typeof issue.closed_at === 'string' ? { statusSince: iso(issue.closed_at) } : {}),
 		...(parent === undefined ? {} : { parentId: String(parent) }),
 		...(priority === undefined ? {} : { priority }),
 		...(claim === undefined ? {} : { assignee: claim.assignee }),

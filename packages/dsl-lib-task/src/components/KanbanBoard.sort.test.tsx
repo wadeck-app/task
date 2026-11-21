@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { groupedColumns, groupedLayout, sortedColumns, sortedLayout } from '../kanban/boardFixtures.js';
 import { normalizeColumns, SORT_OPTIONS } from '../kanban/boardModel.js';
+import { AbExperiments } from '@wadeck-app/dsl-ui';
 import { deferred, FakeEventSource, jsonResponse, stubFetch } from '../testHelpers.js';
 import { KanbanBoard } from './KanbanBoard.js';
 
@@ -50,10 +51,23 @@ function setup(extra: Partial<React.ComponentProps<typeof KanbanBoard>> = {}) {
 	);
 }
 
-/** Mounts the board with the dev switcher on and the sort variant `id` stored. */
+/** Mounts the board under the shared A/B dock with the sort control `id` stored in its row. */
 function setupVariant(id: string, extra: Partial<React.ComponentProps<typeof KanbanBoard>> = {}) {
-	window.localStorage.setItem('task.board.sortVariant', id);
-	return setup({ variantSwitcher: true, ...extra });
+	window.localStorage.setItem('ab.board-sort-control', id);
+	return render(
+		<AbExperiments enabled>
+			<KanbanBoard
+				columns={sortedColumns()}
+				config={{ isDefault: false, columns: sortedLayout().columns }}
+				allStatuses={sortedLayout().allStatuses}
+				version="s1"
+				projectParam="p1"
+				apiBase="/api/modules/task"
+				defaultVariant="columns"
+				{...extra}
+			/>
+		</AbExperiments>
+	);
 }
 
 const column = (key: string): HTMLElement => screen.getByTestId(`kanban-column-${key}`);
@@ -102,26 +116,18 @@ describe('separators between groups', () => {
 		expect(screen.queryAllByRole('separator')).toHaveLength(0);
 	});
 
-	it('one before the first card of every group, the first one included, named by the group (rule by default)', () => {
+	it('one before the first card of every group, the first one included, named by the group (label by default)', () => {
 		setup();
 		const doing = separators('Doing');
-		expect(doing.map(entry => entry.getAttribute('aria-label'))).toEqual(['ann', 'bob']);
-		expect(doing.every(entry => entry.getAttribute('data-style') === 'rule')).toBe(true);
+		expect(doing.map(entry => entry.getAttribute('aria-label'))).toEqual(['ann, 2 cards', 'bob, 1 card']);
+		expect(doing.every(entry => entry.getAttribute('data-style') === 'label')).toBe(true);
 		const order = Array.from(
 			column('Doing').querySelectorAll('[role="separator"], [data-testid="kanban-card"]')
 		).map(element => element.getAttribute('data-card-id') ?? element.getAttribute('aria-label'));
-		expect(order).toEqual(['ann', 'ccc33333', 'eee55555', 'bob', 'fff66666']);
+		expect(order).toEqual(['ann, 2 cards', 'ccc33333', 'eee55555', 'bob, 1 card', 'fff66666']);
 		// a sort that forms no group (newest) and no sort: no separator
 		expect(separators('Closed')).toHaveLength(0);
 		expect(separators('To do')).toHaveLength(0);
-	});
-
-	it('the band style shows the number of cards of the group in the column', () => {
-		setupVariant('c');
-		const doing = separators('Doing');
-		expect(doing.every(entry => entry.getAttribute('data-style') === 'band')).toBe(true);
-		expect(doing.map(entry => within(entry).getByTestId('kanban-group-count').textContent)).toEqual(['2', '1']);
-		expect(doing[0]).toHaveTextContent('ann');
 	});
 
 	it('compact and tabs draw them too; swimlanes do not (lanes are groups already)', async () => {
@@ -139,17 +145,17 @@ describe('separators between groups', () => {
 	});
 });
 
-describe('variant a: header menu (the default, also without the dev switcher)', () => {
-	it('a sort button in the header of each configured column, none on the implicit Unmapped column', () => {
+describe('header menu (the initial sort control, also without the A/B dock)', () => {
+	it('a sort button in the header of each column', () => {
 		setup();
-		expect(screen.getByTestId('kanban-board')).toHaveAttribute('data-sort-variant', 'a');
+		expect(screen.getByTestId('kanban-board')).toHaveAttribute('data-sort-variant', 'header-menu');
 		for (const name of ['To do', 'Doing', 'Closed']) {
 			expect(screen.getByRole('button', { name: `Sort column ${name}` })).toHaveAttribute(
 				'aria-haspopup',
 				'menu'
 			);
 		}
-		expect(screen.queryByRole('button', { name: 'Sort column Unmapped' })).toBeNull();
+		expect(screen.getAllByRole('button', { name: /^Sort column/ })).toHaveLength(3);
 	});
 
 	it('opens a menu of radio items with the current sort checked and focused', async () => {
@@ -228,10 +234,10 @@ describe('variant a: header menu (the default, also without the dev switcher)', 
 	});
 });
 
-describe('variant b: toolbar select', () => {
+describe('toolbar select', () => {
 	it('one select for every column, no header control; picking saves the same sort on every column', async () => {
 		const user = userEvent.setup();
-		setupVariant('b');
+		setupVariant('toolbar-select');
 		expect(screen.queryByRole('button', { name: /^Sort column/ })).toBeNull();
 		const select = screen.getByRole('combobox', { name: 'Sort cards by' });
 		expect(
@@ -245,14 +251,13 @@ describe('variant b: toolbar select', () => {
 		await user.selectOptions(select, 'priority');
 		await waitFor(() => expect(calls.some(call => call.method === 'PUT')).toBe(true));
 		expect(putBody()).toEqual({ columns: LAYOUT_WITH(['priority', 'priority', 'priority']) });
-		expect(separators('Doing').every(entry => entry.getAttribute('data-style') === 'rule')).toBe(true);
 	});
 });
 
-describe('variant c: chips', () => {
+describe('chips', () => {
 	it('a chip per option under each column header, the active one pressed; a click saves that column', async () => {
 		const user = userEvent.setup();
-		setupVariant('c');
+		setupVariant('chips');
 		const chips = within(column('Doing')).getByRole('group', { name: 'Sort cards of Doing' });
 		expect(within(chips).getAllByRole('button')).toHaveLength(SORT_OPTIONS.length);
 		expect(within(chips).getByRole('button', { name: 'Assignee' })).toHaveAttribute('aria-pressed', 'true');
@@ -267,23 +272,22 @@ describe('variant c: chips', () => {
 	});
 });
 
-describe('variant d: editor only', () => {
+describe('editor only', () => {
 	it('no control on the board, a read-only badge naming the sort where one is set', () => {
-		setupVariant('d');
+		setupVariant('editor-only');
 		expect(screen.queryByRole('button', { name: /^Sort column/ })).toBeNull();
 		expect(screen.queryByRole('combobox', { name: 'Sort cards by' })).toBeNull();
 		expect(screen.queryByRole('group', { name: /^Sort cards/ })).toBeNull();
 		expect(within(column('Doing')).getByTestId('kanban-sort-badge')).toHaveTextContent('by assignee');
 		expect(within(column('Closed')).getByTestId('kanban-sort-badge')).toHaveTextContent('newest first');
 		expect(within(column('To do')).queryByTestId('kanban-sort-badge')).toBeNull();
-		expect(separators('Doing').every(entry => entry.getAttribute('data-style') === 'rule')).toBe(true);
 	});
 });
 
-describe('variant e: segmented toolbar', () => {
-	it('one segmented control for every column; picking saves it on every column; band separators', async () => {
+describe('segmented toolbar', () => {
+	it('one segmented control for every column; picking saves it on every column', async () => {
 		const user = userEvent.setup();
-		setupVariant('e');
+		setupVariant('segmented');
 		const group = screen.getByRole('group', { name: 'Sort cards of every column' });
 		expect(
 			within(group)
@@ -295,7 +299,6 @@ describe('variant e: segmented toolbar', () => {
 		// on a narrow screen the bar scrolls inside itself instead of being cut by the page (seen at 390 px: Assignee out of view)
 		expect(group.className).toContain('overflow-x-auto');
 		expect(group.className).toContain('max-w-[calc(100vw-6rem)]');
-		expect(separators('Doing').every(entry => entry.getAttribute('data-style') === 'band')).toBe(true);
 
 		await user.click(within(group).getByRole('button', { name: 'Oldest' }));
 		await waitFor(() => expect(calls.some(call => call.method === 'PUT')).toBe(true));
@@ -304,54 +307,9 @@ describe('variant e: segmented toolbar', () => {
 
 	it('Default removes the sort of every column', async () => {
 		const user = userEvent.setup();
-		setupVariant('e');
+		setupVariant('segmented');
 		await user.click(screen.getByRole('button', { name: 'Default' }));
 		await waitFor(() => expect(calls.some(call => call.method === 'PUT')).toBe(true));
 		expect(putBody()).toEqual({ columns: LAYOUT_WITH([undefined, undefined, undefined]) });
-	});
-});
-
-describe('the sort variant dock', () => {
-	it('is absent without the dev switcher, and the stored sort variant is not read', () => {
-		window.localStorage.setItem('task.board.sortVariant', 'c');
-		const get = vi.spyOn(Storage.prototype, 'getItem');
-		setup();
-		expect(screen.queryByRole('toolbar', { name: 'Board columns: sort and groups' })).toBeNull();
-		expect(get).not.toHaveBeenCalledWith('task.board.sortVariant');
-		expect(screen.getByTestId('kanban-board')).toHaveAttribute('data-sort-variant', 'a');
-	});
-
-	it('is a second floating bar above the layout switcher, titled, with the five variants and the active one pressed', () => {
-		setup({ variantSwitcher: true });
-		const dock = screen.getByRole('toolbar', { name: 'Board columns: sort and groups' });
-		expect(dock.className).toMatch(/fixed/);
-		expect(dock.className).toMatch(/bottom-20/);
-		expect(within(dock).getByText('Board columns: sort and groups')).toBeVisible();
-		expect(
-			within(dock)
-				.getAllByRole('button')
-				.map(button => button.textContent)
-		).toEqual(['1 Header menu', '2 Toolbar select', '3 Chips', '4 Editor only', '5 Segmented toolbar']);
-		expect(within(dock).getByRole('button', { name: '1 Header menu' })).toHaveAttribute('aria-pressed', 'true');
-		// the layout switcher is still there
-		expect(screen.getByRole('toolbar', { name: 'Kanban variant' })).toBeInTheDocument();
-	});
-
-	it('switches live and remembers the choice', async () => {
-		const first = setup({ variantSwitcher: true });
-		await userEvent.setup().click(screen.getByRole('button', { name: '3 Chips' }));
-		expect(screen.getByTestId('kanban-board')).toHaveAttribute('data-sort-variant', 'c');
-		expect(window.localStorage.getItem('task.board.sortVariant')).toBe('c');
-		first.unmount();
-
-		setup({ variantSwitcher: true });
-		expect(screen.getByTestId('kanban-board')).toHaveAttribute('data-sort-variant', 'c');
-	});
-
-	it('a stored value that is not a sort variant is reported, and a is used', () => {
-		window.localStorage.setItem('task.board.sortVariant', 'z');
-		setup({ variantSwitcher: true });
-		expect(screen.getByTestId('kanban-board')).toHaveAttribute('data-sort-variant', 'a');
-		expect(screen.getByText(/The saved sort variant "z" is not known/)).toBeInTheDocument();
 	});
 });

@@ -34,12 +34,10 @@ export interface BoardStatusData {
 
 /** One column of the board: a name and the statuses it holds (one in the default layout, several when the project groups them). */
 export interface BoardColumnData {
-	/** Identifies the column (its name, or the key of the implicit Unmapped column). */
+	/** Identifies the column (its name). */
 	key: string;
 	/** What the header shows. */
 	label: string;
-	/** The column of the statuses no configured column lists. */
-	implicit?: boolean;
 	/** The tone of the status of a one-status column; neutral for a group. */
 	tone?: Tone;
 	/** Every status of the column is closed. */
@@ -53,7 +51,37 @@ export interface BoardColumnData {
 	hiddenCount?: number;
 	/** How the cards of the column are ordered; absent = the usual order, no group. */
 	sort?: ColumnSort;
+	/** How a group of cards is introduced when the sort forms groups; absent = `label`. */
+	groupStyle?: GroupStyle;
 	cards: BoardCardData[];
+}
+
+/** How a group of cards is introduced (`board.columns[i].groupStyle` of config.yml). */
+export type GroupStyle = 'label' | 'bar' | 'gap' | 'tint' | 'border' | 'boxed' | 'pill' | 'divider';
+
+export interface GroupStyleOption {
+	value: GroupStyle;
+	label: string;
+	/** A few words for a tooltip. */
+	hint: string;
+}
+
+/** The styles, the default (`label`) first. */
+export const GROUP_STYLES: readonly GroupStyleOption[] = [
+	{ value: 'label', label: 'Label', hint: 'Thin rule with the group name' },
+	{ value: 'bar', label: 'Bar', hint: 'Tinted bar with name and count' },
+	{ value: 'gap', label: 'Gap', hint: 'Large gap and a small caption' },
+	{ value: 'tint', label: 'Tint', hint: 'Group on a tinted panel' },
+	{ value: 'border', label: 'Border', hint: 'Coloured border along the group' },
+	{ value: 'boxed', label: 'Boxed', hint: 'Group in a bordered box' },
+	{ value: 'pill', label: 'Pill', hint: 'Rule with a centred pill' },
+	{ value: 'divider', label: 'Divider', hint: 'Thick dashed rule, no text' },
+];
+
+export const DEFAULT_GROUP_STYLE: GroupStyle = 'label';
+
+export function isGroupStyle(value: unknown): value is GroupStyle {
+	return typeof value === 'string' && GROUP_STYLES.some(option => option.value === value);
 }
 
 /** A sort of the cards inside a column (`board.columns[i].sort` of config.yml). */
@@ -95,6 +123,8 @@ export interface LayoutColumn {
 	name: string;
 	statuses: string[];
 	sort?: ColumnSort;
+	/** Omitted for `label` (the default). */
+	groupStyle?: GroupStyle;
 }
 
 /** The layout with the sort of the columns named in `names` (every column when null) set to `choice`; '' removes it. */
@@ -112,11 +142,39 @@ export function withSort(
 	});
 }
 
+/** How long a task in a finished (terminal) status stays on the board (`board.finishedFor` of config.yml). */
+export type FinishedFor = '1h' | '4h' | '8h' | '1d' | '2d' | '7d' | '14d';
+/** A window, or `none` for no limit (no `finishedFor` key). */
+export type FinishedChoice = FinishedFor | 'none';
+
+export const FINISHED_FOR_OPTIONS: readonly { value: FinishedChoice; label: string }[] = [
+	{ value: 'none', label: 'No limit' },
+	{ value: '1h', label: '1 hour' },
+	{ value: '4h', label: '4 hours' },
+	{ value: '8h', label: '8 hours' },
+	{ value: '1d', label: '1 day' },
+	{ value: '2d', label: '2 days' },
+	{ value: '7d', label: '7 days' },
+	{ value: '14d', label: '14 days' },
+];
+
+export function isFinishedFor(value: unknown): value is FinishedFor {
+	return typeof value === 'string' && value !== 'none' && FINISHED_FOR_OPTIONS.some(option => option.value === value);
+}
+
 /** What the "Configure columns" editor starts from, and the statuses it can place. */
 export interface BoardLayoutData {
 	isDefault: boolean;
 	columns: LayoutColumn[];
 	allStatuses: BoardStatusData[];
+	/** Absent = every finished task is shown. */
+	finishedFor?: FinishedFor;
+}
+
+/** The body of PUT /board/config: the columns, and `finishedFor` unless there is no limit. */
+export interface BoardConfigBody {
+	columns: LayoutColumn[];
+	finishedFor?: FinishedFor;
 }
 
 export const VARIANTS = ['columns', 'swimlanes', 'compact', 'rails', 'tabs'] as const;
@@ -180,10 +238,11 @@ export function normalizeColumns(raw: unknown): BoardColumnData[] {
 					typeof card['status'] === 'string' && card['status'] !== '' ? card['status'] : statuses[0]!.name,
 			} as BoardCardData;
 		});
-		const { sort, ...rest } = column;
+		const { sort, groupStyle, ...rest } = column;
 		return {
 			...rest,
 			...(isColumnSort(sort) ? { sort } : {}),
+			...(isGroupStyle(groupStyle) ? { groupStyle } : {}),
 			key,
 			label: typeof column['label'] === 'string' && column['label'] !== '' ? column['label'] : key,
 			statuses,

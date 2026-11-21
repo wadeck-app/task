@@ -38,11 +38,11 @@ async function newTask(title: string, priority?: string): Promise<string> {
 }
 
 describe('task list with filters', () => {
-	it('the plain list keeps its rows: no priority key, no lease facts', async () => {
+	it('the plain list keeps its rows: no priority key, no lease facts; statusSince (when it entered its status, D23) is the one new fact', async () => {
 		await newTask('a');
 		const rows = json<Array<Record<string, unknown>>>(await run('list'));
 
-		expect(Object.keys(rows[0]!).sort()).toEqual(['createdAt', 'id', 'status', 'title']);
+		expect(Object.keys(rows[0]!).sort()).toEqual(['createdAt', 'id', 'status', 'statusSince', 'title']);
 	});
 
 	it('--available --order priority-then-oldest --limit prints ordered rows with the effective priority', async () => {

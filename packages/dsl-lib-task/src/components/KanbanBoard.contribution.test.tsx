@@ -282,49 +282,6 @@ describe('KanbanBoard contribution mode: the move is a request of its own', () =
 	});
 });
 
-describe('KanbanBoard switcher follows the answer', () => {
-	it('shows the bar when the answer says abSwitcher, and not when it says false', async () => {
-		stubFetch(() => jsonResponse(answer({ abSwitcher: true })));
-		const { unmount } = setup();
-		expect(await screen.findByRole('toolbar', { name: /variant/i })).toBeInTheDocument();
-		unmount();
-
-		stubFetch(() => jsonResponse(answer({ abSwitcher: false })));
-		setup();
-		await waitFor(() => expect(document.querySelector('[data-card-id]')).not.toBeNull());
-		expect(screen.queryByRole('toolbar')).toBeNull();
-	});
-
-	it('reads the stored choice once the answer turns the switcher on', async () => {
-		window.localStorage.setItem('task.kanban.variant', 'tabs');
-		stubFetch(() => jsonResponse(answer({ abSwitcher: true })));
-		setup();
-
-		await screen.findByRole('toolbar', { name: 'Kanban variant' });
-		expect(screen.getByTestId('kanban-board')).toHaveAttribute('data-variant', 'tabs');
-	});
-
-	it('an explicit prop wins over the answer', async () => {
-		stubFetch(() => jsonResponse(answer({ abSwitcher: true })));
-		setup({ variantSwitcher: false });
-		await waitFor(() => expect(document.querySelector('[data-card-id]')).not.toBeNull());
-
-		expect(screen.queryByRole('toolbar')).toBeNull();
-	});
-
-	it('every refetch can change it', async () => {
-		let on = true;
-		stubFetch(() => jsonResponse(answer({ abSwitcher: on, version: on ? 'v1' : 'v2' })));
-		setup();
-		await screen.findByRole('toolbar', { name: 'Kanban variant' });
-
-		on = false;
-		act(() => FakeEventSource.last().emit('version', 'v2'));
-
-		await waitFor(() => expect(screen.queryByRole('toolbar')).toBeNull());
-	});
-});
-
 describe('KanbanBoard projectParam is raw and encoded once', () => {
 	it('a value with "/" is encoded once in the stream url and once in the board query', async () => {
 		const { calls } = stubFetch(() => jsonResponse(answer()));

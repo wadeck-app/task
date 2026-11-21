@@ -76,7 +76,6 @@ describe('GET /tasks/board: shape', () => {
 		expect(columns.map(column => (column['cards'] as unknown[]).length)).toEqual([2, 1, 1, 0]);
 		expect(answer.body['hasCards']).toBe(true);
 		expect(answer.body['emptyText']).toBeNull();
-		expect(answer.body['abSwitcher']).toBe(false);
 		expect(answer.body['projectParam']).toBe(encodeURIComponent(project));
 	});
 
@@ -210,13 +209,11 @@ describe('GET /tasks/board: shape', () => {
 		expect((answer.body['columns'] as Array<{ count: number }>).map(column => column.count)).toEqual([1, 1, 0, 0]);
 	});
 
-	it('abSwitcher is true only when TASK_KANBAN_AB=1 is set in the module process', async () => {
+	it('carries no abSwitcher: the A/B rows live in the shell dock (--ab-tests), TASK_KANBAN_AB is not read', async () => {
 		h = setup();
 		const project = await h.world.createProject('alpha', { configYml: STATUSES_YML });
 		process.env['TASK_KANBAN_AB'] = '1';
-		expect((await board(project)).body['abSwitcher']).toBe(true);
-		process.env['TASK_KANBAN_AB'] = '0';
-		expect((await board(project)).body['abSwitcher']).toBe(false);
+		expect((await board(project)).body).not.toHaveProperty('abSwitcher');
 	});
 });
 

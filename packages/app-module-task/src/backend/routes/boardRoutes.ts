@@ -5,7 +5,7 @@
 import { clearBoardColumns, saveBoardColumns } from '@wadeck-app/task-service';
 
 import { RequestError } from '../errors.js';
-import { abSwitcherEnabled, boardBody, listBoardTasks } from '../boardView.js';
+import { boardBody, listBoardTasks } from '../boardView.js';
 import { encodedProject } from '../hrefs.js';
 import { BLANK_ANSWER, booleanFlag, bodyObject, isBlankRequest } from '../request.js';
 import type { RouteRequest } from '../request.js';
@@ -34,7 +34,7 @@ export function registerBoardRoutes(kit: RouteKit): void {
 		const tasks = await listBoardTasks(ctx);
 		return {
 			status: 200,
-			body: boardBody(ctx, tasks, { abSwitcher: abSwitcherEnabled(), projectParam: encodedProject(ctx.project) }),
+			body: boardBody(ctx, tasks, { projectParam: encodedProject(ctx.project) }),
 		};
 	};
 
@@ -49,10 +49,10 @@ export function registerBoardRoutes(kit: RouteKit): void {
 		const ctx = kit.open(req);
 		const body = bodyObject(req.body, CONFIG_USAGE);
 		for (const key of Object.keys(body)) {
-			if (key !== 'columns') {
+			if (key !== 'columns' && key !== 'finishedFor') {
 				throw new RequestError(
 					400,
-					`unknown key "${key}" in the body (only "columns" is allowed)`,
+					`unknown key "${key}" in the body (only "columns" and "finishedFor" are allowed)`,
 					CONFIG_USAGE
 				);
 			}
@@ -61,7 +61,8 @@ export function registerBoardRoutes(kit: RouteKit): void {
 			throw new RequestError(400, 'columns is missing from the body', CONFIG_USAGE);
 		}
 		// Validated like a config load (a ConfigSchemaError naming the file and the key); nothing is written when it fails.
-		saveBoardColumns(ctx, body['columns']);
+		// `finishedFor` null or absent = every finished task is shown.
+		saveBoardColumns(ctx, body['columns'], body['finishedFor'] === null ? undefined : body['finishedFor']);
 		// The streams of the board check their version at once (no task event is raised).
 		await kit.deliver([]);
 		return answerBoard(req);

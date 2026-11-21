@@ -7,7 +7,7 @@
 		"shared": {
 			"react": "^19",
 			"react-router-dom": "^7",
-			"@wadeck-app/dsl-ui": ">=2026.10.3-0",
+			"@wadeck-app/dsl-ui": ">=2026.10.25-260-0",
 			"@wadeck-app/dsl-renderer": ">=2026.10.14-0"
 		}
 	},

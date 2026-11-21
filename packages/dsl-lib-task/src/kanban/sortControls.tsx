@@ -18,40 +18,26 @@ import {
 } from '../ui/tokens.js';
 import { SORT_OPTIONS, sortOption } from './boardModel.js';
 import type { ColumnSort, SortChoice } from './boardModel.js';
-import type { SeparatorStyle } from './BoardParts.js';
 
-/** The A/B variants of the sort controls (dev switcher only; `a` otherwise). */
-export const SORT_VARIANTS = ['a', 'b', 'c', 'd', 'e'] as const;
-export type SortVariant = (typeof SORT_VARIANTS)[number];
+/** The A/B options of the sort control (row "Board columns: sort control" of the shared dock; `header-menu` otherwise). */
+export type SortVariant = 'header-menu' | 'toolbar-select' | 'chips' | 'editor-only' | 'segmented';
 
-export const SORT_VARIANT_LABELS: Record<SortVariant, string> = {
-	a: 'Header menu',
-	b: 'Toolbar select',
-	c: 'Chips',
-	d: 'Editor only',
-	e: 'Segmented toolbar',
+export const SORT_VARIANT_OPTIONS: Record<SortVariant, { label: string; hint: string }> = {
+	'header-menu': { label: 'Header menu', hint: 'Sort button in each column header' },
+	'toolbar-select': { label: 'Toolbar select', hint: 'One select sets every column' },
+	chips: { label: 'Chips', hint: 'Sort chips under each header' },
+	'editor-only': { label: 'Editor only', hint: 'Badge on the board, change in Configure columns' },
+	segmented: { label: 'Segmented', hint: 'Segmented toolbar sets every column' },
 };
 
 /** Where the control of a variant sits: in each column, in the toolbar for every column, or nowhere (the editor). */
 export const SORT_VARIANT_PLACE: Record<SortVariant, 'column' | 'toolbar' | 'none'> = {
-	a: 'column',
-	b: 'toolbar',
-	c: 'column',
-	d: 'none',
-	e: 'toolbar',
+	'header-menu': 'column',
+	'toolbar-select': 'toolbar',
+	chips: 'column',
+	'editor-only': 'none',
+	segmented: 'toolbar',
 };
-
-export const SORT_VARIANT_SEPARATOR: Record<SortVariant, SeparatorStyle> = {
-	a: 'rule',
-	b: 'rule',
-	c: 'band',
-	d: 'rule',
-	e: 'band',
-};
-
-export function isSortVariant(value: unknown): value is SortVariant {
-	return typeof value === 'string' && (SORT_VARIANTS as readonly string[]).includes(value);
-}
 
 /** The value of a control acting on every column when the columns do not share one sort. */
 export const MIXED_SORT = '*';
@@ -60,7 +46,7 @@ export type ToolbarSortValue = SortChoice | typeof MIXED_SORT;
 const MENU_ITEM_CLASS = `flex w-full cursor-pointer items-center ${GAP_CONTROLS} ${CONTROL_RADIUS} border-0 bg-transparent px-2 py-1.5 text-left text-sm text-content hover:bg-muted-bg focus:bg-muted-bg focus:outline-none`;
 const PRESSED_CLASS = 'border-primary bg-primary-light text-primary';
 
-/** A small button in a column header opening the menu of the sorts of that column (variant a). */
+/** A small button in a column header opening the menu of the sorts of that column (option header-menu). */
 export function SortHeaderMenu({
 	columnLabel,
 	current,
@@ -168,7 +154,7 @@ export function SortHeaderMenu({
 	);
 }
 
-/** One chip per sort under a column header, the active one pressed (variant c). */
+/** One chip per sort under a column header, the active one pressed (option chips). */
 export function SortChips({
 	columnLabel,
 	current,
@@ -209,7 +195,7 @@ export function SortChips({
 	);
 }
 
-/** A read-only badge naming the sort of a column; nothing for the default order (variant d). */
+/** A read-only badge naming the sort of a column; nothing for the default order (option editor-only). */
 export function SortBadge({ sort }: { sort: ColumnSort | undefined }): React.ReactElement | null {
 	if (sort === undefined) {
 		return null;
@@ -225,7 +211,7 @@ export function SortBadge({ sort }: { sort: ColumnSort | undefined }): React.Rea
 	);
 }
 
-/** One select in the board toolbar that sets the sort of every column (variant b). */
+/** One select in the board toolbar that sets the sort of every column (option toolbar-select). */
 export function ToolbarSortSelect({
 	value,
 	busy,
@@ -264,7 +250,7 @@ export function ToolbarSortSelect({
 	);
 }
 
-/** One segmented control in the board toolbar that sets the sort of every column; none pressed when they differ (variant e). */
+/** One segmented control in the board toolbar that sets the sort of every column; none pressed when they differ (option segmented). */
 export function ToolbarSegmented({
 	value,
 	busy,
@@ -301,41 +287,6 @@ export function ToolbarSegmented({
 					</button>
 				);
 			})}
-		</div>
-	);
-}
-
-export const SORT_DOCK_TITLE = 'Board columns: sort and groups';
-
-/**
- * The second floating bar of the dev switcher, above the layout one: picks the variant of the sort controls. Below 640 px the
- * layout bar wraps onto two rows, so this one sits higher there.
- */
-export function SortVariantDock({
-	active,
-	onPick,
-}: {
-	active: SortVariant;
-	onPick: (variant: SortVariant) => void;
-}): React.ReactElement {
-	return (
-		<div
-			role="toolbar"
-			aria-label={SORT_DOCK_TITLE}
-			className="fixed bottom-36 sm:bottom-20 left-1/2 z-[1000] flex w-max max-w-[calc(100vw-1rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-2 rounded-xl border border-border bg-surface p-2 shadow-lg"
-		>
-			<span className="px-1 text-xs font-semibold text-muted">{SORT_DOCK_TITLE}</span>
-			{SORT_VARIANTS.map((variant, index) => (
-				<button
-					key={variant}
-					type="button"
-					aria-pressed={variant === active}
-					onClick={() => onPick(variant)}
-					className={`h-10 shrink-0 cursor-pointer rounded-md border px-3 sm:px-4 text-sm font-semibold focus-visible:ring-2 focus-visible:ring-primary ${variant === active ? 'border-primary bg-[var(--color-primary-solid)] text-white' : 'border-border bg-surface text-content hover:bg-muted-bg'}`}
-				>
-					{`${index + 1} ${SORT_VARIANT_LABELS[variant]}`}
-				</button>
-			))}
 		</div>
 	);
 }

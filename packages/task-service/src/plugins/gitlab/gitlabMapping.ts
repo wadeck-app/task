@@ -108,6 +108,8 @@ export function toSummary(issue: ApiIssue, ctx: MapContext, parentIid?: number):
 		title: issue.title,
 		status: statusOfIssue(issue, ctx),
 		createdAt: iso(issue.created_at),
+		// Only the closing instant: GitLab does not tell when a label status was set.
+		...(issue.state === 'closed' && typeof issue.closed_at === 'string' ? { statusSince: iso(issue.closed_at) } : {}),
 		...(parentIid === undefined ? {} : { parentId: String(parentIid) }),
 		...(priority === undefined ? {} : { priority }),
 		...(claim === undefined ? {} : { assignee: claim.assignee }),

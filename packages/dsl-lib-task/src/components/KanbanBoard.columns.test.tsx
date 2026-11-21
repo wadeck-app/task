@@ -74,9 +74,49 @@ describe('grouped columns', () => {
 		expect(within(column('Closed')).getByTestId('kanban-card-status')).toHaveTextContent('done');
 	});
 
-	it('the implicit Unmapped column is drawn after the configured columns', () => {
+	it('a status in no column is not on the board: no column, no Unmapped, no drop area, no Move to entry', async () => {
 		setup();
-		expect(column('__unmapped__')).toHaveAttribute('aria-label', 'Unmapped');
+		expect(screen.getAllByRole('region').map(region => region.getAttribute('aria-label'))).toEqual([
+			'To do',
+			'Doing',
+			'Closed',
+		]);
+		expect(screen.queryByText('Unmapped')).toBeNull();
+		fireEvent.dragStart(card('aaa11111'), { dataTransfer: dataTransfer('aaa11111') });
+		expect(screen.queryByTestId('kanban-drop-area-parked')).toBeNull();
+		fireEvent.dragEnd(card('aaa11111'), { dataTransfer: dataTransfer('aaa11111') });
+		await userEvent.setup().click(screen.getByRole('button', { name: 'Move aaa11111 to another status' }));
+		expect(screen.getAllByRole('menuitem').map(item => item.textContent)).not.toContain('parked');
+	});
+
+	it('the hiddenNote of the answer is ONE muted status line under the toolbar', async () => {
+		const note =
+			'2 tasks are in a status with no column and are not shown: parked (2). Add the status to a column in Configure columns to show it.';
+		stubFetch(() => jsonResponse(grouped({ hiddenNote: note })));
+		setup({ columns: undefined });
+		await screen.findByTestId('kanban-column-Doing');
+		const line = screen.getByTestId('kanban-hidden-note');
+		expect(line).toHaveTextContent(note);
+		expect(line).toHaveAttribute('role', 'status');
+		expect(line.className).toMatch(/\btext-xs\b/);
+		expect(line.className).toMatch(/\btext-muted\b/);
+		// under the toolbar, before the columns
+		const order = Array.from(
+			screen
+				.getByTestId('kanban-board')
+				.querySelectorAll(
+					'[data-testid="kanban-configure"], [data-testid="kanban-hidden-note"], [data-testid="kanban-column-Doing"]'
+				)
+		).map(element => element.getAttribute('data-testid'));
+		expect(order).toEqual(['kanban-configure', 'kanban-hidden-note', 'kanban-column-Doing']);
+	});
+
+	it('the page gives the first hiddenNote as a prop; none drawn when it is null', () => {
+		const first = setup({ hiddenNote: '1 task is in a status with no column and is not shown: parked (1).' });
+		expect(screen.getByTestId('kanban-hidden-note')).toHaveTextContent('parked (1)');
+		first.unmount();
+		setup({ hiddenNote: null });
+		expect(screen.queryByTestId('kanban-hidden-note')).toBeNull();
 	});
 
 	it('compact and swimlanes also name the status of a card in a grouped column', () => {
@@ -90,7 +130,7 @@ describe('grouped columns', () => {
 	it('tabs: a tab per column with its count, the status pill on the cards of a grouped one, no drag', async () => {
 		setup({ defaultVariant: 'tabs' });
 		const tabs = screen.getAllByRole('tab').map(tab => tab.textContent);
-		expect(tabs).toEqual(['To do1', 'Doing2', 'Closed1', 'Unmapped0']);
+		expect(tabs).toEqual(['To do1', 'Doing2', 'Closed1']);
 		await userEvent.setup().click(screen.getByRole('tab', { name: /Doing/ }));
 		expect(screen.getAllByTestId('kanban-card-status')).toHaveLength(2);
 		expect(document.querySelector('[draggable="true"]')).toBeNull();
@@ -115,7 +155,6 @@ describe('drop areas', () => {
 		expect(names('To do')).toEqual(['todo']);
 		expect(names('Doing')).toEqual(['doing', 'review']);
 		expect(names('Closed')).toEqual(['done', 'rejected']);
-		expect(names('__unmapped__')).toEqual(['parked']);
 		const current = screen.getByTestId('kanban-drop-area-doing');
 		expect(current).toHaveAttribute('data-current', 'true');
 		expect(current).toHaveTextContent('current');
@@ -144,7 +183,7 @@ describe('drop areas', () => {
 		);
 	});
 
-	it('the second status of a closed group and an Unmapped status are targets too', () => {
+	it('the second status of a closed group is a target too', () => {
 		setup();
 		const transfer = dataTransfer('aaa11111');
 		fireEvent.dragStart(card('aaa11111'), { dataTransfer: transfer });
@@ -209,7 +248,7 @@ describe('drop areas', () => {
 		fireEvent.dragStart(card('aaa11111'), { dataTransfer: dataTransfer('aaa11111') });
 		expect(screen.getByTestId('kanban-drop-area-review')).toBeInTheDocument();
 		expect(screen.getByTestId('kanban-drop-area-rejected')).toBeInTheDocument();
-		expect(screen.getByTestId('kanban-drop-area-parked')).toBeInTheDocument();
+		expect(screen.queryByTestId('kanban-drop-area-parked')).toBeNull();
 	});
 
 	it('swimlanes show the areas under the column headers while dragging, and drop on one moves the card', () => {
@@ -251,12 +290,12 @@ describe('the Move to menu', () => {
 			within(menu)
 				.getAllByTestId('kanban-move-group')
 				.map(h => h.textContent)
-		).toEqual(['To do', 'Doing', 'Closed', 'Unmapped']);
+		).toEqual(['To do', 'Doing', 'Closed']);
 		expect(
 			within(menu)
 				.getAllByRole('menuitem')
 				.map(item => item.textContent)
-		).toEqual(['todo', 'review', 'done', 'rejected', 'parked']);
+		).toEqual(['todo', 'review', 'done', 'rejected']);
 	});
 
 	it('arrow keys cross the groups and Enter picks an exact status', async () => {
@@ -302,7 +341,7 @@ describe('Configure columns', () => {
 		return user;
 	}
 
-	it('opens the editor with the stored columns, their statuses and the Unmapped statuses', async () => {
+	it('opens the editor with the stored columns, their statuses, and one muted line naming the hidden statuses', async () => {
 		await open();
 		const editor = screen.getByTestId('columns-editor');
 		const rows = within(editor).getAllByTestId('columns-editor-column');
@@ -312,9 +351,13 @@ describe('Configure columns', () => {
 			'Closed',
 		]);
 		expect(within(rows[1]!).getByTestId('columns-editor-chip-review')).toBeInTheDocument();
-		expect(
-			within(screen.getByTestId('columns-editor-unmapped')).getByTestId('columns-editor-chip-parked')
-		).toBeInTheDocument();
+		// a hidden status is no chip and no box: one muted line at the bottom of the list
+		expect(screen.queryByTestId('columns-editor-chip-parked')).toBeNull();
+		expect(screen.queryByTestId('columns-editor-unmapped')).toBeNull();
+		const hidden = screen.getByTestId('columns-editor-hidden');
+		expect(hidden).toHaveTextContent('Hidden (no column): parked');
+		expect(hidden.className).toMatch(/\btext-muted\b/);
+		expect(screen.queryByText(/Unmapped/)).toBeNull();
 		// the board itself is hidden while editing
 		expect(screen.queryByTestId('kanban-column-Doing')).toBeNull();
 	});
@@ -351,8 +394,8 @@ describe('Configure columns', () => {
 		expect(fresh.value).toBe('New column');
 		await user.clear(fresh);
 		await user.type(fresh, 'Waiting');
-		// put "parked" (Unmapped) in the new column with the select of its chip
-		await user.selectOptions(screen.getByLabelText('Column of status parked'), 'Waiting');
+		// show "parked" (hidden) in the new column with its "Add status" select
+		await user.selectOptions(screen.getByRole('combobox', { name: 'Add a status to column Waiting' }), 'parked');
 		// move the new column up twice: it ends second
 		await user.click(screen.getByRole('button', { name: 'Move column Waiting up' }));
 		await user.click(screen.getByRole('button', { name: 'Move column Waiting up' }));
@@ -362,11 +405,9 @@ describe('Configure columns', () => {
 			'Doing',
 			'Closed',
 		]);
-		// delete "To do": its status becomes Unmapped
+		// delete "To do": its status is hidden
 		await user.click(screen.getByRole('button', { name: 'Delete column To do' }));
-		expect(
-			within(screen.getByTestId('columns-editor-unmapped')).getByTestId('columns-editor-chip-todo')
-		).toBeInTheDocument();
+		expect(screen.getByTestId('columns-editor-hidden')).toHaveTextContent('Hidden (no column): todo');
 
 		await user.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -386,7 +427,7 @@ describe('Configure columns', () => {
 		expect(screen.getByTestId('kanban-column-Doing')).toBeInTheDocument();
 	});
 
-	it('a status chip dragged onto another column moves there, and onto Unmapped leaves every column', async () => {
+	it('a status chip dragged onto another column moves there', async () => {
 		const user = await open();
 		const rows = screen.getAllByTestId('columns-editor-column');
 		const chip = within(rows[1]!).getByTestId('columns-editor-chip-review');
@@ -401,16 +442,41 @@ describe('Configure columns', () => {
 		expect(
 			within(screen.getAllByTestId('columns-editor-column')[1]!).queryByTestId('columns-editor-chip-review')
 		).toBeNull();
-
-		const again = within(screen.getAllByTestId('columns-editor-column')[0]!).getByTestId(
-			'columns-editor-chip-review'
-		);
-		const unmapped = screen.getByTestId('columns-editor-unmapped');
-		fireEvent.dragStart(again, { dataTransfer: transfer });
-		fireEvent.dragOver(unmapped, { dataTransfer: transfer });
-		fireEvent.drop(unmapped, { dataTransfer: transfer });
-		expect(within(unmapped).getByTestId('columns-editor-chip-review')).toBeInTheDocument();
 		void user;
+	});
+
+	it('"Hide (no column)" in the select of a chip takes the status out of every column; "Add status" shows it again', async () => {
+		const user = await open();
+		const select = screen.getByRole('combobox', { name: 'Column of status review' });
+		const labels = within(select)
+			.getAllByRole('option')
+			.map(option => option.textContent);
+		expect(labels).toEqual(['To do', 'Doing', 'Closed', 'Hide (no column)']);
+
+		await user.selectOptions(select, 'Hide (no column)');
+		expect(screen.queryByTestId('columns-editor-chip-review')).toBeNull();
+		expect(screen.getByTestId('columns-editor-hidden')).toHaveTextContent('Hidden (no column): review, parked');
+
+		// every column offers the hidden statuses, in the project order
+		const add = screen.getByRole('combobox', { name: 'Add a status to column Closed' });
+		expect(
+			within(add)
+				.getAllByRole('option')
+				.map(option => option.textContent)
+		).toEqual(['Add status', 'review', 'parked']);
+		await user.selectOptions(add, 'review');
+		const closed = screen.getAllByTestId('columns-editor-column')[2]!;
+		expect(within(closed).getByTestId('columns-editor-chip-review')).toBeInTheDocument();
+		expect(screen.getByTestId('columns-editor-hidden')).toHaveTextContent('Hidden (no column): parked');
+		// the select is back to its placeholder
+		expect(screen.getByRole('combobox', { name: 'Add a status to column Closed' })).toHaveValue('');
+	});
+
+	it('no "Add status" select and no hidden line when every status is in a column', async () => {
+		const user = await open();
+		await user.selectOptions(screen.getByRole('combobox', { name: 'Add a status to column To do' }), 'parked');
+		expect(screen.queryByRole('combobox', { name: /^Add a status to column/ })).toBeNull();
+		expect(screen.queryByTestId('columns-editor-hidden')).toBeNull();
 	});
 
 	it('a column dragged by its handle onto another column is reordered', async () => {
@@ -452,7 +518,7 @@ describe('Configure columns', () => {
 		expect(calls.some(call => call.method === 'PUT')).toBe(false);
 
 		// a status in it lifts the block, the message goes away
-		await user.selectOptions(screen.getByLabelText('Column of status parked'), 'planned');
+		await user.selectOptions(screen.getByRole('combobox', { name: 'Add a status to column planned' }), 'parked');
 		expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
 		expect(screen.queryByTestId('columns-editor-empty')).toBeNull();
 	});
@@ -529,8 +595,9 @@ describe('Configure columns', () => {
 		await user.clear(name);
 		await user.type(name, 'Doing');
 		// a column must hold a status to be saved: put "parked" in it, the duplicate name is what the route refuses
-		// (by option value: two columns are now both called "Doing"; the new column has the id after the three stored ones)
-		await user.selectOptions(screen.getByLabelText('Column of status parked'), '4');
+		// (two columns are now both called "Doing": the "Add status" select of the fourth row)
+		const adds = screen.getAllByRole('combobox', { name: 'Add a status to column Doing' });
+		await user.selectOptions(adds[1]!, 'parked');
 
 		await user.click(screen.getByRole('button', { name: 'Save' }));
 

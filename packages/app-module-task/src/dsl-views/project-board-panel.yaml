@@ -2,8 +2,8 @@
 # Host context: $route.project = the project reference of the host page (the registry id). A contribution cannot declare
 # $sources or $actions (ignored), so the component fetches its own data: it reads `boardPath?project=<projectParam>` itself, watches
 # `eventsPath` for changes and, on a move, POSTs `movePath` (default /tasks/{id}/status below apiBase) by itself, showing the
-# failure inside the board. `variantSwitcher` is left out: the component then follows `abSwitcher` of the board answer
-# (TASK_KANBAN_AB=1 in the module process). The root must be a Section (accepted by the slot; children are not checked).
+# failure inside the board. Its A/B rows are in the shell's shared dock (app-core --ab-tests). The root must be a Section
+# (accepted by the slot; children are not checked).
 $type: Section
 title: Board
 $if: $route.project

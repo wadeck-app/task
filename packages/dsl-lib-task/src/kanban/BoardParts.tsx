@@ -2,8 +2,10 @@ import { ArrowRightLeft } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
 import { useDismiss } from '../useDismiss.js';
 import { CONTROL_RADIUS, CONTROL_SQUARE, FOCUS_RING, GAP_CONTROLS, ICON_SIZE, PILL_RADIUS } from '../ui/tokens.js';
-import { TONE_DOT, TONE_PILL, toneOf } from '../tones.js';
-import type { BoardCardData, BoardColumnData, BoardStatusData } from './boardModel.js';
+import { hashIndex, TONE_BG, TONE_BORDER, TONE_DOT, TONE_PILL, TONES, toneOf } from '../tones.js';
+import type { Tone } from '../tones.js';
+import { DEFAULT_GROUP_STYLE } from './boardModel.js';
+import type { BoardCardData, BoardColumnData, BoardStatusData, GroupStyle } from './boardModel.js';
 
 /** What the layouts need from the board: the cards as shown, the move, the drag state. */
 export interface BoardView {
@@ -20,15 +22,13 @@ export interface BoardView {
 	/** Props that make an element the drop target of EXACTLY `status`. */
 	zone: (status: string) => ZoneProps;
 	move: (id: string, status: string) => void;
-	/** How a run of cards of the same `group` is introduced: a thin rule with the group, or a muted band with the group and its count. */
-	separator?: SeparatorStyle;
+	/** A group style drawn on EVERY column instead of the column's own `groupStyle` (the A/B preview); null or absent = as configured. */
+	groupStyleOverride?: GroupStyle | null;
 	/** Drawn at the end of the header row of a column (the sort control or badge of the column). */
 	headerControl?: (column: BoardColumnData) => React.ReactNode;
 	/** Drawn under the header of a column (the sort chips). */
 	belowHeader?: (column: BoardColumnData) => React.ReactNode;
 }
-
-export type SeparatorStyle = 'rule' | 'band';
 
 export interface ZoneProps {
 	onDragOver: (event: React.DragEvent) => void;
@@ -384,49 +384,173 @@ export function DropAreas({
 	);
 }
 
-/** The line that opens a run of cards of one group: named by the group; the band also gives the number of its cards in the column. */
+/** The tone of a group: the tone of its status for a column sorted by status, else a stable tone picked from its name. */
+export function groupTone(column: BoardColumnData, group: string): Tone {
+	if (column.sort === 'status') {
+		const status = column.statuses.find(entry => entry.name === group);
+		if (status !== undefined) {
+			return toneOf(status.tone);
+		}
+	}
+	return TONES[hashIndex(group, TONES.length)]!;
+}
+
+/** What a screen reader hears for a group: its name and the number of its cards in the column. */
+export function groupLabel(group: string, count: number): string {
+	return `${group}, ${count} ${count === 1 ? 'card' : 'cards'}`;
+}
+
+/** The styles that wrap the cards of a group in an element of their own (the others draw a line before the cards). */
+const WRAPPING: ReadonlySet<GroupStyle> = new Set<GroupStyle>(['tint', 'border', 'boxed']);
+
+const CAPTION_CLASS = 'min-w-0 truncate text-xs font-semibold';
+
+/** The line that opens a group in the styles that do not wrap its cards (label, bar, gap, pill, divider). */
 export function GroupSeparator({
 	group,
 	count,
 	style,
+	tone,
+	first,
 }: {
 	group: string;
 	count: number;
-	style: SeparatorStyle;
+	style: Exclude<GroupStyle, 'tint' | 'border' | 'boxed'>;
+	tone: Tone;
+	/** The first group of the column (no gap above it). */
+	first: boolean;
 }): React.ReactElement {
-	if (style === 'band') {
+	const label = groupLabel(group, count);
+	const common = {
+		role: 'separator',
+		'aria-label': label,
+		'data-testid': 'kanban-group-separator',
+		'data-style': style,
+		'data-tone': tone,
+	} as const;
+	if (style === 'bar') {
 		return (
 			<div
-				role="separator"
-				aria-label={`${group}, ${count} ${count === 1 ? 'card' : 'cards'}`}
-				data-testid="kanban-group-separator"
-				data-style="band"
-				className={`flex items-center ${GAP_CONTROLS} ${CONTROL_RADIUS} bg-muted-bg px-2 py-1 text-xs font-semibold text-content`}
+				{...common}
+				className={`flex w-full items-center ${GAP_CONTROLS} ${CONTROL_RADIUS} px-2 py-1 text-xs font-semibold ${TONE_PILL[tone]}`}
 			>
 				<span className="min-w-0 flex-1 truncate">{group}</span>
-				<span data-testid="kanban-group-count" className="shrink-0 font-medium text-muted">
+				<span data-testid="kanban-group-count" className="shrink-0 font-medium">
 					{count}
 				</span>
 			</div>
 		);
 	}
+	if (style === 'gap') {
+		return (
+			<div
+				{...common}
+				className={`${first ? '' : 'mt-6'} truncate px-1 text-xs font-semibold text-muted`}
+			>
+				{group}
+			</div>
+		);
+	}
+	if (style === 'pill') {
+		return (
+			<div {...common} className={`flex items-center ${GAP_CONTROLS} pt-1`}>
+				<span aria-hidden="true" className="h-px min-w-[1rem] flex-1 bg-border" />
+				<span
+					className={`inline-block min-w-0 max-w-[70%] truncate ${PILL_RADIUS} px-2 text-xs font-medium ${TONE_PILL[tone]}`}
+				>
+					{group}
+				</span>
+				<span aria-hidden="true" className="h-px min-w-[1rem] flex-1 bg-border" />
+			</div>
+		);
+	}
+	if (style === 'divider') {
+		return <div {...common} title={label} className={`my-1 border-0 border-t-2 border-dashed ${TONE_BORDER[tone]}`} />;
+	}
 	return (
-		<div
-			role="separator"
-			aria-label={group}
-			data-testid="kanban-group-separator"
-			data-style="rule"
-			className={`flex items-center ${GAP_CONTROLS} pt-1 text-xs font-medium text-muted`}
-		>
+		<div {...common} className={`flex items-center ${GAP_CONTROLS} pt-1 text-xs font-medium text-muted`}>
 			<span className="min-w-0 max-w-[70%] truncate">{group}</span>
 			<span aria-hidden="true" className="h-px min-w-[1rem] flex-1 bg-border" />
 		</div>
 	);
 }
 
+/** A group whose cards sit inside an element of their own: a tinted panel, a coloured left border, or a bordered box. */
+function GroupBlock({
+	group,
+	count,
+	style,
+	tone,
+	dense,
+	children,
+}: {
+	group: string;
+	count: number;
+	style: 'tint' | 'border' | 'boxed';
+	tone: Tone;
+	dense: boolean;
+	children: React.ReactNode;
+}): React.ReactElement {
+	const label = groupLabel(group, count);
+	const cards = `flex flex-col ${dense ? 'gap-1' : 'gap-2'}`;
+	if (style === 'boxed') {
+		return (
+			<div
+				role="group"
+				aria-label={label}
+				data-testid="kanban-group"
+				data-style="boxed"
+				data-tone={tone}
+				className={`flex flex-col ${CONTROL_RADIUS} border border-border bg-surface`}
+			>
+				<div
+					data-testid="kanban-group-header"
+					className={`flex items-center ${GAP_CONTROLS} border-0 border-b border-solid border-border px-2 py-1 text-xs font-semibold text-content`}
+				>
+					<span aria-hidden="true" className={`inline-block h-2 w-2 shrink-0 ${PILL_RADIUS} ${TONE_DOT[tone]}`} />
+					<span className="min-w-0 flex-1 truncate">{group}</span>
+					<span className="shrink-0 font-medium text-muted">{count}</span>
+				</div>
+				<div className={`${cards} p-1`}>{children}</div>
+			</div>
+		);
+	}
+	const caption = (
+		<div role="separator" aria-label={label} data-testid="kanban-group-separator" data-style={style} data-tone={tone}>
+			<span className={`${CAPTION_CLASS} ${style === 'tint' ? 'text-content' : 'text-muted'}`}>{group}</span>
+		</div>
+	);
+	if (style === 'tint') {
+		return (
+			<div
+				data-testid="kanban-group"
+				data-style="tint"
+				data-tone={tone}
+				className={`${cards} ${CONTROL_RADIUS} ${TONE_BG[tone]} p-2`}
+			>
+				{caption}
+				{children}
+			</div>
+		);
+	}
+	return (
+		<div
+			data-testid="kanban-group"
+			data-style="border"
+			data-tone={tone}
+			className={`${cards} border-0 border-l-4 border-solid ${TONE_BORDER[tone]} pl-2`}
+		>
+			{caption}
+			{children}
+		</div>
+	);
+}
+
 /**
- * The cards of a column, in the order of the answer. When the cards carry a `group` (a sort that forms groups), a separator
- * opens every run of cards of one group, the first one included, so every group is named.
+ * The cards of a column, in the order of the answer. When the cards carry a `group` (a sort that forms groups), every run of
+ * cards of one group, the first one included, is introduced in the group style of the column (`view.groupStyleOverride` wins):
+ * a line before the cards (label, bar, gap, pill, divider) or an element around them (tint, border, boxed). Cards without a
+ * group are drawn as they are.
  */
 export function CardList({
 	column,
@@ -441,36 +565,70 @@ export function CardList({
 	draggable?: boolean;
 	showStatus?: boolean;
 }): React.ReactElement {
+	const style: GroupStyle = view.groupStyleOverride ?? column.groupStyle ?? DEFAULT_GROUP_STYLE;
 	const counts = new Map<string, number>();
 	for (const card of column.cards) {
 		if (card.group !== undefined) {
 			counts.set(card.group, (counts.get(card.group) ?? 0) + 1);
 		}
 	}
+	const drawCard = (card: BoardCardData): React.ReactElement => (
+		<BoardCard
+			key={card.id}
+			card={card}
+			view={view}
+			dense={dense}
+			draggable={draggable}
+			showStatus={showStatus}
+		/>
+	);
+	// Runs of consecutive cards with the same group (undefined = no group).
+	const runs: Array<{ group: string | undefined; cards: BoardCardData[] }> = [];
+	for (const card of column.cards) {
+		const last = runs[runs.length - 1];
+		if (last !== undefined && last.group === card.group) {
+			last.cards.push(card);
+		} else {
+			runs.push({ group: card.group, cards: [card] });
+		}
+	}
 	const items: React.ReactElement[] = [];
-	let previous: string | undefined;
-	column.cards.forEach((card, index) => {
-		if (card.group !== undefined && (index === 0 || card.group !== previous)) {
+	let groupIndex = 0;
+	runs.forEach((run, index) => {
+		if (run.group === undefined) {
+			items.push(...run.cards.map(drawCard));
+			return;
+		}
+		const count = counts.get(run.group) ?? 0;
+		const tone = groupTone(column, run.group);
+		const key = `group-${index}-${run.group}`;
+		if (WRAPPING.has(style)) {
+			items.push(
+				<GroupBlock
+					key={key}
+					group={run.group}
+					count={count}
+					style={style as 'tint' | 'border' | 'boxed'}
+					tone={tone}
+					dense={dense}
+				>
+					{run.cards.map(drawCard)}
+				</GroupBlock>
+			);
+		} else {
 			items.push(
 				<GroupSeparator
-					key={`group-${index}-${card.group}`}
-					group={card.group}
-					count={counts.get(card.group) ?? 0}
-					style={view.separator ?? 'rule'}
-				/>
+					key={key}
+					group={run.group}
+					count={count}
+					style={style as Exclude<GroupStyle, 'tint' | 'border' | 'boxed'>}
+					tone={tone}
+					first={groupIndex === 0}
+				/>,
+				...run.cards.map(drawCard)
 			);
 		}
-		previous = card.group;
-		items.push(
-			<BoardCard
-				key={card.id}
-				card={card}
-				view={view}
-				dense={dense}
-				draggable={draggable}
-				showStatus={showStatus}
-			/>
-		);
+		groupIndex += 1;
 	});
 	return <>{items}</>;
 }

@@ -26,6 +26,18 @@ describe('LocalFileBackend', () => {
 		fs.rmSync(root, { recursive: true, force: true });
 	});
 
+	it('the first read fills the statusSince of an index written before the field existed, from the history of the files', async () => {
+		const record = store.create('legacy', 'backlog');
+		const indexFile = path.join(root, 'data', 'task-index.json');
+		const index = JSON.parse(fs.readFileSync(indexFile, 'utf8')) as { tasks: Array<Record<string, unknown>> };
+		for (const entry of index.tasks) delete entry['statusSince'];
+		fs.writeFileSync(indexFile, JSON.stringify(index));
+
+		const listed = await new LocalFileBackend(new TaskStore(tasksDir)).list();
+
+		expect(listed.map(entry => entry.statusSince)).toEqual([record.createdAt]);
+	});
+
 	it('is the local kind with the full capability set', () => {
 		expect(backend.kind).toBe('local');
 		expect(backend.capabilities).toEqual(LOCAL_CAPABILITIES);

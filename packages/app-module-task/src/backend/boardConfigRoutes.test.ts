@@ -87,10 +87,8 @@ describe('GET /tasks/board: configured columns (config.yml board key)', () => {
 		expect(columns.map(column => [column.key, column.name, column.label])).toEqual([
 			['To do', 'To do', 'To do'],
 			['Doing', 'Doing', 'Doing'],
-			// rejected is in no column: the implicit Unmapped column
-			['__unmapped__', 'Unmapped', 'Unmapped'],
+			// rejected is in no column: it is simply not shown (no Unmapped column)
 		]);
-		expect(columns[2]).toMatchObject({ implicit: true });
 		expect(columns[0]).not.toHaveProperty('implicit');
 		expect(columns[1]!.statuses).toEqual([
 			{ name: 'in-progress', tone: 'info', terminal: false, count: 1 },
@@ -185,7 +183,7 @@ describe('GET /tasks/board: configured columns (config.yml board key)', () => {
 		expect(column!.hiddenCount).toBe(2);
 	}, 60_000);
 
-	it('no Unmapped column when every status is in a column; Unmapped lists ALL unlisted statuses, even with no task', async () => {
+	it('a status in no column is not shown: no Unmapped column, and a one-line note counts the tasks that are hidden', async () => {
 		h = setup();
 		const full = await h.world.createProject('full', {
 			configYml: `${STATUSES_YML}board:\n  columns:\n    - name: A\n      statuses: [backlog, in-progress, done, rejected]\n`,
@@ -195,9 +193,19 @@ describe('GET /tasks/board: configured columns (config.yml board key)', () => {
 		const part = await h.world.createProject('part', {
 			configYml: `${STATUSES_YML}board:\n  columns:\n    - name: A\n      statuses: [backlog]\n`,
 		});
-		const columns = await columnsOf(part);
-		expect(columns.map(column => column.name)).toEqual(['A', 'Unmapped']);
-		expect(columns[1]!.statuses.map(status => status.name)).toEqual(['in-progress', 'done', 'rejected']);
+		// nothing hidden yet: no note
+		expect((await board(part)).body['hiddenNote']).toBeNull();
+		await create(part, 'in a hidden status', 'done');
+		await create(part, 'another', 'done');
+		await create(part, 'third', 'rejected');
+		await create(part, 'shown');
+		const answer = await board(part);
+		expect((answer.body['columns'] as ColumnAnswer[]).map(column => column.name)).toEqual(['A']);
+		expect(answer.body['hiddenNote']).toBe(
+			'3 tasks are in a status with no column and are not shown: done (2), rejected (1). Add the status to a column in Configure columns to show it.'
+		);
+		// a project with every status in a column hides nothing
+		expect((await board(full)).body['hiddenNote']).toBeNull();
 	});
 
 	it('an invalid board in config.yml is a 400 naming the file and the key, with a hint', async () => {
@@ -243,7 +251,7 @@ describe('PUT /board/config and DELETE /board/config', () => {
 
 		expect(answer.status).toBe(200);
 		const columns = answer.body['columns'] as ColumnAnswer[];
-		expect(columns.map(column => column.name)).toEqual(['Waiting', 'Finished', 'Unmapped']);
+		expect(columns.map(column => column.name)).toEqual(['Waiting', 'Finished']);
 		expect(columns[0]!.cards.map(card => card.id)).toEqual([id]);
 		expect(answer.body['config']).toEqual({ isDefault: false, columns: COLUMNS });
 		const text = fs.readFileSync(configFile(project), 'utf8');

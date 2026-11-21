@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getJson, isAbort, problemText } from '../apiFetch.js';
-import { isColumnSort, normalizeColumns } from './boardModel.js';
+import { isColumnSort, isFinishedFor, isGroupStyle, normalizeColumns } from './boardModel.js';
 import type { BoardColumnData, BoardLayoutData, BoardStatusData } from './boardModel.js';
 
 export type LiveState = 'live' | 'reconnecting' | 'polling';
@@ -21,6 +21,10 @@ export interface LiveBoardOptions {
 	pollSeconds: number;
 	/** The layout of the first answer (the page gives it with the first columns); the board then follows the server. */
 	layout?: BoardLayoutData | null;
+	/** The `hiddenNote` of the first answer (the page gives it with the first columns). */
+	hiddenNote?: string | null;
+	/** The `finishedNote` of the first answer. */
+	finishedNote?: string | null;
 }
 
 export interface LiveBoard {
@@ -78,7 +82,10 @@ export interface BoardMeta {
 	warning: string | null;
 	tasksHref: string | null;
 	emptyText: string | null;
-	abSwitcher: boolean | undefined;
+	/** One sentence counting the tasks in statuses no column lists (they are not on the board); null when there are none. */
+	hiddenNote: string | null;
+	/** One sentence about the finished tasks the `finishedFor` window hides (or shows for want of a date); null when nothing to say. */
+	finishedNote: string | null;
 	readOnly: boolean | undefined;
 	/** The stored layout and the statuses it can place; null when the answer has none (the editor is then not offered). */
 	layout: BoardLayoutData | null;
@@ -89,7 +96,8 @@ const NO_META: BoardMeta = {
 	warning: null,
 	tasksHref: null,
 	emptyText: null,
-	abSwitcher: undefined,
+	hiddenNote: null,
+	finishedNote: null,
 	readOnly: undefined,
 	layout: null,
 };
@@ -113,10 +121,12 @@ export function layoutOf(raw: Record<string, unknown>): BoardLayoutData | null {
 			return null;
 		}
 		const sort = column['sort'];
+		const groupStyle = column['groupStyle'];
 		columns.push({
 			name: column['name'],
 			statuses: column['statuses'].filter((x): x is string => typeof x === 'string'),
 			...(isColumnSort(sort) ? { sort } : {}),
+			...(isGroupStyle(groupStyle) && groupStyle !== 'label' ? { groupStyle } : {}),
 		});
 	}
 	const allStatuses: BoardStatusData[] = [];
@@ -126,7 +136,14 @@ export function layoutOf(raw: Record<string, unknown>): BoardLayoutData | null {
 		}
 		allStatuses.push(status as unknown as BoardStatusData);
 	}
-	return { isDefault: config['isDefault'] === true, columns, allStatuses };
+	// An unknown window is dropped: the controls then say "No limit", which is what a missing key means.
+	const finishedFor = config['finishedFor'];
+	return {
+		isDefault: config['isDefault'] === true,
+		columns,
+		allStatuses,
+		...(isFinishedFor(finishedFor) ? { finishedFor } : {}),
+	};
 }
 
 interface Shown {
@@ -143,7 +160,7 @@ export function useLiveBoard(options: LiveBoardOptions): LiveBoard {
 	const [shown, setShown] = useState<Shown>({
 		columns: options.columns ?? [],
 		version: options.version,
-		meta: { ...NO_META, layout: options.layout ?? null },
+		meta: { ...NO_META, layout: options.layout ?? null, hiddenNote: text(options.hiddenNote), finishedNote: text(options.finishedNote) },
 	});
 	const [loading, setLoading] = useState(options.columns === undefined && options.projectParam !== '');
 	const [loaded, setLoaded] = useState(options.columns !== undefined);
@@ -211,7 +228,8 @@ export function useLiveBoard(options: LiveBoardOptions): LiveBoard {
 					warning: text(raw['warning']),
 					tasksHref: text(raw['tasksHref']),
 					emptyText: text(raw['emptyText']),
-					abSwitcher: flag(raw['abSwitcher']),
+					hiddenNote: text(raw['hiddenNote']),
+					finishedNote: text(raw['finishedNote']),
 					readOnly: flag(raw['readOnly']),
 					layout: layoutOf(raw),
 				};
