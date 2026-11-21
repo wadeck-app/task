@@ -48,16 +48,17 @@ sections:
       label: $sources.projects.noProjectsText
       variant: info
     # The selected project cannot be read (invalid config, broken parent chain...): the reason and the fix, not a blank page.
-    - $type: Badge
+    - $type: task:Notice
       $if: $sources.projects.selectedProblem
       label: $sources.projects.selectedProblem
       variant: danger
     # The address names a project the registry does not know: said, with the next step, not a blank page.
-    - $type: Badge
+    - $type: task:Notice
       $if: $sources.projects.unknownProjectText
       label: $sources.projects.unknownProjectText
       variant: danger
-    - $type: Badge
+    # task:Notice, not a Badge: a Badge is a one-line pill and cramps a long message (path, cause, fix).
+    - $type: task:Notice
       $if: $sources.board.errorText
       label: $sources.board.errorText
       variant: danger

@@ -329,7 +329,7 @@ export function ColumnsEditor({
 						setInsert(point);
 					}
 				}}
-				className={`relative inline-flex ${CONTROL_H} min-w-0 max-w-full cursor-grab items-center ${GAP_CONTROLS} ${PILL_RADIUS} ${CONTROL_BORDER} bg-surface pl-3 pr-1 ${CONTROL_TEXT} text-content ${FOCUS_RING} ${landed === status ? 'ring-2 ring-primary' : ''}`}
+				className={`relative inline-flex min-h-8 min-w-0 max-w-full cursor-grab flex-wrap items-center py-0.5 sm:h-8 sm:flex-nowrap sm:py-0 ${GAP_CONTROLS} ${PILL_RADIUS} ${CONTROL_BORDER} bg-surface pl-3 pr-1 ${CONTROL_TEXT} text-content ${FOCUS_RING} ${landed === status ? 'ring-2 ring-primary' : ''}`}
 			>
 				{bar !== null ? (
 					<span
@@ -343,7 +343,7 @@ export function ColumnsEditor({
 					aria-hidden="true"
 					className={`inline-block h-2 w-2 shrink-0 ${PILL_RADIUS} ${TONE_DOT[toneOf(info?.tone)]}`}
 				/>
-				<span className="min-w-0 truncate">{status}</span>
+				<span className="min-w-0 flex-1 truncate sm:flex-none">{status}</span>
 				<button
 					type="button"
 					aria-label={earlier}
@@ -371,7 +371,7 @@ export function ColumnsEditor({
 						const value = event.target.value;
 						assign(status, value === HIDE ? HIDE : Number(value));
 					}}
-					className={`h-6 min-w-0 max-w-[8rem] truncate ${CONTROL_RADIUS} border-0 bg-muted-bg px-1 text-xs text-content ${FOCUS_RING}`}
+					className={`h-6 w-full min-w-0 truncate sm:w-auto sm:max-w-[8rem] ${CONTROL_RADIUS} border-0 bg-muted-bg px-1 text-xs text-content ${FOCUS_RING}`}
 				>
 					{draft.map(entry => (
 						<option key={entry.id} value={String(entry.id)}>
@@ -715,12 +715,12 @@ function BoardPreview({
 			<span aria-hidden="true" className="text-xs font-medium text-muted">
 				Board preview
 			</span>
-			<ol className={`m-0 flex min-w-0 list-none items-stretch ${GAP_CONTROLS} overflow-x-auto p-0 pb-1`}>
+			<ol className={`m-0 flex min-w-0 list-none flex-col items-stretch sm:flex-row ${GAP_CONTROLS} p-0 pb-1 sm:overflow-x-auto`}>
 				{draft.map(column => (
 					<li
 						key={column.id}
 						data-testid="columns-editor-preview-column"
-						className={`flex w-36 shrink-0 flex-col gap-1 ${CONTROL_RADIUS} ${CONTROL_BORDER} bg-muted-bg p-2`}
+						className={`flex w-full flex-col gap-1 sm:w-36 sm:shrink-0 ${CONTROL_RADIUS} ${CONTROL_BORDER} bg-muted-bg p-2`}
 					>
 						<span
 							data-testid="columns-editor-preview-name"
@@ -737,7 +737,7 @@ function BoardPreview({
 				{hidden.length > 0 ? (
 					<li
 						data-testid="columns-editor-preview-hidden"
-						className={`flex w-36 shrink-0 flex-col gap-1 ${CONTROL_RADIUS} border border-dashed border-border p-2 text-xs text-muted`}
+						className={`flex w-full flex-col gap-1 sm:w-36 sm:shrink-0 ${CONTROL_RADIUS} border border-dashed border-border p-2 text-xs text-muted`}
 					>
 						<span className="font-semibold">Hidden</span>
 						<span className="flex min-w-0 flex-wrap gap-1 opacity-70">{hidden.map(statusChip)}</span>

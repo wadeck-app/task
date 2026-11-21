@@ -65,6 +65,7 @@ export function toInlineError(failure: HttpErrorResult): HttpErrorResult {
 	const message = typeof error === 'string' ? error : `Request failed with status ${failure.status}.`;
 	// "Send a JSON body {...}" explains the API to a caller writing requests; a form user has no body to fix.
 	const useful = typeof hint === 'string' && hint !== '' && !hint.startsWith('Send ');
-	const errorText = useful ? `${message}. ${hint}` : message;
+	// A message may already end with a period (boardConfig builds sentences): never print two.
+	const errorText = useful ? `${message.replace(/\.+$/, '')}. ${hint}` : message;
 	return { status: 200, body: { ...failure.body, failed: true, httpStatus: failure.status, errorText } };
 }

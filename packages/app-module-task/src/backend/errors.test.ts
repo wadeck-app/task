@@ -18,7 +18,19 @@ import {
 	UnsupportedByBackendError,
 } from '@wadeck-app/task-core';
 
-import { RequestError, toHttpError } from './errors.js';
+import { RequestError, toHttpError, toInlineError } from './errors.js';
+
+describe('toInlineError', () => {
+	it('joins message and hint with ONE period (a message already ending with one gets no second)', () => {
+		const ended = toInlineError({
+			status: 400,
+			body: { error: 'titleLines must be 1, 2 or 3, found 9.', hint: 'Fix it.' },
+		});
+		expect(ended.body['errorText']).toBe('titleLines must be 1, 2 or 3, found 9. Fix it.');
+		const bare = toInlineError({ status: 400, body: { error: 'no period', hint: 'Fix it.' } });
+		expect(bare.body['errorText']).toBe('no period. Fix it.');
+	});
+});
 
 describe('toHttpError', () => {
 	it('RequestError keeps its status, message, hint and extra fields', () => {

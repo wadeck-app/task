@@ -1317,6 +1317,20 @@ describe('board: page and project-module contribution', () => {
 		expect(component['$if']).toBe('$sources.board.columns');
 	});
 
+	it('the board page shows a config/read error as a task:Notice, never a Badge pill', () => {
+		const tree = load(readFileSync(join(viewsDir, 'board-page.yaml'), 'utf8')) as {
+			sections: Array<Record<string, unknown>>;
+		};
+		for (const bound of [
+			'$sources.board.errorText',
+			'$sources.projects.selectedProblem',
+			'$sources.projects.unknownProjectText',
+		]) {
+			const node = tree.sections.find(section => section['label'] === bound);
+			expect(node, bound).toMatchObject({ $type: 'task:Notice', variant: 'danger' });
+		}
+	});
+
 	it('the board page shows the failure of a move and the unread status warning as notices', () => {
 		const page = readFileSync(join(viewsDir, 'board-page.yaml'), 'utf8');
 		for (const bound of ['$ctx.boardResult.undeliveredText', '$sources.board.warning']) {

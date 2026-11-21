@@ -292,6 +292,23 @@ describe('the board preview', () => {
 			.queryAllByTestId('columns-editor-preview-status')
 			.map(element => element.textContent ?? '');
 
+	it('stacks on a narrow width (no sideways scroll, boxes full width) and scrolls in a row from sm up', () => {
+		open();
+		const list = boxes()[0]!.parentElement!;
+		expect(list).toHaveClass('flex-col', 'sm:flex-row', 'sm:overflow-x-auto');
+		expect(list).not.toHaveClass('overflow-x-auto');
+		for (const box of boxes()) {
+			expect(box).toHaveClass('w-full', 'sm:w-36');
+		}
+	});
+
+	it('a status chip of the editor wraps on a narrow width (name readable, column select on its own line) and keeps one line from sm up', () => {
+		open();
+		const chip = screen.getByRole('combobox', { name: 'Column of status review' }).parentElement!;
+		expect(chip).toHaveClass('flex-wrap', 'sm:flex-nowrap', 'sm:h-8');
+		expect(screen.getByRole('combobox', { name: 'Column of status review' })).toHaveClass('w-full', 'sm:w-auto');
+	});
+
 	it('sits at the top of the editor: one box per column in order, with its name, its sort and its statuses in order', () => {
 		open();
 		const editor = screen.getByTestId('columns-editor');
