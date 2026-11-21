@@ -3,7 +3,7 @@
  * registry (two local strategies), launches the real detached worker (the same entry started again, hidden on Windows), and the test
  * polls `status --json` until the worker ended ready to finalize.
  */
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { addProject, defaultRegistryDir } from '@wadeck-app/project-sdk';
@@ -78,7 +78,17 @@ describe('task strategy migrate (subprocess)', () => {
 		writeFileSync(configFile, CONFIG);
 
 		const started = cli('strategy', 'migrate', 'start', '--allow-loss', 'all', '--json');
-		expect(started.exitCode, started.text).toBe(0);
+		// A worker that is not running left its reason in its own log: the failure shows it, not only the path.
+		let workerLogText = '(the answer names no worker log)';
+		try {
+			const logPath = (JSON.parse(started.stdout) as { worker?: { log?: string } }).worker?.log;
+			if (logPath !== undefined) workerLogText = existsSync(logPath) ? readFileSync(logPath, 'utf8') : `(${logPath} does not exist)`;
+		} catch {
+			workerLogText = '(the answer is not JSON)';
+		}
+		expect(started.exitCode, `${started.text}
+--- worker log ---
+${workerLogText}`).toBe(0);
 		const answer = JSON.parse(started.stdout) as { started: boolean; worker: { running: boolean; pid?: number } };
 		expect(answer.started).toBe(true);
 		workerPid = answer.worker.pid;

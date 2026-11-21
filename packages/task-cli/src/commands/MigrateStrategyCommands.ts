@@ -392,6 +392,8 @@ async function start(
 						running: worker.running,
 						...(worker.pid === undefined ? {} : { pid: worker.pid }),
 						...(worker.error === undefined ? {} : { error: worker.error }),
+						// Where the reason is when the worker is not running (its own stdout and stderr).
+						...(worker.running ? {} : { log: workerLog(resolved) }),
 					},
 				},
 				null,
