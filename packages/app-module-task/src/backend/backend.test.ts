@@ -75,8 +75,8 @@ const EXPECTED_ROUTES = [
 	'DELETE /tasks/:id/comments/:commentId',
 	'POST /types',
 	'DELETE /types/:name',
-	'POST /tasks/delete/plan',
-	'POST /tasks/delete',
+	'POST /tasks/deletion-plans',
+	'DELETE /tasks',
 ];
 
 let h: Harness;
@@ -204,8 +204,8 @@ describe('project selection', () => {
 			['POST /tasks/:id/meta', { id: 'x' }, { key: 'k', value: 'v' }],
 			['POST /types', {}, { name: 'bug' }],
 			['DELETE /types/:name', { name: 'bug' }, undefined],
-			['POST /tasks/delete/plan', {}, { all: true }],
-			['POST /tasks/delete', {}, { all: true, confirm: true }],
+			['POST /tasks/deletion-plans', {}, { all: true }],
+			['DELETE /tasks', {}, { all: true, confirm: true }],
 			['POST /tasks', {}, { description: 'd' }],
 			['POST /tasks/:id/status', { id: 'x' }, { status: 'done' }],
 			['POST /tasks/:id/labels', { id: 'x' }, { label: 'l' }],
@@ -1270,7 +1270,7 @@ describe('event delivery', () => {
 		await h.call('POST /tasks/:id/meta', { ...on, body: { key: 'k', value: 'v' } });
 		await h.call('POST /tasks/:id/parent', { ...on, body: { parent: blocker } });
 		await h.call('DELETE /tasks/:id/parent', on);
-		await h.call('POST /tasks/delete', { query: { project }, body: { ids: [other], confirm: true } });
+		await h.call('DELETE /tasks', { query: { project }, body: { ids: [other], confirm: true } });
 
 		const names = new Set(h.sink.events.map(e => e.name));
 		expect([...names].sort()).toEqual(
@@ -2434,10 +2434,10 @@ describe('delete', () => {
 		const answer = await h.call('GET /tasks', { query: { project, showAll: 'true' } });
 		return answer.body['tasks'].map((t: { id: string }) => t.id);
 	}
-	const plan = (body: unknown): Promise<Answer> => h.call('POST /tasks/delete/plan', { query: { project }, body });
-	const remove = (body: unknown): Promise<Answer> => h.call('POST /tasks/delete', { query: { project }, body });
+	const plan = (body: unknown): Promise<Answer> => h.call('POST /tasks/deletion-plans', { query: { project }, body });
+	const remove = (body: unknown): Promise<Answer> => h.call('DELETE /tasks', { query: { project }, body });
 
-	it('POST /tasks/delete/plan previews the selection without deleting', async () => {
+	it('POST /tasks/deletion-plans previews the selection without deleting', async () => {
 		const a = await createTask('a');
 		const b = await createTask('b');
 		const answer = await plan({ ids: [a.slice(0, 8)] });
@@ -2508,7 +2508,7 @@ describe('delete', () => {
 		expect(answer.body['summary']).toContain('1 link(s)');
 	});
 
-	it('POST /tasks/delete without confirm:true is a 400 carrying the plan, and deletes nothing', async () => {
+	it('DELETE /tasks without confirm:true is a 400 carrying the plan, and deletes nothing', async () => {
 		const a = await createTask('a');
 		for (const body of [{ ids: [a] }, { ids: [a], confirm: false }, { ids: [a], confirm: 'true' }]) {
 			const answer = await remove(body);
@@ -2520,7 +2520,7 @@ describe('delete', () => {
 		expect(await ids()).toEqual([a]);
 	});
 
-	it('POST /tasks/delete with confirm:true deletes the planned tasks and reports the outcome', async () => {
+	it('DELETE /tasks with confirm:true deletes the planned tasks and reports the outcome', async () => {
 		const parent = await createTask('parent');
 		await createTask('child', { parent });
 		const keep = await createTask('keep');
@@ -2549,7 +2549,7 @@ describe('delete', () => {
 		});
 	});
 
-	it('POST /tasks/delete reports the orphaned children and removed links of the deleted task', async () => {
+	it('DELETE /tasks reports the orphaned children and removed links of the deleted task', async () => {
 		const parent = await createTask('parent');
 		const child = await createTask('child', { parent });
 		const holder = await createTask('holder');
@@ -2581,14 +2581,14 @@ describe('delete', () => {
 		expect(h.sink.events).toEqual([]);
 	});
 
-	it('POST /tasks/delete lists the undelivered events when the sink reports them, the tasks are deleted anyway', async () => {
+	it('DELETE /tasks lists the undelivered events when the sink reports them, the tasks are deleted anyway', async () => {
 		const unreachable: EventSink = { deliver: () => Promise.resolve({ delivered: false, reason: 'exit 3' }) };
 		const failing = setup(unreachable);
 		try {
 			const dir = await failing.world.createProject('beta');
 			const created = await failing.call('POST /tasks', { query: { project: dir }, body: { description: 'a' } });
 
-			const answer = await failing.call('POST /tasks/delete', {
+			const answer = await failing.call('DELETE /tasks', {
 				query: { project: dir },
 				body: { all: true, confirm: true },
 			});
@@ -2646,7 +2646,7 @@ describe('delete', () => {
 				}
 				failOnNthDelete(2);
 
-				const answer = await failing.call('POST /tasks/delete', {
+				const answer = await failing.call('DELETE /tasks', {
 					query: { project: dir, inlineErrors: 'true' },
 					body: { all: true, confirm: true },
 				});
@@ -2656,7 +2656,7 @@ describe('delete', () => {
 				expect(answer.body['undeliveredText']).toContain('1 queue event(s) were not delivered');
 				expect(answer.body['errorText']).toContain('deleted 1 of 3 task(s)');
 				// Logged as any 5xx.
-				expect(stderr.join('')).toContain('[task] POST /tasks/delete failed (500)');
+				expect(stderr.join('')).toContain('[task] DELETE /tasks failed (500)');
 			} finally {
 				failing.world.cleanup();
 			}
@@ -2675,13 +2675,13 @@ describe('delete', () => {
 		});
 	});
 
-	it('POST /tasks/delete with confirm:true and nothing matching is a 200 deleting nothing', async () => {
+	it('DELETE /tasks with confirm:true and nothing matching is a 200 deleting nothing', async () => {
 		const answer = await remove({ ids: ['zzzz'], confirm: true });
 		expect(answer.status).toBe(200);
 		expect(answer.body).toMatchObject({ deletedCount: 0, notFound: ['zzzz'] });
 	});
 
-	it('POST /tasks/delete validates the selector before checking the confirmation', async () => {
+	it('DELETE /tasks validates the selector before checking the confirmation', async () => {
 		const answer = await remove({ confirm: true });
 		expect(answer.status).toBe(400);
 		expect(answer.body['hint']).toContain('ids');
@@ -2984,7 +2984,7 @@ describe('view data: page links, filters and form defaults', () => {
 	describe('delete plan answer for the delete page', () => {
 		it('offers the confirmation request only when something would be deleted, with the exact selector', async () => {
 			const a = await createTask('a');
-			const withTask = await h.call('POST /tasks/delete/plan', {
+			const withTask = await h.call('POST /tasks/deletion-plans', {
 				query: { project },
 				body: { ids: [a], cascade: true },
 			});
@@ -2995,7 +2995,7 @@ describe('view data: page links, filters and form defaults', () => {
 				cascade: true,
 				confirm: true,
 			});
-			const none = await h.call('POST /tasks/delete/plan', {
+			const none = await h.call('POST /tasks/deletion-plans', {
 				query: { project },
 				body: { filter: 'title=nothing*' },
 			});
@@ -3006,7 +3006,7 @@ describe('view data: page links, filters and form defaults', () => {
 		it('ignores the blank fields a form sends and the extra keys, selecting with the one that is filled', async () => {
 			const a = await createTask('alpha');
 			await createTask('beta');
-			const answer = await h.call('POST /tasks/delete/plan', {
+			const answer = await h.call('POST /tasks/deletion-plans', {
 				query: { project },
 				body: { projectParam: projectParam(), ids: '', filter: 'title=alpha', all: false, cascade: false },
 			});
@@ -3021,7 +3021,7 @@ describe('view data: page links, filters and form defaults', () => {
 		});
 
 		it('still 400s when every selector is blank', async () => {
-			const answer = await h.call('POST /tasks/delete/plan', {
+			const answer = await h.call('POST /tasks/deletion-plans', {
 				query: { project },
 				body: { ids: '', filter: '', all: false },
 			});
@@ -3133,7 +3133,7 @@ describe('inline errors (?inlineErrors=true): the views cannot read a failed req
 
 	it('the delete route reports the missing confirmation inline', async () => {
 		const id = await createTask('a');
-		const answer = await h.call('POST /tasks/delete', {
+		const answer = await h.call('DELETE /tasks', {
 			query: projectQuery(),
 			body: { ids: id },
 		});
@@ -3261,9 +3261,9 @@ describe('detail page flags', () => {
 describe('delete answers drive the page state', () => {
 	it('a preview carries previewText, an executed delete deletedText and canConfirm false (the stale preview goes away)', async () => {
 		const id = await createTask('a');
-		const preview = await h.call('POST /tasks/delete/plan', { query: { project }, body: { ids: id } });
+		const preview = await h.call('POST /tasks/deletion-plans', { query: { project }, body: { ids: id } });
 		expect(preview.body['previewText']).toBe(`Project alpha: ${preview.body['summary']}`);
-		const done = await h.call('POST /tasks/delete', {
+		const done = await h.call('DELETE /tasks', {
 			query: { project },
 			body: { ids: id, confirm: true },
 		});
@@ -3888,7 +3888,7 @@ describe('delete stays explicit per project', () => {
 
 	it('the preview and the confirm request name the project, with the path', async () => {
 		await createTask('a');
-		const preview = await h.call('POST /tasks/delete/plan', { query: { project }, body: { all: true } });
+		const preview = await h.call('POST /tasks/deletion-plans', { query: { project }, body: { all: true } });
 		expect(preview.body['previewText']).toBe('Project alpha: Would delete 1 task(s).');
 		expect(preview.body['projectText']).toBe(
 			`Project alpha (${projectDir}): only its tasks listed above will be deleted.`
@@ -3899,14 +3899,14 @@ describe('delete stays explicit per project', () => {
 
 	it('the executed delete names the project too', async () => {
 		const id = await createTask('a');
-		const done = await h.call('POST /tasks/delete', { query: { project }, body: { ids: id, confirm: true } });
+		const done = await h.call('DELETE /tasks', { query: { project }, body: { ids: id, confirm: true } });
 		expect(done.body['deletedText']).toBe('Deleted 1 task(s) from project alpha.');
 	});
 
 	it('refuses to run without a project, and ignores allProjects: nothing is ever deleted globally', async () => {
 		await createTask('a');
 		await h.call('POST /tasks', { query: { project: beta }, body: { description: 'b' } });
-		for (const route of ['POST /tasks/delete/plan', 'POST /tasks/delete']) {
+		for (const route of ['POST /tasks/deletion-plans', 'DELETE /tasks']) {
 			const answer = await h.call(route, { query: { allProjects: 'true' }, body: { all: true, confirm: true } });
 			expect(answer.status, route).toBe(400);
 			expect(answer.body['error'], route).toContain('project');
@@ -3917,7 +3917,7 @@ describe('delete stays explicit per project', () => {
 
 	it('an empty project (the unselected form select) is a 400 asking to choose, nothing deleted', async () => {
 		await createTask('a');
-		const answer = await h.call('POST /tasks/delete', {
+		const answer = await h.call('DELETE /tasks', {
 			query: { project: '' },
 			body: { all: true, confirm: true },
 		});

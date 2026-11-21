@@ -373,7 +373,7 @@ describe('task detail page: forms and links', () => {
 			'DELETE /api/modules/task/tasks/{id}/meta-keys/{keyKey}',
 			'PATCH /api/modules/task/tasks/{id}?',
 			'POST /api/modules/task/tasks?project=',
-			'POST /api/modules/task/tasks/delete?',
+			'DELETE /api/modules/task/tasks?',
 			'POST /api/modules/task/tasks/{id}/parent',
 			'DELETE /api/modules/task/tasks/{id}/parent',
 			'POST /api/modules/task/tasks/{id}/links',
@@ -427,7 +427,7 @@ describe('delete page', () => {
 	const page = view('delete-page.yaml');
 
 	it('previews first and shows the confirm form only once a preview selected something', () => {
-		expect(page).toContain('url: POST /api/modules/task/tasks/delete/plan?project={projectParam}');
+		expect(page).toContain('url: POST /api/modules/task/tasks/deletion-plans?project={projectParam}');
 		expect(page).toContain('$if: $ctx.plan.canConfirm');
 		expect(page).toContain('initialData: $ctx.plan.confirmRequest');
 	});
@@ -1110,7 +1110,7 @@ describe('manifest: the labels the breadcrumb shows (app-core-cli >= 2026.10.19-
 describe('views: every mutating action that produces queue events shows what the queue did not receive', () => {
 	const EVENT_FREE_URLS = [
 		// The delete preview deletes nothing.
-		'/api/modules/task/tasks/delete/plan',
+		'/api/modules/task/tasks/deletion-plans',
 		// Project types and the project registry are not task changes.
 		'/api/modules/task/types',
 		'/api/modules/task/projects',

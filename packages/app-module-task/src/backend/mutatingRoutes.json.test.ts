@@ -98,8 +98,8 @@ const successes: Array<[route: string, request: () => Call]> = [
 	['DELETE /types/:name', () => ({ params: { name: 'bug' } })],
 	['PUT /board/config', () => ({ body: { columns: [{ name: 'All', statuses: ['backlog'] }] } })],
 	['DELETE /board/config', () => ({})],
-	['POST /tasks/delete/plan', () => ({ body: { ids: [b] } })],
-	['POST /tasks/delete', () => ({ body: { ids: [b], confirm: true } })],
+	['POST /tasks/deletion-plans', () => ({ body: { ids: [b] } })],
+	['DELETE /tasks', () => ({ body: { ids: [b], confirm: true } })],
 ];
 
 /** One request that FAILS per mutating route, in the ways a page can make it fail: no body, unknown task. */
@@ -150,8 +150,8 @@ const failures: Array<[label: string, route: string, request: () => Call]> = [
 	['unknown type', 'DELETE /types/:name', () => ({ params: { name: 'nope' } })],
 	['unknown status', 'PUT /board/config', () => ({ body: { columns: [{ name: 'A', statuses: ['nope'] }] } })],
 	['all projects', 'DELETE /board/config', () => ({ query: { allProjects: 'true' } })],
-	['no body', 'POST /tasks/delete/plan', () => ({})],
-	['not confirmed', 'POST /tasks/delete', () => ({ body: { ids: [b] } })],
+	['no body', 'POST /tasks/deletion-plans', () => ({})],
+	['not confirmed', 'DELETE /tasks', () => ({ body: { ids: [b] } })],
 ];
 
 /** The body must survive what the shell does with it: be a non-empty JSON text of an object. */

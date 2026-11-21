@@ -19,7 +19,7 @@
 // | checklistRows           | [{id,title,headline,status,tone,terminal,href}] | the children as the rows of task:TaskChecklist | checklist |
 // | terminalStatus, reopenStatus | string, string                    | the status a checked sub-task gets (first terminal in config order, '' when the project has none) and the one an unchecked one gets back (the default status) | checklist |
 // | deleteImpactText, hasDescendants, deleteLabel, deleteCascadeLabel | string, boolean, string, string | the sentence of the delete dialog (links removed, blockers lost), whether the cascade button is offered, and the labels of the two buttons (each states what happens to the children) | delete dialog |
-// | forms.delete, forms.deleteCascade | {projectParam,ids,cascade,confirm} | the body of POST /tasks/delete for this task (one per button of the dialog, cascade false / true); ids is this task's id | delete dialog |
+// | forms.delete, forms.deleteCascade | {projectParam,ids,cascade,confirm} | the body of DELETE /tasks for this task (one per button of the dialog, cascade false / true); ids is this task's id | delete dialog |
 // | descriptionText, hasDescription | string or null, boolean        | the body when it adds information, else null / false (the old Description panel no longer repeats the title) | Markdown, $if |
 // | statusOptions           | [{value,label,tone,terminal,outcome?}] | the statuses of the merged config (the one `set-status` validates against), config order; `outcome` (positive/negative) on terminal ones only; tone danger = closed negatively | pickers |
 // | typeOptions             | [{value,label}]                        | "None" (value '') then the configured types; [] when the project has none (free text) | pickers |
@@ -126,7 +126,7 @@ function detailForms(
 		meta: { ...base, key: '', value: '' },
 		parent: { ...base, parent: '' },
 		link: { ...base, type: 'blockedBy', target: '' },
-		// The delete dialog posts this as is to POST /tasks/delete: the task is never retyped, `confirm` is set by the dialog's own button.
+		// The delete dialog posts this as is to DELETE /tasks: the task is never retyped, `confirm` is set by the dialog's own button.
 		delete: { ...base, ids: task.id, cascade: false, confirm: true },
 		deleteCascade: { ...base, ids: task.id, cascade: true, confirm: true },
 		empty: base,

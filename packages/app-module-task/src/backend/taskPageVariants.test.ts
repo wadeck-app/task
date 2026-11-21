@@ -876,7 +876,7 @@ describe('actions', () => {
 			'POST /api/modules/task/tasks/{id}/status?project={projectParam}&inlineErrors=true',
 			'subtaskResult',
 		],
-		['deleteTask', 'POST /api/modules/task/tasks/delete?project={projectParam}&inlineErrors=true', 'deleteResult'],
+		['deleteTask', 'DELETE /api/modules/task/tasks?project={projectParam}&inlineErrors=true', 'deleteResult'],
 		[
 			'addComment',
 			'POST /api/modules/task/tasks/{id}/comments?project={projectParam}&inlineErrors=true',

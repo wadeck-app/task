@@ -125,6 +125,7 @@ Detail: `docs/claude/app-core-registration.md`
 
 ## app-module-task routes and pages
 
+- Deleting tasks is REST: `DELETE /tasks` (selection `ids|all|filter`, `cascade`, `confirm=true` in the query string or a JSON body; `effect: 'sensitive'`, the host asks for the PIN); the preview is `POST /tasks/deletion-plans`. No verb in a path.
 - Routes `/api/modules/task/...` take `?project=<id|name|alias>`; typed errors are mapped in `errors.ts`; every route that changes a task produces queue events and answers `undelivered` / `undeliveredText`. `manifest.test.ts` fails when a mutating action has no such badge.
 - Page addresses carry the project as the PATH segment `:project` (the registry id; `?project=` on a page address is ignored); build addresses with `hrefs.ts`. No page has a back link (the breadcrumb carries the context).
 - View conventions (app-core DSL): mutations use Form + `$actions` + `onSubmit`; every request of a view adds `inlineErrors=true` and shows `errorText` in a danger Badge; no source query may be empty (use `scopeQuery` / `projectQuery`, `?blank=true`); a source waiting for `projects` also takes `reload: $urlParam.reload`.

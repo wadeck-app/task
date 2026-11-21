@@ -194,13 +194,13 @@ describe('module routes with traversal-shaped ids', () => {
 				build: e => ({ params: { id: real }, query: query({ type: 'blockedBy', target: e }) }),
 			},
 			{
-				name: 'POST delete/plan',
-				route: 'POST /tasks/delete/plan',
+				name: 'POST deletion-plans',
+				route: 'POST /tasks/deletion-plans',
 				build: e => ({ query: query(), body: { ids: [e] } }),
 			},
 			{
-				name: 'POST delete',
-				route: 'POST /tasks/delete',
+				name: 'DELETE collection',
+				route: 'DELETE /tasks',
 				build: e => ({ query: query(), body: { ids: [e], confirm: true } }),
 			},
 		];
@@ -241,7 +241,7 @@ describe('module routes with traversal-shaped ids', () => {
 				if (!answer) continue;
 				// 2xx is acceptable only for a no-op that names nothing (`delete` with an unknown id answers a plan that selects nothing).
 				if (answer.status < 400) {
-					if (!c.name.startsWith('POST delete')) problems.push(`${where}: status ${answer.status}`);
+					if (!/^(POST deletion-plans|DELETE collection)/.test(c.name)) problems.push(`${where}: status ${answer.status}`);
 					continue;
 				}
 				const body = answer.body;

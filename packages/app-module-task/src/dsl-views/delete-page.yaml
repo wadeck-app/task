@@ -19,10 +19,10 @@ $sources:
 
 $actions:
     previewDelete:
-        url: POST /api/modules/task/tasks/delete/plan?project={projectParam}&inlineErrors=true
+        url: POST /api/modules/task/tasks/deletion-plans?project={projectParam}&inlineErrors=true
         resultKey: plan
     deleteTasks:
-        url: POST /api/modules/task/tasks/delete?project={projectParam}&inlineErrors=true
+        url: DELETE /api/modules/task/tasks?project={projectParam}&inlineErrors=true
         resultKey: plan
 
 $type: PageContent

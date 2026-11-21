@@ -176,7 +176,7 @@ $actions:
     # The confirmation dialog: the body is forms.delete ({ ids, cascade, confirm: true }). The answer is read by the page-level
     # notices, because the task is gone afterwards and the design is not drawn any more.
     deleteTask:
-        url: POST /api/modules/task/tasks/delete?project={projectParam}&inlineErrors=true
+        url: DELETE /api/modules/task/tasks?project={projectParam}&inlineErrors=true
         resultKey: deleteResult
         reloadSources: true
 

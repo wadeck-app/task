@@ -111,7 +111,7 @@ describe('detail fields of the three task page designs', () => {
 		expect((await detail(blocker)).body['pillTexts']).not.toHaveProperty('blocked');
 	});
 
-	it('forms.delete carries the task id and confirm: true, ready for POST /tasks/delete from the dialog', async () => {
+	it('forms.delete carries the task id and confirm: true, ready for DELETE /tasks from the dialog', async () => {
 		const id = await createTask('t');
 		const forms = (await detail(id)).body['forms'] as Record<string, unknown>;
 		expect(forms['delete']).toMatchObject({ ids: id, cascade: false, confirm: true });

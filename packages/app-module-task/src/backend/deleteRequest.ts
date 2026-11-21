@@ -1,13 +1,43 @@
-// The delete routes: reading the request body and shaping the preview and outcome bodies.
+// The delete routes: reading the request (query string or body) and shaping the preview and outcome bodies.
 import { describeDeleteEffects, selectDeleteTargets } from '@wadeck-app/task-service';
 import type { DeletePlan, PlanDeleteInput } from '@wadeck-app/task-service';
 
 import { RequestError } from './errors.js';
 import { encodedProject } from './hrefs.js';
+import { bodyObject, queryValue } from './request.js';
+import type { RouteRequest } from './request.js';
 import { withRowLinks } from './rowViews.js';
 
 export const DELETE_USAGE =
-	'Send a JSON body with exactly one selector: { "ids": string[] | "id1,id2" }, { "all": true } or { "filter": "<id|title|status|parentId>=<glob>[,<glob>]" }, plus an optional "cascade": true. POST /tasks/delete also needs "confirm": true.';
+	'Give exactly one selector, in the query string (?ids=a1,b2 | ?all=true | ?filter=<id|title|status|parentId>=<glob>[,<glob>]) or in a JSON body ({ "ids": string[] | "id1,id2" } | { "all": true } | { "filter": "..." }), plus an optional cascade=true. DELETE /tasks also needs confirm=true.';
+
+const DELETE_FIELDS = ['ids', 'all', 'filter', 'cascade', 'confirm'] as const;
+const DELETE_FLAGS = new Set<string>(['all', 'cascade', 'confirm']);
+
+/**
+ * The fields of a delete request. REST: the selection of the collection is in the query string (`DELETE /tasks?ids=a1,b2&confirm=true`,
+ * like a Kubernetes DeleteCollection); a JSON body is accepted too, because the shell's forms send their fields as a body. A field given
+ * in both places is a 400: no precedence to guess.
+ */
+export function deleteFields(req: RouteRequest): Record<string, unknown> {
+	const body = req.body === undefined || req.body === null ? {} : bodyObject(req.body, DELETE_USAGE);
+	const fields: Record<string, unknown> = { ...body };
+	for (const name of DELETE_FIELDS) {
+		const raw = queryValue(req.query, name);
+		if (raw === undefined) continue;
+		if (name in body) {
+			throw new RequestError(400, `${name} is given in the query and in the body: give it once`, DELETE_USAGE);
+		}
+		if (!DELETE_FLAGS.has(name)) {
+			fields[name] = raw;
+		} else if (raw === 'true' || raw === 'false') {
+			fields[name] = raw === 'true';
+		} else {
+			throw new RequestError(400, `${name} must be true or false`, DELETE_USAGE);
+		}
+	}
+	return fields;
+}
 
 type ProjectRef = { id: string; name: string; path: string };
 

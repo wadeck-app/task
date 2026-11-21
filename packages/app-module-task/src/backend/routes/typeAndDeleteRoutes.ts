@@ -11,7 +11,7 @@ import type { ExecuteDeleteResult } from '@wadeck-app/task-service';
 
 import { readAcrossProjects } from '../acrossProjects.js';
 import { allTypesBody } from '../allProjectsViews.js';
-import { DELETE_USAGE, deleteInput, outcomeBody, planBody } from '../deleteRequest.js';
+import { deleteFields, deleteInput, outcomeBody, planBody } from '../deleteRequest.js';
 import { RequestError } from '../errors.js';
 import { allProjectsFlag, BLANK_ANSWER, bodyObject, isBlankRequest, requiredString } from '../request.js';
 import { typesBody } from '../taskViews.js';
@@ -68,19 +68,21 @@ const SENSITIVE = { effect: 'sensitive' } as const;
 export function registerDeleteRoutes(kit: RouteKit): void {
 	const { route, open, deliver } = kit;
 
-	route('POST', '/tasks/delete/plan', async req => {
+	// REST: the preview is a plan resource computed from a selection (nothing is stored and nothing is deleted), the deletion is
+	// DELETE on the collection. The preview is a POST because the shell's forms send their fields as a body.
+	route('POST', '/tasks/deletion-plans', async req => {
 		const ctx = open(req);
-		const body = bodyObject(req.body, DELETE_USAGE);
-		const plan = await planDelete(ctx, deleteInput(body));
-		return { status: 200, body: planBody(ctx.project, plan, body) };
+		const fields = deleteFields(req);
+		const plan = await planDelete(ctx, deleteInput(fields));
+		return { status: 200, body: planBody(ctx.project, plan, fields) };
 	});
 
 	route(
-		'POST',
-		'/tasks/delete',
+		'DELETE',
+		'/tasks',
 		async req => {
 			const ctx = open(req);
-			const body = bodyObject(req.body, DELETE_USAGE);
+			const body = deleteFields(req);
 			const plan = await planDelete(ctx, deleteInput(body));
 			// Deletion is irreversible: only an explicit boolean true goes through; otherwise the preview is the answer.
 			if (body['confirm'] !== true) {
