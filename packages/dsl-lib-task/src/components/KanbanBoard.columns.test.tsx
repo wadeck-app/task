@@ -427,6 +427,41 @@ describe('Configure columns', () => {
 		expect(screen.getByRole('button', { name: 'Move column Doing up' })).toBeEnabled();
 	});
 
+	it('a column with no status cannot be saved: Save is off and the editor names the column BEFORE any request (the route refuses it)', async () => {
+		const { calls } = stubFetch(call => (call.method === 'PUT' ? answerAfterSave() : jsonResponse(grouped())));
+		const user = await open();
+		await user.click(screen.getByRole('button', { name: 'Add column' }));
+		const name = within(screen.getAllByTestId('columns-editor-column')[3]!).getByRole('textbox');
+		await user.clear(name);
+		await user.type(name, 'planned');
+
+		expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+		expect(screen.getByTestId('columns-editor-empty')).toHaveTextContent(
+			'Column "planned" has no status: drag a status onto it, or delete the column.'
+		);
+		expect(calls.some(call => call.method === 'PUT')).toBe(false);
+
+		// a status in it lifts the block, the message goes away
+		await user.selectOptions(screen.getByLabelText('Column of status parked'), 'planned');
+		expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+		expect(screen.queryByTestId('columns-editor-empty')).toBeNull();
+	});
+
+	it('several empty columns are all named; deleting them lifts the block', async () => {
+		const user = await open();
+		await user.click(screen.getByRole('button', { name: 'Add column' }));
+		await user.click(screen.getByRole('button', { name: 'Add column' }));
+
+		expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+		const text = screen.getByTestId('columns-editor-empty').textContent ?? '';
+		expect(text).toContain('Column "New column" has no status');
+		expect(text).toContain('Column "New column 2" has no status');
+
+		await user.click(screen.getByRole('button', { name: 'Delete column New column 2' }));
+		await user.click(screen.getByRole('button', { name: 'Delete column New column' }));
+		expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+	});
+
 	it('a refused save keeps the editor open, shows the route message and hint in an alert, and the draft is kept', async () => {
 		stubFetch(call =>
 			call.method === 'PUT'
@@ -445,6 +480,9 @@ describe('Configure columns', () => {
 		const name = within(rows[3]!).getByRole('textbox') as HTMLInputElement;
 		await user.clear(name);
 		await user.type(name, 'Doing');
+		// a column must hold a status to be saved: put "parked" in it, the duplicate name is what the route refuses
+		// (by option value: two columns are now both called "Doing"; the new column has the id after the three stored ones)
+		await user.selectOptions(screen.getByLabelText('Column of status parked'), '4');
 
 		await user.click(screen.getByRole('button', { name: 'Save' }));
 

@@ -55,7 +55,7 @@ export function freshColumnName(taken: readonly string[]): string {
  * The editor of the board columns ("Configure columns"): add, rename, delete and reorder columns (drag the handle, or the up and
  * down buttons), and put every status in a column (drag its chip onto a column, or pick the column in its select). A status in no
  * column goes to the Unmapped box: the board shows those in an Unmapped column. The rules (names, a status in one column only)
- * are the server's: a refused save shows its message and hint, nothing is checked twice.
+ * are the server's and a refused save shows its message and hint; only "a column holds at least one status" is also said before the request (a refused empty column read as an untested editor).
  */
 export function ColumnsEditor({
 	layout,
@@ -75,6 +75,9 @@ export function ColumnsEditor({
 	const byName = new Map<string, BoardStatusData>(layout.allStatuses.map(status => [status.name, status]));
 	const placed = new Set(draft.flatMap(column => column.statuses));
 	const unmapped = layout.allStatuses.filter(status => !placed.has(status.name)).map(status => status.name);
+
+	// The route refuses a column with no status: said here, before the request, so the user never learns it from a failed save.
+	const empty = draft.filter(column => column.statuses.length === 0);
 
 	const addColumn = (): void => {
 		counter.current += 1;
@@ -307,6 +310,17 @@ export function ColumnsEditor({
 					)}
 				</div>
 			</div>
+			{empty.length > 0 ? (
+				<div data-testid="columns-editor-empty" className={`flex flex-col ${GAP_CONTROLS}`}>
+					{empty.map(column => (
+						<Notice
+							key={column.id}
+							variant="warning"
+							label={`Column "${column.name.trim() === '' ? '(unnamed)' : column.name}" has no status: drag a status onto it, or delete the column.`}
+						/>
+					))}
+				</div>
+			) : null}
 			{error !== null ? <Notice variant="danger" label={error} /> : null}
 			<div className={`flex flex-wrap items-center ${GAP_CONTROLS}`}>
 				<button type="button" onClick={addColumn} disabled={busy} className={SECONDARY_BUTTON_CLASS}>
@@ -333,7 +347,8 @@ export function ColumnsEditor({
 				<button
 					type="button"
 					onClick={() => onSave(draft.map(column => ({ name: column.name, statuses: column.statuses })))}
-					disabled={busy}
+					disabled={busy || empty.length > 0}
+					title={empty.length > 0 ? 'A column with no status cannot be saved: fill or delete it' : undefined}
 					className={BUTTON_PRIMARY_CLASS}
 				>
 					{busy ? 'Saving' : 'Save'}
