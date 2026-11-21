@@ -321,7 +321,9 @@ describe.each(PAIR_KINDS)('the migration worker over $name', kind => {
 			...toolkit.moves,
 			moveTask: async (id, options) => {
 				const outcome = await move(id, options);
-				store.writeControl('stop');
+				// Only after a real move: a first attempt that waits for a parent (the order of equal creation times is not
+				// the test's to decide) would otherwise stop the worker with nothing moved (seen once on Linux CI, 3bafe66).
+				if (outcome.outcome === 'moved') store.writeControl('stop');
 				return outcome;
 			},
 		};
