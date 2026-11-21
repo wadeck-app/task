@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getJson, isAbort, problemText } from '../apiFetch.js';
-import { normalizeColumns } from './boardModel.js';
+import { isColumnSort, normalizeColumns } from './boardModel.js';
 import type { BoardColumnData, BoardLayoutData, BoardStatusData } from './boardModel.js';
 
 export type LiveState = 'live' | 'reconnecting' | 'polling';
@@ -112,9 +112,11 @@ export function layoutOf(raw: Record<string, unknown>): BoardLayoutData | null {
 		if (!isObject(column) || typeof column['name'] !== 'string' || !Array.isArray(column['statuses'])) {
 			return null;
 		}
+		const sort = column['sort'];
 		columns.push({
 			name: column['name'],
 			statuses: column['statuses'].filter((x): x is string => typeof x === 'string'),
+			...(isColumnSort(sort) ? { sort } : {}),
 		});
 	}
 	const allStatuses: BoardStatusData[] = [];

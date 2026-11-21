@@ -40,7 +40,7 @@ export const PILL_NEUTRAL_CLASS = `inline-flex ${CONTROL_H} items-center ${GAP_C
 /** A dashed pill that adds something ("+ Add"). */
 export const PILL_ADD_CLASS = `inline-flex ${CONTROL_H} items-center ${GAP_CONTROLS} ${PILL_RADIUS} border border-dashed border-border bg-transparent px-3 ${PILL_TEXT} text-muted hover:border-primary hover:text-content ${FOCUS_RING} disabled:cursor-not-allowed disabled:opacity-60`;
 /** A filled primary button (Save inside a popover). */
-export const BUTTON_PRIMARY_CLASS = `inline-flex ${CONTROL_H} items-center justify-center ${CONTROL_RADIUS} bg-primary px-3 ${PILL_TEXT} text-white hover:opacity-90 ${FOCUS_RING} disabled:cursor-not-allowed disabled:opacity-60`;
+export const BUTTON_PRIMARY_CLASS = `inline-flex ${CONTROL_H} items-center justify-center ${CONTROL_RADIUS} bg-[var(--color-primary-solid)] px-3 ${PILL_TEXT} text-white hover:bg-[var(--color-primary-solid-hover)] ${FOCUS_RING} disabled:cursor-not-allowed disabled:opacity-60`;
 /** A square icon button (check, cross, x). */
 export const ICON_BUTTON_CLASS = `inline-flex ${CONTROL_SQUARE} shrink-0 items-center justify-center ${CONTROL_RADIUS} ${CONTROL_BORDER} bg-surface text-muted hover:text-content ${FOCUS_RING} disabled:cursor-not-allowed disabled:opacity-60`;
 /** The panel of a popover: a bordered box that grows with its content up to a height, then scrolls inside; a bottom sheet below 640 px. */

@@ -17,7 +17,8 @@ import {
 	PILL_RADIUS,
 	PILL_TEXT,
 } from '../ui/tokens.js';
-import type { BoardLayoutData, BoardStatusData } from './boardModel.js';
+import { isColumnSort, SORT_OPTIONS } from './boardModel.js';
+import type { BoardLayoutData, BoardStatusData, ColumnSort, LayoutColumn } from './boardModel.js';
 
 export interface ColumnsEditorProps {
 	/** The stored layout (or one column per status) and every status of the project. */
@@ -26,7 +27,8 @@ export interface ColumnsEditorProps {
 	busy: boolean;
 	/** The route's message and hint of the last refused save or reset; null when there is none. */
 	error: string | null;
-	onSave: (columns: Array<{ name: string; statuses: string[] }>) => void;
+	/** The columns to store; `sort` is left out for the default order. */
+	onSave: (columns: LayoutColumn[]) => void;
 	onReset: () => void;
 	onCancel: () => void;
 }
@@ -36,6 +38,7 @@ interface DraftColumn {
 	id: number;
 	name: string;
 	statuses: string[];
+	sort?: ColumnSort;
 }
 
 const UNMAPPED = 'unmapped';
@@ -67,7 +70,12 @@ export function ColumnsEditor({
 }: ColumnsEditorProps): React.ReactElement {
 	const counter = useRef(layout.columns.length);
 	const [draft, setDraft] = useState<DraftColumn[]>(() =>
-		layout.columns.map((column, index) => ({ id: index, name: column.name, statuses: [...column.statuses] }))
+		layout.columns.map((column, index) => ({
+			id: index,
+			name: column.name,
+			statuses: [...column.statuses],
+			...(column.sort === undefined ? {} : { sort: column.sort }),
+		}))
 	);
 	const drag = useRef<{ kind: 'column'; id: number } | { kind: 'status'; name: string } | null>(null);
 	const [overKey, setOverKey] = useState<string | null>(null);
@@ -91,6 +99,16 @@ export function ColumnsEditor({
 	};
 	const rename = (id: number, name: string): void =>
 		setDraft(current => current.map(column => (column.id === id ? { ...column, name } : column)));
+	const setSort = (id: number, value: string): void =>
+		setDraft(current =>
+			current.map(column => {
+				if (column.id !== id) {
+					return column;
+				}
+				const { sort: _previous, ...rest } = column;
+				return isColumnSort(value) ? { ...rest, sort: value } : rest;
+			})
+		);
 	const remove = (id: number): void => setDraft(current => current.filter(column => column.id !== id));
 	const moveBy = (id: number, delta: -1 | 1): void =>
 		setDraft(current => {
@@ -305,6 +323,22 @@ export function ColumnsEditor({
 								column.statuses.map(status => chip(status, column.id))
 							)}
 						</div>
+						<label className={`flex flex-wrap items-center ${GAP_CONTROLS} text-xs text-muted`}>
+							<span className="font-medium">Sort cards</span>
+							<select
+								aria-label={`Sort of column ${column.name}`}
+								value={column.sort ?? ''}
+								disabled={busy}
+								onChange={event => setSort(column.id, event.target.value)}
+								className={`${FIELD_CLASS} min-w-0 max-w-full`}
+							>
+								{SORT_OPTIONS.map(option => (
+									<option key={option.value} value={option.value}>
+										{option.label}
+									</option>
+								))}
+							</select>
+						</label>
 					</li>
 				))}
 			</ol>
@@ -363,7 +397,15 @@ export function ColumnsEditor({
 				) : null}
 				<button
 					type="button"
-					onClick={() => onSave(draft.map(column => ({ name: column.name, statuses: column.statuses })))}
+					onClick={() =>
+						onSave(
+							draft.map(column => ({
+								name: column.name,
+								statuses: column.statuses,
+								...(column.sort === undefined ? {} : { sort: column.sort }),
+							}))
+						)
+					}
 					disabled={busy || empty.length > 0}
 					aria-describedby={empty.length > 0 ? 'columns-editor-save-why' : undefined}
 					title={empty.length > 0 ? 'A column with no status cannot be saved: fill or delete it' : undefined}

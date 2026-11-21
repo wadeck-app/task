@@ -300,7 +300,7 @@ describe('KanbanBoard switcher follows the answer', () => {
 		stubFetch(() => jsonResponse(answer({ abSwitcher: true })));
 		setup();
 
-		await screen.findByRole('toolbar');
+		await screen.findByRole('toolbar', { name: 'Kanban variant' });
 		expect(screen.getByTestId('kanban-board')).toHaveAttribute('data-variant', 'tabs');
 	});
 
@@ -316,7 +316,7 @@ describe('KanbanBoard switcher follows the answer', () => {
 		let on = true;
 		stubFetch(() => jsonResponse(answer({ abSwitcher: on, version: on ? 'v1' : 'v2' })));
 		setup();
-		await screen.findByRole('toolbar');
+		await screen.findByRole('toolbar', { name: 'Kanban variant' });
 
 		on = false;
 		act(() => FakeEventSource.last().emit('version', 'v2'));

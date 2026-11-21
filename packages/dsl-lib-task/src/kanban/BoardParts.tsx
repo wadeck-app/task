@@ -20,7 +20,15 @@ export interface BoardView {
 	/** Props that make an element the drop target of EXACTLY `status`. */
 	zone: (status: string) => ZoneProps;
 	move: (id: string, status: string) => void;
+	/** How a run of cards of the same `group` is introduced: a thin rule with the group, or a muted band with the group and its count. */
+	separator?: SeparatorStyle;
+	/** Drawn at the end of the header row of a column (the sort control or badge of the column). */
+	headerControl?: (column: BoardColumnData) => React.ReactNode;
+	/** Drawn under the header of a column (the sort chips). */
+	belowHeader?: (column: BoardColumnData) => React.ReactNode;
 }
+
+export type SeparatorStyle = 'rule' | 'band';
 
 export interface ZoneProps {
 	onDragOver: (event: React.DragEvent) => void;
@@ -286,8 +294,16 @@ export function BoardCard({
 	);
 }
 
-/** The header of a column: label, count and the hidden count; a terminal column is tinted by its tone. */
-export function ColumnHeader({ column, count }: { column: BoardColumnData; count?: number }): React.ReactElement {
+/** The header of a column: label, count and the hidden count; a terminal column is tinted by its tone. `control` ends the row. */
+export function ColumnHeader({
+	column,
+	count,
+	control,
+}: {
+	column: BoardColumnData;
+	count?: number;
+	control?: React.ReactNode;
+}): React.ReactElement {
 	const tone = toneOf(column.tone);
 	const hidden = column.hiddenCount ?? 0;
 	return (
@@ -300,6 +316,7 @@ export function ColumnHeader({ column, count }: { column: BoardColumnData; count
 				{count ?? column.count}
 			</span>
 			{hidden > 0 ? <span className="shrink-0 text-xs font-normal">{`+${hidden} hidden`}</span> : null}
+			{control}
 		</header>
 	);
 }
@@ -365,4 +382,95 @@ export function DropAreas({
 			})}
 		</div>
 	);
+}
+
+/** The line that opens a run of cards of one group: named by the group; the band also gives the number of its cards in the column. */
+export function GroupSeparator({
+	group,
+	count,
+	style,
+}: {
+	group: string;
+	count: number;
+	style: SeparatorStyle;
+}): React.ReactElement {
+	if (style === 'band') {
+		return (
+			<div
+				role="separator"
+				aria-label={`${group}, ${count} ${count === 1 ? 'card' : 'cards'}`}
+				data-testid="kanban-group-separator"
+				data-style="band"
+				className={`flex items-center ${GAP_CONTROLS} ${CONTROL_RADIUS} bg-muted-bg px-2 py-1 text-xs font-semibold text-content`}
+			>
+				<span className="min-w-0 flex-1 truncate">{group}</span>
+				<span data-testid="kanban-group-count" className="shrink-0 font-medium text-muted">
+					{count}
+				</span>
+			</div>
+		);
+	}
+	return (
+		<div
+			role="separator"
+			aria-label={group}
+			data-testid="kanban-group-separator"
+			data-style="rule"
+			className={`flex items-center ${GAP_CONTROLS} pt-1 text-xs font-medium text-muted`}
+		>
+			<span className="min-w-0 max-w-[70%] truncate">{group}</span>
+			<span aria-hidden="true" className="h-px min-w-[1rem] flex-1 bg-border" />
+		</div>
+	);
+}
+
+/**
+ * The cards of a column, in the order of the answer. When the cards carry a `group` (a sort that forms groups), a separator
+ * opens every run of cards of one group, the first one included, so every group is named.
+ */
+export function CardList({
+	column,
+	view,
+	dense = false,
+	draggable = true,
+	showStatus = false,
+}: {
+	column: BoardColumnData;
+	view: BoardView;
+	dense?: boolean;
+	draggable?: boolean;
+	showStatus?: boolean;
+}): React.ReactElement {
+	const counts = new Map<string, number>();
+	for (const card of column.cards) {
+		if (card.group !== undefined) {
+			counts.set(card.group, (counts.get(card.group) ?? 0) + 1);
+		}
+	}
+	const items: React.ReactElement[] = [];
+	let previous: string | undefined;
+	column.cards.forEach((card, index) => {
+		if (card.group !== undefined && (index === 0 || card.group !== previous)) {
+			items.push(
+				<GroupSeparator
+					key={`group-${index}-${card.group}`}
+					group={card.group}
+					count={counts.get(card.group) ?? 0}
+					style={view.separator ?? 'rule'}
+				/>
+			);
+		}
+		previous = card.group;
+		items.push(
+			<BoardCard
+				key={card.id}
+				card={card}
+				view={view}
+				dense={dense}
+				draggable={draggable}
+				showStatus={showStatus}
+			/>
+		);
+	});
+	return <>{items}</>;
 }

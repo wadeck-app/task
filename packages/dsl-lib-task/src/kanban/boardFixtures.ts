@@ -161,3 +161,65 @@ export function groupedLayout(): BoardLayoutData {
 		],
 	};
 }
+
+/**
+ * {@link groupedColumns} with sorts: "Doing" is sorted by assignee (cards carry `group`: two of ann, one of bob), "Closed" by newest
+ * (no group), "To do" has no sort.
+ */
+export function sortedColumns(): BoardColumnData[] {
+	return groupedColumns().map(column => {
+		if (column.key === 'Doing') {
+			return {
+				...column,
+				sort: 'assignee',
+				count: 3,
+				cards: [
+					{
+						id: 'ccc33333',
+						headline: 'Build it',
+						href: '/t/ccc33333',
+						status: 'doing',
+						tone: 'info',
+						assignee: 'ann',
+						group: 'ann',
+					},
+					{
+						id: 'eee55555',
+						headline: 'Check it',
+						href: '/t/eee55555',
+						status: 'review',
+						tone: 'warning',
+						assignee: 'ann',
+						group: 'ann',
+					},
+					{
+						id: 'fff66666',
+						headline: 'Test it',
+						href: '/t/fff66666',
+						status: 'doing',
+						tone: 'info',
+						assignee: 'bob',
+						group: 'bob',
+					},
+				],
+			};
+		}
+		if (column.key === 'Closed') {
+			return { ...column, sort: 'newest' };
+		}
+		return column;
+	});
+}
+
+/** The layout answer that goes with {@link sortedColumns}. */
+export function sortedLayout(): BoardLayoutData {
+	const base = groupedLayout();
+	return {
+		...base,
+		columns: [
+			{ name: 'To do', statuses: ['todo'] },
+			{ name: 'Doing', statuses: ['doing', 'review'], sort: 'assignee' },
+			{ name: 'Closed', statuses: ['done', 'rejected'], sort: 'newest' },
+		],
+	};
+}

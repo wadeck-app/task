@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { groupedColumns, groupedLayout, sampleColumns } from '../kanban/boardFixtures.js';
+import { groupedColumns, groupedLayout, sampleColumns, sortedColumns, sortedLayout } from '../kanban/boardFixtures.js';
 import { FakeEventSource, jsonResponse, stubFetch } from '../testHelpers.js';
 import { KanbanBoard } from './KanbanBoard.js';
 
@@ -572,6 +572,49 @@ describe('Configure columns', () => {
 		await screen.findByTestId('kanban-column-todo');
 		await user.click(screen.getByTestId('kanban-configure'));
 		expect(screen.getByRole('button', { name: 'Reset to default' })).toBeDisabled();
+	});
+
+	it('each column has a "Sort cards" select, starting from the stored sort; Save sends it, and leaves it out for the default order', async () => {
+		const sorted = (): Response =>
+			jsonResponse(
+				grouped({ columns: sortedColumns(), config: { isDefault: false, columns: sortedLayout().columns } })
+			);
+		const { calls } = stubFetch(() => sorted());
+		const user = await open();
+
+		const doing = screen.getByRole('combobox', { name: 'Sort of column Doing' });
+		expect(doing).toHaveValue('assignee');
+		expect(screen.getByRole('combobox', { name: 'Sort of column To do' })).toHaveValue('');
+		expect(within(doing).getAllByRole('option').map(option => option.textContent)).toEqual([
+			'Default order',
+			'Status',
+			'Priority',
+			'Assignee',
+			'Oldest first',
+			'Newest first',
+		]);
+		expect(screen.getAllByText('Sort cards').length).toBe(3);
+
+		await user.selectOptions(screen.getByRole('combobox', { name: 'Sort of column To do' }), 'priority');
+		await user.selectOptions(screen.getByRole('combobox', { name: 'Sort of column Closed' }), '');
+		await user.click(screen.getByRole('button', { name: 'Save' }));
+
+		await waitFor(() => expect(calls.some(call => call.method === 'PUT')).toBe(true));
+		expect(JSON.parse(calls.find(call => call.method === 'PUT')!.body!)).toEqual({
+			columns: [
+				{ name: 'To do', statuses: ['todo'], sort: 'priority' },
+				{ name: 'Doing', statuses: ['doing', 'review'], sort: 'assignee' },
+				{ name: 'Closed', statuses: ['done', 'rejected'] },
+			],
+		});
+	});
+
+	it('a renamed column keeps its sort label in step with its name', async () => {
+		const user = await open();
+		const name = within(screen.getAllByTestId('columns-editor-column')[0]!).getByRole('textbox');
+		await user.clear(name);
+		await user.type(name, 'Backlog');
+		expect(screen.getByRole('combobox', { name: 'Sort of column Backlog' })).toHaveValue('');
 	});
 
 	it('page mode (moveAction) configures the same way: the layout is saved by the component itself, not by a page action', async () => {

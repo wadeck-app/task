@@ -27,6 +27,7 @@ import {
 	unknownVariantText,
 	VARIANT_LABELS,
 	VARIANTS,
+	withSort,
 } from '../kanban/boardModel.js';
 import type {
 	BoardCardData,
@@ -34,8 +35,24 @@ import type {
 	BoardLayoutData,
 	BoardStatusData,
 	KanbanVariant,
+	LayoutColumn,
 	PendingMove,
+	SortChoice,
 } from '../kanban/boardModel.js';
+import {
+	isSortVariant,
+	MIXED_SORT,
+	SORT_VARIANT_PLACE,
+	SORT_VARIANT_SEPARATOR,
+	SORT_VARIANTS,
+	SortBadge,
+	SortChips,
+	SortHeaderMenu,
+	SortVariantDock,
+	ToolbarSegmented,
+	ToolbarSortSelect,
+} from '../kanban/sortControls.js';
+import type { SortVariant, ToolbarSortValue } from '../kanban/sortControls.js';
 import { ColumnsEditor } from '../kanban/ColumnsEditor.js';
 import { useLiveBoard } from '../kanban/useLiveBoard.js';
 import { ColumnsLayout, CompactLayout, RailsLayout, SwimlanesLayout, TabsLayout } from '../kanban/variants.js';
@@ -49,8 +66,8 @@ export interface KanbanBoardProps {
 	 * module's page, which has none of our sources): the board starts empty, says "Loading board" and fetches `boardPath`.
 	 */
 	columns?: BoardColumnData[];
-	/** The stored layout of the board (`config` of the answer: `{ isDefault, columns: [{ name, statuses }] }`), for the "Configure columns" editor. Only the first value matters; absent in contribution mode (the fetched answer has it). */
-	config?: { isDefault?: boolean; columns?: Array<{ name: string; statuses: string[] }> };
+	/** The stored layout of the board (`config` of the answer: `{ isDefault, columns: [{ name, statuses, sort? }] }`), for the "Configure columns" editor and the sort controls of the board. Only the first value matters; absent in contribution mode (the fetched answer has it). */
+	config?: { isDefault?: boolean; columns?: LayoutColumn[] };
 	/** Every status of the project (`allStatuses` of the answer), for the editor. */
 	allStatuses?: BoardStatusData[];
 	/** The version of that answer; a `version` event with another value makes the board fetch again. */
@@ -112,6 +129,8 @@ const LAYOUTS = {
 	tabs: TabsLayout,
 } as const;
 const STORAGE_KEY = 'task.kanban.variant';
+const SORT_STORAGE_KEY = 'task.board.sortVariant';
+const DEFAULT_SORT_VARIANT: SortVariant = 'a';
 const DEFAULT_POLL_SECONDS = 20;
 const LIVE_TEXT = { live: 'Live', reconnecting: 'Reconnecting', polling: 'Polling' } as const;
 const LIVE_TONE = { live: 'success', reconnecting: 'warning', polling: 'info' } as const;
@@ -160,6 +179,35 @@ function storedVariant(fallback: string): StoredVariant {
 	};
 }
 
+/** The saved choice of the sort dock; a stale or unreadable one is reported and `a` is used. */
+function storedSortVariant(): { variant: SortVariant; note: string | null } {
+	let stored: string | null;
+	try {
+		stored = window.localStorage.getItem(SORT_STORAGE_KEY);
+	} catch (error) {
+		return {
+			variant: DEFAULT_SORT_VARIANT,
+			note: `The saved sort variant could not be read (${error instanceof Error ? error.message : String(error)}); using "${DEFAULT_SORT_VARIANT}".`,
+		};
+	}
+	if (stored === null) {
+		return { variant: DEFAULT_SORT_VARIANT, note: null };
+	}
+	if (isSortVariant(stored)) {
+		return { variant: stored, note: null };
+	}
+	return {
+		variant: DEFAULT_SORT_VARIANT,
+		note: `The saved sort variant "${stored}" is not known (valid: ${SORT_VARIANTS.join(', ')}); using "${DEFAULT_SORT_VARIANT}".`,
+	};
+}
+
+/** The sort the columns of the layout share, or MIXED_SORT when they differ. */
+function sharedSort(columns: readonly LayoutColumn[]): ToolbarSortValue {
+	const sorts = new Set(columns.map(column => column.sort ?? ''));
+	return sorts.size === 1 ? ([...sorts][0] as SortChoice) : MIXED_SORT;
+}
+
 /** Moves a card with a request of its own (no page action): resolves the failure, null when it worked. */
 async function moveByRequest(
 	apiBase: string,
@@ -199,7 +247,7 @@ function VariantSwitcher({
 					type="button"
 					aria-pressed={variant === active}
 					onClick={() => onPick(variant)}
-					className={`h-10 shrink-0 cursor-pointer rounded-md border px-3 sm:px-4 text-sm font-semibold focus-visible:ring-2 focus-visible:ring-primary ${variant === active ? 'border-primary bg-primary text-white' : 'border-border bg-surface text-content hover:bg-muted-bg'}`}
+					className={`h-10 shrink-0 cursor-pointer rounded-md border px-3 sm:px-4 text-sm font-semibold focus-visible:ring-2 focus-visible:ring-primary ${variant === active ? 'border-primary bg-[var(--color-primary-solid)] text-white' : 'border-border bg-surface text-content hover:bg-muted-bg'}`}
 				>
 					{`${index + 1} ${VARIANT_LABELS[variant]}`}
 				</button>
@@ -212,10 +260,11 @@ function VariantSwitcher({
  * A kanban board of the tasks of one project: a column per status, cards moved by drag and drop or with a "Move to"
  * menu on every card, kept up to date by itself (an event stream tells when the board changed, a poll takes over when
  * there is none). Five layouts (`columns`, `swimlanes`, `compact`, `rails`, `tabs`); a move shows at once and goes back,
- * with the reason, when the server refuses it.
+ * with the reason, when the server refuses it. A column can be sorted (status, priority, assignee, oldest, newest); a sort
+ * that forms groups draws a separator before each group.
  *
- * IN SCOPE: showing and moving the cards of one project. OUT OF SCOPE: editing a task (a card links to its page),
- * changing the statuses or the order of the cards.
+ * IN SCOPE: showing and moving the cards of one project, the sort of each column. OUT OF SCOPE: editing a task (a card
+ * links to its page), changing the statuses, placing a card by hand inside a column.
  *
  * @registryCategory composite
  * @registryTags kanban board columns status drag cards swimlanes
@@ -282,6 +331,11 @@ export function KanbanBoard({
 	const [configuring, setConfiguring] = useState(false);
 	const [configBusy, setConfigBusy] = useState(false);
 	const [configError, setConfigError] = useState<string | null>(null);
+	// The last refused save of a sort picked on the board (the editor shows its own error).
+	const [sortError, setSortError] = useState<string | null>(null);
+	const storedSort = useMemo(() => (switcherOn ? storedSortVariant() : null), [switcherOn]);
+	const [pickedSort, setPickedSort] = useState<SortVariant | null>(null);
+	const [sortStorageNote, setSortStorageNote] = useState<string | null>(null);
 
 	const movesRef = useRef(moves);
 	movesRef.current = moves;
@@ -437,9 +491,11 @@ export function KanbanBoard({
 		move: (id, status) => void move(id, status),
 	};
 
-	const saveLayout = async (columns: Array<{ name: string; statuses: string[] }>): Promise<void> => {
+	/** Stores the whole layout: from the editor, or with one changed sort from the board (`from: 'board'`). */
+	const saveLayout = async (columns: LayoutColumn[], from: 'editor' | 'board' = 'editor'): Promise<void> => {
 		setConfigBusy(true);
 		setConfigError(null);
+		setSortError(null);
 		try {
 			await putJson(configPath, { project: projectParam }, { columns }, { apiBase: apiBase ?? getApiBase() });
 			await live.refetch(true);
@@ -448,7 +504,11 @@ export function KanbanBoard({
 			}
 		} catch (error) {
 			if (mounted.current) {
-				setConfigError(`The columns were not saved: ${problemText(error)}`);
+				if (from === 'board') {
+					setSortError(`The sort was not saved: ${problemText(error)}`);
+				} else {
+					setConfigError(`The columns were not saved: ${problemText(error)}`);
+				}
 			}
 		} finally {
 			if (mounted.current) {
@@ -485,6 +545,18 @@ export function KanbanBoard({
 		} catch (error) {
 			setStorageNote(
 				`The variant could not be saved (${error instanceof Error ? error.message : String(error)}); it is back to "${defaultVariant}" after a reload.`
+			);
+		}
+	};
+
+	const pickSortVariant = (next: SortVariant): void => {
+		setPickedSort(next);
+		try {
+			window.localStorage.setItem(SORT_STORAGE_KEY, next);
+			setSortStorageNote(null);
+		} catch (error) {
+			setSortStorageNote(
+				`The sort variant could not be saved (${error instanceof Error ? error.message : String(error)}); it is back to "${DEFAULT_SORT_VARIANT}" after a reload.`
 			);
 		}
 	};
@@ -550,9 +622,68 @@ export function KanbanBoard({
 		'warning'
 	);
 	addNote('storage', switcherOn ? (storageNote ?? stored?.note ?? null) : null, 'warning');
+	addNote('sort-storage', switcherOn ? (sortStorageNote ?? storedSort?.note ?? null) : null, 'warning');
+	addNote('sort', configuring ? null : sortError, 'danger');
 
 	// The layout is the project's config: offered where the cards can be moved, once the answer carried it.
 	const canConfigure = !isReadOnly && hasProject && live.loaded && live.meta.layout !== null;
+
+	// The sort controls: the dock picks the variant (dev switcher only), else `a`.
+	const sortVariant: SortVariant = switcherOn
+		? (pickedSort ?? storedSort?.variant ?? DEFAULT_SORT_VARIANT)
+		: DEFAULT_SORT_VARIANT;
+	const layoutColumns = live.meta.layout?.columns ?? [];
+	const sortBusy = configBusy && !configuring;
+	const pickSort = (names: string[] | null, choice: SortChoice): void => {
+		if (!canConfigure || configBusy) {
+			return;
+		}
+		void saveLayout(withSort(layoutColumns, names, choice), 'board');
+	};
+	// Only a column of the stored layout has a sort to change (not the implicit Unmapped one).
+	const sortable = (column: BoardColumnData): boolean =>
+		canConfigure && column.implicit !== true && layoutColumns.some(entry => entry.name === column.key);
+	const place = SORT_VARIANT_PLACE[sortVariant];
+	view.separator = SORT_VARIANT_SEPARATOR[sortVariant];
+	if (sortVariant === 'a') {
+		view.headerControl = column =>
+			sortable(column) ? (
+				<SortHeaderMenu
+					columnLabel={column.label}
+					current={column.sort}
+					busy={sortBusy}
+					onPick={choice => pickSort([column.key], choice)}
+				/>
+			) : null;
+	} else if (sortVariant === 'c') {
+		view.belowHeader = column =>
+			sortable(column) ? (
+				<SortChips
+					columnLabel={column.label}
+					current={column.sort}
+					busy={sortBusy}
+					onPick={choice => pickSort([column.key], choice)}
+				/>
+			) : null;
+	} else if (sortVariant === 'd') {
+		view.headerControl = column => <SortBadge sort={column.sort} />;
+	}
+	const toolbarSort =
+		place === 'toolbar' && canConfigure && !configuring && layoutColumns.length > 0 ? (
+			sortVariant === 'b' ? (
+				<ToolbarSortSelect
+					value={sharedSort(layoutColumns)}
+					busy={sortBusy}
+					onPick={choice => pickSort(null, choice)}
+				/>
+			) : (
+				<ToolbarSegmented
+					value={sharedSort(layoutColumns)}
+					busy={sortBusy}
+					onPick={choice => pickSort(null, choice)}
+				/>
+			)
+		) : null;
 	const empty = isBoardEmpty(shown);
 	const Layout = LAYOUTS[variant];
 	const emptyMessage = emptyText ?? live.meta.emptyText ?? 'No tasks yet';
@@ -572,7 +703,7 @@ export function KanbanBoard({
 				layout={live.meta.layout}
 				busy={configBusy}
 				error={configError}
-				onSave={columns => void saveLayout(columns)}
+				onSave={columns => void saveLayout(columns, 'editor')}
 				onReset={() => void resetLayout()}
 				onCancel={() => {
 					setConfiguring(false);
@@ -590,7 +721,8 @@ export function KanbanBoard({
 		<div
 			data-testid="kanban-board"
 			data-variant={variant}
-			className={`flex min-w-0 flex-col gap-4 ${switcherOn ? 'pb-28' : ''}`}
+			data-sort-variant={sortVariant}
+			className={`flex min-w-0 flex-col gap-4 ${switcherOn ? 'pb-72 sm:pb-48' : ''}`}
 		>
 			<div className="flex flex-wrap items-center justify-between gap-2">
 				{live.meta.tasksHref !== null ? (
@@ -601,6 +733,12 @@ export function KanbanBoard({
 					<span />
 				)}
 				<div className="flex flex-wrap items-center gap-2">
+					{toolbarSort}
+					{sortBusy ? (
+						<span role="status" data-testid="kanban-sort-pending" className="text-xs text-muted">
+							Saving the sort
+						</span>
+					) : null}
 					{canConfigure && !configuring ? (
 						<button
 							type="button"
@@ -628,6 +766,7 @@ export function KanbanBoard({
 			</div>
 			{notes.length > 0 ? <div className="flex flex-col gap-2">{notes}</div> : null}
 			{content}
+			{switcherOn ? <SortVariantDock active={sortVariant} onPick={pickSortVariant} /> : null}
 			{switcherOn ? <VariantSwitcher active={variant} onPick={pickVariant} /> : null}
 		</div>
 	);

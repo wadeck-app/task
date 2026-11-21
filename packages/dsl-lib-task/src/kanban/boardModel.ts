@@ -18,6 +18,8 @@ export interface BoardCardData {
 	/** The tone of the status. */
 	tone?: Tone;
 	updatedAt?: string;
+	/** The group of the card in a column whose sort forms groups (status, priority, assignee); absent otherwise. */
+	group?: string;
 }
 
 /** One status a column holds: it is one drop area while a card is dragged. */
@@ -49,13 +51,71 @@ export interface BoardColumnData {
 	count: number;
 	/** Tasks of this column that the answer leaves out (a cap per column). */
 	hiddenCount?: number;
+	/** How the cards of the column are ordered; absent = the usual order, no group. */
+	sort?: ColumnSort;
 	cards: BoardCardData[];
+}
+
+/** A sort of the cards inside a column (`board.columns[i].sort` of config.yml). */
+export type ColumnSort = 'status' | 'priority' | 'assignee' | 'oldest' | 'newest';
+/** A sort, or '' for the default order (no `sort` key). */
+export type SortChoice = ColumnSort | '';
+
+export interface SortOption {
+	value: SortChoice;
+	label: string;
+	/** A short label, for a control with little room. */
+	shortLabel: string;
+	/** What a read-only badge says (empty for the default order). */
+	badge: string;
+	/** The sort forms groups: the cards carry `group` and the board draws a separator between groups. */
+	groups: boolean;
+}
+
+export const SORT_OPTIONS: readonly SortOption[] = [
+	{ value: '', label: 'Default order', shortLabel: 'Default', badge: '', groups: false },
+	{ value: 'status', label: 'Status', shortLabel: 'Status', badge: 'by status', groups: true },
+	{ value: 'priority', label: 'Priority', shortLabel: 'Priority', badge: 'by priority', groups: true },
+	{ value: 'assignee', label: 'Assignee', shortLabel: 'Assignee', badge: 'by assignee', groups: true },
+	{ value: 'oldest', label: 'Oldest first', shortLabel: 'Oldest', badge: 'oldest first', groups: false },
+	{ value: 'newest', label: 'Newest first', shortLabel: 'Newest', badge: 'newest first', groups: false },
+];
+
+export function isColumnSort(value: unknown): value is ColumnSort {
+	return typeof value === 'string' && value !== '' && SORT_OPTIONS.some(option => option.value === value);
+}
+
+/** The option of a sort (the default order for none). */
+export function sortOption(sort: ColumnSort | undefined): SortOption {
+	return SORT_OPTIONS.find(option => option.value === (sort ?? ''))!;
+}
+
+/** One column of the stored layout. */
+export interface LayoutColumn {
+	name: string;
+	statuses: string[];
+	sort?: ColumnSort;
+}
+
+/** The layout with the sort of the columns named in `names` (every column when null) set to `choice`; '' removes it. */
+export function withSort(
+	columns: readonly LayoutColumn[],
+	names: readonly string[] | null,
+	choice: SortChoice
+): LayoutColumn[] {
+	return columns.map(column => {
+		if (names !== null && !names.includes(column.name)) {
+			return column;
+		}
+		const { sort: _previous, ...rest } = column;
+		return choice === '' ? rest : { ...rest, sort: choice };
+	});
 }
 
 /** What the "Configure columns" editor starts from, and the statuses it can place. */
 export interface BoardLayoutData {
 	isDefault: boolean;
-	columns: Array<{ name: string; statuses: string[] }>;
+	columns: LayoutColumn[];
 	allStatuses: BoardStatusData[];
 }
 
@@ -111,15 +171,19 @@ export function normalizeColumns(raw: unknown): BoardColumnData[] {
 			if (!isObject(card) || typeof card['id'] !== 'string' || card['id'] === '') {
 				throw new Error(`columns[${index}].cards[${cardIndex}] (${key}) has no "id"`);
 			}
+			const { group, ...fields } = card;
 			return {
-				...card,
+				...fields,
+				...(typeof group === 'string' && group !== '' ? { group } : {}),
 				headline: typeof card['headline'] === 'string' ? card['headline'] : card['id'],
 				status:
 					typeof card['status'] === 'string' && card['status'] !== '' ? card['status'] : statuses[0]!.name,
 			} as BoardCardData;
 		});
+		const { sort, ...rest } = column;
 		return {
-			...column,
+			...rest,
+			...(isColumnSort(sort) ? { sort } : {}),
 			key,
 			label: typeof column['label'] === 'string' && column['label'] !== '' ? column['label'] : key,
 			statuses,

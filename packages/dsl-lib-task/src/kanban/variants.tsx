@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { CONTROL_RADIUS, FOCUS_RING, GAP_BLOCKS, GAP_CONTROLS, PILL_RADIUS } from '../ui/tokens.js';
 import { TONE_DOT, toneOf } from '../tones.js';
-import { BoardCard, ColumnHeader, DropAreas, EmptyColumn, zoneClass } from './BoardParts.js';
+import { BoardCard, CardList, ColumnHeader, DropAreas, EmptyColumn, zoneClass } from './BoardParts.js';
 import type { BoardView } from './BoardParts.js';
 import { laneKeyOf, lanesOf } from './boardModel.js';
 import type { BoardColumnData } from './boardModel.js';
@@ -91,15 +91,14 @@ function Column({
 			{...(zone ?? {})}
 			className={`flex min-w-0 flex-col gap-2 p-1 ${zoneClass(zone?.['data-drop-target'] === 'true')} ${className}`}
 		>
-			<ColumnHeader column={column} />
+			<ColumnHeader column={column} control={view.headerControl?.(column)} />
+			{view.belowHeader?.(column)}
 			<DropAreas statuses={column.statuses} view={view} />
 			{column.cards.length === 0 ? (
 				<EmptyColumn />
 			) : (
 				<div className={`flex flex-col ${dense ? 'gap-1' : 'gap-2'} ${CARDS_SCROLL_CLASS}`}>
-					{column.cards.map(card => (
-						<BoardCard key={card.id} card={card} view={view} dense={dense} showStatus={grouped} />
-					))}
+					<CardList column={column} view={view} dense={dense} showStatus={grouped} />
 				</div>
 			)}
 		</section>
@@ -142,7 +141,8 @@ export function SwimlanesLayout({ view }: { view: BoardView }): React.ReactEleme
 				<div className={`grid ${GAP_BLOCKS}`} style={grid}>
 					{view.columns.map(column => (
 						<div key={column.key} className="flex min-w-0 flex-col gap-1">
-							<ColumnHeader column={column} />
+							<ColumnHeader column={column} control={view.headerControl?.(column)} />
+							{view.belowHeader?.(column)}
 							<DropAreas statuses={column.statuses} view={view} />
 						</div>
 					))}
@@ -251,6 +251,10 @@ export function TabsLayout({ view }: { view: BoardView }): React.ReactElement {
 	if (active === undefined) {
 		return <EmptyColumn />;
 	}
+	// The sort control of the shown column sits above its cards (a tab has no header).
+	const controls = [view.headerControl?.(active), view.belowHeader?.(active)]
+		.filter(node => node !== null && node !== undefined && node !== false)
+		.map((node, index) => <React.Fragment key={index}>{node}</React.Fragment>);
 	return (
 		<div className="flex flex-col gap-2">
 			<div role="tablist" aria-label="Statuses" className={`flex ${GAP_CONTROLS} overflow-x-auto pb-1`}>
@@ -281,21 +285,16 @@ export function TabsLayout({ view }: { view: BoardView }): React.ReactElement {
 				data-status={onlyStatus(active) ?? active.key}
 				className="flex flex-col gap-2"
 			>
+				{controls.length > 0 ? (
+					<div className={`flex flex-wrap items-center ${GAP_CONTROLS}`}>{controls}</div>
+				) : null}
 				{(active.hiddenCount ?? 0) > 0 ? (
 					<p className="m-0 text-xs text-muted">{`+${active.hiddenCount} hidden`}</p>
 				) : null}
 				{active.cards.length === 0 ? (
 					<EmptyColumn />
 				) : (
-					active.cards.map(card => (
-						<BoardCard
-							key={card.id}
-							card={card}
-							view={view}
-							draggable={false}
-							showStatus={active.statuses.length > 1}
-						/>
-					))
+					<CardList column={active} view={view} draggable={false} showStatus={active.statuses.length > 1} />
 				)}
 			</div>
 		</div>

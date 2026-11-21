@@ -124,7 +124,7 @@ describe('KanbanBoard switcher on a narrow screen', () => {
 	it('wraps in rows inside the viewport, every button at least 40px high', () => {
 		setup({ variantSwitcher: true });
 
-		const bar = screen.getByRole('toolbar');
+		const bar = screen.getByRole('toolbar', { name: 'Kanban variant' });
 		expect(bar.className).toMatch(/flex-wrap/);
 		expect(bar.className).toMatch(/\bw-max\b/);
 		expect(bar.className).toMatch(/max-w-\[calc\(100vw-1rem\)\]/);
@@ -136,9 +136,10 @@ describe('KanbanBoard switcher on a narrow screen', () => {
 		}
 	});
 
-	it('leaves room under the board for the bar, only while it is shown', () => {
+	it('leaves room under the board for the two bars (layout and sort), only while they are shown', () => {
 		const { unmount } = setup({ variantSwitcher: true });
-		expect(screen.getByTestId('kanban-board').className).toMatch(/\bpb-28\b/);
+		expect(screen.getByTestId('kanban-board').className).toMatch(/\bpb-72\b/);
+		expect(screen.getByTestId('kanban-board').className).toMatch(/\bsm:pb-48\b/);
 		unmount();
 
 		setup({ variantSwitcher: false });
