@@ -28,7 +28,7 @@ async function bundle(entry: string, outfile: string, version = DEV_VERSION): Pr
 		entryPoints: [path.join(packageRoot, 'src', entry)],
 		bundle: true,
 		platform: 'node',
-		target: 'node22',
+		target: 'node24',
 		format: 'cjs',
 		outfile,
 		external: [],

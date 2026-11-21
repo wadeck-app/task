@@ -59,7 +59,7 @@ async function bundle(entry: string, outfile: string, version: string): Promise<
 		entryPoints: [path.join(packageRoot, 'src', entry)],
 		bundle: true,
 		platform: 'node',
-		target: 'node22',
+		target: 'node24',
 		format: 'cjs',
 		outfile,
 		external: [],

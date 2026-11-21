@@ -15,7 +15,7 @@
 		"clean": "rimraf coverage"
 	},
 	"engines": {
-		"node": ">=22"
+		"node": ">=24"
 	},
 	"dependencies": {
 		"@wadeck-app/dsl-renderer": "latest",
