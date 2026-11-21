@@ -78,14 +78,11 @@ describe('task strategy migrate (subprocess)', () => {
 		writeFileSync(configFile, CONFIG);
 
 		const started = cli('strategy', 'migrate', 'start', '--allow-loss', 'all', '--json');
-		// A worker that is not running left its reason in its own log: the failure shows it, not only the path.
+		// A worker that is not running left its reason in its own log: the failure shows it, not only the path. The path is taken from
+		// the text, not from a parsed answer: on Linux CI other lines (git noise) come before the JSON.
 		let workerLogText = '(the answer names no worker log)';
-		try {
-			const logPath = (JSON.parse(started.stdout) as { worker?: { log?: string } }).worker?.log;
-			if (logPath !== undefined) workerLogText = existsSync(logPath) ? readFileSync(logPath, 'utf8') : `(${logPath} does not exist)`;
-		} catch {
-			workerLogText = '(the answer is not JSON)';
-		}
+		const logPath = /"log": "([^"]+)"/.exec(started.text)?.[1];
+		if (logPath !== undefined) workerLogText = existsSync(logPath) ? readFileSync(logPath, 'utf8') : `(${logPath} does not exist)`;
 		expect(started.exitCode, `${started.text}
 --- worker log ---
 ${workerLogText}`).toBe(0);
