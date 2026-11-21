@@ -107,6 +107,8 @@ export {
 	BOARD_COLUMN_NAME_MAX,
 	clearBoardColumns,
 	saveBoardColumns,
+	saveBoardCard,
+	clearBoardCard,
 	unmappedStatuses,
 	validateBoard,
 } from './boardConfig.js';

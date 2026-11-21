@@ -27,36 +27,34 @@ function setup(extra: Partial<React.ComponentProps<typeof KanbanBoard>> = {}) {
 			projectParam="p1"
 			moveAction="moveCard"
 			apiBase="/api/modules/task"
-			defaultVariant="columns"
 			onAction={onAction}
 			{...extra}
 		/>
 	);
 }
 
-function dragTo(id: string, target: HTMLElement): void {
+/** Drags card `id` and drops it on the drop band of `status` (the bands exist only while a card is dragged). */
+function dragTo(id: string, status: string): void {
 	const card = document.querySelector(`[data-card-id="${id}"]`) as HTMLElement;
 	const dataTransfer = { setData: vi.fn(), getData: vi.fn(() => id), effectAllowed: '', dropEffect: '' };
 	fireEvent.dragStart(card, { dataTransfer });
+	const target = screen.getByTestId(`kanban-drop-area-${status}`);
 	fireEvent.dragOver(target, { dataTransfer });
 	fireEvent.drop(target, { dataTransfer });
 	fireEvent.dragEnd(card, { dataTransfer });
 }
 
 describe('KanbanBoard widths', () => {
-	it.each(['columns', 'compact'] as const)(
-		'%s: columns share the width and shrink to a minimum, they do not have a fixed width',
-		variant => {
-			setup({ defaultVariant: variant });
+	it('columns share the width and shrink to a minimum, they do not have a fixed width', () => {
+		setup();
 
-			for (const status of ['todo', 'doing', 'done']) {
-				const classes = screen.getByTestId(`kanban-column-${status}`).className;
-				expect(classes).toMatch(/\bflex-1\b/);
-				expect(classes).toMatch(/\bmin-w-\[1[3-9]rem\]/);
-				expect(classes).not.toMatch(/\bw-(60|72)\b/);
-			}
+		for (const status of ['todo', 'doing', 'done']) {
+			const classes = screen.getByTestId(`kanban-column-${status}`).className;
+			expect(classes).toMatch(/\bflex-1\b/);
+			expect(classes).toMatch(/\bmin-w-\[1[3-9]rem\]/);
+			expect(classes).not.toMatch(/\bw-(60|72)\b/);
 		}
-	);
+	});
 
 	it('the strip scrolls sideways beyond the minimum widths and is never wider than its container', () => {
 		setup();
@@ -65,24 +63,6 @@ describe('KanbanBoard widths', () => {
 		expect(strip.className).toMatch(/overflow-x-auto/);
 		expect(strip.className).toMatch(/\bmin-w-0\b/);
 		expect(strip.className).toMatch(/\bmax-w-full\b/);
-	});
-
-	it('swimlanes: the grid has the same minimum per column and the rows share the strip', () => {
-		setup({ defaultVariant: 'swimlanes' });
-
-		const strip = screen.getByTestId('kanban-strip');
-		const inner = strip.firstElementChild as HTMLElement;
-		// 3 columns of 13rem and 2 gaps of 1rem.
-		expect(inner.style.minWidth).toBe('41rem');
-		expect(inner.className).not.toMatch(/min-w-max/);
-		const grid = screen.getByTestId('kanban-cell-urgent-doing').parentElement as HTMLElement;
-		expect(grid.style.gridTemplateColumns).toBe('repeat(3, minmax(13rem, 1fr))');
-	});
-
-	it('rails sit in the same scrolling strip', () => {
-		setup({ defaultVariant: 'rails' });
-
-		expect(screen.getByTestId('kanban-strip').className).toMatch(/overflow-x-auto/);
 	});
 
 	describe('scroll hint', () => {
@@ -107,19 +87,6 @@ describe('KanbanBoard widths', () => {
 	});
 });
 
-describe('KanbanBoard compact cards', () => {
-	it('the headline wraps on two lines and keeps room to read, instead of an ellipsis after 3 letters', () => {
-		setup({ defaultVariant: 'compact' });
-
-		const headline = screen.getByRole('link', { name: 'Write the spec' });
-		expect(headline.className).toMatch(/line-clamp-2/);
-		expect(headline.className).toMatch(/min-w-\[10rem\]/);
-		expect(headline.className).not.toMatch(/\btruncate\b/);
-		// The line may wrap so the headline gets its own row when the id, pill and menu take the width.
-		expect(headline.parentElement!.className).toMatch(/flex-wrap/);
-	});
-});
-
 describe('KanbanBoard failed move message (no page action)', () => {
 	/** Contribution mode: the component posts the move itself and is the only place that says why it failed. */
 	function contribution(post: () => Response) {
@@ -134,7 +101,7 @@ describe('KanbanBoard failed move message (no page action)', () => {
 		contribution(() => jsonResponse({ error: 'status done needs a resolution' }, 409));
 		await waitFor(() => expect(document.querySelector('[data-card-id="aaa11111"]')).not.toBeNull());
 
-		dragTo('aaa11111', screen.getByTestId('kanban-column-done'));
+		dragTo('aaa11111', 'done');
 
 		const alert = await screen.findByRole('alert');
 		expect(alert).toHaveTextContent('status done needs a resolution');
@@ -159,9 +126,9 @@ describe('KanbanBoard failed move message (no page action)', () => {
 		});
 		await waitFor(() => expect(document.querySelector('[data-card-id="aaa11111"]')).not.toBeNull());
 
-		dragTo('aaa11111', screen.getByTestId('kanban-column-done'));
+		dragTo('aaa11111', 'done');
 		await screen.findByRole('alert');
-		dragTo('bbb22222', screen.getByTestId('kanban-column-doing'));
+		dragTo('bbb22222', 'doing');
 
 		await waitFor(() => expect(screen.queryByText(/first problem/)).toBeNull());
 	});

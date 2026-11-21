@@ -2,12 +2,14 @@ import { ArrowRightLeft } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
 import { useDismiss } from '../useDismiss.js';
 import { CONTROL_RADIUS, CONTROL_SQUARE, FOCUS_RING, GAP_CONTROLS, ICON_SIZE, PILL_RADIUS } from '../ui/tokens.js';
-import { hashIndex, TONE_BG, TONE_BORDER, TONE_DOT, TONE_PILL, TONES, toneOf } from '../tones.js';
+import { hashIndex, TONE_DOT, TONE_PILL, TONES, toneOf } from '../tones.js';
 import type { Tone } from '../tones.js';
-import { DEFAULT_GROUP_STYLE } from './boardModel.js';
-import type { BoardCardData, BoardColumnData, BoardStatusData, GroupStyle } from './boardModel.js';
+import { cardsInStatusOrder } from './boardModel.js';
+import type { BoardCardData, BoardColumnData, BoardStatusData } from './boardModel.js';
+import { renderCardField, TITLE_CLAMP } from './CardFields.js';
+import type { CardLayout } from './cardLayout.js';
 
-/** What the layouts need from the board: the cards as shown, the move, the drag state. */
+/** What the columns need from the board: the cards as shown, the move, the drag state. */
 export interface BoardView {
 	columns: BoardColumnData[];
 	readOnly: boolean;
@@ -22,12 +24,12 @@ export interface BoardView {
 	/** Props that make an element the drop target of EXACTLY `status`. */
 	zone: (status: string) => ZoneProps;
 	move: (id: string, status: string) => void;
-	/** A group style drawn on EVERY column instead of the column's own `groupStyle` (the A/B preview); null or absent = as configured. */
-	groupStyleOverride?: GroupStyle | null;
 	/** Drawn at the end of the header row of a column (the sort control or badge of the column). */
 	headerControl?: (column: BoardColumnData) => React.ReactNode;
 	/** Drawn under the header of a column (the sort chips). */
 	belowHeader?: (column: BoardColumnData) => React.ReactNode;
+	/** The saved layout of the cards (`config.card`); absent = the usual card. */
+	cardLayout?: CardLayout;
 }
 
 export interface ZoneProps {
@@ -57,7 +59,6 @@ export function MoveMenu({
 	from,
 	columns,
 	disabled,
-	dense = false,
 	onMove,
 }: {
 	card: BoardCardData;
@@ -65,7 +66,6 @@ export function MoveMenu({
 	from: string;
 	columns: BoardColumnData[];
 	disabled: boolean;
-	dense?: boolean;
 	onMove: (id: string, status: string) => void;
 }): React.ReactElement {
 	const [open, setOpen] = useState(false);
@@ -123,7 +123,7 @@ export function MoveMenu({
 				title="Move to..."
 				disabled={disabled || count === 0}
 				onClick={() => setOpen(value => !value)}
-				className={`inline-flex ${dense ? 'h-6 w-6' : CONTROL_SQUARE} cursor-pointer items-center justify-center ${CONTROL_RADIUS} border-0 bg-transparent text-muted hover:bg-muted-bg hover:text-content ${FOCUS_RING} disabled:cursor-not-allowed disabled:opacity-40`}
+				className={`inline-flex ${CONTROL_SQUARE} cursor-pointer items-center justify-center ${CONTROL_RADIUS} border-0 bg-transparent text-muted hover:bg-muted-bg hover:text-content ${FOCUS_RING} disabled:cursor-not-allowed disabled:opacity-40`}
 			>
 				<ArrowRightLeft size={ICON_SIZE} aria-hidden="true" />
 			</button>
@@ -179,26 +179,29 @@ export function MoveMenu({
 	);
 }
 
-/** One card. `dense` is the one-line card of the compact layout. */
+/** One card. */
 export function BoardCard({
 	card,
 	view,
-	dense = false,
-	showMove = true,
-	draggable = true,
 	showStatus = false,
+	layout,
+	preview = false,
 }: {
 	card: BoardCardData;
 	view: BoardView;
-	dense?: boolean;
-	showMove?: boolean;
-	draggable?: boolean;
 	/** Shows the status of the card as a pill: the column holds several statuses. */
 	showStatus?: boolean;
+	/** The layout of the cards (`board.card`); absent = the usual card. */
+	layout?: CardLayout | undefined;
+	/** A card of the preview of the card editor: not draggable, its title is not a link. */
+	preview?: boolean;
 }): React.ReactElement {
+	if (layout !== undefined) {
+		return <LaidOutCard card={card} view={view} showStatus={showStatus} layout={layout} preview={preview} />;
+	}
 	const status = card.status ?? '';
 	const busy = view.busy.has(card.id);
-	const canDrag = draggable && !view.readOnly && !busy;
+	const canDrag = !view.readOnly && !busy;
 	const labels = card.labels ?? [];
 	const tone = toneOf(card.tone);
 	const priorityText = card.priorityText ?? card.priority;
@@ -206,23 +209,16 @@ export function BoardCard({
 		<a
 			href={card.href}
 			title={card.headline}
-			className={`min-w-0 text-content no-underline hover:underline ${dense ? 'min-w-[10rem] flex-1 line-clamp-2 break-words' : 'line-clamp-2 break-words'}`}
+			data-testid="kanban-card-title"
+			className="line-clamp-2 min-w-0 break-words text-content no-underline hover:underline"
 		>
 			{card.headline}
 		</a>
 	);
 	const idText = <span className="shrink-0 font-mono text-xs text-muted">{card.id}</span>;
-	const move =
-		showMove && !view.readOnly ? (
-			<MoveMenu
-				card={card}
-				from={status}
-				columns={view.columns}
-				disabled={busy}
-				dense={dense}
-				onMove={view.move}
-			/>
-		) : null;
+	const move = view.readOnly ? null : (
+		<MoveMenu card={card} from={status} columns={view.columns} disabled={busy} onMove={view.move} />
+	);
 	const statusPill =
 		showStatus && status !== '' ? (
 			<span
@@ -251,45 +247,105 @@ export function BoardCard({
 			draggable={canDrag ? true : undefined}
 			onDragStart={event => (canDrag ? view.startDrag(event, card, status) : event.preventDefault())}
 			onDragEnd={() => view.endDrag()}
-			className={`relative ${CONTROL_RADIUS} border border-border bg-surface pl-3 pr-2 text-sm shadow-sm ${dense ? 'py-1' : 'py-2'} ${canDrag ? 'cursor-grab' : ''} ${busy ? 'opacity-60' : ''}`}
+			className={`relative ${CONTROL_RADIUS} border border-border bg-surface py-2 pl-3 pr-2 text-sm shadow-sm ${canDrag ? 'cursor-grab' : ''} ${busy ? 'opacity-60' : ''}`}
 		>
 			<span aria-hidden="true" className={`absolute inset-y-0 left-0 w-1 rounded-l-md ${TONE_DOT[tone]}`} />
-			{dense ? (
-				<div className={`flex flex-wrap items-center ${GAP_CONTROLS}`}>
+			<div className="flex flex-col gap-2">
+				<div className={`flex items-start justify-between ${GAP_CONTROLS}`}>
 					{idText}
-					{headline}
-					{statusPill}
-					{priority}
-					{card.assignee ? <span className="shrink-0 text-xs text-muted">{card.assignee}</span> : null}
 					{move}
 				</div>
-			) : (
-				<div className="flex flex-col gap-2">
+				{headline}
+				<div className={`flex flex-wrap items-center ${GAP_CONTROLS} text-xs`}>
+					{statusPill}
+					{priority}
+					{card.type ? <span className="text-muted">{card.type}</span> : null}
+					{card.assignee ? <span className="text-muted">{card.assignee}</span> : null}
+				</div>
+				{labels.length > 0 ? (
+					<div className={`flex flex-wrap items-center ${GAP_CONTROLS} text-xs`}>
+						{labels.slice(0, MAX_LABELS).map(label => (
+							<span key={label} className={`${PILL_RADIUS} bg-muted-bg px-2 text-muted`}>
+								{label}
+							</span>
+						))}
+						{labels.length > MAX_LABELS ? (
+							<span className="text-muted">{`+${labels.length - MAX_LABELS}`}</span>
+						) : null}
+					</div>
+				) : null}
+			</div>
+		</article>
+	);
+}
+
+/**
+ * A card drawn with a layout: a top row (the id when it is the first field, and the "Move to" menu), the title clamped to the
+ * number of lines, then the other fields in order. Only the fields of the layout show: no type, no labels.
+ */
+function LaidOutCard({
+	card,
+	view,
+	showStatus,
+	layout,
+	preview,
+}: {
+	card: BoardCardData;
+	view: BoardView;
+	showStatus: boolean;
+	layout: CardLayout;
+	preview: boolean;
+}): React.ReactElement {
+	const status = card.status ?? '';
+	const busy = view.busy.has(card.id);
+	const canDrag = !preview && !view.readOnly && !busy;
+	const tone = toneOf(card.tone);
+	const leadsWithId = layout.fields[0]?.field === 'id';
+	const rest = leadsWithId ? layout.fields.slice(1) : layout.fields;
+	// A field the card has nothing for draws nothing.
+	const nodes = rest
+		.map(entry => ({ entry, rendered: renderCardField(entry, card, showStatus) }))
+		.filter(item => item.rendered !== null);
+	const lead = leadsWithId ? renderCardField(layout.fields[0]!, card, showStatus) : null;
+	const move = view.readOnly ? null : (
+		<MoveMenu card={card} from={status} columns={view.columns} disabled={busy || preview} onMove={view.move} />
+	);
+	return (
+		<article
+			data-testid={preview ? 'kanban-card-preview' : 'kanban-card'}
+			data-card-id={card.id}
+			data-tone={tone}
+			aria-label={`${card.id} ${card.headline}`}
+			aria-busy={busy || undefined}
+			draggable={canDrag ? true : undefined}
+			onDragStart={event => (canDrag ? view.startDrag(event, card, status) : event.preventDefault())}
+			onDragEnd={() => view.endDrag()}
+			className={`relative ${CONTROL_RADIUS} border border-border bg-surface py-2 pl-3 pr-2 text-sm shadow-sm ${canDrag ? 'cursor-grab' : ''} ${busy ? 'opacity-60' : ''}`}
+		>
+			<span aria-hidden="true" className={`absolute inset-y-0 left-0 w-1 rounded-l-md ${TONE_DOT[tone]}`} />
+			<div className="flex flex-col gap-2">
+				{lead !== null || move !== null ? (
 					<div className={`flex items-start justify-between ${GAP_CONTROLS}`}>
-						{idText}
+						{lead ?? <span />}
 						{move}
 					</div>
-					{headline}
-					<div className={`flex flex-wrap items-center ${GAP_CONTROLS} text-xs`}>
-						{statusPill}
-						{priority}
-						{card.type ? <span className="text-muted">{card.type}</span> : null}
-						{card.assignee ? <span className="text-muted">{card.assignee}</span> : null}
+				) : null}
+				<a
+					href={preview ? undefined : card.href}
+					title={card.headline}
+					data-testid="kanban-card-title"
+					className={`${TITLE_CLAMP[layout.titleLines]} min-w-0 break-words text-content no-underline hover:underline`}
+				>
+					{card.headline}
+				</a>
+				{nodes.length > 0 ? (
+					<div data-testid="card-meta" className={`flex flex-wrap items-center ${GAP_CONTROLS} text-xs`}>
+						{nodes.map(item => (
+							<React.Fragment key={item.entry.field}>{item.rendered}</React.Fragment>
+						))}
 					</div>
-					{labels.length > 0 ? (
-						<div className={`flex flex-wrap items-center ${GAP_CONTROLS} text-xs`}>
-							{labels.slice(0, MAX_LABELS).map(label => (
-								<span key={label} className={`${PILL_RADIUS} bg-muted-bg px-2 text-muted`}>
-									{label}
-								</span>
-							))}
-							{labels.length > MAX_LABELS ? (
-								<span className="text-muted">{`+${labels.length - MAX_LABELS}`}</span>
-							) : null}
-						</div>
-					) : null}
-				</div>
-			)}
+				) : null}
+			</div>
 		</article>
 	);
 }
@@ -327,56 +383,54 @@ export function EmptyColumn(): React.ReactElement {
 	return <p className="m-0 px-2 py-3 text-center text-xs text-muted">{EMPTY_COLUMN_TEXT}</p>;
 }
 
-/** Common classes of a drop target, highlighted while a dragged card is over it. */
-export function zoneClass(highlighted: boolean): string {
-	return `${CONTROL_RADIUS} ${highlighted ? 'bg-primary-light ring-2 ring-primary' : ''}`;
-}
-
 /**
- * The drop areas of a column, shown while a card is dragged: one labelled area per status the column holds, stacked, each
- * tinted by the tone of its status. Dropping on an area sets EXACTLY that status. The area of the status the card is in is
- * marked and does not accept the drop.
+ * The drop areas of a column, shown while a card is dragged (Jira): an overlay over the WHOLE body of the column, split in
+ * bands of equal height, one per status the column holds, in the order of the column (a one-status column = one band over
+ * the whole body). Each band is labelled with the status and its tone dot; the cards stay drawn, dimmed, behind the bands.
+ * Dropping on a band sets EXACTLY that status. The band of the status the card is in is marked and takes no drop.
  */
 export function DropAreas({
 	statuses,
 	view,
-	direction = 'column',
 }: {
 	statuses: BoardStatusData[];
 	view: BoardView;
-	direction?: 'column' | 'row';
 }): React.ReactElement | null {
 	const drag = view.dragging;
 	if (drag === null) {
 		return null;
 	}
 	return (
-		<div
-			data-testid="kanban-drop-areas"
-			className={`flex ${direction === 'row' ? 'flex-row flex-wrap' : 'flex-col'} gap-1`}
-		>
+		<div data-testid="kanban-drop-areas" className="absolute inset-0 z-10 flex flex-col gap-1">
 			{statuses.map(status => {
 				const current = status.name === drag.from;
 				const zone = view.zone(status.name);
 				const over = zone['data-drop-target'] === 'true';
+				const tone = toneOf(status.tone);
 				return (
 					<div
 						key={status.name}
 						data-testid={`kanban-drop-area-${status.name}`}
 						data-status={status.name}
+						data-tone={tone}
 						data-current={current ? 'true' : undefined}
 						aria-label={
 							current ? `${status.name} (current status)` : `Drop here to set status ${status.name}`
 						}
 						{...zone}
-						className={`flex min-h-[2.5rem] min-w-0 flex-1 items-center ${GAP_CONTROLS} ${CONTROL_RADIUS} border-2 border-dashed px-2 text-xs font-medium ${current ? 'border-border bg-muted-bg text-muted opacity-70' : over ? 'border-primary bg-primary-light text-content ring-2 ring-primary' : 'border-primary/50 bg-surface text-content'}`}
+						className={`flex min-h-0 min-w-0 flex-1 basis-0 flex-col items-stretch ${CONTROL_RADIUS} border-2 border-dashed p-1 text-xs font-medium ${current ? 'border-border text-muted' : over ? 'border-primary bg-primary-light text-content ring-2 ring-primary' : 'border-primary text-content'}`}
 					>
 						<span
-							aria-hidden="true"
-							className={`inline-block h-2 w-2 shrink-0 ${PILL_RADIUS} ${TONE_DOT[toneOf(status.tone)]}`}
-						/>
-						<span className="min-w-0 flex-1 truncate">{status.name}</span>
-						{current ? <span className="shrink-0 font-normal">current</span> : null}
+							className={`inline-flex min-w-0 max-w-full items-center self-start ${GAP_CONTROLS} ${PILL_RADIUS} border border-border bg-surface px-2 py-0.5 shadow-sm`}
+						>
+							<span
+								aria-hidden="true"
+								data-testid="kanban-band-dot"
+								className={`inline-block h-2 w-2 shrink-0 ${PILL_RADIUS} ${TONE_DOT[tone]}`}
+							/>
+							<span className="min-w-0 truncate">{status.name}</span>
+							{current ? <span className="shrink-0 font-normal">current</span> : null}
+						</span>
 					</div>
 				);
 			})}
@@ -400,235 +454,72 @@ export function groupLabel(group: string, count: number): string {
 	return `${group}, ${count} ${count === 1 ? 'card' : 'cards'}`;
 }
 
-/** The styles that wrap the cards of a group in an element of their own (the others draw a line before the cards). */
-const WRAPPING: ReadonlySet<GroupStyle> = new Set<GroupStyle>(['tint', 'border', 'boxed']);
-
-const CAPTION_CLASS = 'min-w-0 truncate text-xs font-semibold';
-
-/** The line that opens a group in the styles that do not wrap its cards (label, bar, gap, pill, divider). */
+/** The line that opens a group of cards: a thin rule on both sides of the group name, the name in a pill tinted by the group tone. */
 export function GroupSeparator({
 	group,
 	count,
-	style,
 	tone,
-	first,
 }: {
 	group: string;
 	count: number;
-	style: Exclude<GroupStyle, 'tint' | 'border' | 'boxed'>;
 	tone: Tone;
-	/** The first group of the column (no gap above it). */
-	first: boolean;
 }): React.ReactElement {
-	const label = groupLabel(group, count);
-	const common = {
-		role: 'separator',
-		'aria-label': label,
-		'data-testid': 'kanban-group-separator',
-		'data-style': style,
-		'data-tone': tone,
-	} as const;
-	if (style === 'bar') {
-		return (
-			<div
-				{...common}
-				className={`flex w-full items-center ${GAP_CONTROLS} ${CONTROL_RADIUS} px-2 py-1 text-xs font-semibold ${TONE_PILL[tone]}`}
-			>
-				<span className="min-w-0 flex-1 truncate">{group}</span>
-				<span data-testid="kanban-group-count" className="shrink-0 font-medium">
-					{count}
-				</span>
-			</div>
-		);
-	}
-	if (style === 'gap') {
-		return (
-			<div
-				{...common}
-				className={`${first ? '' : 'mt-6'} truncate px-1 text-xs font-semibold text-muted`}
+	return (
+		<div
+			role="separator"
+			aria-label={groupLabel(group, count)}
+			data-testid="kanban-group-separator"
+			data-tone={tone}
+			className={`flex items-center ${GAP_CONTROLS} pt-1`}
+		>
+			<span aria-hidden="true" className="h-px min-w-[1rem] flex-1 bg-border" />
+			<span
+				className={`inline-block min-w-0 max-w-[70%] truncate ${PILL_RADIUS} px-2 text-xs font-medium ${TONE_PILL[tone]}`}
 			>
 				{group}
-			</div>
-		);
-	}
-	if (style === 'pill') {
-		return (
-			<div {...common} className={`flex items-center ${GAP_CONTROLS} pt-1`}>
-				<span aria-hidden="true" className="h-px min-w-[1rem] flex-1 bg-border" />
-				<span
-					className={`inline-block min-w-0 max-w-[70%] truncate ${PILL_RADIUS} px-2 text-xs font-medium ${TONE_PILL[tone]}`}
-				>
-					{group}
-				</span>
-				<span aria-hidden="true" className="h-px min-w-[1rem] flex-1 bg-border" />
-			</div>
-		);
-	}
-	if (style === 'divider') {
-		return <div {...common} title={label} className={`my-1 border-0 border-t-2 border-dashed ${TONE_BORDER[tone]}`} />;
-	}
-	return (
-		<div {...common} className={`flex items-center ${GAP_CONTROLS} pt-1 text-xs font-medium text-muted`}>
-			<span className="min-w-0 max-w-[70%] truncate">{group}</span>
+			</span>
 			<span aria-hidden="true" className="h-px min-w-[1rem] flex-1 bg-border" />
 		</div>
 	);
 }
 
-/** A group whose cards sit inside an element of their own: a tinted panel, a coloured left border, or a bordered box. */
-function GroupBlock({
-	group,
-	count,
-	style,
-	tone,
-	dense,
-	children,
-}: {
-	group: string;
-	count: number;
-	style: 'tint' | 'border' | 'boxed';
-	tone: Tone;
-	dense: boolean;
-	children: React.ReactNode;
-}): React.ReactElement {
-	const label = groupLabel(group, count);
-	const cards = `flex flex-col ${dense ? 'gap-1' : 'gap-2'}`;
-	if (style === 'boxed') {
-		return (
-			<div
-				role="group"
-				aria-label={label}
-				data-testid="kanban-group"
-				data-style="boxed"
-				data-tone={tone}
-				className={`flex flex-col ${CONTROL_RADIUS} border border-border bg-surface`}
-			>
-				<div
-					data-testid="kanban-group-header"
-					className={`flex items-center ${GAP_CONTROLS} border-0 border-b border-solid border-border px-2 py-1 text-xs font-semibold text-content`}
-				>
-					<span aria-hidden="true" className={`inline-block h-2 w-2 shrink-0 ${PILL_RADIUS} ${TONE_DOT[tone]}`} />
-					<span className="min-w-0 flex-1 truncate">{group}</span>
-					<span className="shrink-0 font-medium text-muted">{count}</span>
-				</div>
-				<div className={`${cards} p-1`}>{children}</div>
-			</div>
-		);
-	}
-	const caption = (
-		<div role="separator" aria-label={label} data-testid="kanban-group-separator" data-style={style} data-tone={tone}>
-			<span className={`${CAPTION_CLASS} ${style === 'tint' ? 'text-content' : 'text-muted'}`}>{group}</span>
-		</div>
-	);
-	if (style === 'tint') {
-		return (
-			<div
-				data-testid="kanban-group"
-				data-style="tint"
-				data-tone={tone}
-				className={`${cards} ${CONTROL_RADIUS} ${TONE_BG[tone]} p-2`}
-			>
-				{caption}
-				{children}
-			</div>
-		);
-	}
-	return (
-		<div
-			data-testid="kanban-group"
-			data-style="border"
-			data-tone={tone}
-			className={`${cards} border-0 border-l-4 border-solid ${TONE_BORDER[tone]} pl-2`}
-		>
-			{caption}
-			{children}
-		</div>
-	);
-}
-
 /**
- * The cards of a column, in the order of the answer. When the cards carry a `group` (a sort that forms groups), every run of
- * cards of one group, the first one included, is introduced in the group style of the column (`view.groupStyleOverride` wins):
- * a line before the cards (label, bar, gap, pill, divider) or an element around them (tint, border, boxed). Cards without a
- * group are drawn as they are.
+ * The cards of a column, in the order of the answer; a column sorted by status follows the order of its statuses. When the
+ * cards carry a `group` (a sort that forms groups), every run of cards of one group, the first one included, opens with a
+ * {@link GroupSeparator}. Cards without a group are drawn as they are.
  */
 export function CardList({
 	column,
 	view,
-	dense = false,
-	draggable = true,
 	showStatus = false,
 }: {
 	column: BoardColumnData;
 	view: BoardView;
-	dense?: boolean;
-	draggable?: boolean;
 	showStatus?: boolean;
 }): React.ReactElement {
-	const style: GroupStyle = view.groupStyleOverride ?? column.groupStyle ?? DEFAULT_GROUP_STYLE;
+	const cards = column.sort === 'status' ? cardsInStatusOrder(column) : column.cards;
 	const counts = new Map<string, number>();
-	for (const card of column.cards) {
+	for (const card of cards) {
 		if (card.group !== undefined) {
 			counts.set(card.group, (counts.get(card.group) ?? 0) + 1);
 		}
 	}
-	const drawCard = (card: BoardCardData): React.ReactElement => (
-		<BoardCard
-			key={card.id}
-			card={card}
-			view={view}
-			dense={dense}
-			draggable={draggable}
-			showStatus={showStatus}
-		/>
-	);
-	// Runs of consecutive cards with the same group (undefined = no group).
-	const runs: Array<{ group: string | undefined; cards: BoardCardData[] }> = [];
-	for (const card of column.cards) {
-		const last = runs[runs.length - 1];
-		if (last !== undefined && last.group === card.group) {
-			last.cards.push(card);
-		} else {
-			runs.push({ group: card.group, cards: [card] });
-		}
-	}
 	const items: React.ReactElement[] = [];
-	let groupIndex = 0;
-	runs.forEach((run, index) => {
-		if (run.group === undefined) {
-			items.push(...run.cards.map(drawCard));
-			return;
-		}
-		const count = counts.get(run.group) ?? 0;
-		const tone = groupTone(column, run.group);
-		const key = `group-${index}-${run.group}`;
-		if (WRAPPING.has(style)) {
-			items.push(
-				<GroupBlock
-					key={key}
-					group={run.group}
-					count={count}
-					style={style as 'tint' | 'border' | 'boxed'}
-					tone={tone}
-					dense={dense}
-				>
-					{run.cards.map(drawCard)}
-				</GroupBlock>
-			);
-		} else {
+	let previous: string | undefined;
+	cards.forEach((card, index) => {
+		// A new run of a group (the first card of the column included) opens with its separator.
+		if (card.group !== undefined && (index === 0 || card.group !== previous)) {
 			items.push(
 				<GroupSeparator
-					key={key}
-					group={run.group}
-					count={count}
-					style={style as Exclude<GroupStyle, 'tint' | 'border' | 'boxed'>}
-					tone={tone}
-					first={groupIndex === 0}
-				/>,
-				...run.cards.map(drawCard)
+					key={`group-${index}-${card.group}`}
+					group={card.group}
+					count={counts.get(card.group) ?? 0}
+					tone={groupTone(column, card.group)}
+				/>
 			);
 		}
-		groupIndex += 1;
+		previous = card.group;
+		items.push(<BoardCard key={card.id} card={card} view={view} showStatus={showStatus} layout={view.cardLayout} />);
 	});
 	return <>{items}</>;
 }

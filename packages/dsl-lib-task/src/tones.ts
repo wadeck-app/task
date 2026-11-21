@@ -31,26 +31,6 @@ export const TONE_TEXT: Record<Tone, string> = {
 	purple: 'text-primary',
 };
 
-/** Background only of a tone (a tinted panel holding other content). */
-export const TONE_BG: Record<Tone, string> = {
-	neutral: 'bg-muted-bg',
-	info: 'bg-info-bg',
-	success: 'bg-success-bg',
-	warning: 'bg-warning-bg',
-	danger: 'bg-danger-bg',
-	purple: 'bg-primary-light',
-};
-
-/** Border colour of a tone (the same colours as the dots). */
-export const TONE_BORDER: Record<Tone, string> = {
-	neutral: 'border-muted',
-	info: 'border-info-text',
-	success: 'border-success',
-	warning: 'border-warning-text',
-	danger: 'border-danger',
-	purple: 'border-primary',
-};
-
 /** The six label colours, defined in styles/task.css with light and dark values. */
 export const CHIP_PALETTE: readonly string[] = [
 	'bg-task-chip-1-bg text-task-chip-1',

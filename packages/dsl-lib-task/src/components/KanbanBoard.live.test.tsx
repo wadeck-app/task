@@ -29,7 +29,6 @@ function setup(extra: Partial<React.ComponentProps<typeof KanbanBoard>> = {}) {
 			projectParam="p 1"
 			moveAction="moveCard"
 			apiBase="/api/modules/task"
-			defaultVariant="columns"
 			onAction={vi.fn()}
 			{...extra}
 		/>

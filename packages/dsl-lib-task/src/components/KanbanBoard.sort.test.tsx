@@ -45,7 +45,6 @@ function setup(extra: Partial<React.ComponentProps<typeof KanbanBoard>> = {}) {
 			version="s1"
 			projectParam="p1"
 			apiBase="/api/modules/task"
-			defaultVariant="columns"
 			{...extra}
 		/>
 	);
@@ -63,7 +62,6 @@ function setupVariant(id: string, extra: Partial<React.ComponentProps<typeof Kan
 				version="s1"
 				projectParam="p1"
 				apiBase="/api/modules/task"
-				defaultVariant="columns"
 				{...extra}
 			/>
 		</AbExperiments>
@@ -116,11 +114,10 @@ describe('separators between groups', () => {
 		expect(screen.queryAllByRole('separator')).toHaveLength(0);
 	});
 
-	it('one before the first card of every group, the first one included, named by the group (label by default)', () => {
+	it('one before the first card of every group, the first one included, named by the group', () => {
 		setup();
 		const doing = separators('Doing');
 		expect(doing.map(entry => entry.getAttribute('aria-label'))).toEqual(['ann, 2 cards', 'bob, 1 card']);
-		expect(doing.every(entry => entry.getAttribute('data-style') === 'label')).toBe(true);
 		const order = Array.from(
 			column('Doing').querySelectorAll('[role="separator"], [data-testid="kanban-card"]')
 		).map(element => element.getAttribute('data-card-id') ?? element.getAttribute('aria-label'));
@@ -128,20 +125,6 @@ describe('separators between groups', () => {
 		// a sort that forms no group (newest) and no sort: no separator
 		expect(separators('Closed')).toHaveLength(0);
 		expect(separators('To do')).toHaveLength(0);
-	});
-
-	it('compact and tabs draw them too; swimlanes do not (lanes are groups already)', async () => {
-		const compact = setup({ defaultVariant: 'compact' });
-		expect(separators('Doing')).toHaveLength(2);
-		compact.unmount();
-
-		const tabs = setup({ defaultVariant: 'tabs' });
-		await userEvent.setup().click(screen.getByRole('tab', { name: /Doing/ }));
-		expect(separators('Doing')).toHaveLength(2);
-		tabs.unmount();
-
-		setup({ defaultVariant: 'swimlanes' });
-		expect(screen.queryAllByRole('separator')).toHaveLength(0);
 	});
 });
 

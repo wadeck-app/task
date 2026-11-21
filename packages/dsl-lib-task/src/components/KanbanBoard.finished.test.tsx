@@ -88,7 +88,9 @@ describe('Configure columns: Show finished tasks for', () => {
 		).toEqual(LABELS);
 		const editor = screen.getByTestId('columns-editor');
 		const order = Array.from(
-			editor.querySelectorAll('select[aria-label="Show finished tasks for"], [data-testid="columns-editor-column"]')
+			editor.querySelectorAll(
+				'select[aria-label="Show finished tasks for"], [data-testid="columns-editor-column"]'
+			)
 		);
 		expect(order[0]).toBe(select());
 		const hint = screen.getByText(
@@ -185,7 +187,7 @@ describe('the toolbar control "Finished tasks shown for"', () => {
 			</AbExperiments>
 		);
 		await screen.findByTestId('kanban-column-Doing');
-		expect(screen.getByRole('group', { name: 'Board layout' })).toBeInTheDocument();
+		expect(screen.getByRole('group', { name: 'Board columns: sort control' })).toBeInTheDocument();
 		expect(screen.queryByRole('group', { name: /finished/i })).toBeNull();
 	});
 });
@@ -219,7 +221,9 @@ describe('finishedNote', () => {
 		);
 		expect(screen.getByTestId('kanban-finished-note')).toHaveTextContent('no date');
 		first.unmount();
-		render(<KanbanBoard columns={sortedColumns()} projectParam="p1" apiBase="/api/modules/task" finishedNote={null} />);
+		render(
+			<KanbanBoard columns={sortedColumns()} projectParam="p1" apiBase="/api/modules/task" finishedNote={null} />
+		);
 		expect(screen.queryByTestId('kanban-finished-note')).toBeNull();
 	});
 });

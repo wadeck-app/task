@@ -1,4 +1,5 @@
 import type { Tone } from '../tones.js';
+import type { CardLayout } from './cardLayout.js';
 
 /** One card of the board (a row of `GET /tasks/board`). */
 export interface BoardCardData {
@@ -18,6 +19,12 @@ export interface BoardCardData {
 	/** The tone of the status. */
 	tone?: Tone;
 	updatedAt?: string;
+	/** When the task was created (ISO). */
+	createdAt?: string;
+	/** When the task entered its current status (ISO); absent when unknown. */
+	statusSince?: string;
+	/** The id of the parent task; absent for a task with no parent. */
+	parentId?: string;
 	/** The group of the card in a column whose sort forms groups (status, priority, assignee); absent otherwise. */
 	group?: string;
 }
@@ -51,37 +58,7 @@ export interface BoardColumnData {
 	hiddenCount?: number;
 	/** How the cards of the column are ordered; absent = the usual order, no group. */
 	sort?: ColumnSort;
-	/** How a group of cards is introduced when the sort forms groups; absent = `label`. */
-	groupStyle?: GroupStyle;
 	cards: BoardCardData[];
-}
-
-/** How a group of cards is introduced (`board.columns[i].groupStyle` of config.yml). */
-export type GroupStyle = 'label' | 'bar' | 'gap' | 'tint' | 'border' | 'boxed' | 'pill' | 'divider';
-
-export interface GroupStyleOption {
-	value: GroupStyle;
-	label: string;
-	/** A few words for a tooltip. */
-	hint: string;
-}
-
-/** The styles, the default (`label`) first. */
-export const GROUP_STYLES: readonly GroupStyleOption[] = [
-	{ value: 'label', label: 'Label', hint: 'Thin rule with the group name' },
-	{ value: 'bar', label: 'Bar', hint: 'Tinted bar with name and count' },
-	{ value: 'gap', label: 'Gap', hint: 'Large gap and a small caption' },
-	{ value: 'tint', label: 'Tint', hint: 'Group on a tinted panel' },
-	{ value: 'border', label: 'Border', hint: 'Coloured border along the group' },
-	{ value: 'boxed', label: 'Boxed', hint: 'Group in a bordered box' },
-	{ value: 'pill', label: 'Pill', hint: 'Rule with a centred pill' },
-	{ value: 'divider', label: 'Divider', hint: 'Thick dashed rule, no text' },
-];
-
-export const DEFAULT_GROUP_STYLE: GroupStyle = 'label';
-
-export function isGroupStyle(value: unknown): value is GroupStyle {
-	return typeof value === 'string' && GROUP_STYLES.some(option => option.value === value);
 }
 
 /** A sort of the cards inside a column (`board.columns[i].sort` of config.yml). */
@@ -123,8 +100,6 @@ export interface LayoutColumn {
 	name: string;
 	statuses: string[];
 	sort?: ColumnSort;
-	/** Omitted for `label` (the default). */
-	groupStyle?: GroupStyle;
 }
 
 /** The layout with the sort of the columns named in `names` (every column when null) set to `choice`; '' removes it. */
@@ -169,32 +144,14 @@ export interface BoardLayoutData {
 	allStatuses: BoardStatusData[];
 	/** Absent = every finished task is shown. */
 	finishedFor?: FinishedFor;
+	/** The layout of the cards (`config.card`); absent = the usual card. */
+	card?: CardLayout;
 }
 
 /** The body of PUT /board/config: the columns, and `finishedFor` unless there is no limit. */
 export interface BoardConfigBody {
 	columns: LayoutColumn[];
 	finishedFor?: FinishedFor;
-}
-
-export const VARIANTS = ['columns', 'swimlanes', 'compact', 'rails', 'tabs'] as const;
-export type KanbanVariant = (typeof VARIANTS)[number];
-
-export const VARIANT_LABELS: Record<KanbanVariant, string> = {
-	columns: 'Columns',
-	swimlanes: 'Swimlanes',
-	compact: 'Compact',
-	rails: 'Rails',
-	tabs: 'Tabs',
-};
-
-export function isVariant(value: unknown): value is KanbanVariant {
-	return typeof value === 'string' && (VARIANTS as readonly string[]).includes(value);
-}
-
-/** The message for a variant name that does not exist: names the valid ones. */
-export function unknownVariantText(value: unknown, where: string): string {
-	return `KanbanBoard: ${where} "${String(value)}" is not a known variant. Valid variants: ${VARIANTS.join(', ')}.`;
 }
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -238,11 +195,11 @@ export function normalizeColumns(raw: unknown): BoardColumnData[] {
 					typeof card['status'] === 'string' && card['status'] !== '' ? card['status'] : statuses[0]!.name,
 			} as BoardCardData;
 		});
-		const { sort, groupStyle, ...rest } = column;
+		// A legacy `groupStyle` key (D24: one group style) is dropped.
+		const { sort, groupStyle: _legacy, ...rest } = column;
 		return {
 			...rest,
 			...(isColumnSort(sort) ? { sort } : {}),
-			...(isGroupStyle(groupStyle) ? { groupStyle } : {}),
 			key,
 			label: typeof column['label'] === 'string' && column['label'] !== '' ? column['label'] : key,
 			statuses,
@@ -316,43 +273,20 @@ export function statusesOf(columns: BoardColumnData[]): BoardStatusData[] {
 	return columns.flatMap(column => column.statuses);
 }
 
-/** Priority names in the usual order; others follow in order of appearance; no priority comes last. */
-const KNOWN_PRIORITY_ORDER = ['urgent', 'high', 'medium', 'low'];
-export const NO_PRIORITY = 'none';
-
-export interface Lane {
-	key: string;
-	label: string;
-}
-
-/** The priority rows of the swimlanes: only priorities some card has. */
-export function lanesOf(columns: BoardColumnData[]): Lane[] {
-	const seen = new Map<string, string>();
-	let withoutPriority = false;
-	for (const column of columns) {
-		for (const card of column.cards) {
-			if (card.priority === undefined || card.priority === '') {
-				withoutPriority = true;
-			} else if (!seen.has(card.priority)) {
-				seen.set(card.priority, card.priorityText ?? card.priority);
-			}
-		}
-	}
-	const keys = [...seen.keys()];
-	const rank = (key: string): number => {
-		const index = KNOWN_PRIORITY_ORDER.indexOf(key.toLowerCase());
-		return index === -1 ? KNOWN_PRIORITY_ORDER.length : index;
+/**
+ * The cards of a column sorted by status, in the order of `column.statuses` (the order of the config IS the order on the
+ * board), whatever the order of the answer or of a card just moved in. Stable inside a status; a status the column does not
+ * list goes last.
+ */
+export function cardsInStatusOrder(column: BoardColumnData): BoardCardData[] {
+	const rank = (card: BoardCardData): number => {
+		const index = column.statuses.findIndex(status => status.name === (card.group ?? card.status));
+		return index === -1 ? column.statuses.length : index;
 	};
-	// Stable: equal ranks keep their order of appearance.
-	const ordered = keys
-		.map((key, order) => ({ key, order }))
-		.sort((a, b) => rank(a.key) - rank(b.key) || a.order - b.order)
-		.map(entry => ({ key: entry.key, label: seen.get(entry.key)! }));
-	return withoutPriority ? [...ordered, { key: NO_PRIORITY, label: 'No priority' }] : ordered;
-}
-
-export function laneKeyOf(card: BoardCardData): string {
-	return card.priority === undefined || card.priority === '' ? NO_PRIORITY : card.priority;
+	return column.cards
+		.map((card, index) => ({ card, index }))
+		.sort((a, b) => rank(a.card) - rank(b.card) || a.index - b.index)
+		.map(entry => entry.card);
 }
 
 /** Whether nothing is on the board (and nothing is hidden by a cap). */

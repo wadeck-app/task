@@ -3,7 +3,7 @@ import * as path from 'node:path';
 
 import { ConfigSchemaError, loadRegistry, setParent } from '@wadeck-app/project-sdk';
 
-import { BoardConfigError, clearBoardColumns, saveBoardColumns } from './boardConfig.js';
+import { BoardConfigError, clearBoardCard, clearBoardColumns, saveBoardCard, saveBoardColumns } from './boardConfig.js';
 import { describeError } from './describeError.js';
 import { loadTaskConfig } from './projectConfig.js';
 import { ownConfigFile, registryStorage } from './storage.js';
@@ -117,7 +117,7 @@ describe('board key: errors name the FILE and the key and carry a fix', () => {
 
 	it('an unknown key under board', async () => {
 		const { error, file } = await bad('board:\n  columns:\n    - name: A\n      statuses: [backlog]\n  lanes: 3\n');
-		expect(error.message).toBe(`${file}: board.lanes: unknown key (only "columns" and "finishedFor" are allowed).`);
+		expect(error.message).toBe(`${file}: board.lanes: unknown key (only "columns", "finishedFor" and "card" are allowed).`);
 	});
 
 	it('columns missing, not a list or empty', async () => {
@@ -300,44 +300,112 @@ describe('board finishedFor (optional, decision D23)', () => {
 	});
 });
 
-describe('board column groupStyle (optional, decision D23)', () => {
-	const STYLES = ['label', 'bar', 'gap', 'tint', 'border', 'boxed', 'pill', 'divider'];
-	const withStyle = (style: string): string =>
-		`${STATUSES}board:
-  columns:
-    - name: Doing
-      statuses: [in-progress, done]
-      sort: status
-      groupStyle: ${style}
-`;
+describe('board card layout (board.card, decision D24)', () => {
+	const yml = (card: string): string =>
+		`${STATUSES}board:\n  columns:\n    - name: A\n      statuses: [backlog, done]\n  card:\n${card}`;
 
-	it.each(STYLES)('reads groupStyle: %s as written', async style => {
+	it('reads the fields in the order written, with their styles, and the number of title lines', async () => {
 		const storage = await single();
-		write(ownConfigFile(storage), withStyle(style));
-		expect(load(storage).board?.columns[0]).toEqual({
-			name: 'Doing',
-			statuses: ['in-progress', 'done'],
-			sort: 'status',
-			groupStyle: style,
+		write(
+			ownConfigFile(storage),
+			yml('    titleLines: 3\n    fields:\n      - field: assignee\n        style: initials\n      - field: priority\n        style: dot\n      - field: id\n')
+		);
+		expect(load(storage).board?.card).toEqual({
+			titleLines: 3,
+			fields: [{ field: 'assignee', style: 'initials' }, { field: 'priority', style: 'dot' }, { field: 'id' }],
 		});
 	});
 
-	it('an unknown style names the column, the key and the eight valid styles', async () => {
+	it('no card key: none (today\'s card)', async () => {
+		const storage = await single();
+		write(ownConfigFile(storage), `${STATUSES}board:\n  columns:\n    - name: A\n      statuses: [backlog]\n`);
+		expect(load(storage).board).toEqual({ columns: [{ name: 'A', statuses: ['backlog'] }] });
+	});
+
+	it('an empty fields list is valid: a card with only its title', async () => {
+		const storage = await single();
+		write(ownConfigFile(storage), yml('    fields: []\n'));
+		expect(load(storage).board?.card).toEqual({ fields: [] });
+	});
+
+	it.each([
+		['    titleLines: 4\n', 'board.card.titleLines', 'titleLines must be 1, 2 or 3'],
+		['    wat: 1\n', 'board.card.wat', 'unknown key'],
+		['    fields: [labels]\n', 'board.card.fields[0]', 'must be a mapping'],
+		['    fields:\n      - field: labels\n', 'board.card.fields[0].field', '"labels" is not a card field. Valid fields: id, priority, assignee, status, created, statusSince, parent.'],
+		['    fields:\n      - field: id\n      - field: id\n', 'board.card.fields[1].field', '"id" is already listed'],
+		['    fields:\n      - field: priority\n        style: sparkle\n', 'board.card.fields[0].style', '"sparkle" is not a style of priority. Valid styles: pill, text, dot.'],
+		['    fields:\n      - field: id\n        style: pill\n', 'board.card.fields[0].style', 'id has no style'],
+	])('a mistake is refused naming the key: %#', async (card, key, expected) => {
+		const storage = await single();
+		const file = ownConfigFile(storage);
+		write(file, yml(card));
+		const error = failure(storage);
+		expect(error.message).toContain(`${file}: ${key}:`);
+		expect(error.message).toContain(expected);
+	});
+
+	it('saveBoardCard writes only the card and keeps the columns, the sort and the window; clearBoardCard removes it', async () => {
+		const storage = await single();
+		write(ownConfigFile(storage), `${STATUSES}board:\n  finishedFor: 2d\n  columns:\n    - name: A\n      statuses: [backlog, done]\n      sort: status\n`);
+		saveBoardCard({ storage, config: load(storage) }, { titleLines: 1, fields: [{ field: 'id' }] });
+		expect(load(storage).board).toEqual({
+			finishedFor: '2d',
+			columns: [{ name: 'A', statuses: ['backlog', 'done'], sort: 'status' }],
+			card: { titleLines: 1, fields: [{ field: 'id' }] },
+		});
+		clearBoardCard({ storage, config: load(storage) });
+		expect(load(storage).board).toEqual({
+			finishedFor: '2d',
+			columns: [{ name: 'A', statuses: ['backlog', 'done'], sort: 'status' }],
+		});
+	});
+
+	it('saveBoardCard on a project with no board key creates the default layout (one column per status) with the card', async () => {
+		const storage = await single();
+		write(ownConfigFile(storage), STATUSES);
+		saveBoardCard({ storage, config: load(storage) }, { fields: [] });
+		expect(load(storage).board).toEqual({
+			columns: [
+				{ name: 'backlog', statuses: ['backlog'] },
+				{ name: 'in-progress', statuses: ['in-progress'] },
+				{ name: 'done', statuses: ['done'] },
+			],
+			card: { fields: [] },
+		});
+	});
+
+	it('saveBoardColumns keeps the card it does not know about', async () => {
+		const storage = await single();
+		write(ownConfigFile(storage), yml('    titleLines: 1\n'));
+		saveBoardColumns({ storage, config: load(storage) }, [{ name: 'B', statuses: ['backlog'] }]);
+		expect(load(storage).board).toEqual({ columns: [{ name: 'B', statuses: ['backlog'] }], card: { titleLines: 1 } });
+	});
+});
+
+describe('legacy groupStyle (decision D24: only the pill group style is left)', () => {
+	const STYLES = ['label', 'bar', 'gap', 'tint', 'border', 'boxed', 'pill', 'divider'];
+	const withStyle = (style: string): string =>
+		`${STATUSES}board:\n  columns:\n    - name: Doing\n      statuses: [in-progress, done]\n      sort: status\n      groupStyle: ${style}\n`;
+
+	it.each(STYLES)('a groupStyle: %s written by an earlier version is accepted and ignored: the board still loads', async style => {
+		const storage = await single();
+		write(ownConfigFile(storage), withStyle(style));
+		expect(load(storage).board?.columns[0]).toEqual({ name: 'Doing', statuses: ['in-progress', 'done'], sort: 'status' });
+	});
+
+	it('a value that was never a style is still an error naming the key', async () => {
 		const storage = await single();
 		const file = ownConfigFile(storage);
 		write(file, withStyle('neon'));
-		const error = failure(storage);
-		expect(error.message).toBe(
-			`${file}: board.columns[0].groupStyle: "neon" is not a group style of column "Doing". Valid styles: ${STYLES.join(', ')}.`
-		);
+		expect(failure(storage).message).toContain(`${file}: board.columns[0].groupStyle: "neon"`);
 	});
 
-	it('saveBoardColumns keeps the style', async () => {
+	it('saveBoardColumns never writes it back, even when the caller still sends it', async () => {
 		const storage = await single();
 		write(ownConfigFile(storage), STATUSES);
-		const columns = [{ name: 'Open', statuses: ['backlog'], sort: 'assignee', groupStyle: 'tint' }];
-		saveBoardColumns({ storage, config: load(storage) }, columns);
-		expect(load(storage).board).toEqual({ columns });
+		saveBoardColumns({ storage, config: load(storage) }, [{ name: 'Open', statuses: ['backlog'], sort: 'assignee', groupStyle: 'tint' }]);
+		expect(load(storage).board).toEqual({ columns: [{ name: 'Open', statuses: ['backlog'], sort: 'assignee' }] });
 	});
 });
 

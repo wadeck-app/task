@@ -199,25 +199,55 @@ describe('the sort travels with the layout', () => {
 		expect(refused.body['error']).toContain('Valid sorts: status, priority, assignee, oldest, newest');
 	});
 
-	it('PUT /board/config saves a groupStyle; the column and config.columns echo it; an unknown style is a 400 naming the valid ones', async () => {
-		const { project } = await seeded('status');
-		const columns = [
-			{ name: 'Doing', statuses: ['integrating', 'in-progress'], sort: 'status', groupStyle: 'tint' },
-			{ name: 'Rest', statuses: ['backlog', 'done'] },
-		];
+	it('the statuses of a column are in the ORDER of the config, whatever the order of the project statuses, for the cards, the groups and the answer', async () => {
+		// project order: backlog, integrating, in-progress, done. The column lists in-progress BEFORE integrating.
+		h = setup();
+		const yml = `${STATUSES_YML}board:\n  columns:\n    - name: Doing\n      statuses: [in-progress, integrating]\n      sort: status\n    - name: Rest\n      statuses: [backlog, done]\n`;
+		const project = await h.world.createProject('alpha', { configYml: yml });
+		const a = await create(project, 'A integrating', 'integrating');
+		const b = await create(project, 'B in progress', 'in-progress');
 
-		const saved = await h.call('PUT /board/config', { query: { project }, body: { columns } });
+		const column = await doing(project);
+
+		expect(column.cards.map(card => [card.id, card.group])).toEqual([
+			[b, 'in-progress'],
+			[a, 'integrating'],
+		]);
+		const answer = await h.call('GET /tasks/board', { query: { project } });
+		const full = (answer.body['columns'] as Array<{ name: string; statuses: Array<{ name: string }> }>).find(col => col.name === 'Doing')!;
+		expect(full.statuses.map(status => status.name)).toEqual(['in-progress', 'integrating']);
+		expect((answer.body['config'] as { columns: Array<{ statuses: string[] }> }).columns[0]!.statuses).toEqual(['in-progress', 'integrating']);
+	});
+
+	it('PUT /board/config keeps the order of the statuses it is given, and the next board follows it', async () => {
+		const { project } = await seeded('status');
+
+		const saved = await h.call('PUT /board/config', {
+			query: { project },
+			body: {
+				columns: [
+					{ name: 'Doing', statuses: ['in-progress', 'integrating'], sort: 'status' },
+					{ name: 'Rest', statuses: ['done', 'backlog'] },
+				],
+			},
+		});
 
 		expect(saved.status).toBe(200);
-		const column = (saved.body['columns'] as Array<Column & { groupStyle?: string }>).find(col => col.name === 'Doing')!;
-		expect(column.groupStyle).toBe('tint');
-		expect(saved.body['config']).toMatchObject({ columns });
-		const refused = await h.call('PUT /board/config', {
-			query: { project },
-			body: { columns: [{ name: 'Doing', statuses: ['in-progress'], groupStyle: 'neon' }] },
-		});
-		expect(refused.status).toBe(400);
-		expect(refused.body['error']).toContain('Valid styles: label, bar, gap, tint, border, boxed, pill, divider');
+		const columns = saved.body['columns'] as Array<{ name: string; statuses: Array<{ name: string }> }>;
+		expect(columns[0]!.statuses.map(status => status.name)).toEqual(['in-progress', 'integrating']);
+		expect(columns[1]!.statuses.map(status => status.name)).toEqual(['done', 'backlog']);
+		expect(await h.call('GET /tasks/board', { query: { project } }).then(answer => (answer.body['config'] as { columns: Array<{ statuses: string[] }> }).columns[1]!.statuses)).toEqual(['done', 'backlog']);
+	});
+
+	it('a legacy groupStyle in the config is ignored: the answer carries none and a PUT drops it', async () => {
+		h = setup();
+		const yml = `${STATUSES_YML}board:\n  columns:\n    - name: Doing\n      statuses: [integrating, in-progress]\n      sort: status\n      groupStyle: tint\n    - name: Rest\n      statuses: [backlog, done]\n`;
+		const project = await h.world.createProject('alpha', { configYml: yml });
+
+		const answer = await h.call('GET /tasks/board', { query: { project } });
+
+		expect(answer.status).toBe(200);
+		expect(JSON.stringify(answer.body)).not.toContain('groupStyle');
 	});
 
 	it('the board version changes when only the sort changes', async () => {

@@ -10,4 +10,3 @@ $if: $route.project
 items:
     - $type: task:KanbanBoard
       projectParam: $route.project
-      defaultVariant: columns

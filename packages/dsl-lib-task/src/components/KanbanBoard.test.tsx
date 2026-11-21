@@ -2,7 +2,6 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sampleColumns } from '../kanban/boardFixtures.js';
-import { VARIANTS } from '../kanban/boardModel.js';
 import { resetReported } from '../reportOnce.js';
 import { deferred, FakeEventSource, jsonResponse, stubFetch } from '../testHelpers.js';
 import { KanbanBoard } from './KanbanBoard.js';
@@ -45,7 +44,6 @@ function setup(extra: Partial<React.ComponentProps<typeof KanbanBoard>> = {}) {
 			projectParam="p1"
 			moveAction="moveCard"
 			apiBase="/api/modules/task"
-			defaultVariant="columns"
 			onAction={onAction}
 			{...extra}
 		/>
@@ -56,18 +54,20 @@ const column = (status: string): HTMLElement => screen.getByTestId(`kanban-colum
 const cardIn = (status: string, id: string): HTMLElement | null =>
 	column(status).querySelector(`[data-card-id="${id}"]`);
 
-function dragTo(id: string, target: HTMLElement): void {
+/** Drags card `id` and drops it on the drop band of `status` (the bands exist only while a card is dragged). */
+function dragTo(id: string, status: string): void {
 	const card = document.querySelector(`[data-card-id="${id}"]`) as HTMLElement;
 	const dataTransfer = { setData: vi.fn(), getData: vi.fn(() => id), effectAllowed: '', dropEffect: '' };
 	fireEvent.dragStart(card, { dataTransfer });
+	const target = screen.queryByTestId(`kanban-drop-area-${status}`) ?? column(status);
 	fireEvent.dragOver(target, { dataTransfer });
 	fireEvent.drop(target, { dataTransfer });
 	fireEvent.dragEnd(card, { dataTransfer });
 }
 
-describe('KanbanBoard variants', () => {
-	it.each(['columns', 'swimlanes', 'compact'] as const)('%s draws every card with id and headline', variant => {
-		setup({ defaultVariant: variant });
+describe('KanbanBoard columns', () => {
+	it('draws every card with id and headline', () => {
+		setup();
 
 		for (const id of ALL_IDS) {
 			expect(document.querySelector(`[data-card-id="${id}"]`)).not.toBeNull();
@@ -77,7 +77,6 @@ describe('KanbanBoard variants', () => {
 			'/modules/task/tasks/p/p1/aaa11111'
 		);
 		expect(screen.getByText('aaa11111')).toBeInTheDocument();
-		expect(screen.getByTestId('kanban-board')).toHaveAttribute('data-variant', variant);
 	});
 
 	it('columns: a header per status with label and count, hidden cards named, terminal tinted by its tone', () => {
@@ -114,76 +113,6 @@ describe('KanbanBoard variants', () => {
 		expect(within(column('doing')).getByText('No tasks')).toBeInTheDocument();
 	});
 
-	it('swimlanes: one row per effective priority, urgent first, tasks without one last, cells hold the cards', () => {
-		setup({ defaultVariant: 'swimlanes' });
-
-		const lanes = screen.getAllByTestId('kanban-lane').map(lane => lane.getAttribute('data-lane'));
-		expect(lanes).toEqual(['urgent', 'high', 'medium', 'none']);
-		const cell = screen.getByTestId('kanban-cell-urgent-doing');
-		expect(cell.querySelector('[data-card-id="ccc33333"]')).not.toBeNull();
-		expect(screen.getByTestId('kanban-cell-none-todo').querySelector('[data-card-id="bbb22222"]')).not.toBeNull();
-	});
-
-	it('rails: one column open, the others are rails with their count, and a rail opens its column', async () => {
-		setup({ defaultVariant: 'rails' });
-
-		expect(cardIn('todo', 'aaa11111')).not.toBeNull();
-		expect(document.querySelector('[data-card-id="ccc33333"]')).toBeNull();
-		const rail = screen.getByRole('button', { name: /Show In progress \(1\)/ });
-
-		await userEvent.setup().click(rail);
-
-		expect(cardIn('doing', 'ccc33333')).not.toBeNull();
-		expect(document.querySelector('[data-card-id="aaa11111"]')).toBeNull();
-		expect(screen.getByRole('button', { name: /Show To do \(2\)/ })).toBeInTheDocument();
-	});
-
-	it('rails: a collapsed rail opens into a panel with its drop areas while a card is dragged, and the area is the drop target', () => {
-		setup({ defaultVariant: 'rails' });
-		expect(screen.getByTestId('kanban-rail-doing')).toBeInTheDocument();
-
-		const card = document.querySelector('[data-card-id="aaa11111"]') as HTMLElement;
-		const dataTransfer = { setData: vi.fn(), getData: vi.fn(() => 'aaa11111'), effectAllowed: '', dropEffect: '' };
-		fireEvent.dragStart(card, { dataTransfer });
-		expect(screen.queryByTestId('kanban-rail-doing')).toBeNull();
-		const area = screen.getByTestId('kanban-drop-area-doing');
-		fireEvent.dragOver(area, { dataTransfer });
-		fireEvent.drop(area, { dataTransfer });
-		fireEvent.dragEnd(card, { dataTransfer });
-
-		expect(onAction).toHaveBeenCalledWith(
-			'moveCard',
-			{ projectParam: 'p1', cardId: 'aaa11111', status: 'doing' },
-			{ body: { status: 'doing' } }
-		);
-	});
-
-	it('tabs: status tabs with counts, the list of the selected one, no drag', async () => {
-		setup({ defaultVariant: 'tabs' });
-
-		const tabs = screen.getAllByRole('tab');
-		expect(tabs.map(t => t.textContent)).toEqual(['To do2', 'In progress1', 'Done5']);
-		expect(screen.getByRole('tab', { name: /To do/ })).toHaveAttribute('aria-selected', 'true');
-		expect(screen.getByRole('tabpanel')).toContainElement(document.querySelector('[data-card-id="aaa11111"]'));
-		expect(document.querySelector('[draggable="true"]')).toBeNull();
-
-		await userEvent.setup().click(screen.getByRole('tab', { name: /In progress/ }));
-
-		expect(document.querySelector('[data-card-id="ccc33333"]')).not.toBeNull();
-		expect(document.querySelector('[data-card-id="aaa11111"]')).toBeNull();
-	});
-
-	it('an unknown variant is a message naming the valid ones, not a board', () => {
-		setup({ defaultVariant: 'kanbanish' as never });
-
-		const alert = screen.getByRole('alert');
-		expect(alert).toHaveTextContent('kanbanish');
-		for (const name of VARIANTS) {
-			expect(alert).toHaveTextContent(name);
-		}
-		expect(screen.queryByTestId('kanban-board')).toBeNull();
-	});
-
 	it('whole board empty shows emptyText', () => {
 		const columns = sampleColumns().map(c => ({ ...c, cards: [], count: 0, hiddenCount: 0 }));
 		setup({ columns, emptyText: 'Nothing here yet' });
@@ -203,7 +132,7 @@ describe('KanbanBoard drag and drop', () => {
 	it('dropping a card on another column runs the action with the card id, project and status', async () => {
 		setup({ params: { extra: 'x' } });
 
-		dragTo('aaa11111', column('doing'));
+		dragTo('aaa11111', 'doing');
 
 		expect(onAction).toHaveBeenCalledTimes(1);
 		expect(onAction).toHaveBeenCalledWith(
@@ -214,22 +143,34 @@ describe('KanbanBoard drag and drop', () => {
 		await waitFor(() => expect(cardIn('doing', 'aaa11111')).not.toBeNull());
 	});
 
-	it('cards are draggable, and a column that can take the dragged card is highlighted', () => {
+	it('cards are draggable, and the band of a status that can take the dragged card is highlighted', () => {
 		setup();
 		const card = document.querySelector('[data-card-id="aaa11111"]') as HTMLElement;
 		expect(card).toHaveAttribute('draggable', 'true');
 
 		fireEvent.dragStart(card, { dataTransfer: { setData: vi.fn(), effectAllowed: '' } });
-		fireEvent.dragOver(column('doing'), { dataTransfer: { dropEffect: '' } });
+		fireEvent.dragOver(screen.getByTestId('kanban-drop-area-doing'), { dataTransfer: { dropEffect: '' } });
 
-		expect(column('doing')).toHaveAttribute('data-drop-target', 'true');
-		expect(column('todo')).not.toHaveAttribute('data-drop-target', 'true');
+		expect(screen.getByTestId('kanban-drop-area-doing')).toHaveAttribute('data-drop-target', 'true');
+		expect(screen.getByTestId('kanban-drop-area-todo')).not.toHaveAttribute('data-drop-target', 'true');
+	});
+
+	it('the column itself is no drop target: only its bands are', () => {
+		setup();
+		const card = document.querySelector('[data-card-id="aaa11111"]') as HTMLElement;
+		const dataTransfer = { setData: vi.fn(), getData: vi.fn(() => 'aaa11111'), effectAllowed: '', dropEffect: '' };
+		fireEvent.dragStart(card, { dataTransfer });
+		fireEvent.dragOver(column('doing'), { dataTransfer });
+		fireEvent.drop(column('doing'), { dataTransfer });
+
+		expect(column('doing')).not.toHaveAttribute('data-drop-target');
+		expect(onAction).not.toHaveBeenCalled();
 	});
 
 	it('dropping on its own column does nothing', () => {
 		setup();
 
-		dragTo('aaa11111', column('todo'));
+		dragTo('aaa11111', 'todo');
 
 		expect(onAction).not.toHaveBeenCalled();
 	});
@@ -239,7 +180,7 @@ describe('KanbanBoard drag and drop', () => {
 
 		expect(document.querySelector('[draggable="true"]')).toBeNull();
 		expect(screen.queryByRole('button', { name: /Move/ })).toBeNull();
-		dragTo('aaa11111', column('doing'));
+		dragTo('aaa11111', 'doing');
 		expect(onAction).not.toHaveBeenCalled();
 	});
 });
@@ -284,20 +225,6 @@ describe('KanbanBoard keyboard move', () => {
 		expect(button).toHaveFocus();
 		expect(button).toHaveAttribute('aria-expanded', 'false');
 	});
-
-	it.each(VARIANTS)('%s: a card can be moved with the menu', async variant => {
-		const user = userEvent.setup();
-		setup({ defaultVariant: variant });
-
-		await user.click(screen.getByRole('button', { name: 'Move aaa11111 to another status' }));
-		await user.click(screen.getByRole('menuitem', { name: 'done' }));
-
-		expect(onAction).toHaveBeenCalledWith(
-			'moveCard',
-			{ projectParam: 'p1', cardId: 'aaa11111', status: 'done' },
-			{ body: { status: 'done' } }
-		);
-	});
 });
 
 describe('KanbanBoard optimistic moves', () => {
@@ -306,7 +233,7 @@ describe('KanbanBoard optimistic moves', () => {
 		onAction.mockReturnValue(pending.promise);
 		setup();
 
-		dragTo('aaa11111', column('doing'));
+		dragTo('aaa11111', 'doing');
 
 		await waitFor(() => expect(cardIn('doing', 'aaa11111')).not.toBeNull());
 		expect(cardIn('todo', 'aaa11111')).toBeNull();
@@ -320,7 +247,7 @@ describe('KanbanBoard optimistic moves', () => {
 		onAction.mockResolvedValue({ error: 'status done needs a resolution', status: 409 });
 		setup();
 
-		dragTo('aaa11111', column('done'));
+		dragTo('aaa11111', 'done');
 
 		await waitFor(() => expect(cardIn('todo', 'aaa11111')).not.toBeNull());
 		expect(cardIn('done', 'aaa11111')).toBeNull();
@@ -336,7 +263,7 @@ describe('KanbanBoard optimistic moves', () => {
 		onAction.mockRejectedValue(new Error('Unexpected end of JSON input'));
 		setup();
 
-		dragTo('aaa11111', column('done'));
+		dragTo('aaa11111', 'done');
 
 		expect(await screen.findByTestId('kanban-move-failed')).toHaveTextContent(/failed/i);
 		expect(screen.queryByRole('alert')).toBeNull();
@@ -347,7 +274,7 @@ describe('KanbanBoard optimistic moves', () => {
 		const { calls } = stubFetch(() => jsonResponse(boardWithMove('aaa11111', 'doing', 'v2')));
 		setup();
 
-		dragTo('aaa11111', column('doing'));
+		dragTo('aaa11111', 'doing');
 
 		await waitFor(() => expect(calls).toHaveLength(1));
 		expect(calls[0]!.url.pathname).toBe('/api/modules/task/tasks/board');
@@ -360,7 +287,7 @@ describe('KanbanBoard optimistic moves', () => {
 		stubFetch(() => jsonResponse({ columns: sampleColumns(), version: 'v2' }));
 		setup();
 
-		dragTo('aaa11111', column('doing'));
+		dragTo('aaa11111', 'doing');
 
 		await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
 		expect(screen.getByRole('alert')).toHaveTextContent('aaa11111');
@@ -373,9 +300,9 @@ describe('KanbanBoard optimistic moves', () => {
 		onAction.mockReturnValue(pending.promise);
 		setup();
 
-		dragTo('aaa11111', column('doing'));
+		dragTo('aaa11111', 'doing');
 		await waitFor(() => expect(cardIn('doing', 'aaa11111')).not.toBeNull());
-		dragTo('aaa11111', column('done'));
+		dragTo('aaa11111', 'done');
 
 		expect(onAction).toHaveBeenCalledTimes(1);
 		await act(async () => pending.resolve(undefined));

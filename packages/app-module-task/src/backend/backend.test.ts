@@ -26,6 +26,8 @@ const EXPECTED_ROUTES = [
 	'GET /tasks/board',
 	'PUT /board/config',
 	'DELETE /board/config',
+	'PUT /board/card',
+	'DELETE /board/card',
 	'GET /projects',
 	'GET /summary',
 	'GET /health',

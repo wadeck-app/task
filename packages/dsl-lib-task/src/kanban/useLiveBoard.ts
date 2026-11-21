@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getJson, isAbort, problemText } from '../apiFetch.js';
-import { isColumnSort, isFinishedFor, isGroupStyle, normalizeColumns } from './boardModel.js';
+import { parseCardLayout } from './cardLayout.js';
+import { isColumnSort, isFinishedFor, normalizeColumns } from './boardModel.js';
 import type { BoardColumnData, BoardLayoutData, BoardStatusData } from './boardModel.js';
 
 export type LiveState = 'live' | 'reconnecting' | 'polling';
@@ -121,12 +122,11 @@ export function layoutOf(raw: Record<string, unknown>): BoardLayoutData | null {
 			return null;
 		}
 		const sort = column['sort'];
-		const groupStyle = column['groupStyle'];
+		// Only the known keys are kept: a legacy `groupStyle` (D24) is dropped here, so no PUT sends it back.
 		columns.push({
 			name: column['name'],
 			statuses: column['statuses'].filter((x): x is string => typeof x === 'string'),
 			...(isColumnSort(sort) ? { sort } : {}),
-			...(isGroupStyle(groupStyle) && groupStyle !== 'label' ? { groupStyle } : {}),
 		});
 	}
 	const allStatuses: BoardStatusData[] = [];
@@ -138,11 +138,13 @@ export function layoutOf(raw: Record<string, unknown>): BoardLayoutData | null {
 	}
 	// An unknown window is dropped: the controls then say "No limit", which is what a missing key means.
 	const finishedFor = config['finishedFor'];
+	const card = parseCardLayout(config['card']);
 	return {
 		isDefault: config['isDefault'] === true,
 		columns,
 		allStatuses,
 		...(isFinishedFor(finishedFor) ? { finishedFor } : {}),
+		...(card === undefined ? {} : { card }),
 	};
 }
 
@@ -160,7 +162,12 @@ export function useLiveBoard(options: LiveBoardOptions): LiveBoard {
 	const [shown, setShown] = useState<Shown>({
 		columns: options.columns ?? [],
 		version: options.version,
-		meta: { ...NO_META, layout: options.layout ?? null, hiddenNote: text(options.hiddenNote), finishedNote: text(options.finishedNote) },
+		meta: {
+			...NO_META,
+			layout: options.layout ?? null,
+			hiddenNote: text(options.hiddenNote),
+			finishedNote: text(options.finishedNote),
+		},
 	});
 	const [loading, setLoading] = useState(options.columns === undefined && options.projectParam !== '');
 	const [loaded, setLoaded] = useState(options.columns !== undefined);

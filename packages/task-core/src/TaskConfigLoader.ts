@@ -41,7 +41,7 @@ export interface TaskGlobalConfig {
 export const BOARD_COLUMN_SORTS = ['status', 'priority', 'assignee', 'oldest', 'newest'] as const;
 export type BoardColumnSort = (typeof BOARD_COLUMN_SORTS)[number];
 
-/** How the groups of a sorted column are drawn (decision D23); absent = `label`, the thin rule with the group name. */
+/** The group styles an earlier version offered (D23). Only the pill is left (D24): a config that still holds one is accepted and the value ignored. */
 export const BOARD_GROUP_STYLES = ['label', 'bar', 'gap', 'tint', 'border', 'boxed', 'pill', 'divider'] as const;
 export type BoardGroupStyle = (typeof BOARD_GROUP_STYLES)[number];
 
@@ -50,17 +50,45 @@ export interface BoardColumnConfig {
 	name: string;
 	statuses: string[];
 	sort?: BoardColumnSort;
-	groupStyle?: BoardGroupStyle;
 }
 
 /** How long a task stays on the board after it entered a terminal status; absent = always shown. */
 export const BOARD_FINISHED_FOR = ['1h', '4h', '8h', '1d', '2d', '7d', '14d'] as const;
 export type BoardFinishedFor = (typeof BOARD_FINISHED_FOR)[number];
 
+/**
+ * What a card of the board can show (decision D24): only what the index carries, so the board stays one read. `style` is how it is
+ * drawn: `BOARD_CARD_FIELDS[field]` lists the valid ones (the first is the default); a field with none has no `style`.
+ */
+export const BOARD_CARD_FIELDS = {
+	id: [],
+	priority: ['pill', 'text', 'dot'],
+	assignee: ['text', 'initials'],
+	status: ['auto', 'pill', 'dot'],
+	created: [],
+	statusSince: [],
+	parent: [],
+} as const satisfies Record<string, readonly string[]>;
+export type BoardCardField = keyof typeof BOARD_CARD_FIELDS;
+export const BOARD_CARD_TITLE_LINES = [1, 2, 3] as const;
+
+/** One field of a card, in the order shown; `style` absent = the default style of the field. */
+export interface BoardCardFieldConfig {
+	field: BoardCardField;
+	style?: string;
+}
+
+/** The layout of the cards of the board; absent = today's card (id, title, priority, assignee, status in a grouped column). */
+export interface BoardCardConfig {
+	titleLines?: 1 | 2 | 3;
+	fields?: BoardCardFieldConfig[];
+}
+
 /** The `board` key of config.yml (validated by task-service). Absent = one column per status. */
 export interface BoardConfig {
 	columns: BoardColumnConfig[];
 	finishedFor?: BoardFinishedFor;
+	card?: BoardCardConfig;
 }
 
 export interface TaskProjectConfig {

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Settings2 } from 'lucide-react';
+import { LayoutTemplate, Settings2 } from 'lucide-react';
 import { useAbExperiments, useAbTest, useRegisterAbTests } from '@wadeck-app/dsl-ui';
 import { deleteJson, isAbort, postJson, problemText, putJson } from '../apiFetch.js';
 import { getApiBase } from '../runtime-config.js';
@@ -23,14 +23,10 @@ import type { BoardView, ZoneProps } from '../kanban/BoardParts.js';
 import {
 	applyMoves,
 	FINISHED_FOR_OPTIONS,
-	GROUP_STYLES,
 	isBoardEmpty,
 	isFinishedFor,
-	isVariant,
 	normalizeColumns,
 	statusOfCard,
-	unknownVariantText,
-	VARIANT_LABELS,
 	withSort,
 } from '../kanban/boardModel.js';
 import type {
@@ -40,8 +36,6 @@ import type {
 	BoardLayoutData,
 	BoardStatusData,
 	FinishedChoice,
-	GroupStyle,
-	KanbanVariant,
 	LayoutColumn,
 	PendingMove,
 	SortChoice,
@@ -58,10 +52,12 @@ import {
 } from '../kanban/sortControls.js';
 import type { SortVariant, ToolbarSortValue } from '../kanban/sortControls.js';
 import { ColumnsEditor, FINISHED_HINT } from '../kanban/ColumnsEditor.js';
-import { useLiveBoard } from '../kanban/useLiveBoard.js';
-import { ColumnsLayout, CompactLayout, RailsLayout, SwimlanesLayout, TabsLayout } from '../kanban/variants.js';
+import { CardLayoutEditor } from '../kanban/CardLayoutEditor.js';
+import type { CardBody } from '../kanban/cardLayout.js';
+import { layoutOf, useLiveBoard } from '../kanban/useLiveBoard.js';
+import { BoardColumns } from '../kanban/BoardColumns.js';
 
-export type { BoardCardData, BoardColumnData, KanbanVariant } from '../kanban/boardModel.js';
+export type { BoardCardData, BoardColumnData } from '../kanban/boardModel.js';
 
 export interface KanbanBoardProps {
 	/**
@@ -70,8 +66,8 @@ export interface KanbanBoardProps {
 	 * module's page, which has none of our sources): the board starts empty, says "Loading board" and fetches `boardPath`.
 	 */
 	columns?: BoardColumnData[];
-	/** The stored layout of the board (`config` of the answer: `{ isDefault, columns: [{ name, statuses, sort? }] }`), for the "Configure columns" editor and the sort controls of the board. Only the first value matters; absent in contribution mode (the fetched answer has it). */
-	config?: { isDefault?: boolean; columns?: LayoutColumn[]; finishedFor?: string };
+	/** The stored layout of the board (`config` of the answer: `{ isDefault, columns: [{ name, statuses, sort? }], card? }`), for the "Configure columns" and "Configure cards" editors, the sort controls and the layout of the cards. Only the first value matters; absent in contribution mode (the fetched answer has it). */
+	config?: { isDefault?: boolean; columns?: LayoutColumn[]; finishedFor?: string; card?: unknown };
 	/** Every status of the project (`allStatuses` of the answer), for the editor. */
 	allStatuses?: BoardStatusData[];
 	/** The version of that answer; a `version` event with another value makes the board fetch again. */
@@ -92,15 +88,12 @@ export interface KanbanBoardProps {
 	boardPath?: string;
 	/** Route that stores the column layout (PUT to save, DELETE to reset), below `apiBase` (default `/board/config`). */
 	configPath?: string;
+	/** Route that stores the layout of the cards (PUT to save, DELETE to reset), below `apiBase` (default `/board/card`). */
+	cardPath?: string;
 	/** Route of the event stream (SSE, event `version`), below `apiBase` (default `/board/events`). */
 	eventsPath?: string;
 	/** Where the module API is mounted; defaults to the one `configureTaskUi` set. */
 	apiBase?: string;
-	/**
-	 * `columns`, `swimlanes`, `compact`, `rails` or `tabs`. The layout, and the initial option of the "Board layout" row of the
-	 * shell's A/B dock (app-core `--ab-tests`); the dock choice wins only while that dock is on.
-	 */
-	defaultVariant?: KanbanVariant;
 	/** The `hiddenNote` of the first answer (tasks in statuses no column lists, which the board does not show); then the board follows the server. */
 	hiddenNote?: string | null;
 	/** The `finishedNote` of the first answer (finished tasks hidden by `finishedFor`, or shown for want of a date); then the board follows the server. */
@@ -130,38 +123,11 @@ export interface KanbanBoardProps {
 
 const CONFIGURE_BUTTON_CLASS = `inline-flex ${CONTROL_H} items-center ${GAP_CONTROLS} ${CONTROL_RADIUS} ${CONTROL_BORDER} bg-surface px-3 ${PILL_TEXT} text-content hover:bg-muted-bg ${FOCUS_RING}`;
 
-const LAYOUTS = {
-	columns: ColumnsLayout,
-	swimlanes: SwimlanesLayout,
-	compact: CompactLayout,
-	rails: RailsLayout,
-	tabs: TabsLayout,
-} as const;
 const DEFAULT_SORT_VARIANT: SortVariant = 'header-menu';
-/** The option of the group style row that keeps the style of each column. */
-const AS_CONFIGURED = 'config';
-type GroupStyleChoice = GroupStyle | typeof AS_CONFIGURED;
 /** A control of the board that saves the board setting. */
 type BoardSave = 'sort' | 'finished';
 const DEFAULT_POLL_SECONDS = 20;
 
-const LAYOUT_HINTS: Record<KanbanVariant, string> = {
-	columns: 'Columns side by side',
-	swimlanes: 'Rows by priority',
-	compact: 'One-line cards',
-	rails: 'One open column, the others as rails',
-	tabs: 'One column per tab, no drag',
-};
-const LAYOUT_OPTIONS = Object.fromEntries(
-	(Object.keys(VARIANT_LABELS) as KanbanVariant[]).map(variant => [
-		variant,
-		{ label: VARIANT_LABELS[variant], hint: LAYOUT_HINTS[variant] },
-	])
-) as Record<KanbanVariant, { label: string; hint: string }>;
-const GROUP_STYLE_OPTIONS = {
-	[AS_CONFIGURED]: { label: 'As configured', hint: "Each column's own group style" },
-	...Object.fromEntries(GROUP_STYLES.map(style => [style.value, { label: style.label, hint: style.hint }])),
-} as Record<GroupStyleChoice, { label: string; hint: string }>;
 const LIVE_TEXT = { live: 'Live', reconnecting: 'Reconnecting', polling: 'Polling' } as const;
 const LIVE_TONE = { live: 'success', reconnecting: 'warning', polling: 'info' } as const;
 const LIVE_HINT = {
@@ -170,20 +136,12 @@ const LIVE_HINT = {
 	polling: 'No live connection: the board is fetched again every few seconds',
 } as const;
 
-/** The layout the page gave with its first columns, or null when it gave none. */
+/** The layout the page gave with its first columns (unknown keys dropped, like a fetched answer), or null when it gave none. */
 function initialLayout(
 	config: KanbanBoardProps['config'],
 	allStatuses: KanbanBoardProps['allStatuses']
 ): BoardLayoutData | null {
-	if (config === undefined || !Array.isArray(config.columns) || !Array.isArray(allStatuses)) {
-		return null;
-	}
-	return {
-		isDefault: config.isDefault === true,
-		columns: config.columns,
-		allStatuses,
-		...(isFinishedFor(config.finishedFor) ? { finishedFor: config.finishedFor } : {}),
-	};
+	return config === undefined ? null : layoutOf({ config, allStatuses });
 }
 
 /** The sort the columns of the layout share, or MIXED_SORT when they differ. */
@@ -215,16 +173,16 @@ async function moveByRequest(
 /**
  * A kanban board of the tasks of one project: a column per status, cards moved by drag and drop or with a "Move to"
  * menu on every card, kept up to date by itself (an event stream tells when the board changed, a poll takes over when
- * there is none). Five layouts (`columns`, `swimlanes`, `compact`, `rails`, `tabs`); a move shows at once and goes back,
- * with the reason, when the server refuses it. A column can be sorted (status, priority, assignee, oldest, newest); a sort
- * that forms groups introduces each group in the column's group style (label, bar, gap, tint, border, boxed, pill, divider).
+ * there is none). While a card is dragged, every column is covered by one drop band per status (equal heights, in the
+ * column's order); a move shows at once and goes back, with the reason, when the server refuses it. A column can be sorted
+ * (status, priority, assignee, oldest, newest); a sort that forms groups opens each group with a rule and a pill.
  * Statuses no column lists are not on the board; one muted line (`hiddenNote`) counts their tasks.
  *
  * IN SCOPE: showing and moving the cards of one project, the sort of each column. OUT OF SCOPE: editing a task (a card
  * links to its page), changing the statuses, placing a card by hand inside a column.
  *
  * @registryCategory composite
- * @registryTags kanban board columns status drag cards swimlanes
+ * @registryTags kanban board columns status drag cards
  */
 export function KanbanBoard({
 	columns,
@@ -238,8 +196,8 @@ export function KanbanBoard({
 	boardPath = '/tasks/board',
 	eventsPath = '/board/events',
 	configPath = '/board/config',
+	cardPath = '/board/card',
 	apiBase,
-	defaultVariant = 'columns',
 	hiddenNote,
 	finishedNote,
 	readOnly,
@@ -278,27 +236,15 @@ export function KanbanBoard({
 	});
 	const mover = useAction('KanbanBoard', moveAction, onAction, actionPending);
 
-	// The A/B rows of the board, in the shell's shared dock. Their choice applies only while that dock is on: without it
-	// (no host, or the shell runs without --ab-tests) the board shows the initial options, whatever a past session stored.
-	const layoutTest = useAbTest<KanbanVariant>({
-		id: 'board-layout',
-		label: 'Board layout',
-		options: LAYOUT_OPTIONS,
-		initial: isVariant(defaultVariant) ? defaultVariant : 'columns',
-	});
+	// The A/B row of the board, in the shell's shared dock. Its choice applies only while that dock is on: without it (no
+	// host, or the shell runs without --ab-tests) the board shows the initial option, whatever a past session stored.
 	const sortTest = useAbTest<SortVariant>({
 		id: 'board-sort-control',
 		label: 'Board columns: sort control',
 		options: SORT_VARIANT_OPTIONS,
 		initial: DEFAULT_SORT_VARIANT,
 	});
-	const groupTest = useAbTest<GroupStyleChoice>({
-		id: 'board-group-style',
-		label: 'Board columns: group style',
-		options: GROUP_STYLE_OPTIONS,
-		initial: AS_CONFIGURED,
-	});
-	useRegisterAbTests([layoutTest, sortTest, groupTest]);
+	useRegisterAbTests([sortTest]);
 	const abOn = useAbExperiments()?.enabled === true;
 
 	const [moves, setMoves] = useState<Record<string, PendingMove>>({});
@@ -309,6 +255,10 @@ export function KanbanBoard({
 	const [configuring, setConfiguring] = useState(false);
 	const [configBusy, setConfigBusy] = useState(false);
 	const [configError, setConfigError] = useState<string | null>(null);
+	// The editor of the layout of the cards: open, saving, and the last refused save or reset.
+	const [cardsOpen, setCardsOpen] = useState(false);
+	const [cardBusy, setCardBusy] = useState(false);
+	const [cardError, setCardError] = useState<string | null>(null);
 	// The last refused save of a sort picked on the board (the editor shows its own error).
 	const [sortError, setSortError] = useState<string | null>(null);
 	// Which control of the board is saving (its own pending text), null when none is.
@@ -439,7 +389,7 @@ export function KanbanBoard({
 					return;
 				}
 				event.preventDefault();
-				// An area inside a column is the target of its status alone: the column does not take the drag over.
+				// A band is the target of its status alone.
 				event.stopPropagation();
 				if (event.dataTransfer) {
 					event.dataTransfer.dropEffect = 'move';
@@ -521,13 +471,46 @@ export function KanbanBoard({
 		}
 	};
 
-	if (!isVariant(defaultVariant)) {
-		return <Notice variant="danger" label={unknownVariantText(defaultVariant, 'defaultVariant')} />;
-	}
-	const variant: string = abOn ? layoutTest.value : defaultVariant;
-	if (!isVariant(variant)) {
-		return <Notice variant="danger" label={unknownVariantText(variant, 'variant')} />;
-	}
+	/** Stores the layout of the cards (PUT, the whole board comes back through the refetch) and closes the editor. */
+	const saveCard = async (body: CardBody): Promise<void> => {
+		setCardBusy(true);
+		setCardError(null);
+		try {
+			await putJson(cardPath, { project: projectParam }, body, { apiBase: apiBase ?? getApiBase() });
+			await live.refetch(true);
+			if (mounted.current) {
+				setCardsOpen(false);
+			}
+		} catch (error) {
+			if (mounted.current) {
+				setCardError(`The cards were not saved: ${problemText(error)}`);
+			}
+		} finally {
+			if (mounted.current) {
+				setCardBusy(false);
+			}
+		}
+	};
+
+	const resetCard = async (): Promise<void> => {
+		setCardBusy(true);
+		setCardError(null);
+		try {
+			await deleteJson(cardPath, { project: projectParam }, { apiBase: apiBase ?? getApiBase() });
+			await live.refetch(true);
+			if (mounted.current) {
+				setCardsOpen(false);
+			}
+		} catch (error) {
+			if (mounted.current) {
+				setCardError(`The cards were not reset: ${problemText(error)}`);
+			}
+		} finally {
+			if (mounted.current) {
+				setCardBusy(false);
+			}
+		}
+	};
 
 	const notes: React.ReactElement[] = [];
 	const addNote = (key: string, label: string | null, tone: 'danger' | 'warning'): void => {
@@ -581,15 +564,15 @@ export function KanbanBoard({
 			: `KanbanBoard: pollSeconds must be a positive number (got ${String(pollSeconds)}); using ${DEFAULT_POLL_SECONDS}.`,
 		'warning'
 	);
-	addNote('sort', configuring ? null : sortError, 'danger');
+	// An editor of the board (columns or cards) is open: the controls of the board itself are not offered.
+	const editing = configuring || cardsOpen;
+	addNote('sort', editing ? null : sortError, 'danger');
 
 	// The layout is the project's config: offered where the cards can be moved, once the answer carried it.
 	const canConfigure = !isReadOnly && hasProject && live.loaded && live.meta.layout !== null;
 
-	// The sort control and the group style: the dock picks them while it is on, else the initial options.
+	// The sort control: the dock picks it while it is on, else the initial option.
 	const sortVariant: SortVariant = abOn ? sortTest.value : DEFAULT_SORT_VARIANT;
-	const groupChoice: GroupStyleChoice = abOn ? groupTest.value : AS_CONFIGURED;
-	view.groupStyleOverride = groupChoice === AS_CONFIGURED ? null : groupChoice;
 	const layoutColumns = live.meta.layout?.columns ?? [];
 	const finishedFor = live.meta.layout?.finishedFor;
 	// Any save started from the board disables every board control until it ends.
@@ -611,7 +594,7 @@ export function KanbanBoard({
 		void saveLayout({ columns: layoutColumns, ...(choice === 'none' ? {} : { finishedFor: choice }) }, 'finished');
 	};
 	const finishedControl =
-		canConfigure && !configuring ? (
+		canConfigure && !editing ? (
 			<label className={`inline-flex items-center ${GAP_CONTROLS} ${PILL_TEXT} text-content`}>
 				<span className="text-xs text-muted">Finished</span>
 				<select
@@ -662,7 +645,7 @@ export function KanbanBoard({
 		view.headerControl = column => <SortBadge sort={column.sort} />;
 	}
 	const toolbarSort =
-		place === 'toolbar' && canConfigure && !configuring && layoutColumns.length > 0 ? (
+		place === 'toolbar' && canConfigure && !editing && layoutColumns.length > 0 ? (
 			sortVariant === 'toolbar-select' ? (
 				<ToolbarSortSelect
 					value={sharedSort(layoutColumns)}
@@ -677,8 +660,9 @@ export function KanbanBoard({
 				/>
 			)
 		) : null;
+	// The saved layout of the cards: every card of the board is drawn with it (absent = the usual card).
+	view.cardLayout = live.meta.layout?.card;
 	const empty = isBoardEmpty(shown);
-	const Layout = LAYOUTS[variant];
 	const emptyMessage = emptyText ?? live.meta.emptyText ?? 'No tasks yet';
 	let content: React.ReactElement | null;
 	if (live.loading) {
@@ -704,20 +688,29 @@ export function KanbanBoard({
 				}}
 			/>
 		);
+	} else if (cardsOpen && live.meta.layout !== null) {
+		content = (
+			<CardLayoutEditor
+				layout={live.meta.layout.card}
+				columns={live.columns}
+				busy={cardBusy}
+				error={cardError}
+				onSave={body => void saveCard(body)}
+				onReset={() => void resetCard()}
+				onCancel={() => {
+					setCardsOpen(false);
+					setCardError(null);
+				}}
+			/>
+		);
 	} else if (empty) {
 		content = <p className="m-0 text-sm text-muted">{emptyMessage}</p>;
 	} else {
-		content = <Layout view={view} />;
+		content = <BoardColumns view={view} />;
 	}
 
 	return (
-		<div
-			data-testid="kanban-board"
-			data-variant={variant}
-			data-sort-variant={sortVariant}
-			data-group-style={groupChoice}
-			className="flex min-w-0 flex-col gap-4"
-		>
+		<div data-testid="kanban-board" data-sort-variant={sortVariant} className="flex min-w-0 flex-col gap-4">
 			<div className="flex flex-wrap items-center justify-between gap-2">
 				{live.meta.tasksHref !== null ? (
 					<a href={live.meta.tasksHref} data-testid="kanban-open-tasks" className={CONFIGURE_BUTTON_CLASS}>
@@ -739,7 +732,21 @@ export function KanbanBoard({
 							Saving the finished tasks setting
 						</span>
 					) : null}
-					{canConfigure && !configuring ? (
+					{canConfigure && !editing ? (
+						<button
+							type="button"
+							data-testid="kanban-configure-cards"
+							onClick={() => {
+								setCardError(null);
+								setCardsOpen(true);
+							}}
+							className={CONFIGURE_BUTTON_CLASS}
+						>
+							<LayoutTemplate size={ICON_SIZE} aria-hidden="true" />
+							Configure cards
+						</button>
+					) : null}
+					{canConfigure && !editing ? (
 						<button
 							type="button"
 							data-testid="kanban-configure"

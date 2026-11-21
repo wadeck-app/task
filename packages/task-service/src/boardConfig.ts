@@ -7,8 +7,21 @@
 //         statuses: [in-progress, review]
 // Scope local (the project's own layer). A status in no column is allowed: the board shows it in an implicit "Unmapped" column.
 import { ConfigSchemaError, writeFileAtomic } from '@wadeck-app/project-sdk';
-import { BOARD_COLUMN_SORTS, BOARD_FINISHED_FOR, BOARD_GROUP_STYLES, TaskConfigLoader } from '@wadeck-app/task-core';
-import type { BoardColumnConfig, BoardColumnSort, BoardFinishedFor, BoardGroupStyle, BoardConfig, TaskResolvedConfig } from '@wadeck-app/task-core';
+import {
+	BOARD_CARD_FIELDS,
+	BOARD_CARD_TITLE_LINES,
+	BOARD_COLUMN_SORTS,
+	BOARD_FINISHED_FOR,
+	BOARD_GROUP_STYLES,
+	TaskConfigLoader,
+} from '@wadeck-app/task-core';
+import type {
+	BoardCardConfig,
+	BoardCardField,
+	BoardColumnConfig,
+	BoardColumnSort,
+	BoardFinishedFor,
+	BoardGroupStyle, BoardConfig, TaskResolvedConfig } from '@wadeck-app/task-core';
 
 import { ownConfigFile } from './storage.js';
 import type { TaskStorage } from './storage.js';
@@ -51,8 +64,8 @@ export function validateBoard(file: string, value: unknown, statuses?: readonly 
 		return fail('board', `must be a mapping with a "columns" list, found ${found(value)}.`);
 	}
 	for (const key of Object.keys(value)) {
-		if (key !== 'columns' && key !== 'finishedFor') {
-			fail(`board.${key}`, 'unknown key (only "columns" and "finishedFor" are allowed).');
+		if (key !== 'columns' && key !== 'finishedFor' && key !== 'card') {
+			fail(`board.${key}`, 'unknown key (only "columns", "finishedFor" and "card" are allowed).');
 		}
 	}
 	const raw = value['columns'];
@@ -150,14 +163,14 @@ export function validateBoard(file: string, value: unknown, statuses?: readonly 
 			return fail(
 				`${at}.groupStyle`,
 				`${found(groupStyle)} is not a group style of column "${name}". Valid styles: ${BOARD_GROUP_STYLES.join(', ')}.`,
-				'Write groupStyle: label (or another valid style), or remove the key for the usual thin rule.'
+				'The group style is no longer configurable (only the pill is left): remove the groupStyle key.'
 			);
 		}
+		// A legacy groupStyle (D23) was checked above and is NOT kept: only the pill group style exists now (D24).
 		columns.push({
 			name,
 			statuses: names,
 			...(sort === undefined ? {} : { sort: sort as BoardColumnSort }),
-			...(groupStyle === undefined ? {} : { groupStyle: groupStyle as BoardGroupStyle }),
 		});
 	});
 	const finishedFor = value['finishedFor'];
@@ -168,7 +181,66 @@ export function validateBoard(file: string, value: unknown, statuses?: readonly 
 			'Write finishedFor: 7d (or another valid value), or remove the key to show every finished task.'
 		);
 	}
-	return { columns, ...(finishedFor === undefined ? {} : { finishedFor: finishedFor as BoardFinishedFor }) };
+	const card = value['card'] === undefined ? undefined : validateCard(fail, value['card']);
+	return {
+		columns,
+		...(finishedFor === undefined ? {} : { finishedFor: finishedFor as BoardFinishedFor }),
+		...(card === undefined ? {} : { card }),
+	};
+}
+
+const CARD_HINT =
+	'Write card: { titleLines: 2, fields: [{ field: priority, style: pill }, { field: assignee }] } (fields: ' +
+	Object.keys(BOARD_CARD_FIELDS).join(', ') +
+	'), or remove the card key for the usual card.';
+
+/** Checks `board.card`: the shape, the fields (known, once each), their styles, the number of title lines. */
+function validateCard(fail: (path: string, problem: string, hint?: string) => never, value: unknown): BoardCardConfig {
+	if (!isObject(value)) return fail('board.card', `must be a mapping, found ${found(value)}.`, CARD_HINT);
+	for (const key of Object.keys(value)) {
+		if (key !== 'titleLines' && key !== 'fields') {
+			fail(`board.card.${key}`, 'unknown key (a card has "titleLines" and "fields").', CARD_HINT);
+		}
+	}
+	const card: BoardCardConfig = {};
+	const lines = value['titleLines'];
+	if (lines !== undefined) {
+		if (!BOARD_CARD_TITLE_LINES.includes(lines as 1 | 2 | 3)) {
+			fail('board.card.titleLines', `titleLines must be 1, 2 or 3, found ${found(lines)}.`, CARD_HINT);
+		}
+		card.titleLines = lines as 1 | 2 | 3;
+	}
+	const fields = value['fields'];
+	if (fields !== undefined) {
+		if (!Array.isArray(fields)) return fail('board.card.fields', `must be a list, found ${found(fields)}.`, CARD_HINT);
+		const seen = new Set<string>();
+		card.fields = fields.map((entry: unknown, index) => {
+			const at = `board.card.fields[${index}]`;
+			if (!isObject(entry)) return fail(at, `must be a mapping with a field, found ${found(entry)}.`, CARD_HINT);
+			for (const key of Object.keys(entry)) {
+				if (key !== 'field' && key !== 'style') fail(`${at}.${key}`, 'unknown key (a card field has "field" and "style").', CARD_HINT);
+			}
+			const name = entry['field'];
+			if (typeof name !== 'string' || !(name in BOARD_CARD_FIELDS)) {
+				return fail(
+					`${at}.field`,
+					`${found(name)} is not a card field. Valid fields: ${Object.keys(BOARD_CARD_FIELDS).join(', ')}.`,
+					CARD_HINT
+				);
+			}
+			if (seen.has(name)) return fail(`${at}.field`, `${found(name)} is already listed. A field is shown once.`, CARD_HINT);
+			seen.add(name);
+			const style = entry['style'];
+			if (style === undefined) return { field: name as BoardCardField };
+			const valid: readonly string[] = BOARD_CARD_FIELDS[name as BoardCardField];
+			if (valid.length === 0) return fail(`${at}.style`, `${name} has no style: remove the style key.`, CARD_HINT);
+			if (typeof style !== 'string' || !valid.includes(style)) {
+				return fail(`${at}.style`, `${found(style)} is not a style of ${name}. Valid styles: ${valid.join(', ')}.`, CARD_HINT);
+			}
+			return { field: name as BoardCardField, style };
+		});
+	}
+	return card;
 }
 
 /** Statuses of the project that no column lists (the board shows them in its implicit "Unmapped" column). */
@@ -179,7 +251,7 @@ export function unmappedStatuses(config: Pick<TaskResolvedConfig, 'statuses' | '
 
 interface BoardContext {
 	storage: TaskStorage;
-	config: Pick<TaskResolvedConfig, 'statuses'>;
+	config: Pick<TaskResolvedConfig, 'statuses' | 'board'>;
 }
 
 /**
@@ -188,9 +260,40 @@ interface BoardContext {
  */
 export function saveBoardColumns(ctx: BoardContext, columns: unknown, finishedFor?: unknown): BoardConfig {
 	const file = ownConfigFile(ctx.storage);
-	const board = validateBoard(file, { columns, ...(finishedFor === undefined ? {} : { finishedFor }) }, ctx.config.statuses);
+	// The card layout has its own route: saving the columns keeps it.
+	const card = ctx.config.board?.card;
+	const board = validateBoard(
+		file,
+		{ columns, ...(finishedFor === undefined ? {} : { finishedFor }), ...(card === undefined ? {} : { card }) },
+		ctx.config.statuses
+	);
 	TaskConfigLoader.updateSection(file, 'board', board, writeFileAtomic, { createDirectory: true });
 	return board;
+}
+
+/**
+ * Writes the card layout of the board (own layer, atomic, validated like a load) and keeps the columns and the window. A project with
+ * no `board` key gets the default layout (one column per status) with the card.
+ */
+export function saveBoardCard(ctx: BoardContext, card: unknown): BoardConfig {
+	const file = ownConfigFile(ctx.storage);
+	const current = ctx.config.board;
+	const columns = current?.columns ?? ctx.config.statuses.map(status => ({ name: status, statuses: [status] }));
+	const board = validateBoard(
+		file,
+		{ columns, ...(current?.finishedFor === undefined ? {} : { finishedFor: current.finishedFor }), card },
+		ctx.config.statuses
+	);
+	TaskConfigLoader.updateSection(file, 'board', board, writeFileAtomic, { createDirectory: true });
+	return board;
+}
+
+/** Removes the card layout (the usual card again); the columns and the window stay. */
+export function clearBoardCard(ctx: BoardContext): void {
+	const current = ctx.config.board;
+	if (current?.card === undefined) return;
+	const { card: _removed, ...rest } = current;
+	TaskConfigLoader.updateSection(ownConfigFile(ctx.storage), 'board', rest, writeFileAtomic, { createDirectory: false });
 }
 
 /** Removes the `board` key from the own config file (back to one column per status); a file without it is left as it is. */

@@ -98,6 +98,8 @@ const successes: Array<[route: string, request: () => Call]> = [
 	['DELETE /types/:name', () => ({ params: { name: 'bug' } })],
 	['PUT /board/config', () => ({ body: { columns: [{ name: 'All', statuses: ['backlog'] }] } })],
 	['DELETE /board/config', () => ({})],
+	['PUT /board/card', () => ({ body: { fields: [{ field: 'id' }] } })],
+	['DELETE /board/card', () => ({})],
 	['POST /tasks/deletion-plans', () => ({ body: { ids: [b] } })],
 	['DELETE /tasks', () => ({ body: { ids: [b], confirm: true } })],
 ];
@@ -150,6 +152,8 @@ const failures: Array<[label: string, route: string, request: () => Call]> = [
 	['unknown type', 'DELETE /types/:name', () => ({ params: { name: 'nope' } })],
 	['unknown status', 'PUT /board/config', () => ({ body: { columns: [{ name: 'A', statuses: ['nope'] }] } })],
 	['all projects', 'DELETE /board/config', () => ({ query: { allProjects: 'true' } })],
+	['unknown card field', 'PUT /board/card', () => ({ body: { fields: [{ field: 'nope' }] } })],
+	['all projects', 'DELETE /board/card', () => ({ query: { allProjects: 'true' } })],
 	['no body', 'POST /tasks/deletion-plans', () => ({})],
 	['not confirmed', 'DELETE /tasks', () => ({ body: { ids: [b] } })],
 ];

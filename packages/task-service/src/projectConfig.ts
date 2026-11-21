@@ -183,7 +183,10 @@ function readSetup(
 	});
 	checkDefaultPriority(config, layers);
 	// A parent's statuses are not the child's (scope local): only the own layer's board is checked against the merged statuses.
-	if (merged.values['board'] !== undefined) validateBoard(ownName, merged.values['board'], config.statuses);
+	// The validated board replaces the raw one: what the validator drops (a legacy key) never reaches the callers.
+	if (merged.values['board'] !== undefined) {
+		config.board = validateBoard(ownName, merged.values['board'], config.statuses);
+	}
 	return { config, strategy: parseStrategySection(ownName, merged.values['strategy']) };
 }
 

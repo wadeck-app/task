@@ -44,7 +44,6 @@ function setup(extra: Partial<React.ComponentProps<typeof KanbanBoard>> = {}) {
 			projectParam="p1"
 			moveAction="moveCard"
 			apiBase="/api/modules/task"
-			defaultVariant="columns"
 			onAction={onAction}
 			{...extra}
 		/>
@@ -118,40 +117,25 @@ describe('grouped columns', () => {
 		setup({ hiddenNote: null });
 		expect(screen.queryByTestId('kanban-hidden-note')).toBeNull();
 	});
-
-	it('compact and swimlanes also name the status of a card in a grouped column', () => {
-		const first = setup({ defaultVariant: 'compact' });
-		expect(within(column('Doing')).getAllByTestId('kanban-card-status')).toHaveLength(2);
-		first.unmount();
-		setup({ defaultVariant: 'swimlanes' });
-		expect(screen.getAllByTestId('kanban-card-status').length).toBeGreaterThanOrEqual(3);
-	});
-
-	it('tabs: a tab per column with its count, the status pill on the cards of a grouped one, no drag', async () => {
-		setup({ defaultVariant: 'tabs' });
-		const tabs = screen.getAllByRole('tab').map(tab => tab.textContent);
-		expect(tabs).toEqual(['To do1', 'Doing2', 'Closed1']);
-		await userEvent.setup().click(screen.getByRole('tab', { name: /Doing/ }));
-		expect(screen.getAllByTestId('kanban-card-status')).toHaveLength(2);
-		expect(document.querySelector('[draggable="true"]')).toBeNull();
-	});
 });
 
-describe('drop areas', () => {
+describe('drop areas: one band per status over the whole column body', () => {
+	const bands = (key: string): HTMLElement[] =>
+		Array.from(column(key).querySelectorAll<HTMLElement>('[data-testid^="kanban-drop-area-"]')).filter(
+			element => element.getAttribute('data-testid') !== 'kanban-band-dot'
+		);
+	const names = (key: string): string[] => bands(key).map(area => area.getAttribute('data-status') ?? '');
+
 	it('there is none until a card is dragged', () => {
 		setup();
 		expect(screen.queryByTestId('kanban-drop-areas')).toBeNull();
 	});
 
-	it('while a card is dragged every column shows one labelled area per status, in order, with the current one marked', () => {
+	it('while a card is dragged every column shows N bands for its N statuses, in order, the current one marked', () => {
 		setup();
 
 		fireEvent.dragStart(card('ccc33333'), { dataTransfer: dataTransfer('ccc33333') });
 
-		const names = (key: string): string[] =>
-			Array.from(column(key).querySelectorAll('[data-testid^="kanban-drop-area-"]')).map(
-				area => area.getAttribute('data-status') ?? ''
-			);
 		expect(names('To do')).toEqual(['todo']);
 		expect(names('Doing')).toEqual(['doing', 'review']);
 		expect(names('Closed')).toEqual(['done', 'rejected']);
@@ -165,14 +149,109 @@ describe('drop areas', () => {
 		expect(screen.queryByTestId('kanban-drop-areas')).toBeNull();
 	});
 
-	it('dropping on an area sets EXACTLY that status (a status of a grouped column, not the first one)', () => {
+	it('each band is labelled with its status name and the tone dot of the status', () => {
+		setup();
+		fireEvent.dragStart(card('aaa11111'), { dataTransfer: dataTransfer('aaa11111') });
+
+		const review = screen.getByTestId('kanban-drop-area-review');
+		expect(review).toHaveTextContent('review');
+		expect(within(review).getByTestId('kanban-band-dot').className).toMatch(/\bbg-/);
+		expect(review).toHaveAttribute('data-tone', 'warning');
+	});
+
+	it('the bands cover the whole body of the column: an absolute overlay over the cards, the bands of equal height', () => {
+		setup();
+		fireEvent.dragStart(card('aaa11111'), { dataTransfer: dataTransfer('aaa11111') });
+
+		const overlays = within(column('Doing')).getAllByTestId('kanban-drop-areas');
+		expect(overlays).toHaveLength(1);
+		const overlay = overlays[0]!;
+		expect(overlay.className).toMatch(/\babsolute\b/);
+		expect(overlay.className).toMatch(/\binset-0\b/);
+		expect(overlay.className).toMatch(/\bflex-col\b/);
+		// the overlay sits in the body of the column, which also holds the cards
+		const body = within(column('Doing')).getByTestId('kanban-column-body');
+		expect(overlay.parentElement).toBe(body);
+		expect(body.className).toMatch(/\brelative\b/);
+		expect(body.className).toMatch(/\bflex-1\b/);
+		expect(bands('Doing')).toHaveLength(2);
+		for (const band of bands('Doing')) {
+			expect(band.className).toMatch(/\bflex-1\b/);
+			expect(band.className).toMatch(/\bbasis-0\b/);
+		}
+	});
+
+	it('a one-status column has ONE band over its whole body', () => {
+		setup();
+		fireEvent.dragStart(card('ccc33333'), { dataTransfer: dataTransfer('ccc33333') });
+
+		const overlay = within(column('To do')).getByTestId('kanban-drop-areas');
+		expect(overlay.children).toHaveLength(1);
+		expect(overlay.children[0]).toHaveAttribute('data-status', 'todo');
+	});
+
+	it('the cards stay drawn, dimmed, behind the bands', () => {
+		setup();
+		fireEvent.dragStart(card('aaa11111'), { dataTransfer: dataTransfer('aaa11111') });
+
+		const cards = within(column('Doing')).getByTestId('kanban-column-cards');
+		expect(within(cards).getByText('Build it')).toBeInTheDocument();
+		expect(cards.className).toMatch(/\bopacity-\d+\b/);
+		fireEvent.dragEnd(card('aaa11111'), { dataTransfer: dataTransfer('aaa11111') });
+		expect(within(column('Doing')).getByTestId('kanban-column-cards').className).not.toMatch(/\bopacity-\d+\b/);
+	});
+
+	it('while dragging, the columns stretch to the tallest one, so a short or empty column is as tall as the others', () => {
+		setup();
+		const row = column('Doing').parentElement!;
+		expect(row.className).toMatch(/\bitems-start\b/);
+
+		fireEvent.dragStart(card('aaa11111'), { dataTransfer: dataTransfer('aaa11111') });
+
+		expect(row.className).toMatch(/\bitems-stretch\b/);
+		expect(row.className).not.toMatch(/\bitems-start\b/);
+		// a least height too, for a board whose columns are all short
+		expect(within(column('To do')).getByTestId('kanban-column-body').className).toMatch(/\bmin-h-\[/);
+	});
+
+	it('an empty column is droppable on its band', () => {
+		const columns = groupedColumns();
+		columns[2]!.cards = [];
+		columns[2]!.count = 0;
+		setup({ columns });
+		const transfer = dataTransfer('aaa11111');
+
+		fireEvent.dragStart(card('aaa11111'), { dataTransfer: transfer });
+		const band = within(column('Closed')).getByTestId('kanban-drop-area-done');
+		fireEvent.dragOver(band, { dataTransfer: transfer });
+		fireEvent.drop(band, { dataTransfer: transfer });
+
+		expect(onAction).toHaveBeenCalledWith(
+			'moveCard',
+			{ projectParam: 'p1', cardId: 'aaa11111', status: 'done' },
+			{ body: { status: 'done' } }
+		);
+	});
+
+	it('hovering a band highlights it alone', () => {
+		setup();
+		const transfer = dataTransfer('aaa11111');
+		fireEvent.dragStart(card('aaa11111'), { dataTransfer: transfer });
+		const review = screen.getByTestId('kanban-drop-area-review');
+		fireEvent.dragOver(review, { dataTransfer: transfer });
+
+		expect(review).toHaveAttribute('data-drop-target', 'true');
+		expect(review.className).toMatch(/\bring-2\b/);
+		expect(screen.getByTestId('kanban-drop-area-doing')).not.toHaveAttribute('data-drop-target');
+	});
+
+	it('dropping on a band sets EXACTLY that status (a status of a grouped column, not the first one)', () => {
 		setup();
 		const transfer = dataTransfer('aaa11111');
 
 		fireEvent.dragStart(card('aaa11111'), { dataTransfer: transfer });
 		const area = screen.getByTestId('kanban-drop-area-review');
 		fireEvent.dragOver(area, { dataTransfer: transfer });
-		expect(area).toHaveAttribute('data-drop-target', 'true');
 		fireEvent.drop(area, { dataTransfer: transfer });
 
 		expect(onAction).toHaveBeenCalledTimes(1);
@@ -195,40 +274,31 @@ describe('drop areas', () => {
 		);
 	});
 
-	it('dropping on the area of the current status, or on the body of a grouped column, does nothing', () => {
+	it('the band of the current status is inert, and the column outside its bands takes no drop', () => {
 		setup();
 		const transfer = dataTransfer('ccc33333');
 		fireEvent.dragStart(card('ccc33333'), { dataTransfer: transfer });
 
 		fireEvent.dragOver(screen.getByTestId('kanban-drop-area-doing'), { dataTransfer: transfer });
+		expect(screen.getByTestId('kanban-drop-area-doing')).not.toHaveAttribute('data-drop-target');
 		fireEvent.drop(screen.getByTestId('kanban-drop-area-doing'), { dataTransfer: transfer });
-		// the column "Closed" holds two statuses: its body is no target, only its areas
-		fireEvent.dragOver(column('Closed'), { dataTransfer: transfer });
-		fireEvent.drop(column('Closed'), { dataTransfer: transfer });
+		fireEvent.dragOver(column('To do'), { dataTransfer: transfer });
+		fireEvent.drop(column('To do'), { dataTransfer: transfer });
 
 		expect(onAction).not.toHaveBeenCalled();
 	});
 
-	it('a column holding ONE status still takes a drop on its body, and the area inside does not move the card twice', () => {
+	it('a drop on the band of a one-status column moves once', () => {
 		setup();
 		const transfer = dataTransfer('ccc33333');
 		fireEvent.dragStart(card('ccc33333'), { dataTransfer: transfer });
-
-		fireEvent.drop(column('To do'), { dataTransfer: transfer });
+		fireEvent.drop(screen.getByTestId('kanban-drop-area-todo'), { dataTransfer: transfer });
 		expect(onAction).toHaveBeenCalledTimes(1);
 		expect(onAction).toHaveBeenLastCalledWith(
 			'moveCard',
 			{ projectParam: 'p1', cardId: 'ccc33333', status: 'todo' },
 			{ body: { status: 'todo' } }
 		);
-	});
-
-	it('a drop on the area inside a one-status column moves once (the column does not handle it again)', () => {
-		setup();
-		const transfer = dataTransfer('ccc33333');
-		fireEvent.dragStart(card('ccc33333'), { dataTransfer: transfer });
-		fireEvent.drop(screen.getByTestId('kanban-drop-area-todo'), { dataTransfer: transfer });
-		expect(onAction).toHaveBeenCalledTimes(1);
 	});
 
 	it('the moved card is drawn at once in the column of its new status, with its new status', async () => {
@@ -243,31 +313,59 @@ describe('drop areas', () => {
 		expect(pills.map(pill => pill.textContent)).toContain('review');
 	});
 
-	it.each(['compact', 'rails'] as const)('%s shows the areas while dragging', variant => {
-		setup({ defaultVariant: variant });
-		fireEvent.dragStart(card('aaa11111'), { dataTransfer: dataTransfer('aaa11111') });
-		expect(screen.getByTestId('kanban-drop-area-review')).toBeInTheDocument();
-		expect(screen.getByTestId('kanban-drop-area-rejected')).toBeInTheDocument();
-		expect(screen.queryByTestId('kanban-drop-area-parked')).toBeNull();
-	});
-
-	it('swimlanes show the areas under the column headers while dragging, and drop on one moves the card', () => {
-		setup({ defaultVariant: 'swimlanes' });
-		const transfer = dataTransfer('aaa11111');
-		fireEvent.dragStart(card('aaa11111'), { dataTransfer: transfer });
-		fireEvent.drop(screen.getByTestId('kanban-drop-area-review'), { dataTransfer: transfer });
-		expect(onAction).toHaveBeenCalledWith(
-			'moveCard',
-			{ projectParam: 'p1', cardId: 'aaa11111', status: 'review' },
-			{ body: { status: 'review' } }
-		);
-	});
-
-	it('readOnly: no drag, no area', () => {
+	it('readOnly: no drag, no band', () => {
 		setup({ readOnly: true });
 		expect(document.querySelector('[draggable="true"]')).toBeNull();
 		fireEvent.dragStart(card('aaa11111'), { dataTransfer: dataTransfer('aaa11111') });
 		expect(screen.queryByTestId('kanban-drop-areas')).toBeNull();
+	});
+});
+
+describe('the order of the statuses of a column is the order of the config', () => {
+	/** groupedColumns() whose "Doing" lists review BEFORE doing (the project order is doing, review). */
+	function reversed(): ReturnType<typeof groupedColumns> {
+		return groupedColumns().map(entry =>
+			entry.key === 'Doing' ? { ...entry, statuses: [entry.statuses[1]!, entry.statuses[0]!] } : entry
+		);
+	}
+
+	it('the bands follow column.statuses, not the project order', () => {
+		setup({ columns: reversed() });
+		fireEvent.dragStart(card('aaa11111'), { dataTransfer: dataTransfer('aaa11111') });
+		const names = Array.from(column('Doing').querySelectorAll('[data-status]')).map(area =>
+			area.getAttribute('data-status')
+		);
+		expect(names).toEqual(['review', 'doing']);
+	});
+
+	it('the Move to menu lists them in that order too', async () => {
+		const user = userEvent.setup();
+		setup({ columns: reversed() });
+		await user.click(screen.getByRole('button', { name: 'Move aaa11111 to another status' }));
+		expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual([
+			'review',
+			'doing',
+			'done',
+			'rejected',
+		]);
+	});
+
+	it('a column sorted by status draws its groups in that order, whatever the order of the cards in the answer', () => {
+		const columns = reversed().map(entry =>
+			entry.key === 'Doing'
+				? {
+						...entry,
+						sort: 'status' as const,
+						// the answer lists the doing card first: the board still opens with the review group
+						cards: entry.cards.map(item => ({ ...item, group: item.status })),
+					}
+				: entry
+		);
+		setup({ columns });
+		const order = Array.from(
+			column('Doing').querySelectorAll('[role="separator"], [data-testid="kanban-card"]')
+		).map(element => element.getAttribute('data-card-id') ?? element.getAttribute('aria-label'));
+		expect(order).toEqual(['review, 1 card', 'eee55555', 'doing, 1 card', 'ccc33333']);
 	});
 });
 
@@ -527,7 +625,9 @@ describe('Configure columns', () => {
 		const user = await open();
 		await user.click(screen.getByRole('button', { name: 'Add column' }));
 
-		const name = within(screen.getAllByTestId('columns-editor-column')[3]!).getByRole('textbox') as HTMLInputElement;
+		const name = within(screen.getAllByTestId('columns-editor-column')[3]!).getByRole(
+			'textbox'
+		) as HTMLInputElement;
 		expect(name).toHaveFocus();
 		expect(name.selectionStart).toBe(0);
 		expect(name.selectionEnd).toBe(name.value.length);
@@ -652,14 +752,11 @@ describe('Configure columns', () => {
 		const doing = screen.getByRole('combobox', { name: 'Sort of column Doing' });
 		expect(doing).toHaveValue('assignee');
 		expect(screen.getByRole('combobox', { name: 'Sort of column To do' })).toHaveValue('');
-		expect(within(doing).getAllByRole('option').map(option => option.textContent)).toEqual([
-			'Default order',
-			'Status',
-			'Priority',
-			'Assignee',
-			'Oldest first',
-			'Newest first',
-		]);
+		expect(
+			within(doing)
+				.getAllByRole('option')
+				.map(option => option.textContent)
+		).toEqual(['Default order', 'Status', 'Priority', 'Assignee', 'Oldest first', 'Newest first']);
 		expect(screen.getAllByText('Sort cards').length).toBe(3);
 
 		await user.selectOptions(screen.getByRole('combobox', { name: 'Sort of column To do' }), 'priority');

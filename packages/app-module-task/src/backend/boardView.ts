@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 
 import { listStatuses, listTasks, unmappedStatuses } from '@wadeck-app/task-service';
 import type { StatusInfo } from '@wadeck-app/task-service';
-import type { BoardColumnSort, BoardGroupStyle, TaskSummary } from '@wadeck-app/task-core';
+import type { BoardColumnSort, TaskSummary } from '@wadeck-app/task-core';
 
 import { shortTitle } from './display.js';
 import { detailHref, tasksPageHref } from './hrefs.js';
@@ -33,6 +33,10 @@ export interface BoardCard {
 	/** The tone of the status. */
 	tone: string;
 	createdAt: string;
+	/** When the task entered its current status (the index); absent when the backend cannot tell. */
+	statusSince?: string;
+	/** The parent task (the index); absent for a root task. */
+	parentId?: string;
 	/** The group the card belongs to in a column whose sort forms groups (status, priority, assignee); absent otherwise. */
 	group?: string;
 }
@@ -65,8 +69,6 @@ export interface BoardColumn {
 	statuses: BoardColumnStatus[];
 	/** How the cards are ordered; absent = the usual order (status, then priority and age) with no group. */
 	sort?: BoardColumnSort;
-	/** How its groups are drawn; absent = the thin rule with the group name. */
-	groupStyle?: BoardGroupStyle;
 	/** The tasks in this status, the hidden ones included. */
 	count: number;
 	hiddenCount: number;
@@ -103,7 +105,7 @@ export function boardVersion(ctx: OpenedProject, tasks: readonly TaskSummary[]):
 	const lines = [...tasks]
 		.sort((a, b) => a.id.localeCompare(b.id))
 		.map(task =>
-			JSON.stringify([task.id, task.status, task.title, effectivePriority(ctx.config, task), task.assignee ?? ''])
+			JSON.stringify([task.id, task.status, task.title, effectivePriority(ctx.config, task), task.assignee ?? '', task.parentId ?? '', task.statusSince ?? ''])
 		);
 	// The columns are part of the board: a status added to or removed from the config changes the version too.
 	const columns = JSON.stringify([listStatuses(ctx), ctx.config.board ?? null]);
@@ -125,6 +127,8 @@ function cardOf(ctx: OpenedProject, task: TaskSummary): BoardCard {
 		status: task.status,
 		tone: statusTone(ctx.config, task.status),
 		createdAt: task.createdAt,
+		...(task.statusSince === undefined ? {} : { statusSince: task.statusSince }),
+		...(task.parentId === undefined ? {} : { parentId: task.parentId }),
 	};
 }
 
@@ -219,7 +223,6 @@ interface ColumnSpec {
 	statuses: string[];
 	implicit?: true;
 	sort?: BoardColumnSort;
-	groupStyle?: BoardGroupStyle;
 }
 
 /** The columns of the board: the `board` key of the config (one column per status without it). A status in no column is not shown. */
@@ -233,7 +236,6 @@ function columnSpecs(ctx: OpenedProject, statuses: readonly StatusInfo[]): Colum
 		name: column.name,
 		statuses: column.statuses,
 		...(column.sort === undefined ? {} : { sort: column.sort }),
-		...(column.groupStyle === undefined ? {} : { groupStyle: column.groupStyle }),
 	}));
 	return specs;
 }
@@ -305,7 +307,6 @@ function buildColumn(
 			count: tasks.filter(task => task.status === info.name).length,
 		})),
 		...(spec.sort === undefined ? {} : { sort: spec.sort }),
-		...(spec.groupStyle === undefined ? {} : { groupStyle: spec.groupStyle }),
 		count: ordered.length,
 		hiddenCount: Math.max(ordered.length - BOARD_COLUMN_CAP, 0),
 		cards: ordered
@@ -331,13 +332,13 @@ export function boardBody(
 		config: {
 			isDefault: configured === undefined,
 			...(configured?.finishedFor === undefined ? {} : { finishedFor: configured.finishedFor }),
+			...(configured?.card === undefined ? {} : { card: configured.card }),
 			columns: (
 				configured?.columns ?? statuses.map(status => ({ name: status.name, statuses: [status.name] }))
 			).map(column => ({
 				name: column.name,
 				statuses: [...column.statuses],
 				...('sort' in column && column.sort !== undefined ? { sort: column.sort } : {}),
-				...('groupStyle' in column && column.groupStyle !== undefined ? { groupStyle: column.groupStyle } : {}),
 			})),
 		},
 		// Every status of the project: the editor offers them.

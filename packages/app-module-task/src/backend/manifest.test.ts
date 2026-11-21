@@ -1283,6 +1283,8 @@ describe('board: page and project-module contribution', () => {
 		});
 		// No moveAction: the host page has no such action, the component posts movePath itself.
 		expect(board).not.toHaveProperty('moveAction');
+		// One layout only (D24): no defaultVariant.
+		expect(board).not.toHaveProperty('defaultVariant');
 	});
 
 	it('the board page binds the component to the board source and to the moveCard action (the status route)', () => {
@@ -1306,8 +1308,9 @@ describe('board: page and project-module contribution', () => {
 			version: '$sources.board.version',
 			projectParam: '$sources.board.projectParam',
 			moveAction: 'moveCard',
-			defaultVariant: 'columns',
 		});
+		// One layout only (D24): the component has no defaultVariant prop any more.
+		expect(component).not.toHaveProperty('defaultVariant');
 		// The A/B rows of the board are in the shell's shared dock: the page passes no switcher prop.
 		expect(component).not.toHaveProperty('variantSwitcher');
 		// The component waits for data: with the blank answer there is no `columns`.

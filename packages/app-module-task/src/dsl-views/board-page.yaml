@@ -83,7 +83,6 @@ sections:
       version: $sources.board.version
       projectParam: $sources.board.projectParam
       moveAction: moveCard
-      defaultVariant: columns
       hiddenNote: $sources.board.hiddenNote
       finishedNote: $sources.board.finishedNote
       emptyText: $sources.board.emptyText

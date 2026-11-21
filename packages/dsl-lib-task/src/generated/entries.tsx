@@ -184,7 +184,7 @@ export const InlineTextEntry: ComponentRegistryEntry = {
 }
 
 export const KanbanBoardEntry: ComponentRegistryEntry = {
-	name: 'KanbanBoard', category: 'composite', tags: ["kanban","board","columns","status","drag","cards","swimlanes"],
+	name: 'KanbanBoard', category: 'composite', tags: ["kanban","board","columns","status","drag","cards"],
 	nodeSchema: null as never,
 	render: ({ node, ctx }: RegistryRenderProps) => {
 		const columns = coerceProp(resolveExpressionValue(node['columns'], ctx), 'KanbanBoard.columns', 'array', false) as import('../components/KanbanBoard.js').KanbanBoardProps['columns']
@@ -197,9 +197,9 @@ export const KanbanBoardEntry: ComponentRegistryEntry = {
 		const idParam = coerceProp(resolveExpressionValue(node['idParam'], ctx), 'KanbanBoard.idParam', 'string', false) as import('../components/KanbanBoard.js').KanbanBoardProps['idParam']
 		const boardPath = coerceProp(resolveExpressionValue(node['boardPath'], ctx), 'KanbanBoard.boardPath', 'string', false) as import('../components/KanbanBoard.js').KanbanBoardProps['boardPath']
 		const configPath = coerceProp(resolveExpressionValue(node['configPath'], ctx), 'KanbanBoard.configPath', 'string', false) as import('../components/KanbanBoard.js').KanbanBoardProps['configPath']
+		const cardPath = coerceProp(resolveExpressionValue(node['cardPath'], ctx), 'KanbanBoard.cardPath', 'string', false) as import('../components/KanbanBoard.js').KanbanBoardProps['cardPath']
 		const eventsPath = coerceProp(resolveExpressionValue(node['eventsPath'], ctx), 'KanbanBoard.eventsPath', 'string', false) as import('../components/KanbanBoard.js').KanbanBoardProps['eventsPath']
 		const apiBase = coerceProp(resolveExpressionValue(node['apiBase'], ctx), 'KanbanBoard.apiBase', 'string', false) as import('../components/KanbanBoard.js').KanbanBoardProps['apiBase']
-		const defaultVariant = coerceProp(resolveExpressionValue(node['defaultVariant'], ctx), 'KanbanBoard.defaultVariant', 'primitive', false) as import('../components/KanbanBoard.js').KanbanBoardProps['defaultVariant']
 		const hiddenNote = coerceProp(resolveExpressionValue(node['hiddenNote'], ctx), 'KanbanBoard.hiddenNote', 'string', false, true) as import('../components/KanbanBoard.js').KanbanBoardProps['hiddenNote']
 		const finishedNote = coerceProp(resolveExpressionValue(node['finishedNote'], ctx), 'KanbanBoard.finishedNote', 'string', false, true) as import('../components/KanbanBoard.js').KanbanBoardProps['finishedNote']
 		const readOnly = coerceProp(resolveExpressionValue(node['readOnly'], ctx), 'KanbanBoard.readOnly', 'primitive', false) as import('../components/KanbanBoard.js').KanbanBoardProps['readOnly']
@@ -208,7 +208,7 @@ export const KanbanBoardEntry: ComponentRegistryEntry = {
 		const params = coerceProp(resolveExpressionsDeep(node['params'], ctx), 'KanbanBoard.params', 'object', false) as import('../components/KanbanBoard.js').KanbanBoardProps['params']
 		const onAction = coerceProp(resolveExpressionValue(node['onAction'], ctx) ?? pageActionHandler(ctx), 'KanbanBoard.onAction', 'function', false) as import('../components/KanbanBoard.js').KanbanBoardProps['onAction']
 		const actionPending = coerceProp(resolveExpressionValue(node['actionPending'], ctx) ?? ctx['$actionPending'], 'KanbanBoard.actionPending', 'object', false) as import('../components/KanbanBoard.js').KanbanBoardProps['actionPending']
-		return <KanbanBoard columns={columns} config={config} allStatuses={allStatuses} version={version} projectParam={projectParam} moveAction={moveAction} movePath={movePath} idParam={idParam} boardPath={boardPath} configPath={configPath} eventsPath={eventsPath} apiBase={apiBase} defaultVariant={defaultVariant} hiddenNote={hiddenNote} finishedNote={finishedNote} readOnly={readOnly} emptyText={emptyText} pollSeconds={pollSeconds} params={params} onAction={onAction} actionPending={actionPending} />
+		return <KanbanBoard columns={columns} config={config} allStatuses={allStatuses} version={version} projectParam={projectParam} moveAction={moveAction} movePath={movePath} idParam={idParam} boardPath={boardPath} configPath={configPath} cardPath={cardPath} eventsPath={eventsPath} apiBase={apiBase} hiddenNote={hiddenNote} finishedNote={finishedNote} readOnly={readOnly} emptyText={emptyText} pollSeconds={pollSeconds} params={params} onAction={onAction} actionPending={actionPending} />
 	},
 }
 
@@ -627,7 +627,7 @@ CommentComposerEntry.knownKeys = ["action","actionPending","author","buttonLabel
 CommentThreadEntry.knownKeys = ["actionPending","comments","editAction","emptyText","newestFirst","now","onAction","params","readOnly","removeAction"];
 ControlButtonEntry.knownKeys = ["action","actionPending","disabled","hint","icon","label","onAction","params","variant"];
 InlineTextEntry.knownKeys = ["action","actionPending","allowEmpty","ariaLabel","collapsedLines","maxLength","multiline","onAction","params","placeholder","readOnly","textClass","value","valueParam"];
-KanbanBoardEntry.knownKeys = ["actionPending","allStatuses","apiBase","boardPath","columns","config","configPath","defaultVariant","emptyText","eventsPath","finishedNote","hiddenNote","idParam","moveAction","movePath","onAction","params","pollSeconds","projectParam","readOnly","version"];
+KanbanBoardEntry.knownKeys = ["actionPending","allStatuses","apiBase","boardPath","cardPath","columns","config","configPath","emptyText","eventsPath","finishedNote","hiddenNote","idParam","moveAction","movePath","onAction","params","pollSeconds","projectParam","readOnly","version"];
 KeyValueListEntry.knownKeys = ["density","emptyText","entries"];
 LabelChipsEntry.knownKeys = ["actionPending","addAction","colors","emptyText","labelKeys","labelParam","labels","onAction","params","placeholder","readOnly","removeAction","size"];
 LabelComboboxEntry.knownKeys = ["actionPending","addAction","apiBase","colors","emptyText","labelKeys","labelParam","labels","onAction","params","placeholder","projectParam","readOnly","removeAction","size","suggestions"];

@@ -22,15 +22,17 @@ afterEach(() => {
 
 /** The host page of a contribution gives no columns and no action. */
 function setup(extra: Partial<React.ComponentProps<typeof KanbanBoard>> = {}) {
-	return render(<KanbanBoard projectParam="p1" apiBase="/api/modules/task" defaultVariant="columns" {...extra} />);
+	return render(<KanbanBoard projectParam="p1" apiBase="/api/modules/task" {...extra} />);
 }
 
 const column = (status: string): HTMLElement => screen.getByTestId(`kanban-column-${status}`);
 
-function dragTo(id: string, target: HTMLElement): void {
+/** Drags card `id` and drops it on the drop band of `status` (the bands exist only while a card is dragged). */
+function dragTo(id: string, status: string): void {
 	const card = document.querySelector(`[data-card-id="${id}"]`) as HTMLElement;
 	const dataTransfer = { setData: vi.fn(), getData: vi.fn(() => id), effectAllowed: '', dropEffect: '' };
 	fireEvent.dragStart(card, { dataTransfer });
+	const target = screen.getByTestId(`kanban-drop-area-${status}`);
 	fireEvent.dragOver(target, { dataTransfer });
 	fireEvent.drop(target, { dataTransfer });
 	fireEvent.dragEnd(card, { dataTransfer });
@@ -169,7 +171,7 @@ describe('KanbanBoard contribution mode: the move is a request of its own', () =
 		const { calls } = server(() => jsonResponse({ task: {} }));
 		await loaded();
 
-		dragTo('aaa11111', column('doing'));
+		dragTo('aaa11111', 'doing');
 
 		await waitFor(() => expect(calls.some(c => c.method === 'POST')).toBe(true));
 		const post = calls.find(c => c.method === 'POST')!;
@@ -183,7 +185,7 @@ describe('KanbanBoard contribution mode: the move is a request of its own', () =
 		const { calls } = server(() => jsonResponse({}));
 		await loaded({ movePath: '/x/{id}/to' });
 
-		dragTo('aaa11111', column('doing'));
+		dragTo('aaa11111', 'doing');
 
 		await waitFor(() => expect(calls.some(c => c.method === 'POST')).toBe(true));
 		expect(calls.find(c => c.method === 'POST')!.url.pathname).toBe('/api/modules/task/x/aaa11111/to');
@@ -206,7 +208,7 @@ describe('KanbanBoard contribution mode: the move is a request of its own', () =
 		});
 		await loaded();
 
-		dragTo('aaa11111', column('doing'));
+		dragTo('aaa11111', 'doing');
 
 		await waitFor(() => expect(column('doing').querySelector('[data-card-id="aaa11111"]')).not.toBeNull());
 		await waitFor(() => expect(calls.filter(c => c.method === 'GET').length).toBeGreaterThanOrEqual(2));
@@ -217,7 +219,7 @@ describe('KanbanBoard contribution mode: the move is a request of its own', () =
 		server(() => jsonResponse({ error: 'status done needs a resolution', hint: 'Set one first' }, 409));
 		await loaded();
 
-		dragTo('aaa11111', column('done'));
+		dragTo('aaa11111', 'done');
 
 		const alert = await screen.findByRole('alert');
 		expect(alert).toHaveTextContent('aaa11111');
@@ -231,7 +233,7 @@ describe('KanbanBoard contribution mode: the move is a request of its own', () =
 		server(() => new Response('Bad gateway', { status: 502 }));
 		await loaded();
 
-		dragTo('aaa11111', column('done'));
+		dragTo('aaa11111', 'done');
 
 		const alert = await screen.findByRole('alert');
 		expect(alert).toHaveTextContent(/not moved/i);
@@ -243,7 +245,7 @@ describe('KanbanBoard contribution mode: the move is a request of its own', () =
 		server(() => Promise.reject(new TypeError('Failed to fetch')));
 		await loaded();
 
-		dragTo('aaa11111', column('done'));
+		dragTo('aaa11111', 'done');
 
 		const alert = await screen.findByRole('alert');
 		expect(alert).toHaveTextContent(/could not reach/i);
@@ -275,7 +277,7 @@ describe('KanbanBoard contribution mode: the move is a request of its own', () =
 			/>
 		);
 
-		dragTo('aaa11111', column('doing'));
+		dragTo('aaa11111', 'doing');
 
 		await waitFor(() => expect(onAction).toHaveBeenCalledTimes(1));
 		expect(calls.filter(c => c.method === 'POST')).toHaveLength(0);
@@ -298,7 +300,7 @@ describe('KanbanBoard projectParam is raw and encoded once', () => {
 		setup({ projectParam: 'a/b' });
 		await waitFor(() => expect(document.querySelector('[data-card-id="aaa11111"]')).not.toBeNull());
 
-		dragTo('aaa11111', column('doing'));
+		dragTo('aaa11111', 'doing');
 
 		await waitFor(() => expect(calls.some(c => c.method === 'POST')).toBe(true));
 		expect(calls.find(c => c.method === 'POST')!.url.search).toBe('?project=a%2Fb');

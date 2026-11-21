@@ -1,8 +1,8 @@
 // GET /tasks/board: the data of the Kanban board of ONE project (the stream that tells when it changes is boardEvents.ts).
 // A card is moved with the existing POST /tasks/:id/status: the board has no move route of its own. The LAYOUT of the columns
 // (the `board` key of config.yml, decision D18) is edited with PUT / DELETE /board/config: a config edit like the types, so no
-// queue event.
-import { clearBoardColumns, saveBoardColumns } from '@wadeck-app/task-service';
+// queue event. The CARD layout (`board.card`) has its own PUT / DELETE /board/card.
+import { clearBoardCard, clearBoardColumns, saveBoardCard, saveBoardColumns } from '@wadeck-app/task-service';
 
 import { RequestError } from '../errors.js';
 import { boardBody, listBoardTasks } from '../boardView.js';
@@ -10,6 +10,9 @@ import { encodedProject } from '../hrefs.js';
 import { BLANK_ANSWER, booleanFlag, bodyObject, isBlankRequest } from '../request.js';
 import type { RouteRequest } from '../request.js';
 import type { RouteKit } from './routeKit.js';
+
+const CARD_USAGE =
+	'Send a JSON body { "titleLines": 1|2|3, "fields": [{ "field": string, "style"?: string }, ...] }; DELETE /board/card restores the usual card.';
 
 const CONFIG_USAGE =
 	'Send a JSON body { "columns": [{ "name": string, "statuses": [string, ...] }, ...] }; DELETE /board/config resets to one column per status.';
@@ -52,7 +55,7 @@ export function registerBoardRoutes(kit: RouteKit): void {
 			if (key !== 'columns' && key !== 'finishedFor') {
 				throw new RequestError(
 					400,
-					`unknown key "${key}" in the body (only "columns" and "finishedFor" are allowed)`,
+					`unknown key "${key}" in the body (only "columns" and "finishedFor" are allowed; the card layout has PUT /board/card)`,
 					CONFIG_USAGE
 				);
 			}
@@ -64,6 +67,24 @@ export function registerBoardRoutes(kit: RouteKit): void {
 		// `finishedFor` null or absent = every finished task is shown.
 		saveBoardColumns(ctx, body['columns'], body['finishedFor'] === null ? undefined : body['finishedFor']);
 		// The streams of the board check their version at once (no task event is raised).
+		await kit.deliver([]);
+		return answerBoard(req);
+	});
+
+	kit.route('PUT', '/board/card', async req => {
+		refuseAllProjects(req.query);
+		const ctx = kit.open(req);
+		const body = bodyObject(req.body, CARD_USAGE);
+		// Validated like a config load (an unknown key or field names the file, the key and the valid values); nothing is written on failure.
+		saveBoardCard(ctx, body);
+		await kit.deliver([]);
+		return answerBoard(req);
+	});
+
+	kit.route('DELETE', '/board/card', async req => {
+		refuseAllProjects(req.query);
+		const ctx = kit.open(req);
+		clearBoardCard(ctx);
 		await kit.deliver([]);
 		return answerBoard(req);
 	});
