@@ -433,6 +433,10 @@ export async function waitForWorker(
 	let waited = 0;
 	for (;;) {
 		if (liveWorker(input).alive) return true;
+		// A short migration can be over before the first look: the lock is released and the status says nothing is left to move (a
+		// resume is refused in such a status, so it was this launch that got there).
+		const state = storeOf(input).readState();
+		if (state !== undefined && NOT_MOVING.includes(state.status)) return true;
 		if (waited >= options.timeoutMs) return false;
 		const step = Math.min(100, options.timeoutMs - waited);
 		await options.sleep(step);

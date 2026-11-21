@@ -447,6 +447,20 @@ describe('readMigrationLog', () => {
 });
 
 describe('waitForWorker', () => {
+	it('is true when the worker already ENDED its run before the first look (a short migration: the lock is gone, the status says nothing is left to move)', async () => {
+		const { input } = setup(STATE({ status: 'ready-to-finalize' }), [], () => false);
+		const sleeps: number[] = [];
+
+		expect(await waitForWorker(input, { timeoutMs: 1000, sleep: async ms => void sleeps.push(ms) })).toBe(true);
+		expect(sleeps).toEqual([]);
+	});
+
+	it('is still false for a worker that never started: status running, no lock', async () => {
+		const { input } = setup(STATE({ status: 'running' }), [], () => false);
+
+		expect(await waitForWorker(input, { timeoutMs: 200, sleep: async () => undefined })).toBe(false);
+	});
+
 	it('is true as soon as a live worker holds the lock, and false after the time it was given', async () => {
 		const { input, holdLock } = setup();
 		let t = 0;
