@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 
 import { listStatuses, listTasks, unmappedStatuses } from '@wadeck-app/task-service';
 import type { StatusInfo } from '@wadeck-app/task-service';
-import type { TaskSummary } from '@wadeck-app/task-core';
+import type { BoardColumnSort, TaskSummary } from '@wadeck-app/task-core';
 
 import { shortTitle } from './display.js';
 import { detailHref, tasksPageHref } from './hrefs.js';
@@ -33,6 +33,8 @@ export interface BoardCard {
 	/** The tone of the status. */
 	tone: string;
 	createdAt: string;
+	/** The group the card belongs to in a column whose sort forms groups (status, priority, assignee); absent otherwise. */
+	group?: string;
 }
 
 /** One status a column holds. */
@@ -65,6 +67,8 @@ export interface BoardColumn {
 	outcome?: 'positive' | 'negative';
 	/** The statuses the column holds, in the order of the column: each one is a drop area. */
 	statuses: BoardColumnStatus[];
+	/** How the cards are ordered; absent = the usual order (status, then priority and age) with no group. */
+	sort?: BoardColumnSort;
 	/** The tasks in this status, the hidden ones included. */
 	count: number;
 	hiddenCount: number;
@@ -147,6 +151,7 @@ interface ColumnSpec {
 	name: string;
 	statuses: string[];
 	implicit?: true;
+	sort?: BoardColumnSort;
 }
 
 /** The columns of the board: the `board` key of the config (one column per status without it), plus Unmapped when a status is in none. */
@@ -159,12 +164,53 @@ function columnSpecs(ctx: OpenedProject, statuses: readonly StatusInfo[]): Colum
 		key: column.name,
 		name: column.name,
 		statuses: column.statuses,
+		...(column.sort === undefined ? {} : { sort: column.sort }),
 	}));
 	const unmapped = unmappedStatuses(ctx.config);
 	if (unmapped.length > 0) {
 		specs.push({ key: UNMAPPED_COLUMN_KEY, name: UNMAPPED_COLUMN_NAME, statuses: unmapped, implicit: true });
 	}
 	return specs;
+}
+
+const UNASSIGNED_GROUP = 'Unassigned';
+
+/** The cards of a column in the order of its sort, each with its group when the sort forms groups. */
+function orderColumn(
+	ctx: OpenedProject,
+	infos: readonly StatusInfo[],
+	tasks: readonly TaskSummary[],
+	sort: BoardColumnSort | undefined
+): Array<{ task: TaskSummary; group?: string }> {
+	const byPriority = priorityThenOldest(ctx);
+	const inStatuses = tasks.filter(task => infos.some(info => info.name === task.status));
+	const plain = (list: readonly TaskSummary[]): Array<{ task: TaskSummary }> => list.map(task => ({ task }));
+	// The usual order: the statuses in the order of the column, then each status as before (closed newest first, open by priority then age).
+	const perStatus = (info: StatusInfo): TaskSummary[] =>
+		tasks.filter(task => task.status === info.name).sort(info.terminal ? newestFirst : byPriority);
+	switch (sort) {
+		case 'status':
+			return infos.flatMap(info => perStatus(info).map(task => ({ task, group: info.name })));
+		case 'priority':
+			return [...inStatuses].sort(byPriority).map(task => ({ task, group: effectivePriority(ctx.config, task) }));
+		case 'assignee':
+			return [...inStatuses]
+				.sort((a, b) => {
+					if (a.assignee === undefined || b.assignee === undefined) {
+						return a.assignee === b.assignee ? byPriority(a, b) : a.assignee === undefined ? 1 : -1;
+					}
+					return a.assignee.localeCompare(b.assignee, undefined, { sensitivity: 'base' }) || byPriority(a, b);
+				})
+				.map(task => ({ task, group: task.assignee ?? UNASSIGNED_GROUP }));
+		case 'oldest':
+			return plain(
+				[...inStatuses].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+			);
+		case 'newest':
+			return plain([...inStatuses].sort(newestFirst));
+		default:
+			return plain(infos.flatMap(perStatus));
+	}
 }
 
 function buildColumn(
@@ -176,11 +222,7 @@ function buildColumn(
 	const infos = spec.statuses
 		.map(name => statuses.find(status => status.name === name))
 		.filter((info): info is StatusInfo => info !== undefined);
-	const byPriority = priorityThenOldest(ctx);
-	// The statuses in the order of the column, then each status as before: a closed one newest first, an open one by priority then age.
-	const ordered = infos.flatMap(info =>
-		tasks.filter(task => task.status === info.name).sort(info.terminal ? newestFirst : byPriority)
-	);
+	const ordered = orderColumn(ctx, infos, tasks, spec.sort);
 	const single = infos.length === 1 ? infos[0] : undefined;
 	return {
 		key: spec.key,
@@ -197,9 +239,12 @@ function buildColumn(
 			...(info.outcome === undefined ? {} : { outcome: info.outcome }),
 			count: tasks.filter(task => task.status === info.name).length,
 		})),
+		...(spec.sort === undefined ? {} : { sort: spec.sort }),
 		count: ordered.length,
 		hiddenCount: Math.max(ordered.length - BOARD_COLUMN_CAP, 0),
-		cards: ordered.slice(0, BOARD_COLUMN_CAP).map(task => cardOf(ctx, task)),
+		cards: ordered
+			.slice(0, BOARD_COLUMN_CAP)
+			.map(({ task, group }) => ({ ...cardOf(ctx, task), ...(group === undefined ? {} : { group }) })),
 	};
 }
 
@@ -220,7 +265,11 @@ export function boardBody(
 			isDefault: configured === undefined,
 			columns: (
 				configured?.columns ?? statuses.map(status => ({ name: status.name, statuses: [status.name] }))
-			).map(column => ({ name: column.name, statuses: [...column.statuses] })),
+			).map(column => ({
+				name: column.name,
+				statuses: [...column.statuses],
+				...('sort' in column && column.sort !== undefined ? { sort: column.sort } : {}),
+			})),
 		},
 		// Every status of the project: the editor offers them.
 		allStatuses: statuses.map(status => ({

@@ -319,6 +319,16 @@ describe('Configure columns', () => {
 		expect(screen.queryByTestId('kanban-column-Doing')).toBeNull();
 	});
 
+	it('"Open in Tasks" and "Configure columns" are two buttons of the same toolbar: same look, same height', async () => {
+		stubFetch(() => jsonResponse(grouped({ tasksHref: '/modules/task/tasks/p/p1' })));
+		setup({ columns: undefined });
+		await screen.findByTestId('kanban-column-Doing');
+
+		const link = screen.getByRole('link', { name: 'Open in Tasks' });
+		const configure = screen.getByTestId('kanban-configure');
+		expect(link.className).toBe(configure.className);
+	});
+
 	it('Cancel closes the editor and sends nothing', async () => {
 		const { calls } = stubFetch(() => jsonResponse(grouped()));
 		const user = await open();

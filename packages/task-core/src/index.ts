@@ -5,12 +5,14 @@ export type {
 	TaskGlobalConfig,
 	TaskProjectConfig,
 	BoardColumnConfig,
+	BoardColumnSort,
 	BoardConfig,
 	TaskResolvedConfig,
 	StatusOutcome,
 } from './TaskConfigLoader.js';
 export {
 	TaskConfigLoader,
+	BOARD_COLUMN_SORTS,
 	statusOutcomeProblem,
 	DEFAULT_PRIORITIES,
 	DEFAULT_LEASE_MINUTES,

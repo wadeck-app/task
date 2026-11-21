@@ -37,10 +37,15 @@ export interface TaskGlobalConfig {
 	};
 }
 
-/** One column of the Kanban board: a name and the statuses whose tasks it shows. */
+/** How the cards of a board column are ordered; `status`, `priority` and `assignee` also form visual groups. Absent = today's order. */
+export const BOARD_COLUMN_SORTS = ['status', 'priority', 'assignee', 'oldest', 'newest'] as const;
+export type BoardColumnSort = (typeof BOARD_COLUMN_SORTS)[number];
+
+/** One column of the Kanban board: a name, the statuses whose tasks it shows and, optionally, how its cards are ordered. */
 export interface BoardColumnConfig {
 	name: string;
 	statuses: string[];
+	sort?: BoardColumnSort;
 }
 
 /** The `board` key of config.yml (validated by task-service). Absent = one column per status. */

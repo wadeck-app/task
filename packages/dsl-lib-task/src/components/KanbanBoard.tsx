@@ -594,7 +594,7 @@ export function KanbanBoard({
 		>
 			<div className="flex flex-wrap items-center justify-between gap-2">
 				{live.meta.tasksHref !== null ? (
-					<a href={live.meta.tasksHref} className="text-sm text-primary hover:underline">
+					<a href={live.meta.tasksHref} data-testid="kanban-open-tasks" className={CONFIGURE_BUTTON_CLASS}>
 						Open in Tasks
 					</a>
 				) : (

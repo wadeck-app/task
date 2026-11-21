@@ -7,8 +7,8 @@
 //         statuses: [in-progress, review]
 // Scope local (the project's own layer). A status in no column is allowed: the board shows it in an implicit "Unmapped" column.
 import { ConfigSchemaError, writeFileAtomic } from '@wadeck-app/project-sdk';
-import { TaskConfigLoader } from '@wadeck-app/task-core';
-import type { BoardColumnConfig, BoardConfig, TaskResolvedConfig } from '@wadeck-app/task-core';
+import { BOARD_COLUMN_SORTS, TaskConfigLoader } from '@wadeck-app/task-core';
+import type { BoardColumnConfig, BoardColumnSort, BoardConfig, TaskResolvedConfig } from '@wadeck-app/task-core';
 
 import { ownConfigFile } from './storage.js';
 import type { TaskStorage } from './storage.js';
@@ -75,8 +75,8 @@ export function validateBoard(file: string, value: unknown, statuses?: readonly 
 			return fail(at, `must be a mapping with a name and statuses, found ${found(entry)}.`);
 		}
 		for (const key of Object.keys(entry)) {
-			if (key !== 'name' && key !== 'statuses') {
-				fail(`${at}.${key}`, 'unknown key (a column has "name" and "statuses").');
+			if (key !== 'name' && key !== 'statuses' && key !== 'sort') {
+				fail(`${at}.${key}`, 'unknown key (a column has "name", "statuses" and optionally "sort").');
 			}
 		}
 		const name = entry['name'];
@@ -134,7 +134,15 @@ export function validateBoard(file: string, value: unknown, statuses?: readonly 
 			statusAt.set(status, index);
 			names.push(status);
 		});
-		columns.push({ name, statuses: names });
+		const sort = entry['sort'];
+		if (sort !== undefined && !BOARD_COLUMN_SORTS.includes(sort as BoardColumnSort)) {
+			return fail(
+				`${at}.sort`,
+				`${found(sort)} is not a sort of column "${name}". Valid sorts: ${BOARD_COLUMN_SORTS.join(', ')}.`,
+				'Write sort: priority (or another valid sort), or remove the sort key for the usual order.'
+			);
+		}
+		columns.push({ name, statuses: names, ...(sort === undefined ? {} : { sort: sort as BoardColumnSort }) });
 	});
 	return { columns };
 }

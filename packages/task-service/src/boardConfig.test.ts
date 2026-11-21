@@ -215,6 +215,51 @@ describe('board key: errors name the FILE and the key and carry a fix', () => {
 	});
 });
 
+describe('board column sort (optional, decision D22)', () => {
+	const withSort = (sort: string): string =>
+		`${STATUSES}board:\n  columns:\n    - name: Doing\n      statuses: [in-progress, done]\n      sort: ${sort}\n`;
+
+	it.each(['status', 'priority', 'assignee', 'oldest', 'newest'])('reads sort: %s as written', async sort => {
+		const storage = await single();
+		write(ownConfigFile(storage), withSort(sort));
+		expect(load(storage).board).toEqual({ columns: [{ name: 'Doing', statuses: ['in-progress', 'done'], sort }] });
+	});
+
+	it('no sort key: the column has none (today\'s order, no separator)', async () => {
+		const storage = await single();
+		write(ownConfigFile(storage), `${STATUSES}board:\n  columns:\n    - name: A\n      statuses: [backlog]\n`);
+		expect(load(storage).board?.columns[0]).toEqual({ name: 'A', statuses: ['backlog'] });
+	});
+
+	it('an unknown sort names the column, the key and the valid values', async () => {
+		const storage = await single();
+		const file = ownConfigFile(storage);
+		write(file, withSort('type'));
+		const error = failure(storage);
+		expect(error.message).toBe(
+			`${file}: board.columns[0].sort: "type" is not a sort of column "Doing". Valid sorts: status, priority, assignee, oldest, newest.`
+		);
+		expect(error.hint).toEqual(expect.stringContaining('sort: priority'));
+	});
+
+	it('a sort that is not a text is refused too', async () => {
+		const storage = await single();
+		write(ownConfigFile(storage), withSort('[a]'));
+		expect(failure(storage).message).toEqual(expect.stringContaining('board.columns[0].sort'));
+	});
+
+	it('saveBoardColumns keeps the sort of each column and drops none', async () => {
+		const storage = await single();
+		write(ownConfigFile(storage), STATUSES);
+		const columns = [
+			{ name: 'Open', statuses: ['backlog'], sort: 'assignee' },
+			{ name: 'Closed', statuses: ['done'] },
+		];
+		saveBoardColumns({ storage, config: load(storage) }, columns);
+		expect(load(storage).board).toEqual({ columns });
+	});
+});
+
 describe('saveBoardColumns / clearBoardColumns write the OWN layer', () => {
 	it('saves the columns, keeps the other keys, and the config reads them back', async () => {
 		const storage = await single();
