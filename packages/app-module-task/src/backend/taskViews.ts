@@ -90,7 +90,7 @@ export function tasksListBody(
 		showAll: boolean;
 		parent: string | undefined;
 		/** The project's priorities and defaults: rows show the EFFECTIVE priority. */
-		config: PriorityConfig;
+		config: PriorityConfig & Parameters<typeof statusTone>[0];
 		tasks: TaskSummary[];
 		/** Open tasks, to pick a parent from (the create page). */
 		openTasks: TaskSummary[];
@@ -107,7 +107,11 @@ export function tasksListBody(
 		parentFilterText: parent === undefined ? null : `Only the direct children of ${parent}.`,
 		clearParentHref: parent === undefined ? null : pageLink(project, 'tasks', showAll ? { showAll: 'true' } : {}),
 		parentOptions: data.openTasks.map(task => ({ value: task.id, label: `${task.id} ${task.title}` })),
-		tasks: withRowLinks(project, withFieldTexts(data.config, data.tasks, new Date())),
+		// Each row carries the tone of its status (the config decides: a custom status name is not guessed by the list).
+		tasks: withRowLinks(
+			project,
+			withFieldTexts(data.config, data.tasks, new Date()).map(row => ({ ...row, tone: statusTone(data.config, row.status) }))
+		),
 	};
 }
 

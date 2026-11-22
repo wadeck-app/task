@@ -96,6 +96,7 @@ export function allTasksBody(found: TasksAcrossProjects, showAll: boolean): Reco
 			projectPath: task.project.path,
 			titleText: shortTitle(task.title),
 			created: shortUtcTime(task.createdAt),
+			updated: task.updatedAt === undefined ? '' : shortUtcTime(task.updatedAt),
 			href: detailHref(task.project, task.id),
 		})),
 	};

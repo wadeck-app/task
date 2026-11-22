@@ -222,6 +222,6 @@ describe('TaskStore comments', () => {
 
 		spied.addComment(task.id, 'x');
 
-		expect(writes).toEqual([path.join(tasksDir, `${task.id}.json`)]);
+		expect(writes).toEqual([path.join(tasksDir, `${task.id}.json`), path.join(tasksDir, '..', 'task-index.json')].map(p => path.normalize(p)));
 	});
 });

@@ -285,6 +285,33 @@ describe('GET /tasks', () => {
 		expect(answer.body['tasks'][0]['href']).toBe(`/modules/task/tasks/p/${project}/${id}`);
 	});
 
+	it('gives every row the raw updatedAt (ISO) and its short UTC text next to created, after an edit too', async () => {
+		const id = await createTask('edited');
+		const first = await h.call('GET /tasks', { query: { project } });
+		const row = first.body['tasks'][0];
+		expect(row.updatedAt).toBe(row.createdAt);
+		expect(row.updated).toBe(row.created);
+		expect(row.updated).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d$/);
+
+		await new Promise(resolve => setTimeout(resolve, 20));
+		await h.call('POST /tasks/:id/labels', { params: { id }, query: { project }, body: { label: 'x' } });
+
+		const after = (await h.call('GET /tasks', { query: { project } })).body['tasks'][0];
+		expect(after.updatedAt > after.createdAt).toBe(true);
+		expect(after.createdAt).toBe(row.createdAt);
+		expect(after.updated).toBe(String(after.updatedAt).slice(0, 16).replace('T', ' '));
+	});
+
+	it('gives every row of a project the tone of its status (the project config decides, the list does not guess from the name)', async () => {
+		const id = await createTask('toned');
+		const first = (await h.call('GET /tasks', { query: { project } })).body['tasks'][0];
+		expect(first.tone).toBe('neutral');
+
+		await h.call('POST /tasks/:id/status', { params: { id }, query: { project }, body: { status: 'in-progress' } });
+		const second = (await h.call('GET /tasks', { query: { project } })).body['tasks'][0];
+		expect(second.tone).toBe('info');
+	});
+
 	it('restricts to the direct children of ?parent', async () => {
 		const parent = await createTask('parent');
 		const child = await createTask('child', { parent });

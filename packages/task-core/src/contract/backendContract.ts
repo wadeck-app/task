@@ -1091,6 +1091,24 @@ export const BACKEND_CONTRACT_CASES: readonly ContractCase[] = [
 		},
 	},
 
+	{
+		group: 'atomicity',
+		name: 'a summary carries updatedAt: not before createdAt, and an edit moves it (the list is all a page reads)',
+		async run({ backend, task }) {
+			const a = await task('A');
+			const fresh = (await backend.list()).find(summary => summary.id === a.id)!;
+			expect(isIso(fresh.updatedAt ?? '')).toBe(true);
+			expect(fresh.updatedAt! >= fresh.createdAt).toBe(true);
+
+			// Forges stamp whole seconds: wait past one so that "moved" is strict on every backend.
+			await new Promise(resolve => setTimeout(resolve, 1100));
+			await backend.setTitle(a.id, 'A edited');
+
+			const edited = (await backend.list()).find(summary => summary.id === a.id)!;
+			expect(edited.updatedAt! > fresh.updatedAt!).toBe(true);
+		},
+	},
+
 	// ======== search ========
 	{
 		group: 'search',

@@ -77,14 +77,16 @@ export class LocalFileBackend implements TaskBackend {
 		});
 	}
 
-	/** Set once an index of an older version has been given its `statusSince` (a read of the history of each task file, once). */
-	private statusSinceChecked = false;
+	/** Set once an index of an older version has been given its `statusSince` and `updatedAt` (a read of each task file lacking one, once). */
+	private indexFieldsChecked = false;
 
-	/** The index entries; the first call of this backend fills the `statusSince` an older index lacks. */
+	/** The index entries; the first call of this backend fills the `statusSince` and `updatedAt` an older index lacks. */
 	private summaries(): TaskSummary[] {
-		if (!this.statusSinceChecked) {
-			this.statusSinceChecked = true;
-			if (this.store.list().some(entry => entry.statusSince === undefined)) this.store.backfillStatusSince();
+		if (!this.indexFieldsChecked) {
+			this.indexFieldsChecked = true;
+			const entries = this.store.list();
+			if (entries.some(entry => entry.statusSince === undefined)) this.store.backfillStatusSince();
+			if (entries.some(entry => entry.updatedAt === undefined)) this.store.backfillUpdatedAt();
 		}
 		return this.store.list();
 	}

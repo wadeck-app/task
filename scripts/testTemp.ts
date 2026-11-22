@@ -90,6 +90,7 @@ export const OWN_TEMP_PREFIXES: readonly string[] = [
 	'task-store-claim-',
 	'task-store-errors-',
 	'task-store-since-',
+	'task-store-updated-',
 	'task-strategy-cmd-',
 	'task-text-cmd-',
 	'task-fields-cmd-',

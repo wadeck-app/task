@@ -38,6 +38,7 @@ const EXPECTED = [
 	'StatusSelect',
 	'TabPanels',
 	'TaskChecklist',
+	'TaskList',
 	'TaskPicker',
 	'TaskRowList',
 	'Timeline',

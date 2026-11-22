@@ -10,7 +10,8 @@
 # Status and label changes are on the detail page: the installed shell does not fill {id} in a row action URL (see CLAUDE.md).
 # The sources that wait for `projects` also name a $urlParam (`reload`, empty in practice): the shell reloads on a URL
 # change only the sources that name one, so without it the filter links and the project choice changed the URL only.
-# The table columns carry no format nor width in the DSL: the route gives `titleText` (truncated) and `created` (short UTC).
+# The lists are `task:TaskList` (columns, widths, sort and filters live in the component): the route gives `titleText` (truncated),
+# `created` / `updated` (short UTC) and `createdAt` / `updatedAt` (ISO, for the sort and the relative time).
 # A header with actions shows no subtitle: the project is named by `projectText` below it.
 # inlineErrors on every source: one failing source discards the answers of all the others (the page stays blank), so a
 # failure is answered as data (`errorText`) and shown by a badge.
@@ -94,17 +95,15 @@ sections:
       $if: $sources.tasks.warning
       label: $sources.tasks.warning
       variant: warning
-    - $type: DataTable
+    # Both lists are task:TaskList: default order = last update (newest first), sortable headers, client-side filters, the view kept in
+    # the address (q, sort, dir, status, priority, assignee, projectIn, updated: none of the page's own showAll, parent, project, reload).
+    # The route sends the rows with updatedAt / updated; the global list has no priority nor assignee columns (no single set of priorities).
+    - $type: task:TaskList
       $if: $sources.tasks.scopeText
       rows: $sources.tasks.tasks
-      navigateTo: '{href}'
+      scope: all
+      storageKey: all
       emptyMessage: No open tasks in any project yet ("Show closed tasks" includes the closed ones)
-      columns:
-          - { key: 'projectName', label: 'Project' }
-          - { key: 'id', label: 'ID', mono: true, nowrap: true }
-          - { key: 'titleText', label: 'Title', truncate: true, title: '{title}' }
-          - { key: 'status', label: 'Status', nowrap: true }
-          - { key: 'created', label: 'Created (UTC)', nowrap: true }
     - $type: HorizontalStack
       gap: gap-3
       $if: $sources.tasks.parentFilterText
@@ -116,17 +115,10 @@ sections:
             label: Clear the filter
             size: sm
             to: $sources.tasks.clearParentHref
-    - $type: DataTable
+    # The EFFECTIVE priority ("medium (default)" when none is stored) and the holder, whose lease is the tooltip, come with the rows.
+    - $type: task:TaskList
       $if: $sources.tasks.project
       rows: $sources.tasks.tasks
-      navigateTo: '{href}'
+      scope: project
+      storageKey: $sources.tasks.project.id
       emptyMessage: No open tasks yet. Use "New task" to create one ("Show closed tasks" includes the closed ones)
-      columns:
-          - { key: 'id', label: 'ID', mono: true, nowrap: true }
-          - { key: 'titleText', label: 'Title', truncate: true, title: '{title}' }
-          - { key: 'status', label: 'Status', nowrap: true }
-          # The EFFECTIVE priority ("medium (default)" when none is stored) and the holder, whose lease is the tooltip. Per project only:
-          # the global list has no single set of priorities.
-          - { key: 'priorityText', label: 'Priority', nowrap: true }
-          - { key: 'assignee', label: 'Assignee', nowrap: true, truncate: true, title: '{leaseText}' }
-          - { key: 'created', label: 'Created (UTC)', nowrap: true }

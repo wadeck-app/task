@@ -336,7 +336,7 @@ describe('TaskStore activity', () => {
 			expect(store.get(task.id).type).toBeUndefined();
 		});
 
-		it('the change and its entry are one file write', () => {
+		it('the change and its entry are one task file write (then the index entry, for updatedAt)', () => {
 			const task = store.create('A', 'backlog');
 			const writes: string[] = [];
 			const spying = new TaskStore(tasksDir, {
@@ -347,7 +347,7 @@ describe('TaskStore activity', () => {
 			});
 			spying.addLabel(task.id, 'x');
 
-			expect(writes).toEqual([`${task.id}.json`]);
+			expect(writes).toEqual([`${task.id}.json`, 'task-index.json']);
 			expect(JSON.parse(fs.readFileSync(path.join(tasksDir, `${task.id}.json`), 'utf8'))).toMatchObject({
 				labels: ['x'],
 				activity: [{ kind: 'label-added', newValue: 'x' }],

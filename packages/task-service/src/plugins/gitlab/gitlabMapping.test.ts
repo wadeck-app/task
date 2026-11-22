@@ -101,6 +101,7 @@ describe('summaries and status', () => {
 			title: 'Fix it',
 			status: 'wip',
 			createdAt: '2026-11-08T10:00:00.000Z',
+			updatedAt: '2026-11-08T11:00:00.000Z',
 		});
 		expect(statusOfIssue(issue({ state: 'closed', labels: [{ name: 'status:cancelled' }] }), contextOf())).toBe(
 			'cancelled'

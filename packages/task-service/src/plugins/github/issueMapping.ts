@@ -183,6 +183,8 @@ export function toSummary(issue: ApiIssue, ctx: MapContext): TaskSummary {
 		title: issue.title,
 		status: statusOfIssue(issue, ctx),
 		createdAt: iso(issue.created_at),
+		// The forge moves updated_at with any change of the issue (edit, label, state, comment).
+		updatedAt: iso(issue.updated_at),
 		// Only the closing instant: GitHub does not tell when a label status was set, and updated_at moves with every edit.
 		...(issue.state === 'closed' && typeof issue.closed_at === 'string' ? { statusSince: iso(issue.closed_at) } : {}),
 		...(parent === undefined ? {} : { parentId: String(parent) }),

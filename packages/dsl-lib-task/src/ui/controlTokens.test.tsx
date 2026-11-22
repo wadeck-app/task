@@ -23,6 +23,9 @@ const TOKENIZED = [
 	'components/Caption.tsx',
 	'components/ControlButton.tsx',
 	'components/TaskPicker.tsx',
+	'components/TaskList.tsx',
+	'tasklist/FacetFilter.tsx',
+	'tasklist/TaskListTable.tsx',
 	'ui/ChipField.tsx',
 	'ui/SuggestBox.tsx',
 ];

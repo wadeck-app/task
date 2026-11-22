@@ -70,6 +70,11 @@ export interface TaskSummary {
 	 * Absent in an index written before the field existed (see `TaskStore.backfillStatusSince`) and on a backend that cannot tell.
 	 */
 	statusSince?: string;
+	/**
+	 * ISO instant of the LAST CHANGE of the task (any edit, status change, comment, label, link...), mirrored from the task file.
+	 * Absent in an index written before the field existed (see `TaskStore.backfillUpdatedAt`) and on a backend that cannot tell.
+	 */
+	updatedAt?: string;
 }
 
 export interface TaskTreeNode extends TaskSummary {
@@ -262,6 +267,7 @@ export class TaskStore {
 				status: initialStatus,
 				createdAt: now,
 				statusSince: now,
+				updatedAt: now,
 				...(parentId !== undefined && { parentId }),
 			});
 
@@ -605,8 +611,10 @@ export class TaskStore {
 			record.updatedAt = now;
 			record.history.push({ status, timestamp: now });
 
-			this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
-			this.updateIndexEntry(id, status, now);
+			this.persist(record, entry => {
+				entry.status = status;
+				entry.statusSince = now;
+			});
 
 			return record;
 		});
@@ -629,7 +637,7 @@ export class TaskStore {
 					activityEntry(record.updatedAt, 'type', { oldValue: oldType, newValue: type })
 				);
 			}
-			this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+			this.persist(record);
 			return record;
 		});
 	}
@@ -643,7 +651,7 @@ export class TaskStore {
 				record.labels.push(label);
 				this.appendActivity(record, activityEntry(record.updatedAt, 'label-added', { newValue: label }));
 			}
-			this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+			this.persist(record);
 			return record;
 		});
 	}
@@ -657,7 +665,7 @@ export class TaskStore {
 			if (had) {
 				this.appendActivity(record, activityEntry(record.updatedAt, 'label-removed', { oldValue: label }));
 			}
-			this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+			this.persist(record);
 			return record;
 		});
 	}
@@ -681,14 +689,9 @@ export class TaskStore {
 					})
 				);
 			}
-			this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
-			const index = this.readIndex();
-			const entry = index.tasks.find(t => t.id === id);
-			if (!entry) {
-				throw new Error(`Task index out of sync: entry for "${id}" not found. The index may be corrupted.`);
-			}
-			entry.title = title;
-			this.writeIndex(index);
+			this.persist(record, entry => {
+				entry.title = title;
+			});
 			return record;
 		});
 	}
@@ -714,7 +717,7 @@ export class TaskStore {
 					})
 				);
 			}
-			this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+			this.persist(record);
 			return record;
 		});
 	}
@@ -729,7 +732,7 @@ export class TaskStore {
 			if (oldType !== undefined) {
 				this.appendActivity(record, activityEntry(record.updatedAt, 'type', { oldValue: oldType }));
 			}
-			this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+			this.persist(record);
 			return record;
 		});
 	}
@@ -749,7 +752,7 @@ export class TaskStore {
 					delete record.meta;
 				}
 			}
-			this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+			this.persist(record);
 			return record;
 		});
 	}
@@ -768,7 +771,7 @@ export class TaskStore {
 					activityEntry(record.updatedAt, 'meta-set', { field: key, oldValue, newValue: value })
 				);
 			}
-			this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+			this.persist(record);
 			return record;
 		});
 	}
@@ -789,7 +792,7 @@ export class TaskStore {
 			};
 			record.comments = [...comments, comment];
 			record.updatedAt = now;
-			this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+			this.persist(record);
 			return { task: record, comment };
 		});
 	}
@@ -826,7 +829,7 @@ export class TaskStore {
 					newValue: activityPreview(normalizedText),
 				})
 			);
-			this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+			this.persist(record);
 			return { task: record, comment: edited, oldText: existing.text, changed: true };
 		});
 	}
@@ -858,7 +861,7 @@ export class TaskStore {
 					oldValue: activityPreview(existing.text),
 				})
 			);
-			this.writeFile(this.taskFilePath(id), JSON.stringify(record, null, 2));
+			this.persist(record);
 			return { task: record, comment: existing };
 		});
 	}
@@ -1073,19 +1076,13 @@ export class TaskStore {
 		if (kind !== undefined) {
 			this.appendActivity(record, activityEntry(record.updatedAt, kind, { field: type, target }));
 		}
-		this.writeFile(this.taskFilePath(record.id), JSON.stringify(record, null, 2));
-
-		const index = this.readIndex();
-		const entry = index.tasks.find(t => t.id === record.id);
-		if (!entry) {
-			throw new Error(`Task index out of sync: entry for "${record.id}" not found. The index may be corrupted.`);
-		}
-		if (links.length === 0) {
-			delete entry.links;
-		} else {
-			entry.links = links;
-		}
-		this.writeIndex(index);
+		this.persist(record, entry => {
+			if (links.length === 0) {
+				delete entry.links;
+			} else {
+				entry.links = links;
+			}
+		});
 		return record;
 	}
 
@@ -1134,19 +1131,13 @@ export class TaskStore {
 				activityEntry(record.updatedAt, 'parent', { oldValue: oldParentId, newValue: parentId })
 			);
 		}
-		this.writeFile(this.taskFilePath(record.id), JSON.stringify(record, null, 2));
-
-		const index = this.readIndex();
-		const entry = index.tasks.find(t => t.id === record.id);
-		if (!entry) {
-			throw new Error(`Task index out of sync: entry for "${record.id}" not found. The index may be corrupted.`);
-		}
-		if (parentId === undefined) {
-			delete entry.parentId;
-		} else {
-			entry.parentId = parentId;
-		}
-		this.writeIndex(index);
+		this.persist(record, entry => {
+			if (parentId === undefined) {
+				delete entry.parentId;
+			} else {
+				entry.parentId = parentId;
+			}
+		});
 		if (mirror && oldParentId !== parentId) {
 			if (oldParentId !== undefined) this.logInverse(oldParentId, record.id, 'child-removed', 'Parent');
 			if (parentId !== undefined) this.logInverse(parentId, record.id, 'child-added', 'Parent');
@@ -1156,20 +1147,32 @@ export class TaskStore {
 
 	// The task file, then the mirrored fields of its index entry (priority, assignee, leaseUntil; a field the record lacks leaves the entry).
 	private saveWithIndexFields(record: TaskRecord): TaskRecord {
+		return this.persist(record, entry => {
+			for (const key of ['priority', 'assignee', 'leaseUntil'] as const) {
+				const value = record[key];
+				if (value === undefined) {
+					delete entry[key];
+				} else {
+					entry[key] = value;
+				}
+			}
+		});
+	}
+
+	/**
+	 * The ONE write of a changed task record: the task file, then its index entry in a single index write. The entry always gets
+	 * the `updatedAt` of the record (the index is all the list reads); `mirror` sets the other index fields the change touched.
+	 * Not for the mirror entries of `logInverse`: the other task's own fields did not change, so its `updatedAt` stays.
+	 */
+	private persist(record: TaskRecord, mirror?: (entry: TaskSummary) => void): TaskRecord {
 		this.writeFile(this.taskFilePath(record.id), JSON.stringify(record, null, 2));
 		const index = this.readIndex();
 		const entry = index.tasks.find(t => t.id === record.id);
 		if (!entry) {
 			throw new Error(`Task index out of sync: entry for "${record.id}" not found. The index may be corrupted.`);
 		}
-		for (const key of ['priority', 'assignee', 'leaseUntil'] as const) {
-			const value = record[key];
-			if (value === undefined) {
-				delete entry[key];
-			} else {
-				entry[key] = value;
-			}
-		}
+		entry.updatedAt = record.updatedAt;
+		mirror?.(entry);
 		this.writeIndex(index);
 		return record;
 	}
@@ -1256,6 +1259,32 @@ export class TaskStore {
 		this.writeFile(this.indexFilePath(), JSON.stringify(index, null, 2));
 	}
 
+	/**
+	 * Fills `updatedAt` of the index entries that have none (an index written before the field existed) from the `updatedAt` of their
+	 * task file. Same contract as `backfillStatusSince`: returns how many it filled, an unreadable file keeps its entry without a date,
+	 * one index write under the write lock and only when something changed.
+	 */
+	backfillUpdatedAt(): number {
+		return this.withWriteLock(() => {
+			const index = this.readIndex();
+			let filled = 0;
+			for (const entry of index.tasks) {
+				if (entry.updatedAt !== undefined) continue;
+				try {
+					const record = JSON.parse(fs.readFileSync(this.taskFilePath(entry.id), 'utf8')) as Pick<TaskRecord, 'updatedAt'>;
+					if (typeof record.updatedAt === 'string') {
+						entry.updatedAt = record.updatedAt;
+						filled += 1;
+					}
+				} catch {
+					// An unreadable task file keeps its entry without a date: the caller says that, it is not this method's failure.
+				}
+			}
+			if (filled > 0) this.writeIndex(index);
+			return filled;
+		});
+	}
+
 	private addToIndex(summary: TaskSummary): void {
 		const index = this.readIndex();
 		index.tasks.push(summary);
@@ -1289,16 +1318,6 @@ export class TaskStore {
 		});
 	}
 
-	private updateIndexEntry(id: string, status: TaskStatus, since: string): void {
-		const index = this.readIndex();
-		const entry = index.tasks.find(t => t.id === id);
-		if (!entry) {
-			throw new Error(`Task index out of sync: entry for "${id}" not found. The index may be corrupted.`);
-		}
-		entry.status = status;
-		entry.statusSince = since;
-		this.writeIndex(index);
-	}
 
 	private removeFromIndex(id: string): void {
 		const index = this.readIndex();

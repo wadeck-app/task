@@ -17,6 +17,7 @@ export function withRowLinks(project: ProjectRef, tasks: TaskSummary[]): unknown
 		...task,
 		titleText: shortTitle(task.title),
 		created: shortUtcTime(task.createdAt),
+		updated: task.updatedAt === undefined ? '' : shortUtcTime(task.updatedAt),
 		projectPath: project.path,
 		href: detailHref(project, task.id),
 	}));

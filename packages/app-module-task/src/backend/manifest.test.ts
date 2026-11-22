@@ -201,12 +201,15 @@ describe('tasks page: global list without ?project (src/dsl-views/tasks-page.yam
 		expect(block).toContain('reload: $urlParam.reload');
 	});
 
-	it('lists every project task with a Project column, rows linking to the task with its project', () => {
-		const table = page.slice(page.indexOf('rows: $sources.tasks.tasks'));
-		expect(table).toContain("navigateTo: '{href}'");
-		expect(table.indexOf("key: 'projectName'")).toBeGreaterThan(-1);
-		expect(table.indexOf("key: 'projectName'")).toBeLessThan(table.indexOf("key: 'titleText'"));
-		expect(page).toContain('$if: $sources.tasks.scopeText');
+	// task:TaskList draws the Project column and links every row to its task (the route's `href`, project included).
+	it('lists every project task with task:TaskList (scope all, no DataTable), the project list with scope project', () => {
+		expect(page).not.toContain('DataTable');
+		const global = page.slice(page.indexOf('- $type: task:TaskList'));
+		expect(global).toMatch(/\$if: \$sources\.tasks\.scopeText\n\s+rows: \$sources\.tasks\.tasks\n\s+scope: all\n\s+storageKey: all\n/);
+		const project = global.slice(global.indexOf('- $type: task:TaskList', 10));
+		expect(project).toMatch(
+			/\$if: \$sources\.tasks\.project\n\s+rows: \$sources\.tasks\.tasks\n\s+scope: project\n\s+storageKey: \$sources\.tasks\.project\.id\n/
+		);
 	});
 
 	it('shows the skipped-projects warning and the error of the global list', () => {
@@ -819,20 +822,13 @@ describe('views: feedback and refresh conventions found by driving the pages in 
 		expect(view('tree-page.yaml')).toContain('$sources.tree.projectText');
 	});
 
-	it('the tables use the display texts of the routes: truncated titles and short dates', () => {
-		expect(view('tasks-page.yaml')).toContain("key: 'titleText'");
-		expect(view('tasks-page.yaml')).toContain("key: 'created'");
-	});
-
-	it('the project list has a Priority and an Assignee column (one line each, the lease as the tooltip), the global list has none', () => {
+	// Columns, truncation, the Priority / Assignee columns (project list only) and the lease tooltip live in the component (TaskList.test.tsx).
+	it('both lists are task:TaskList over the rows of the route, scope project and scope all, no DataTable', () => {
 		const page = view('tasks-page.yaml');
-		expect(page).toContain("{ key: 'priorityText', label: 'Priority', nowrap: true }");
-		expect(page).toContain(
-			"{ key: 'assignee', label: 'Assignee', nowrap: true, truncate: true, title: '{leaseText}' }"
-		);
-		// Once: the per-project table (the global one has the Project column and no priority set).
-		expect(page.match(/key: 'priorityText'/g)).toHaveLength(1);
-		expect(page.match(/key: 'assignee'/g)).toHaveLength(1);
+		expect(page.match(/\$type: task:TaskList/g)).toHaveLength(2);
+		expect(page).not.toContain('DataTable');
+		expect(page.match(/scope: project/g)).toHaveLength(1);
+		expect(page.match(/scope: all/g)).toHaveLength(1);
 	});
 
 	it('the delete page clears the preview and the confirm button once the delete ran (both answers share the plan state)', () => {

@@ -617,8 +617,8 @@ describe('TaskStore', () => {
 
 			expect(written).toContain(`${record.id}.json`);
 			expect(written).toContain('task-index.json');
-			// create: task + index; updateStatus: task + index; addLabel: task only.
-			expect(written).toHaveLength(5);
+			// create: task + index; updateStatus: task + index; addLabel: task + index (its updatedAt).
+			expect(written).toHaveLength(6);
 		});
 
 		it('propagates a failure of the writer instead of swallowing it', () => {
