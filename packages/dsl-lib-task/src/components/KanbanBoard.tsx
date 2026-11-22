@@ -564,7 +564,7 @@ export function KanbanBoard({
 			: `KanbanBoard: pollSeconds must be a positive number (got ${String(pollSeconds)}); using ${DEFAULT_POLL_SECONDS}.`,
 		'warning'
 	);
-	// An editor of the board (columns or cards) is open: the controls of the board itself are not offered.
+	// An editor of the board (columns or cards) is open in a dialog over the board: the controls of the board stay drawn but disabled.
 	const editing = configuring || cardsOpen;
 	addNote('sort', editing ? null : sortError, 'danger');
 
@@ -576,7 +576,7 @@ export function KanbanBoard({
 	const layoutColumns = live.meta.layout?.columns ?? [];
 	const finishedFor = live.meta.layout?.finishedFor;
 	// Any save started from the board disables every board control until it ends.
-	const sortBusy = configBusy && !configuring;
+	const sortBusy = (configBusy && !configuring) || editing;
 	const pickSort = (names: string[] | null, choice: SortChoice): void => {
 		if (!canConfigure || configBusy) {
 			return;
@@ -594,7 +594,7 @@ export function KanbanBoard({
 		void saveLayout({ columns: layoutColumns, ...(choice === 'none' ? {} : { finishedFor: choice }) }, 'finished');
 	};
 	const finishedControl =
-		canConfigure && !editing ? (
+		canConfigure ? (
 			<label className={`inline-flex items-center ${GAP_CONTROLS} ${PILL_TEXT} text-content`}>
 				<span className="text-xs text-muted">Finished</span>
 				<select
@@ -645,7 +645,7 @@ export function KanbanBoard({
 		view.headerControl = column => <SortBadge sort={column.sort} />;
 	}
 	const toolbarSort =
-		place === 'toolbar' && canConfigure && !editing && layoutColumns.length > 0 ? (
+		place === 'toolbar' && canConfigure && layoutColumns.length > 0 ? (
 			sortVariant === 'toolbar-select' ? (
 				<ToolbarSortSelect
 					value={sharedSort(layoutColumns)}
@@ -674,35 +674,6 @@ export function KanbanBoard({
 	} else if (live.meta.blank || !live.loaded) {
 		// Nothing to show (a blank answer), or the first load failed: the notice above says why.
 		content = null;
-	} else if (configuring && live.meta.layout !== null) {
-		content = (
-			<ColumnsEditor
-				layout={live.meta.layout}
-				busy={configBusy}
-				error={configError}
-				onSave={body => void saveLayout(body, 'editor')}
-				onReset={() => void resetLayout()}
-				onCancel={() => {
-					setConfiguring(false);
-					setConfigError(null);
-				}}
-			/>
-		);
-	} else if (cardsOpen && live.meta.layout !== null) {
-		content = (
-			<CardLayoutEditor
-				layout={live.meta.layout.card}
-				columns={live.columns}
-				busy={cardBusy}
-				error={cardError}
-				onSave={body => void saveCard(body)}
-				onReset={() => void resetCard()}
-				onCancel={() => {
-					setCardsOpen(false);
-					setCardError(null);
-				}}
-			/>
-		);
 	} else if (empty) {
 		content = <p className="m-0 text-sm text-muted">{emptyMessage}</p>;
 	} else {
@@ -732,10 +703,11 @@ export function KanbanBoard({
 							Saving the finished tasks setting
 						</span>
 					) : null}
-					{canConfigure && !editing ? (
+					{canConfigure ? (
 						<button
 							type="button"
 							data-testid="kanban-configure-cards"
+							disabled={configuring}
 							onClick={() => {
 								setCardError(null);
 								setCardsOpen(true);
@@ -746,10 +718,11 @@ export function KanbanBoard({
 							Configure cards
 						</button>
 					) : null}
-					{canConfigure && !editing ? (
+					{canConfigure ? (
 						<button
 							type="button"
 							data-testid="kanban-configure"
+							disabled={cardsOpen}
 							onClick={() => {
 								setConfigError(null);
 								setConfiguring(true);
@@ -783,6 +756,33 @@ export function KanbanBoard({
 			) : null}
 			{notes.length > 0 ? <div className="flex flex-col gap-2">{notes}</div> : null}
 			{content}
+			{configuring && live.meta.layout !== null ? (
+				<ColumnsEditor
+					layout={live.meta.layout}
+					busy={configBusy}
+					error={configError}
+					onSave={body => void saveLayout(body, 'editor')}
+					onReset={() => void resetLayout()}
+					onCancel={() => {
+						setConfiguring(false);
+						setConfigError(null);
+					}}
+				/>
+			) : null}
+			{cardsOpen && live.meta.layout !== null ? (
+				<CardLayoutEditor
+					layout={live.meta.layout.card}
+					columns={live.columns}
+					busy={cardBusy}
+					error={cardError}
+					onSave={body => void saveCard(body)}
+					onReset={() => void resetCard()}
+					onCancel={() => {
+						setCardsOpen(false);
+						setCardError(null);
+					}}
+				/>
+			) : null}
 		</div>
 	);
 }

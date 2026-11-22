@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { CardLayoutEditor } from './CardLayoutEditor.js';
@@ -204,7 +204,7 @@ describe('CardLayoutEditor', () => {
 		const first = setup();
 		expect(screen.getByRole('button', { name: 'Reset to the usual card' })).toBeDisabled();
 		expect(first.onReset).not.toHaveBeenCalled();
-		document.body.innerHTML = '';
+		cleanup();
 		const props = setup({ layout: { titleLines: 1, fields: [] } });
 		await user.click(screen.getByRole('button', { name: 'Reset to the usual card' }));
 		expect(props.onReset).toHaveBeenCalledTimes(1);

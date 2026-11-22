@@ -107,13 +107,14 @@ describe('Configure cards', () => {
 		expect(screen.queryByRole('button', { name: 'Configure cards' })).toBeNull();
 	});
 
-	it('opens the editor in place of the board, with a preview of three cards', async () => {
+	it('opens the editor in a dialog over the board, with a preview of three cards', async () => {
 		setup();
 		await userEvent.setup().click(screen.getByRole('button', { name: 'Configure cards' }));
-		expect(screen.getByTestId('card-editor')).toBeInTheDocument();
-		expect(screen.queryByTestId('kanban-column-Doing')).toBeNull();
+		expect(screen.getByRole('dialog', { name: 'Configure cards' })).toBe(screen.getByTestId('card-editor'));
+		// the board stays drawn behind it, and the other trigger is switched off
+		expect(screen.getByTestId('kanban-column-Doing')).toBeInTheDocument();
 		expect(screen.getAllByTestId('kanban-card-preview')).toHaveLength(3);
-		expect(screen.queryByRole('button', { name: 'Configure columns' })).toBeNull();
+		expect(screen.getByRole('button', { name: 'Configure columns' })).toBeDisabled();
 	});
 
 	it('Cancel goes back to the board without a request', async () => {

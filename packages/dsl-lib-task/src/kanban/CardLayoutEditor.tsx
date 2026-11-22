@@ -1,6 +1,7 @@
 import { ArrowDown, ArrowUp } from 'lucide-react';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Notice } from '../components/Notice.js';
+import { Dialog } from '../ui/Dialog.js';
 import {
 	BUTTON_PRIMARY_CLASS,
 	CONTROL_BORDER,
@@ -85,6 +86,9 @@ export function CardLayoutEditor({
 	onCancel,
 }: CardLayoutEditorProps): React.ReactElement {
 	const [draft, setDraft] = useState<CardDraft>(() => draftFromLayout(layout));
+	// The draft as the dialog opened: closing asks first once it differs (a live refresh of the layout does not reset it).
+	const opened = useRef(JSON.stringify(draft));
+	const dirty = JSON.stringify(draft) !== opened.current;
 	const [announcement, setAnnouncement] = useState('');
 	// The control to focus once the list is redrawn: a move keeps the focus on the field that moved.
 	const focusAfter = useRef<{ field: CardField; direction: 'earlier' | 'later' } | null>(null);
@@ -132,18 +136,45 @@ export function CardLayoutEditor({
 	let position = 0;
 
 	return (
-		<section
-			data-testid="card-editor"
-			aria-label="Configure cards"
-			className={`flex flex-col ${GAP_BLOCKS} ${CONTROL_RADIUS} ${CONTROL_BORDER} bg-surface p-3`}
+		<Dialog
+			title="Configure cards"
+			testId="card-editor"
+			size="lg"
+			dirty={dirty}
+			busy={busy}
+			onClose={onCancel}
+			alert={error !== null ? <Notice variant="danger" label={error} /> : undefined}
+			footer={({ requestClose }) => (
+				<>
+					<span className="flex-1" />
+					<button
+						type="button"
+						onClick={onReset}
+						disabled={busy || usual}
+						title={usual ? 'The cards already have the usual layout' : 'Back to the usual card: id, title, priority, assignee, status'}
+						className={SECONDARY_BUTTON_CLASS}
+					>
+						Reset to the usual card
+					</button>
+					<button type="button" onClick={requestClose} disabled={busy} className={SECONDARY_BUTTON_CLASS}>
+						Cancel
+					</button>
+					<button
+						type="button"
+						onClick={() => onSave(draftToBody(draft))}
+						disabled={busy || (usual && unchanged)}
+						title={usual && unchanged ? 'Change a field first: the cards already have this layout' : undefined}
+						className={BUTTON_PRIMARY_CLASS}
+					>
+						{busy ? 'Saving' : 'Save'}
+					</button>
+				</>
+			)}
 		>
-			<div className="flex flex-col gap-1">
-				<h3 className="m-0 text-sm font-semibold text-content">Configure cards</h3>
-				<p className="m-0 text-xs text-muted">
-					Pick the fields a card shows and put them in order: the preview shows your changes on three cards. The
-					title is always shown. A field a task has no value for is left out of its card.
-				</p>
-			</div>
+			<p className="m-0 text-xs text-muted">
+				Pick the fields a card shows and put them in order: the preview shows your changes on three cards. The
+				title is always shown. A field a task has no value for is left out of its card.
+			</p>
 			<div
 				role="group"
 				aria-label="Card preview"
@@ -270,31 +301,6 @@ export function CardLayoutEditor({
 					);
 				})}
 			</ol>
-			{error !== null ? <Notice variant="danger" label={error} /> : null}
-			<div className={`flex flex-wrap items-center ${GAP_CONTROLS}`}>
-				<span className="flex-1" />
-				<button
-					type="button"
-					onClick={onReset}
-					disabled={busy || usual}
-					title={usual ? 'The cards already have the usual layout' : 'Back to the usual card: id, title, priority, assignee, status'}
-					className={SECONDARY_BUTTON_CLASS}
-				>
-					Reset to the usual card
-				</button>
-				<button type="button" onClick={onCancel} disabled={busy} className={SECONDARY_BUTTON_CLASS}>
-					Cancel
-				</button>
-				<button
-					type="button"
-					onClick={() => onSave(draftToBody(draft))}
-					disabled={busy || (usual && unchanged)}
-					title={usual && unchanged ? 'Change a field first: the cards already have this layout' : undefined}
-					className={BUTTON_PRIMARY_CLASS}
-				>
-					{busy ? 'Saving' : 'Save'}
-				</button>
-			</div>
-		</section>
+		</Dialog>
 	);
 }

@@ -1,6 +1,7 @@
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, GripVertical, Plus, Trash2 } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
 import { Notice } from '../components/Notice.js';
+import { Dialog } from '../ui/Dialog.js';
 import { TONE_DOT, toneOf } from '../tones.js';
 import {
 	BUTTON_PRIMARY_CLASS,
@@ -99,6 +100,11 @@ export function placeStatus<T extends { id: number; statuses: string[] }>(
 	});
 }
 
+/** The parts of a draft that are saved, as one string (to tell whether the user changed anything). */
+function draftSnapshot(draft: readonly DraftColumn[], finished: FinishedChoice): string {
+	return JSON.stringify([draft.map(column => [column.name, column.statuses, column.sort ?? '']), finished]);
+}
+
 /** What the live region says once `status` was placed in `draft`. */
 function landedText(draft: readonly DraftColumn[], status: string): string {
 	const column = draft.find(entry => entry.statuses.includes(status));
@@ -138,6 +144,9 @@ export function ColumnsEditor({
 			...(column.sort === undefined ? {} : { sort: column.sort }),
 		}))
 	);
+	// What the draft was when the dialog opened: closing asks first once it differs (a live refresh of the layout does not reset it).
+	const opened = useRef(draftSnapshot(draft, layout.finishedFor ?? 'none'));
+	const dirty = draftSnapshot(draft, finished) !== opened.current;
 	const drag = useRef<{ kind: 'column'; id: number } | { kind: 'status'; name: string } | null>(null);
 	const [overKey, setOverKey] = useState<string | null>(null);
 	// Where the dragged chip would land: state for the accent bar, a ref for the drop handler (it may run before a render).
@@ -161,7 +170,7 @@ export function ColumnsEditor({
 	);
 	// The control to focus again once a keyboard move redrew the chips (moving a node in the DOM drops its focus).
 	const refocus = useRef<{ status: string; label: string | null } | null>(null);
-	const root = useRef<HTMLElement>(null);
+	const root = useRef<HTMLDivElement>(null);
 	useEffect(() => {
 		const target = refocus.current;
 		if (target === null || root.current === null) {
@@ -437,245 +446,248 @@ export function ColumnsEditor({
 	const highlight = (key: string): string => (overKey === key ? 'ring-2 ring-primary bg-primary-light' : '');
 
 	return (
-		<section
-			ref={root}
-			data-testid="columns-editor"
-			aria-label="Configure columns"
-			className={`flex flex-col ${GAP_BLOCKS} ${CONTROL_RADIUS} ${CONTROL_BORDER} bg-surface p-3`}
+		<Dialog
+			title="Configure columns"
+			testId="columns-editor"
+			size="md"
+			dirty={dirty}
+			busy={busy}
+			onClose={onCancel}
+			alert={error !== null ? <Notice variant="danger" label={error} /> : undefined}
+			footer={({ requestClose }) => (
+				<>
+					<button type="button" onClick={addColumn} disabled={busy} className={SECONDARY_BUTTON_CLASS}>
+						<Plus size={ICON_SIZE} aria-hidden="true" />
+						Add column
+					</button>
+					<span className="flex-1" />
+					<button
+						type="button"
+						onClick={onReset}
+						disabled={busy || layout.isDefault}
+						title={
+							layout.isDefault
+								? 'The board already has one column per status'
+								: 'Back to one column per status'
+						}
+						className={SECONDARY_BUTTON_CLASS}
+					>
+						Reset to default
+					</button>
+					<button type="button" onClick={requestClose} disabled={busy} className={SECONDARY_BUTTON_CLASS}>
+						Cancel
+					</button>
+					{empty.length > 0 ? (
+						<span id="columns-editor-save-why" className="sr-only">
+							{`${empty.length} ${empty.length === 1 ? 'column has' : 'columns have'} no status: fill or delete ${empty.length === 1 ? 'it' : 'them'} to save`}
+						</span>
+					) : null}
+					<button
+						type="button"
+						onClick={() =>
+							onSave({
+								columns: draft.map(column => ({
+									name: column.name,
+									statuses: column.statuses,
+									...(column.sort === undefined ? {} : { sort: column.sort }),
+								})),
+								...(finished === 'none' ? {} : { finishedFor: finished }),
+							})
+						}
+						disabled={busy || empty.length > 0}
+						aria-describedby={empty.length > 0 ? 'columns-editor-save-why' : undefined}
+						title={empty.length > 0 ? 'A column with no status cannot be saved: fill or delete it' : undefined}
+						className={BUTTON_PRIMARY_CLASS}
+					>
+						{busy ? 'Saving' : 'Save'}
+					</button>
+				</>
+			)}
 		>
-			<div className="flex flex-col gap-1">
-				<h3 className="m-0 text-sm font-semibold text-content">Configure columns</h3>
+			<div ref={root} className={`flex flex-col ${GAP_BLOCKS}`}>
 				<p className="m-0 text-xs text-muted">
-					A column shows the tasks of the statuses it holds, in the order of its chips. Drag a status before
-					or after another one, or onto a column; use the arrows of a chip (or Left and Right) to reorder, or
-					pick the column in its list. Drag the handle of a column, or use its arrows, to reorder the columns.
-					A status in no column is hidden from the board.
+					A column shows the tasks of the statuses it holds, in the order of its chips. Drag a status before or
+					after another one, or onto a column; use the arrows of a chip (or Left and Right) to reorder, or pick
+					the column in its list. Drag the handle of a column, or use its arrows, to reorder the columns. A
+					status in no column is hidden from the board.
 				</p>
-			</div>
-			<BoardPreview draft={draft} hidden={hidden} byName={byName} />
-			<p data-testid="columns-editor-announce" role="status" aria-live="polite" className="sr-only">
-				{announcement}
-			</p>
-			<div className="flex flex-col gap-1">
-				<label className={`flex flex-wrap items-center ${GAP_CONTROLS} text-xs text-muted`}>
-					<span className="font-medium">Show finished tasks for</span>
-					<select
-						aria-label="Show finished tasks for"
-						value={finished}
-						disabled={busy}
-						onChange={event => {
-							const value = event.target.value;
-							setFinished(isFinishedFor(value) ? value : 'none');
-						}}
-						className={`${FIELD_CLASS} min-w-0 max-w-full`}
-					>
-						{FINISHED_FOR_OPTIONS.map(option => (
-							<option key={option.value} value={option.value}>
-								{option.label}
-							</option>
-						))}
-					</select>
-				</label>
-				<p className="m-0 text-xs text-muted">{FINISHED_HINT}</p>
-			</div>
-			<ol className={`m-0 flex list-none flex-col ${GAP_CONTROLS} p-0`}>
-				{draft.map((column, index) => (
-					<li
-						key={column.id}
-						data-testid="columns-editor-column"
-						{...(column.statuses.length === 0 ? { 'data-empty': 'true' } : {})}
-						{...dropOn(`col-${column.id}`, column)}
-						className={`flex flex-col ${GAP_CONTROLS} ${CONTROL_RADIUS} ${CONTROL_BORDER} p-2 ${column.statuses.length === 0 ? 'border-warning-text bg-warning-bg' : ''} ${highlight(`col-${column.id}`)}`}
-					>
-						<div className={`flex flex-wrap items-center ${GAP_CONTROLS}`}>
-							<span
-								draggable
-								role="img"
-								aria-label={`Drag to reorder column ${column.name}`}
-								title="Drag to reorder"
-								data-testid="columns-editor-handle"
-								onDragStart={event => {
-									drag.current = { kind: 'column', id: column.id };
-									event.dataTransfer?.setData('text/plain', column.name);
-									if (event.dataTransfer) {
-										event.dataTransfer.effectAllowed = 'move';
-									}
-								}}
-								onDragEnd={endDrag}
-								className="inline-flex h-8 w-6 shrink-0 cursor-grab items-center justify-center text-muted"
-							>
-								<GripVertical size={ICON_SIZE} aria-hidden="true" />
-							</span>
-							<input
-								type="text"
-								value={column.name}
-								aria-label={`Name of column ${index + 1}`}
-								ref={element => {
-									if (element !== null && focusId.current === column.id) {
-										focusId.current = null;
-										element.focus();
-										element.select();
-										element.scrollIntoView?.({ block: 'nearest' });
-									}
-								}}
-								onChange={event => rename(column.id, event.target.value)}
-								className={`${FIELD_CLASS} min-w-[9rem] flex-1`}
-							/>
-							<button
-								type="button"
-								aria-label={`Move column ${column.name} up`}
-								title="Move up"
-								disabled={busy || index === 0}
-								onClick={() => moveBy(column.id, -1)}
-								className={ICON_BUTTON_CLASS}
-							>
-								<ArrowUp size={ICON_SIZE} aria-hidden="true" />
-							</button>
-							<button
-								type="button"
-								aria-label={`Move column ${column.name} down`}
-								title="Move down"
-								disabled={busy || index === draft.length - 1}
-								onClick={() => moveBy(column.id, 1)}
-								className={ICON_BUTTON_CLASS}
-							>
-								<ArrowDown size={ICON_SIZE} aria-hidden="true" />
-							</button>
-							<button
-								type="button"
-								aria-label={`Delete column ${column.name}`}
-								title="Delete column (its statuses are hidden)"
-								disabled={busy}
-								onClick={() => remove(column.id)}
-								className={ICON_BUTTON_CLASS}
-							>
-								<Trash2 size={ICON_SIZE} aria-hidden="true" />
-							</button>
-						</div>
-						<div className={`flex flex-wrap items-center ${GAP_CONTROLS}`}>
-							{column.statuses.length === 0 ? (
+				<BoardPreview draft={draft} hidden={hidden} byName={byName} />
+				<p data-testid="columns-editor-announce" role="status" aria-live="polite" className="sr-only">
+					{announcement}
+				</p>
+				<div className="flex flex-col gap-1">
+					<label className={`flex flex-wrap items-center ${GAP_CONTROLS} text-xs text-muted`}>
+						<span className="font-medium">Show finished tasks for</span>
+						<select
+							aria-label="Show finished tasks for"
+							value={finished}
+							disabled={busy}
+							onChange={event => {
+								const value = event.target.value;
+								setFinished(isFinishedFor(value) ? value : 'none');
+							}}
+							className={`${FIELD_CLASS} min-w-0 max-w-full`}
+						>
+							{FINISHED_FOR_OPTIONS.map(option => (
+								<option key={option.value} value={option.value}>
+									{option.label}
+								</option>
+							))}
+						</select>
+					</label>
+					<p className="m-0 text-xs text-muted">{FINISHED_HINT}</p>
+				</div>
+				<ol className={`m-0 flex list-none flex-col ${GAP_CONTROLS} p-0`}>
+					{draft.map((column, index) => (
+						<li
+							key={column.id}
+							data-testid="columns-editor-column"
+							{...(column.statuses.length === 0 ? { 'data-empty': 'true' } : {})}
+							{...dropOn(`col-${column.id}`, column)}
+							className={`flex flex-col ${GAP_CONTROLS} ${CONTROL_RADIUS} ${CONTROL_BORDER} p-2 ${column.statuses.length === 0 ? 'border-warning-text bg-warning-bg' : ''} ${highlight(`col-${column.id}`)}`}
+						>
+							<div className={`flex flex-wrap items-center ${GAP_CONTROLS}`}>
 								<span
-									data-testid="columns-editor-column-empty"
-									className="text-xs font-medium text-content"
-								>
-									No status yet: drag one here or pick this column in a status list.
-								</span>
-							) : (
-								<span
-									role="list"
-									aria-label={`Statuses of column ${shownName(column.name)}, in board order`}
-									className={`flex min-w-0 max-w-full flex-wrap items-center ${GAP_CONTROLS}`}
-								>
-									{column.statuses.map((status, position) => chip(status, column, position))}
-								</span>
-							)}
-							{hidden.length > 0 ? (
-								<select
-									aria-label={`Add a status to column ${column.name}`}
-									value=""
-									disabled={busy}
-									onChange={event => {
-										if (event.target.value !== '') {
-											assign(event.target.value, column.id);
+									draggable
+									role="img"
+									aria-label={`Drag to reorder column ${column.name}`}
+									title="Drag to reorder"
+									data-testid="columns-editor-handle"
+									onDragStart={event => {
+										drag.current = { kind: 'column', id: column.id };
+										event.dataTransfer?.setData('text/plain', column.name);
+										if (event.dataTransfer) {
+											event.dataTransfer.effectAllowed = 'move';
 										}
 									}}
-									className={`${FIELD_CLASS} min-w-0 max-w-[10rem] cursor-pointer text-xs`}
+									onDragEnd={endDrag}
+									className="inline-flex h-8 w-6 shrink-0 cursor-grab items-center justify-center text-muted"
 								>
-									<option value="">Add status</option>
-									{hidden.map(status => (
-										<option key={status} value={status}>
-											{status}
-										</option>
-									))}
-								</select>
-							) : null}
-						</div>
-						<div className={`flex flex-wrap items-center ${GAP_CONTROLS} text-xs text-muted`}>
-							<label className={`flex flex-wrap items-center ${GAP_CONTROLS}`}>
-								<span className="font-medium">Sort cards</span>
-								<select
-									aria-label={`Sort of column ${column.name}`}
-									value={column.sort ?? ''}
+									<GripVertical size={ICON_SIZE} aria-hidden="true" />
+								</span>
+								<input
+									type="text"
+									value={column.name}
+									aria-label={`Name of column ${index + 1}`}
+									ref={element => {
+										if (element !== null && focusId.current === column.id) {
+											focusId.current = null;
+											element.focus();
+											element.select();
+											element.scrollIntoView?.({ block: 'nearest' });
+										}
+									}}
+									onChange={event => rename(column.id, event.target.value)}
+									className={`${FIELD_CLASS} min-w-[9rem] flex-1`}
+								/>
+								<button
+									type="button"
+									aria-label={`Move column ${column.name} up`}
+									title="Move up"
+									disabled={busy || index === 0}
+									onClick={() => moveBy(column.id, -1)}
+									className={ICON_BUTTON_CLASS}
+								>
+									<ArrowUp size={ICON_SIZE} aria-hidden="true" />
+								</button>
+								<button
+									type="button"
+									aria-label={`Move column ${column.name} down`}
+									title="Move down"
+									disabled={busy || index === draft.length - 1}
+									onClick={() => moveBy(column.id, 1)}
+									className={ICON_BUTTON_CLASS}
+								>
+									<ArrowDown size={ICON_SIZE} aria-hidden="true" />
+								</button>
+								<button
+									type="button"
+									aria-label={`Delete column ${column.name}`}
+									title="Delete column (its statuses are hidden)"
 									disabled={busy}
-									onChange={event => setSort(column.id, event.target.value)}
-									className={`${FIELD_CLASS} min-w-0 max-w-full`}
+									onClick={() => remove(column.id)}
+									className={ICON_BUTTON_CLASS}
 								>
-									{SORT_OPTIONS.map(option => (
-										<option key={option.value} value={option.value}>
-											{option.label}
-										</option>
-									))}
-								</select>
-							</label>
-						</div>
-					</li>
-				))}
-			</ol>
-			{hidden.length > 0 ? (
-				<p data-testid="columns-editor-hidden" className="m-0 text-xs text-muted">
-					{`Hidden (no column): ${hidden.join(', ')}`}
-				</p>
-			) : null}
-			{empty.length > 0 ? (
-				<div data-testid="columns-editor-empty" className={`flex flex-col ${GAP_CONTROLS}`}>
-					{empty.map(column => (
-						<Notice
-							key={column.id}
-							variant="warning"
-							label={`Column "${column.name.trim() === '' ? '(unnamed)' : column.name}" has no status: drag a status onto it, or delete the column.`}
-						/>
+									<Trash2 size={ICON_SIZE} aria-hidden="true" />
+								</button>
+							</div>
+							<div className={`flex flex-wrap items-center ${GAP_CONTROLS}`}>
+								{column.statuses.length === 0 ? (
+									<span
+										data-testid="columns-editor-column-empty"
+										className="text-xs font-medium text-content"
+									>
+										No status yet: drag one here or pick this column in a status list.
+									</span>
+								) : (
+									<span
+										role="list"
+										aria-label={`Statuses of column ${shownName(column.name)}, in board order`}
+										className={`flex min-w-0 max-w-full flex-wrap items-center ${GAP_CONTROLS}`}
+									>
+										{column.statuses.map((status, position) => chip(status, column, position))}
+									</span>
+								)}
+								{hidden.length > 0 ? (
+									<select
+										aria-label={`Add a status to column ${column.name}`}
+										value=""
+										disabled={busy}
+										onChange={event => {
+											if (event.target.value !== '') {
+												assign(event.target.value, column.id);
+											}
+										}}
+										className={`${FIELD_CLASS} min-w-0 max-w-[10rem] cursor-pointer text-xs`}
+									>
+										<option value="">Add status</option>
+										{hidden.map(status => (
+											<option key={status} value={status}>
+												{status}
+											</option>
+										))}
+									</select>
+								) : null}
+							</div>
+							<div className={`flex flex-wrap items-center ${GAP_CONTROLS} text-xs text-muted`}>
+								<label className={`flex flex-wrap items-center ${GAP_CONTROLS}`}>
+									<span className="font-medium">Sort cards</span>
+									<select
+										aria-label={`Sort of column ${column.name}`}
+										value={column.sort ?? ''}
+										disabled={busy}
+										onChange={event => setSort(column.id, event.target.value)}
+										className={`${FIELD_CLASS} min-w-0 max-w-full`}
+									>
+										{SORT_OPTIONS.map(option => (
+											<option key={option.value} value={option.value}>
+												{option.label}
+											</option>
+										))}
+									</select>
+								</label>
+							</div>
+						</li>
 					))}
-				</div>
-			) : null}
-			{error !== null ? <Notice variant="danger" label={error} /> : null}
-			<div className={`flex flex-wrap items-center ${GAP_CONTROLS}`}>
-				<button type="button" onClick={addColumn} disabled={busy} className={SECONDARY_BUTTON_CLASS}>
-					<Plus size={ICON_SIZE} aria-hidden="true" />
-					Add column
-				</button>
-				<span className="flex-1" />
-				<button
-					type="button"
-					onClick={onReset}
-					disabled={busy || layout.isDefault}
-					title={
-						layout.isDefault
-							? 'The board already has one column per status'
-							: 'Back to one column per status'
-					}
-					className={SECONDARY_BUTTON_CLASS}
-				>
-					Reset to default
-				</button>
-				<button type="button" onClick={onCancel} disabled={busy} className={SECONDARY_BUTTON_CLASS}>
-					Cancel
-				</button>
-				{empty.length > 0 ? (
-					<span id="columns-editor-save-why" className="sr-only">
-						{`${empty.length} ${empty.length === 1 ? 'column has' : 'columns have'} no status: fill or delete ${empty.length === 1 ? 'it' : 'them'} to save`}
-					</span>
+				</ol>
+				{hidden.length > 0 ? (
+					<p data-testid="columns-editor-hidden" className="m-0 text-xs text-muted">
+						{`Hidden (no column): ${hidden.join(', ')}`}
+					</p>
 				) : null}
-				<button
-					type="button"
-					onClick={() =>
-						onSave({
-							columns: draft.map(column => ({
-								name: column.name,
-								statuses: column.statuses,
-								...(column.sort === undefined ? {} : { sort: column.sort }),
-							})),
-							...(finished === 'none' ? {} : { finishedFor: finished }),
-						})
-					}
-					disabled={busy || empty.length > 0}
-					aria-describedby={empty.length > 0 ? 'columns-editor-save-why' : undefined}
-					title={empty.length > 0 ? 'A column with no status cannot be saved: fill or delete it' : undefined}
-					className={BUTTON_PRIMARY_CLASS}
-				>
-					{busy ? 'Saving' : 'Save'}
-				</button>
+				{empty.length > 0 ? (
+					<div data-testid="columns-editor-empty" className={`flex flex-col ${GAP_CONTROLS}`}>
+						{empty.map(column => (
+							<Notice
+								key={column.id}
+								variant="warning"
+								label={`Column "${column.name.trim() === '' ? '(unnamed)' : column.name}" has no status: drag a status onto it, or delete the column.`}
+							/>
+						))}
+					</div>
+				) : null}
 			</div>
-		</section>
+		</Dialog>
 	);
 }
 

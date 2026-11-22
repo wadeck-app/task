@@ -456,8 +456,9 @@ describe('Configure columns', () => {
 		expect(hidden).toHaveTextContent('Hidden (no column): parked');
 		expect(hidden.className).toMatch(/\btext-muted\b/);
 		expect(screen.queryByText(/Unmapped/)).toBeNull();
-		// the board itself is hidden while editing
-		expect(screen.queryByTestId('kanban-column-Doing')).toBeNull();
+		// the board stays drawn behind the dialog
+		expect(screen.getByTestId('kanban-column-Doing')).toBeInTheDocument();
+		expect(screen.getByRole('dialog', { name: 'Configure columns' })).toBe(editor);
 	});
 
 	it('"Open in Tasks" and "Configure columns" are two buttons of the same toolbar: same look, same height', async () => {

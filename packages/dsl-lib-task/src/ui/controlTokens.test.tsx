@@ -28,6 +28,7 @@ const TOKENIZED = [
 	'tasklist/ProjectFilter.tsx',
 	'tasklist/TaskListTable.tsx',
 	'ui/ChipField.tsx',
+	'ui/Dialog.tsx',
 	'ui/SuggestBox.tsx',
 ];
 

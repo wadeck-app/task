@@ -116,9 +116,9 @@ describe('Configure columns: Show finished tasks for', () => {
 		expect(putBody()).toEqual({ columns: sortedLayout().columns });
 	});
 
-	it('the toolbar control is not drawn while the editor is open (one control with that role per view)', async () => {
+	it('the toolbar control stays drawn behind the dialog, switched off', async () => {
 		await open();
-		expect(screen.queryByRole('combobox', { name: 'Finished tasks shown for' })).toBeNull();
+		expect(screen.getByRole('combobox', { name: 'Finished tasks shown for' })).toBeDisabled();
 	});
 });
 
