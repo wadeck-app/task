@@ -98,6 +98,24 @@ export interface RequestRecord {
 	apiVersion?: string;
 }
 
+/** One image the fake received (the token is never kept, only the scheme it was sent under). */
+export interface FakeUpload {
+	/** The `name` query parameter. */
+	name: string;
+	/** The `content_type` query parameter. */
+	contentType: string;
+	/** The `repository_id` query parameter, as sent. */
+	repositoryId: string;
+	/** The raw body. */
+	bytes: Buffer;
+	/** The scheme of the Authorization header (`token` is the one the endpoint accepts). */
+	scheme: string;
+	/** The Content-Type header of the request. */
+	requestContentType: string | undefined;
+	/** The address answered (`https://github.com/user-attachments/assets/<uuid>`). */
+	url: string;
+}
+
 export interface FakeGitHubOptions {
 	/** `owner/name` served; other repositories answer 404. Default `acme/shop`. */
 	repo?: string;
@@ -203,14 +221,18 @@ function sha(text: string): string {
 	return crypto.createHash('sha1').update(text).digest('hex');
 }
 
-async function readBody(req: http.IncomingMessage): Promise<string> {
+async function readBytes(req: http.IncomingMessage): Promise<Buffer> {
 	const chunks: Buffer[] = [];
 	for await (const chunk of req) chunks.push(chunk as Buffer);
-	return Buffer.concat(chunks).toString('utf8');
+	return Buffer.concat(chunks);
 }
 
 export class FakeGitHub {
 	readonly requests: RequestRecord[] = [];
+	/** The numeric REST id of the repository (`GET /repos/{owner}/{repo}` -> `id`; what the upload endpoint asks for). */
+	static readonly REPOSITORY_ID = 424242;
+	/** The images received by `POST /user-attachments/assets`, in order. */
+	readonly uploads: FakeUpload[] = [];
 	readonly token: string;
 	readonly repo: string;
 	readonly issues = new Map<number, FakeIssue>();
@@ -828,7 +850,8 @@ export class FakeGitHub {
 				: {}),
 		};
 		this.requests.push(record);
-		const rawBody = await readBody(req);
+		const rawBytes = await readBytes(req);
+		const rawBody = rawBytes.toString('utf8');
 		let parsedBody: unknown;
 		let badJson = false;
 		if (rawBody !== '') {
@@ -866,6 +889,11 @@ export class FakeGitHub {
 			if (applyWrite === true && req.method !== 'GET')
 				this.routeWrite(req.method ?? '', url, parsedBody, req.headers);
 			finish(status, body, headers);
+			return;
+		}
+
+		if (req.method === 'POST' && url.pathname === '/user-attachments/assets') {
+			this.upload(req, url, record, rawBytes, finish);
 			return;
 		}
 
@@ -1015,6 +1043,59 @@ export class FakeGitHub {
 		finish(answer.status, body, base);
 	}
 
+	/**
+	 * `POST /user-attachments/assets?name&content_type&repository_id` (the endpoint gh uses, not documented): the raw bytes as the body,
+	 * `Authorization: token <TOKEN>`. Observed live 2026-11-22: 201 and { url }, and a misleading 404 when the scheme is `Bearer`. From
+	 * the source of gh (not probed): 404 for a refused token or no write access, 422 with the server message for a refused file.
+	 * It spends no quota here (not measured).
+	 */
+	private upload(
+		req: http.IncomingMessage,
+		url: URL,
+		record: RequestRecord,
+		bytes: Buffer,
+		finish: (status: number, body: unknown, headers?: Record<string, string>) => void
+	): void {
+		const authorization = String(req.headers['authorization'] ?? '');
+		const space = authorization.indexOf(' ');
+		const scheme = space < 0 ? authorization : authorization.slice(0, space);
+		const credential = space < 0 ? '' : authorization.slice(space + 1);
+		const notFound = { message: 'Not Found', documentation_url: DOCS, status: '404' };
+		if (scheme !== 'token' || credential !== this.token) {
+			record.auth = authorization === '' ? 'missing' : 'bad';
+			finish(404, notFound);
+			return;
+		}
+		record.auth = 'ok';
+		const name = url.searchParams.get('name') ?? '';
+		const contentType = url.searchParams.get('content_type') ?? '';
+		const repositoryId = url.searchParams.get('repository_id') ?? '';
+		if (this.options.readOnlyToken === true || repositoryId !== String(FakeGitHub.REPOSITORY_ID)) {
+			finish(404, notFound);
+			return;
+		}
+		if (name === '' || contentType === '' || bytes.byteLength === 0) {
+			finish(422, {
+				message: 'Validation Failed',
+				errors: [name === '' ? 'name is required' : contentType === '' ? 'content_type is required' : 'the file is empty'],
+				documentation_url: DOCS,
+				status: '422',
+			});
+			return;
+		}
+		const url2 = `https://github.com/user-attachments/assets/00000000-0000-4000-8000-${String(this.uploads.length + 1).padStart(12, '0')}`;
+		this.uploads.push({
+			name,
+			contentType,
+			repositoryId,
+			bytes,
+			scheme,
+			requestContentType: req.headers['content-type'],
+			url: url2,
+		});
+		finish(201, { url: url2 });
+	}
+
 	private nextFault(pathname: string, method: string): Fault | undefined {
 		const index = this.faults.findIndex(
 			fault =>
@@ -1069,6 +1150,7 @@ export class FakeGitHub {
 				status: 200,
 				body: {
 					...this.repoJson(),
+					id: FakeGitHub.REPOSITORY_ID,
 					private: true,
 					has_issues: this.options.hasIssues,
 					archived: false,

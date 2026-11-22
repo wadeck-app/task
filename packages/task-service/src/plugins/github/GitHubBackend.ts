@@ -6,6 +6,7 @@ import type {
 	BackendCapabilities,
 	BackendClaimInput,
 	BackendClaimResult,
+	AddCommentOptions,
 	BackendCommentChange,
 	BackendReleaseResult,
 	ReleaseOptions,
@@ -79,6 +80,7 @@ export const GITHUB_CAPABILITIES: BackendCapabilities = Object.freeze({
 	// With fills.meta: labels the labels `meta:key=value` are read as meta; the plugin reports it as emulated.
 	meta: false,
 	comments: true,
+	commentAttachments: true,
 	// Priority: a native organization issue field or a label (priorityStorage); assignee and claim: the managed block of the body.
 	// No fill: all three work with nothing declared (see "Storage strategy: github" in CLAUDE.md).
 	priority: true,
@@ -891,7 +893,7 @@ export class GitHubBackend implements TaskBackend {
 		return this.writer.removeLink(id, type, targetId, options);
 	}
 
-	addComment(id: string, text: string, options?: WriteOptions & { author?: string }): Promise<BackendCommentChange> {
+	addComment(id: string, text: string, options?: AddCommentOptions): Promise<BackendCommentChange> {
 		return this.writer.addComment(id, text, options);
 	}
 

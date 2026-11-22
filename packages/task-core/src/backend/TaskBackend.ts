@@ -8,6 +8,7 @@
 // Domain rules (cycles, single duplicateOf, inverse links, activity entries) still live in the local TaskStore; step 0.7
 // of the design lifts them into a shared layer over a thinner port.
 import type { ClaimOutcome, ClaimRequest } from '../taskFields.js';
+import type { CommentAttachment, UploadedAttachment } from '../commentAttachments.js';
 import type { CommentChange, CommentEdit } from '../taskComments.js';
 import type { LinkType, TaskLink, TaskLinks, TaskRecord, TaskStatus, TaskSummary, TaskTreeNode } from '../TaskStore.js';
 import type { BackendCapabilities, BackendKind } from './capabilities.js';
@@ -110,7 +111,16 @@ export interface MigratedCreateInput extends CreateTaskInput {
 
 export interface BackendCommentChange extends Omit<CommentChange, 'task'> {
 	task: VersionedRecord;
+	/** What was stored for the attachments of an `addComment` (capability `commentAttachments`); absent when there were none. */
+	attachments?: UploadedAttachment[];
 }
+
+/** What `addComment` takes besides the revision: the author (a backend may refuse it) and the images to store with the comment. */
+export type AddCommentOptions = WriteOptions & {
+	author?: string;
+	/** Needs the capability `commentAttachments`; a backend without it throws UnsupportedByBackendError, it never drops them. */
+	attachments?: readonly CommentAttachment[];
+};
 
 export interface BackendCommentEdit extends Omit<CommentEdit, 'task'> {
 	task: VersionedRecord;
@@ -213,7 +223,7 @@ export interface TaskBackend {
 	removeLink(id: string, type: LinkType, targetId: string, options?: WriteOptions): Promise<VersionedRecord>;
 
 	// ---- writes: comments ----
-	addComment(id: string, text: string, options?: WriteOptions & { author?: string }): Promise<BackendCommentChange>;
+	addComment(id: string, text: string, options?: AddCommentOptions): Promise<BackendCommentChange>;
 	editComment(id: string, commentId: string, text: string, options?: WriteOptions): Promise<BackendCommentEdit>;
 	removeComment(id: string, commentId: string, options?: WriteOptions): Promise<BackendCommentChange>;
 

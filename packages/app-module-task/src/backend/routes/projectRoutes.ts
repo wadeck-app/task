@@ -1,11 +1,18 @@
 // GET /projects and GET /summary: which projects the module knows and how many tasks they hold.
-import { describeError, resolveProjectReference, summarizeProject, summarizeProjects } from '@wadeck-app/task-service';
+import {
+	describeError,
+	listKnownProjects,
+	resolveProjectReference,
+	summarizeProject,
+	summarizeProjects,
+} from '@wadeck-app/task-service';
 import type { ProjectOverview, ProjectsSummary } from '@wadeck-app/task-service';
 
 import { projectRows, skippedOf, skippedWarning } from '../allProjectsViews.js';
+import { RequestError } from '../errors.js';
 import { projectText, selectedQuery } from '../hrefs.js';
 import { readLastProject } from '../lastProject.js';
-import { attentionText, listRows, openLinks, registryProblemText } from '../projectManagement.js';
+import { IMPORTANCE_NOTE, attentionText, listRows, openLinks, registryProblemText } from '../projectManagement.js';
 import { NO_PROJECT_HINT, openProject, readProjects } from '../projects.js';
 import type { ProjectListing } from '../projects.js';
 import { apiRef } from '../projectRef.js';
@@ -107,6 +114,8 @@ export function registerProjectRoutes(kit: RouteKit): void {
 				openLinks: taskLinks,
 				hasOpenLinks: taskLinks.length > 0,
 				attentionText: attentionText(projects),
+				// Favorites and priority order every list of projects; they are edited elsewhere.
+				importanceNote: IMPORTANCE_NOTE,
 				// Nothing registered: the views show this text (with the exact next step) instead of staying blank.
 				noProjects: projects.length === 0,
 				noProjectsText:
@@ -171,9 +180,19 @@ export function registerProjectRoutes(kit: RouteKit): void {
 		// Naming a project explicitly must fail loudly: an unreadable one is an error, not a skipped entry.
 		const ctx = openProject(requested);
 		const figures = await summarizeProject(ctx);
+		const known = listKnownProjects().projects.find(entry => entry.id === ctx.project.id);
+		if (known === undefined) {
+			throw new RequestError(
+				500,
+				`project ${ctx.project.name} (${ctx.project.id}) was opened but is not in the registry listing`,
+				'The registry changed during the request: retry.'
+			);
+		}
 		const overview: ProjectOverview = {
 			id: ctx.project.id,
 			name: ctx.project.name,
+			favorite: known.favorite,
+			priority: known.priority,
 			path: ctx.project.path,
 			exists: true,
 			...figures,

@@ -31,6 +31,20 @@ export interface TaskListRow {
 	href?: string;
 	projectName?: string;
 	projectPath?: string;
+	/** The project is a favorite in the registry (global list). Absent on an older server: not a favorite. */
+	projectFavorite?: boolean;
+	/** The registry priority of the project (global list). Absent on an older server: normal. */
+	projectPriority?: ProjectPriority;
+}
+
+export type ProjectPriority = 'high' | 'normal' | 'low';
+
+/** A project the server lists with its importance (`projects` of the global answer); `count` is its number of rows on the server. */
+export interface ProjectInfo {
+	name: string;
+	favorite?: boolean;
+	priority?: ProjectPriority;
+	count?: number;
 }
 
 export type SortKey = 'id' | 'title' | 'status' | 'priority' | 'assignee' | 'created' | 'updated' | 'project';
@@ -48,6 +62,8 @@ export interface ListState {
 	/** Names, and `UNASSIGNED` for the tasks nobody holds. */
 	assignee: string[];
 	project: string[];
+	/** Only the tasks of favorite projects (global list). */
+	favoritesOnly: boolean;
 	updated: UpdatedRange;
 }
 
@@ -86,6 +102,7 @@ export const DEFAULT_STATE: ListState = {
 	priority: [],
 	assignee: [],
 	project: [],
+	favoritesOnly: false,
 	updated: 'any',
 };
 
@@ -99,6 +116,7 @@ export function activeFilterCount(state: ListState): number {
 	return (
 		(state.q.trim() === '' ? 0 : 1) +
 		[state.status, state.priority, state.assignee, state.project].filter(values => values.length > 0).length +
+		(state.favoritesOnly ? 1 : 0) +
 		(state.updated === 'any' ? 0 : 1)
 	);
 }
@@ -278,6 +296,9 @@ export function applyFilters(rows: readonly TaskListRow[], state: ListState, now
 		if (!matchesText(row, state.q)) {
 			return false;
 		}
+		if (state.favoritesOnly && row.projectFavorite !== true) {
+			return false;
+		}
 		for (const key of facets) {
 			const wanted = state[key];
 			if (wanted.length === 0) {
@@ -326,11 +347,69 @@ export function facetOptions(rows: readonly TaskListRow[], key: FacetKey, select
 		.sort((a, b) => b.count - a.count || compareText(a.label, b.label));
 }
 
+export interface ProjectOption extends FacetOption {
+	favorite: boolean;
+	priority: ProjectPriority;
+}
+
+const PROJECT_PRIORITY_RANK: Record<ProjectPriority, number> = { high: 0, normal: 1, low: 2 };
+
+/** The order of every list of projects: favorites first, then high, normal, low, then the name (the registry's comparator, applied here). */
+export function compareProjectOptions(a: ProjectOption, b: ProjectOption): number {
+	return (
+		Number(b.favorite) - Number(a.favorite) ||
+		PROJECT_PRIORITY_RANK[a.priority] - PROJECT_PRIORITY_RANK[b.priority] ||
+		compareText(a.label, b.label) ||
+		compareCode(a.value, b.value)
+	);
+}
+
+/**
+ * The projects of the global list for the Project filter: the `projects` the server gives (so a project with no row is offered), else
+ * the ones the rows name. Counts are the rows each project has. A field the server does not send means not favorite, normal.
+ * `selected` names no row has stay listed with a count of 0 (a shared link never hides its own filter).
+ */
+export function projectOptions(
+	rows: readonly TaskListRow[],
+	projects: readonly ProjectInfo[] | undefined,
+	selected: readonly string[] = []
+): ProjectOption[] {
+	const found = new Map<string, ProjectOption>();
+	const upsert = (name: string, favorite: boolean | undefined, priority: ProjectPriority | undefined): ProjectOption => {
+		const known = found.get(name);
+		if (known !== undefined) {
+			return known;
+		}
+		const option: ProjectOption = { value: name, label: name, count: 0, favorite: favorite === true, priority: priority ?? 'normal' };
+		found.set(name, option);
+		return option;
+	};
+	for (const project of projects ?? []) {
+		if (typeof project.name === 'string' && project.name !== '') {
+			upsert(project.name, project.favorite, project.priority);
+		}
+	}
+	for (const row of rows) {
+		if (row.projectName !== undefined && row.projectName !== '') {
+			upsert(row.projectName, row.projectFavorite, row.projectPriority).count++;
+		}
+	}
+	for (const name of selected) {
+		upsert(name, undefined, undefined);
+	}
+	return [...found.values()].sort(compareProjectOptions);
+}
+
+/** The favorite projects of `options`, in their order. */
+export function favoriteProjects(options: readonly ProjectOption[]): ProjectOption[] {
+	return options.filter(option => option.favorite);
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // Address
 
 /** The query parameters this list owns. Every other one belongs to the page and is never touched. */
-export const LIST_PARAMS = ['q', 'sort', 'dir', 'status', 'priority', 'assignee', 'projectIn', 'updated'] as const;
+export const LIST_PARAMS = ['q', 'sort', 'dir', 'status', 'priority', 'assignee', 'projectIn', 'fav', 'updated'] as const;
 
 export interface ParsedState {
 	state: ListState;
@@ -375,6 +454,14 @@ export function parseListState(search: string): ParsedState {
 	state.priority = params.getAll('priority');
 	state.assignee = params.getAll('assignee');
 	state.project = params.getAll('projectIn');
+	const fav = params.get('fav');
+	if (fav !== null) {
+		if (fav === '1') {
+			state.favoritesOnly = true;
+		} else {
+			warnings.push(`The address asks fav="${fav}"; use fav=1 for the favorite projects only.`);
+		}
+	}
 	return { state, present, warnings };
 }
 
@@ -405,6 +492,9 @@ export function serializeListState(state: ListState, currentSearch: string): str
 	}
 	for (const value of state.project) {
 		params.append('projectIn', value);
+	}
+	if (state.favoritesOnly) {
+		params.set('fav', '1');
 	}
 	if (state.updated !== 'any') {
 		params.set('updated', state.updated);

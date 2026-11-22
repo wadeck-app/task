@@ -4,30 +4,38 @@ import {
 	inspectKnownProjects,
 	isRemoteFailure,
 	NoReadableProjectsError,
+	type KnownProject,
+	type ProjectPriorityLevel,
 	type TaskServiceContext,
 } from '@wadeck-app/task-service';
 
 import type { SkippedProject } from './allProjectsViews.js';
 
 export interface ProjectRead<T> {
-	project: { id: string; name: string; path: string };
+	project: { id: string; name: string; path: string; favorite: boolean; priority: ProjectPriorityLevel };
 	value: T;
 }
 
 export interface AcrossProjects<T> {
-	/** The readable projects, sorted by name (case-insensitive) then path: the order of the other all-projects views. */
+	/** The readable projects in importance order (favorites, priority, name), the order of every all-projects view. */
 	entries: ProjectRead<T>[];
 	/** The projects that could not be read, with why. */
 	unreadable: SkippedProject[];
 	/** The same projects with their id and name (the page variants list them by name). */
-	unreadableProjects: Array<{ id: string; name: string; path: string; error: string }>;
+	unreadableProjects: Array<{
+		id: string;
+		name: string;
+		path: string;
+		favorite: boolean;
+		priority: ProjectPriorityLevel;
+		error: string;
+	}>;
 	/** Why the shared registry could not be read (then no project is listed); null when it was. */
 	registryProblem: string | null;
 }
 
-function compareText(a: string, b: string): number {
-	const [left, right] = [a.toLowerCase(), b.toLowerCase()];
-	return left < right ? -1 : left > right ? 1 : 0;
+function unreadableOf(known: KnownProject): Omit<AcrossProjects<never>['unreadableProjects'][number], 'error'> {
+	return { id: known.id, name: known.name, path: known.path, favorite: known.favorite, priority: known.priority };
 }
 
 /**
@@ -45,13 +53,19 @@ export async function readAcrossProjects<T>(
 		if (context === null) {
 			const error = health.error ?? 'unreadable';
 			unreadable.push({ path: health.path, error });
-			unreadableProjects.push({ id: known.id, name: known.name, path: known.path, error });
+			unreadableProjects.push({ ...unreadableOf(known), error });
 			continue;
 		}
 		// One project after the other: the first failure and the order of the entries do not depend on timing.
 		try {
 			entries.push({
-				project: { id: known.id, name: context.project.name, path: known.path },
+				project: {
+					id: known.id,
+					name: context.project.name,
+					path: known.path,
+					favorite: known.favorite,
+					priority: known.priority,
+				},
 				value: await read(context),
 			});
 		} catch (error) {
@@ -60,13 +74,12 @@ export async function readAcrossProjects<T>(
 			if (!isRemoteFailure(error)) throw error;
 			const message = describeProblem(error);
 			unreadable.push({ path: health.path, error: message });
-			unreadableProjects.push({ id: known.id, name: known.name, path: known.path, error: message });
+			unreadableProjects.push({ ...unreadableOf(known), error: message });
 		} finally {
 			// Released as soon as it is read: the strategy of a project may hold a connection or a cache.
 			await context.dispose?.();
 		}
 	}
 	if (inspected.length > 0 && entries.length === 0) throw new NoReadableProjectsError(unreadable);
-	entries.sort((a, b) => compareText(a.project.name, b.project.name) || compareText(a.project.path, b.project.path));
 	return { entries, unreadable, unreadableProjects, registryProblem };
 }

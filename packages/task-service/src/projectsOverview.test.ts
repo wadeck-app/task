@@ -1,6 +1,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { setFavorite, setPriority } from '@wadeck-app/project-sdk';
+
 import { describeError } from './describeError.js';
 import { NoReadableProjectsError } from './errors.js';
 import { openResolvedProject } from './openContext.js';
@@ -54,7 +56,7 @@ describe('projects overview (every project of the shared registry that has a fol
 			});
 		});
 
-		it('gives one entry per project (registration order) with its id, and the totals, closed tasks counted in total only', async () => {
+		it('gives one entry per project (importance order, here by name) with its id, and the totals, closed tasks counted in total only', async () => {
 			const alpha = await registeredWith('alpha', [
 				['a1', 'backlog'],
 				['a2', 'done'],
@@ -81,13 +83,32 @@ describe('projects overview (every project of the shared registry that has a fol
 			]);
 		});
 
+		it('lists projects in importance order and each entry carries favorite and priority', async () => {
+			await registeredWith('delta');
+			await registeredWith('alpha');
+			await registeredWith('echo');
+			await registeredWith('bravo');
+			await setFavorite(sandbox.registryDir, 'echo', true);
+			await setPriority(sandbox.registryDir, 'delta', 'high');
+			await setPriority(sandbox.registryDir, 'alpha', 'low');
+
+			const summary = await summarizeProjects({ env: sandbox.env });
+
+			expect(summary.projects.map(p => [p.name, p.favorite, p.priority])).toEqual([
+				['echo', true, 'normal'],
+				['delta', false, 'high'],
+				['bravo', false, 'normal'],
+				['alpha', false, 'low'],
+			]);
+		});
+
 		it('a row has exactly the documented keys', async () => {
 			await registeredWith('alpha');
 
 			const [row] = (await summarizeProjects({ env: sandbox.env })).projects;
 
 			expect(Object.keys(row!).sort()).toEqual(
-				['byStatus', 'error', 'exists', 'id', 'name', 'open', 'path', 'total'].sort()
+				['byStatus', 'error', 'exists', 'favorite', 'id', 'name', 'open', 'path', 'priority', 'total'].sort()
 			);
 		});
 
@@ -189,6 +210,7 @@ describe('projects overview (every project of the shared registry that has a fol
 			expect(await listTasksAcrossProjects({ env: sandbox.env })).toEqual({
 				tasks: [],
 				readableCount: 0,
+				readableProjects: [],
 				unreadable: [],
 			});
 		});
@@ -210,13 +232,45 @@ describe('projects overview (every project of the shared registry that has a fol
 				['zeta', 'z1'],
 			]);
 			expect(result.tasks[0]).toMatchObject({
-				project: { id: alpha.project.id, name: 'alpha', path: alpha.dir },
+				project: { id: alpha.project.id, name: 'alpha', path: alpha.dir, favorite: false, priority: 'normal' },
 				status: 'backlog',
 				id: expect.any(String),
 				createdAt: expect.any(String),
 			});
-			expect(result.tasks[2]!.project).toEqual({ id: zeta.project.id, name: 'zeta', path: zeta.dir });
+			expect(result.tasks[2]!.project).toEqual({
+				id: zeta.project.id,
+				name: 'zeta',
+				path: zeta.dir,
+				favorite: false,
+				priority: 'normal',
+			});
 			expect(result).toMatchObject({ readableCount: 3, unreadable: [] });
+		});
+
+		it('sorts tasks by project importance (favorite, priority), then project name, then creation; rows carry favorite and priority', async () => {
+			await registeredWith('alpha', [['a1', 'backlog']]);
+			await registeredWith('zeta', [['z1', 'backlog']]);
+			await registeredWith('mid', [['m1', 'backlog']]);
+			await registeredWith('low-one', [['l1', 'backlog']]);
+			await setFavorite(sandbox.registryDir, 'zeta', true);
+			await setPriority(sandbox.registryDir, 'mid', 'high');
+			await setPriority(sandbox.registryDir, 'low-one', 'low');
+
+			const result = await listTasksAcrossProjects({ env: sandbox.env });
+
+			// Every readable project is listed in importance order, the ones without a task included.
+			expect(result.readableProjects.map(p => [p.name, p.favorite, p.priority])).toEqual([
+				['zeta', true, 'normal'],
+				['mid', false, 'high'],
+				['alpha', false, 'normal'],
+				['low-one', false, 'low'],
+			]);
+			expect(result.tasks.map(t => [t.project.name, t.project.favorite, t.project.priority, t.title])).toEqual([
+				['zeta', true, 'normal', 'z1'],
+				['mid', false, 'high', 'm1'],
+				['alpha', false, 'normal', 'a1'],
+				['low-one', false, 'low', 'l1'],
+			]);
 		});
 
 		it('showAll includes the tasks in a terminal status', async () => {

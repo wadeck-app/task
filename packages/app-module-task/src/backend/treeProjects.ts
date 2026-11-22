@@ -3,6 +3,9 @@
 // (ROW_CAP rows per project) and the full forest stays one click away at `treeHref`.
 import type { TaskTreeNode } from '@wadeck-app/task-core';
 
+import { compareByImportance } from '@wadeck-app/task-service';
+import type { ProjectPriorityLevel } from '@wadeck-app/task-service';
+
 import { shortTitle } from './display.js';
 import { detailHref, pageLink } from './hrefs.js';
 
@@ -12,7 +15,7 @@ export const ROW_CAP = 60;
 const NAMED_UNREADABLE_MAX = 5;
 
 export interface TreeProjectReadable {
-	project: { id: string; name: string; path: string };
+	project: { id: string; name: string; path: string; favorite?: boolean; priority?: ProjectPriorityLevel };
 	value: {
 		forest: TaskTreeNode[];
 		terminalStatuses: readonly string[];
@@ -26,6 +29,8 @@ export interface UnreadableProject {
 	id: string;
 	name: string;
 	path: string;
+	favorite?: boolean;
+	priority?: ProjectPriorityLevel;
 	error: string;
 }
 
@@ -86,6 +91,8 @@ function readableEntry({ project, value }: TreeProjectReadable): Record<string, 
 	return {
 		id: project.id,
 		name: project.name,
+		favorite: project.favorite === true,
+		priority: project.priority ?? 'normal',
 		path: project.path,
 		readable: true,
 		treeHref: pageLink(project, 'tree'),
@@ -104,22 +111,26 @@ function readableEntry({ project, value }: TreeProjectReadable): Record<string, 
 	};
 }
 
-/** Every project (unreadable ones with their reason and fix), sorted by name. */
+/** Every project (unreadable ones with their reason and fix), in importance order (favorites, priority, name). */
 export function buildTreeProjects(input: TreeProjectsInput): Array<Record<string, unknown>> {
 	return [
 		...input.entries.map(readableEntry),
 		...input.unreadableProjects.map(bad => ({
 			id: bad.id,
 			name: bad.name,
+			favorite: bad.favorite === true,
+			priority: bad.priority ?? 'normal',
 			path: bad.path,
 			readable: false,
 			treeHref: pageLink(bad, 'tree'),
 			problemText: bad.error,
 		})),
-	].sort((a, b) => {
-		const [left, right] = [String(a['name']).toLowerCase(), String(b['name']).toLowerCase()];
-		return left < right ? -1 : left > right ? 1 : 0;
-	});
+	].sort((a, b) =>
+		compareByImportance(
+			{ id: String(a['id']), name: String(a['name']), favorite: a['favorite'] === true, priority: a['priority'] as ProjectPriorityLevel },
+			{ id: String(b['id']), name: String(b['name']), favorite: b['favorite'] === true, priority: b['priority'] as ProjectPriorityLevel }
+		)
+	);
 }
 
 /**

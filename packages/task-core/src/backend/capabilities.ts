@@ -49,6 +49,12 @@ export interface BackendCapabilities {
 	meta: boolean;
 	comments: boolean;
 	/**
+	 * Images attached to a comment (`addComment(..., { attachments })`): the backend stores them itself (github: a user-attachments
+	 * asset). Optional like `priority`; absent means false. A backend without it refuses the attachments with
+	 * UnsupportedByBackendError, never drops them.
+	 */
+	commentAttachments?: boolean;
+	/**
 	 * A priority field on the task (setPriority / clearPriority). Optional so that a backend written before it keeps compiling; absent
 	 * means false. A backend that declares it away still has to answer the operation with UnsupportedByBackendError.
 	 */
@@ -79,6 +85,8 @@ export const LOCAL_CAPABILITIES: BackendCapabilities = Object.freeze({
 	labels: true,
 	meta: true,
 	comments: true,
+	// Task never commits or copies a file for the user: a local project has nowhere to keep an image.
+	commentAttachments: false,
 	priority: true,
 	assignee: true,
 	claim: true,
@@ -105,6 +113,7 @@ export const BACKEND_CAPABILITY_NAMES: readonly (keyof BackendCapabilities)[] = 
 		labels: 0,
 		meta: 0,
 		comments: 0,
+		commentAttachments: 0,
 		priority: 0,
 		assignee: 0,
 		claim: 0,

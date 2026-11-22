@@ -7,11 +7,14 @@ import {
 	openTaskContext,
 	resolveProjectReference,
 } from '@wadeck-app/task-service';
-import type { KnownProject, TaskServiceContext } from '@wadeck-app/task-service';
+import type { KnownProject, ProjectPriorityLevel, TaskServiceContext } from '@wadeck-app/task-service';
 
 import { RequestError } from './errors.js';
 import { tasksPageHref } from './hrefs.js';
 import { trackContext } from './requestScope.js';
+
+/** What opening a project needs: a known project, or one resolved from a reference (no importance data then). */
+type Openable = Pick<KnownProject, 'id' | 'name' | 'path' | 'storage' | 'problem'>;
 
 /** The service context of a project the module can address: a registered project with a folder, so its path is known. */
 export type OpenedProject = TaskServiceContext & { project: { id: string; name: string; path: string } };
@@ -21,6 +24,10 @@ export interface ProjectListing {
 	id: string;
 	/** Registry name. */
 	name: string;
+	/** Favorite in the shared registry (set in the project module, read only here). */
+	favorite: boolean;
+	/** Registry priority: `high`, `normal` or `low`. */
+	priority: ProjectPriorityLevel;
 	path: string;
 	/** False when the project folder is gone (informational: the tasks of a registered project are in the registry). */
 	exists: boolean;
@@ -39,7 +46,7 @@ function problemOf(error: unknown): string {
 }
 
 /** The checks every use of a known project starts with, then its context. */
-function openKnown(known: KnownProject, options: { track: boolean } = { track: true }): OpenedProject {
+function openKnown(known: Openable, options: { track: boolean } = { track: true }): OpenedProject {
 	if (known.problem !== undefined) {
 		throw new RequestError(
 			409,
@@ -59,6 +66,8 @@ async function listingOf(known: KnownProject): Promise<ProjectListing> {
 	const base = {
 		id: known.id,
 		name: known.name,
+		favorite: known.favorite,
+		priority: known.priority,
 		path: known.path,
 		exists: fs.existsSync(known.path),
 	};
@@ -78,13 +87,13 @@ async function listingOf(known: KnownProject): Promise<ProjectListing> {
 }
 
 /**
- * The projects the module shows: every project of the shared registry that has a folder. Read at every call (never cached).
+ * The projects the module shows: every project of the shared registry that has a folder, in importance order (favorites, then high/normal/low priority, then name). Read at every call (never cached).
  * `registryProblem` says why the shared registry could not be read (then no project is listed).
  */
 export async function readProjects(): Promise<{ projects: ProjectListing[]; registryProblem: string | null }> {
 	const known = listKnownProjects();
 	const projects: ProjectListing[] = [];
-	// One project after the other (registry order): a slow or failing project never reorders the listing.
+	// One project after the other (importance order: favorites, priority, name): a slow or failing project never reorders the listing.
 	for (const entry of known.projects) {
 		projects.push(await listingOf(entry));
 	}
@@ -137,7 +146,7 @@ function requireAny(known: readonly KnownProject[]): void {
 const KNOWN_PROJECTS_HINT =
 	'Use the id, name or alias of a registered project (GET /api/modules/task/projects lists them).';
 
-function pickProject(known: readonly KnownProject[], requested: string | undefined): KnownProject {
+function pickProject(known: readonly KnownProject[], requested: string | undefined): Openable {
 	if (requested !== undefined) {
 		// An id, a name, an alias or an id prefix is the shared registry's to resolve (typed errors: not found, ambiguous, unreadable).
 		let resolved;

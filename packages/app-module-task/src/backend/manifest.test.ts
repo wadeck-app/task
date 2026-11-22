@@ -205,7 +205,7 @@ describe('tasks page: global list without ?project (src/dsl-views/tasks-page.yam
 	it('lists every project task with task:TaskList (scope all, no DataTable), the project list with scope project', () => {
 		expect(page).not.toContain('DataTable');
 		const global = page.slice(page.indexOf('- $type: task:TaskList'));
-		expect(global).toMatch(/\$if: \$sources\.tasks\.scopeText\n\s+rows: \$sources\.tasks\.tasks\n\s+scope: all\n\s+storageKey: all\n/);
+		expect(global).toMatch(/\$if: \$sources\.tasks\.scopeText\n\s+rows: \$sources\.tasks\.tasks\n(?:\s+#[^\n]*\n)*\s+projects: \$sources\.tasks\.projects\n\s+scope: all\n\s+storageKey: all\n/);
 		const project = global.slice(global.indexOf('- $type: task:TaskList', 10));
 		expect(project).toMatch(
 			/\$if: \$sources\.tasks\.project\n\s+rows: \$sources\.tasks\.tasks\n\s+scope: project\n\s+storageKey: \$sources\.tasks\.project\.id\n/
@@ -976,7 +976,8 @@ describe('views: no link whose purpose is going back (the breadcrumb carries the
 		],
 		'tree-page.yaml': [{ label: '$sources.tree.showAllToggle.label', to: '$sources.tree.showAllToggle.href' }],
 		'types-page.yaml': [],
-		'projects-page.yaml': [],
+		// Favorites and priority are edited in the project module: a feature, not a way back.
+		'projects-page.yaml': [{ label: 'Open the project module', to: '/modules/project/projects' }],
 		'tasks-widget.yaml': [],
 	};
 

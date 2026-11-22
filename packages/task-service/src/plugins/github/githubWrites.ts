@@ -18,19 +18,25 @@ import {
 	BackendUnreachableError,
 	CommentNotFoundError,
 	LINK_TYPES,
+	PLACEHOLDER_ATTACHMENT_URL,
 	PartialWriteError,
 	StaleRevisionError,
 	TaskClaimedError,
 	TaskConflictError,
 	TaskNotFoundError,
 	UnsupportedByBackendError,
+	altOf,
+	checkAttachments,
+	composeCommentBody,
 	normalizeAssignee,
 	normalizeClaimRequest,
 	normalizeCommentText,
 	normalizePriority,
 } from '@wadeck-app/task-core';
 import type {
+	AddCommentOptions,
 	BackendClaimInput,
+	CommentAttachment,
 	BackendClaimResult,
 	BackendCommentChange,
 	BackendCommentEdit,
@@ -83,6 +89,7 @@ import {
 	typeOf,
 	typeOfLabel,
 } from './issueMapping.js';
+import { orphanNote, readRepositoryId, uploadAttachments } from './githubAttachments.js';
 import type { ApiComment, ApiIssue, BodyParts, MapContext } from './issueMapping.js';
 import type { StatusRepresentation } from './statusMapping.js';
 
@@ -1588,11 +1595,10 @@ export class GitHubWriter {
 
 	// ---------------------------------------------------------------- comments
 
-	async addComment(
-		id: string,
-		text: string,
-		options?: WriteOptions & { author?: string }
-	): Promise<BackendCommentChange> {
+	/** The numeric id of the repository, asked once per process (an upload needs it). */
+	private repositoryId: Promise<number> | undefined;
+
+	async addComment(id: string, text: string, options?: AddCommentOptions): Promise<BackendCommentChange> {
 		if (options?.author !== undefined) {
 			throw new UnsupportedByBackendError(
 				'github',
@@ -1600,6 +1606,9 @@ export class GitHubWriter {
 				'comments',
 				'GitHub writes the comment as the user of the token, so an author cannot be chosen: leave out --author (or "author" in the request).'
 			);
+		}
+		if (options?.attachments !== undefined && options.attachments.length > 0) {
+			return this.addCommentWithAttachments(id, text, options.attachments, options);
 		}
 		const clean = normalizeCommentText(text);
 		const { issue } = await this.prepare(id, options, []);
@@ -1613,6 +1622,68 @@ export class GitHubWriter {
 			)
 		).body;
 		return { task: await this.read(issue.number), comment: commentsOf([created])[0]! };
+	}
+
+	/**
+	 * A comment with images: every rule is checked and the issue is read BEFORE the first request that changes anything; then the
+	 * images are uploaded one after the other, and only then is the comment created, so a refused upload posts nothing. A comment
+	 * that fails after the uploads is a PartialWriteError (an upload cannot be removed: the assets stay on GitHub, unreferenced).
+	 */
+	private async addCommentWithAttachments(
+		id: string,
+		text: string,
+		attachments: readonly CommentAttachment[],
+		options: AddCommentOptions
+	): Promise<BackendCommentChange> {
+		checkAttachments(attachments);
+		// The body is measured with addresses of the final length, so a too long comment is refused before anything is uploaded.
+		composeCommentBody(
+			text,
+			attachments.map(item => ({ name: item.name, alt: altOf(item), url: PLACEHOLDER_ATTACHMENT_URL }))
+		);
+		const { issue } = await this.prepare(id, options, []);
+		const repo = this.host.settings.repo.full;
+		this.repositoryId ??= readRepositoryId(this.host.client, this.host.repoPath, repo);
+		let repositoryId: number;
+		try {
+			repositoryId = await this.repositoryId;
+		} catch (error) {
+			this.repositoryId = undefined;
+			throw error;
+		}
+		const uploaded = await uploadAttachments(this.host.client, repositoryId, repo, attachments);
+		const body = composeCommentBody(text, uploaded);
+		let created: ApiComment;
+		try {
+			created = (
+				await this.send<ApiComment>(
+					'addComment',
+					String(issue.number),
+					'POST',
+					this.path(issue.number, '/comments'),
+					{ body }
+				)
+			).body;
+		} catch (error) {
+			throw new PartialWriteError({
+				backendKind: 'github',
+				operation: 'addComment',
+				taskId: String(issue.number),
+				applied: uploaded.map(item => `uploaded ${item.name} (${item.url})`),
+				notApplied: [
+					isUnknownOutcome(error)
+						? `the comment itself (it may have been created: check ${this.host.issueUrl(issue.number)})`
+						: 'the comment itself',
+				],
+				hint: `${orphanNote(uploaded)} Run the same command again once the cause is fixed: the images are uploaded again.`,
+				cause: error,
+			});
+		}
+		return {
+			task: await this.read(issue.number),
+			comment: commentsOf([created])[0]!,
+			attachments: uploaded,
+		};
 	}
 
 	private async commentsOfIssue(issue: ApiIssue): Promise<ApiComment[]> {

@@ -66,6 +66,7 @@ describe('LocalFileBackend', () => {
 			labels: true,
 			meta: true,
 			comments: true,
+			commentAttachments: false,
 			priority: true,
 			assignee: true,
 			claim: true,

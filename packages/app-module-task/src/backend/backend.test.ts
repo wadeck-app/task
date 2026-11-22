@@ -231,6 +231,8 @@ describe('GET /projects', () => {
 			{
 				id: project,
 				name: 'alpha',
+				favorite: false,
+				priority: 'normal',
 				path: projectDir,
 				exists: true,
 				openCount: 0,

@@ -8,6 +8,7 @@ import { BackendDataError, BackendLimitError, TaskNotFoundError } from '@wadeck-
 import type {
 	BackendCapabilities,
 	BackendClaimResult,
+	AddCommentOptions,
 	BackendCommentChange,
 	BackendReleaseResult,
 	ReleaseOptions,
@@ -720,7 +721,7 @@ export class GitLabBackend implements TaskBackend {
 		return this.writer.removeLink(id, type, targetId, options);
 	}
 
-	addComment(id: string, text: string, options?: WriteOptions & { author?: string }): Promise<BackendCommentChange> {
+	addComment(id: string, text: string, options?: AddCommentOptions): Promise<BackendCommentChange> {
 		return this.writer.addComment(id, text, options);
 	}
 

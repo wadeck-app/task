@@ -630,6 +630,33 @@ export const BACKEND_CONTRACT_CASES: readonly ContractCase[] = [
 		},
 	},
 
+	{
+		group: 'fields',
+		name: 'comment attachments: a backend without the capability refuses them loudly and writes no comment',
+		needs: NEEDS.comments,
+		async run({ backend, task, caps }) {
+			// A backend that declares `commentAttachments` stores the images itself: its own tests cover it (it needs an upload server).
+			if (caps.commentAttachments === true) return;
+			const a = await task('A');
+			const refused = await rejectsWith(
+				backend.addComment(a.id, 'with an image', {
+					attachments: [{ name: 'shot.png', mimeType: 'image/png', bytes: new Uint8Array([1, 2, 3]) }],
+				}),
+				UnsupportedByBackendError
+			);
+			expect(refused.capability).toBe('commentAttachments');
+			expect(refused.hint).not.toBe('');
+			// Nothing was written: the comment is not there.
+			expect((await backend.get(a.id)).comments).toBeUndefined();
+		},
+		async attempt({ backend, task }) {
+			const a = await task('A');
+			return backend.addComment(a.id, 'a note', {
+				attachments: [{ name: 'shot.png', mimeType: 'image/png', bytes: new Uint8Array([1]) }],
+			});
+		},
+	},
+
 	// ======== graph ========
 	{
 		group: 'graph',

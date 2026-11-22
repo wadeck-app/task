@@ -1,15 +1,20 @@
 // Comment commands: comment, comments, comment-edit, comment-rm. Parsing and output only: the rules live in task-service.
 import { addComment, deliverEvents, editComment, listComments, removeComment } from '@wadeck-app/task-service';
-import type { TaskComment } from '@wadeck-app/task-core';
+import { InvalidCommentTextError } from '@wadeck-app/task-core';
+import type { CommentAttachment, TaskComment } from '@wadeck-app/task-core';
 
 import type { ProjectCommand } from '../cli/env.js';
 import { errorOutput, failure, jsonResult } from '../cli/output.js';
 import type { CommandResult } from '../cli/output.js';
+import { readAttachments } from '../cli/readAttachments.js';
 import { readTextSource } from '../cli/readText.js';
 
 const COMMENT_USAGE =
-	'Usage: task comment <id> <text...> [--file <path|->] [--author <name>] [--json]\n' +
-	'Words are joined with a space; put -- before a text that starts with --. --file reads the text from a file, or from standard input with -.';
+	'Usage: task comment <id> <text...> [--file <path|->] [--author <name>] [--attach <file>[#alt]]... [--json]\n' +
+	'Words are joined with a space; put -- before a text that starts with --. --file reads the text from a file, or from standard input with -.\n' +
+	'--attach stores an image with the comment (github strategy only; png, jpg, jpeg, gif or webp, at most 10 MB each, at most 10 per comment):\n' +
+	'GitHub keeps the image itself, nothing is committed. #alt sets its alternative text (the file name by default); repeat the flag for several.\n' +
+	'An image the text does not reference is added after the text as ![alt](url); write ![alt](./file.png) in the text to place it. The text may be left out when an image is attached.';
 const COMMENTS_USAGE = 'Usage: task comments <id> [--json]';
 const EDIT_USAGE =
 	'Usage: task comment-edit <id> <comment-id> <text...> [--file <path|->] [--json]\n' +
@@ -21,6 +26,8 @@ interface ParsedCommentArgs {
 	positionals: string[];
 	file: string | undefined;
 	author: string | undefined;
+	/** The values of --attach, in order. */
+	attach: string[];
 }
 
 /** Flags `--file <source>` and (when allowed) `--author <name>` anywhere; after `--` every word is text. */
@@ -28,9 +35,10 @@ function parseCommentArgs(
 	rest: string[],
 	usage: string,
 	allowAuthor: boolean,
-	jsonMode: boolean
+	jsonMode: boolean,
+	allowAttach = false
 ): ParsedCommentArgs | CommandResult {
-	const parsed: ParsedCommentArgs = { positionals: [], file: undefined, author: undefined };
+	const parsed: ParsedCommentArgs = { positionals: [], file: undefined, author: undefined, attach: [] };
 	let literal = false;
 	for (let i = 0; i < rest.length; i++) {
 		const arg = rest[i]!;
@@ -50,6 +58,12 @@ function parseCommentArgs(
 			if (!parsed.author) {
 				return errorOutput(jsonMode, '--author requires a name', usage);
 			}
+		} else if (allowAttach && arg === '--attach') {
+			const spec = rest[++i];
+			if (!spec) {
+				return errorOutput(jsonMode, '--attach requires an image file (task comment <id> <text> --attach shot.png)', usage);
+			}
+			parsed.attach.push(spec);
 		} else {
 			return errorOutput(jsonMode, `unknown flag: ${arg}`, usage);
 		}
@@ -69,7 +83,7 @@ function commentText(words: string[], file: string | undefined): string | undefi
 }
 
 export const runComment: ProjectCommand = async (rest, { jsonMode, ctx, eventSink }) => {
-	const parsed = parseCommentArgs(rest, COMMENT_USAGE, true, jsonMode);
+	const parsed = parseCommentArgs(rest, COMMENT_USAGE, true, jsonMode, true);
 	if ('exitCode' in parsed) return parsed;
 	const [id, ...words] = parsed.positionals;
 	if (!id) {
@@ -81,19 +95,43 @@ export const runComment: ProjectCommand = async (rest, { jsonMode, ctx, eventSin
 	} catch (error) {
 		return errorOutput(jsonMode, error instanceof Error ? error.message : String(error), COMMENT_USAGE);
 	}
-	if (text === undefined) {
+	if (text === undefined && parsed.attach.length === 0) {
 		return errorOutput(jsonMode, 'missing text', COMMENT_USAGE);
+	}
+	// The files are read and checked here, before any request.
+	let attachments: CommentAttachment[] = [];
+	try {
+		attachments = readAttachments(parsed.attach);
+	} catch (error) {
+		return error instanceof InvalidCommentTextError
+			? failure(jsonMode, error)
+			: errorOutput(jsonMode, error instanceof Error ? error.message : String(error), COMMENT_USAGE);
 	}
 	let result: Awaited<ReturnType<typeof addComment>>;
 	try {
-		result = await addComment(ctx, { id, text, ...(parsed.author === undefined ? {} : { author: parsed.author }) });
+		result = await addComment(ctx, {
+			id,
+			text: text ?? '',
+			...(parsed.author === undefined ? {} : { author: parsed.author }),
+			...(attachments.length === 0 ? {} : { attachments }),
+		});
 	} catch (error) {
 		return failure(jsonMode, error);
 	}
 	await deliverEvents(eventSink, result.events);
 	return jsonMode
-		? jsonResult({ taskId: result.task.id, comment: result.comment })
-		: { exitCode: 0, output: `Comment ${result.comment.id} added to task ${result.task.id}` };
+		? jsonResult({
+				taskId: result.task.id,
+				comment: result.comment,
+				...(result.attachments === undefined ? {} : { attachments: result.attachments }),
+			})
+		: {
+				exitCode: 0,
+				output: [
+					`Comment ${result.comment.id} added to task ${result.task.id}`,
+					...(result.attachments ?? []).map(item => `  attached ${item.name}: ${item.url}`),
+				].join('\n'),
+			};
 };
 
 /** "2026-11-08 14:17": the UTC minute. */

@@ -35,6 +35,11 @@ export interface ConformanceRequest {
 	headers?: Record<string, string>;
 	/** `token` (default, `Authorization: Bearer`), `none` (no credentials) or `bad` (a token GitHub does not know). */
 	auth?: 'token' | 'none' | 'bad';
+	/**
+	 * An image upload (`POST /user-attachments/assets`): sent to the uploads address (the same server for the fake), with the
+	 * `Authorization: token <TOKEN>` scheme and the raw bytes (base64 here) as the body, `content-type: application/octet-stream`.
+	 */
+	upload?: { bytesBase64: string };
 }
 
 export interface ConformanceStep {
@@ -52,6 +57,10 @@ export interface ConformanceStep {
 	ignoreKeys?: string[];
 	/** Only the keys the fake sends are compared (an endpoint the fake models in part). */
 	subset?: boolean;
+	/** The headers of the live answer were not kept (a step added from a live exchange verified by hand): only the status and the body are compared. */
+	headersNotRecorded?: boolean;
+	/** Where the step comes from when it was not recorded by the scenario script. */
+	note?: string;
 	expect: { status: number; headers: Record<string, string>; body: unknown };
 }
 
@@ -154,6 +163,8 @@ function normalizeText(text: string, ctx: NormalizeContext): string {
 	out = out.replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, '<ip>');
 	// References to issues in messages.
 	out = out.replace(/#\d+/g, '#N');
+	// The id of an uploaded image is random.
+	out = out.replace(/(\/user-attachments\/assets\/)[0-9a-f-]+/g, '$1<uuid>');
 	// A url (or a url inside a sentence): its numbers are volatile ids.
 	out = out.replace(/(<web>|<api>)\S*/g, url => url.replace(/\d+/g, 'N'));
 	// GraphQL node ids in a message (`I_kwDO...`) are opaque.
@@ -360,9 +371,13 @@ export async function exchange(
 		...(request.headers === undefined ? {} : substitute(request.headers, vars)),
 	};
 	if (request.auth === 'bad') headers['authorization'] = 'Bearer github_pat_xxxxxxxxxxxxxxxxxxxxxxxx';
-	else if (request.auth !== 'none') headers['authorization'] = `Bearer ${token}`;
-	let payload: string | undefined;
-	if (request.rawBody !== undefined) payload = substitute(request.rawBody, vars);
+	else if (request.auth !== 'none')
+		headers['authorization'] = `${request.upload === undefined ? 'Bearer' : 'token'} ${token}`;
+	let payload: string | Buffer | undefined;
+	if (request.upload !== undefined) {
+		payload = Buffer.from(request.upload.bytesBase64, 'base64');
+		headers['content-type'] = 'application/octet-stream';
+	} else if (request.rawBody !== undefined) payload = substitute(request.rawBody, vars);
 	else if (request.body !== undefined) {
 		payload = JSON.stringify(substitute(request.body, vars));
 		headers['content-type'] ??= 'application/json';
@@ -496,7 +511,7 @@ export async function replayFixture(
 				apiBase: options.apiBase,
 			});
 			const names = new Set([...Object.keys(expectedHeaders), ...Object.keys(actual.headers)]);
-			for (const name of names) {
+			for (const name of step.headersNotRecorded === true ? [] : names) {
 				if (OPTIONAL_HEADERS.includes(name) && actual.headers[name] === undefined) continue;
 				if (expectedHeaders[name] !== actual.headers[name])
 					problems.push(

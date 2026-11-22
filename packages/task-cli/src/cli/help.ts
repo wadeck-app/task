@@ -29,10 +29,15 @@ Usage:
                                              --description-file reads the body from a file, or from standard input with -
   task set-title <id> <text>                 Change the title (the index and 'task list' follow)
   task set-description <id> <text>           Change the description; an empty text clears it (the body is the title again)
-  task comment <id> <text...> [--file <path|->] [--author <name>] [--json]
+  task comment <id> <text...> [--file <path|->] [--author <name>] [--attach <file>[#alt]]... [--json]
                                              Add a comment (plain text, 1 to 10000 characters; words are joined with a space, -- before a text
                                              starting with --; --file reads it from a file or from standard input with -). No author unless
-                                             --author is given. Prints the new comment id
+                                             --author is given. Prints the new comment id.
+                                             --attach (repeatable, github strategy only): GitHub stores the image itself, nothing is committed.
+                                             png, jpg, jpeg, gif or webp, at most 10 MB each and 10 per comment; uploaded BEFORE the comment, so
+                                             a refused upload posts nothing. #alt = alternative text (the file name by default). An image the text
+                                             does not reference is added after it as ![alt](url); ![alt](./file.png) in the text is replaced by
+                                             the url. The text may be left out with an image. --json adds attachments: [{name, alt, url}]
   task comments <id> [--json]                List the comments of a task, oldest first (id, UTC minute, author, "(edited)", the text indented);
                                              --json: [{id, at, text, author?, editedAt?}]
   task comment-edit <id> <comment-id> <text...> [--file <path|->]

@@ -23,6 +23,9 @@ const RAW = (unit, count, prefix) => ({ $repeat: prefix === undefined ? [unit, c
 const PREFIX = '[task-api-test] ';
 // A search query for a URL: the placeholders ({{repo}}) must survive, so only spaces and quotes are encoded.
 const Q = text => text.replace(/ /g, '%20').replace(/"/g, '%22');
+// A 1x1 PNG, the bytes of the upload step.
+const PNG_1X1_BASE64 =
+	'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 const DELETE_ISSUE = 'mutation($id: ID!) { deleteIssue(input: {issueId: $id}) { clientMutationId } }';
 
 /**
@@ -38,6 +41,7 @@ export function steps() {
 		if (o.auth !== undefined) request.auth = o.auth;
 		if (o.headers !== undefined) request.headers = o.headers;
 		if (o.rawBody !== undefined) request.rawBody = o.rawBody;
+		if (o.upload !== undefined) request.upload = { bytesBase64: o.upload };
 		const step = { name, request };
 		for (const key of ['save', 'saveHeaders', 'saveLinks', 'wait', 'ignoreKeys', 'subset', 'track'])
 			if (o[key] !== undefined) step[key] = o[key];
@@ -58,7 +62,7 @@ export function steps() {
 	get('unknown route', `${R}/nothing-here`);
 	get('repository name in upper case', `repos/{{repoU}}/issues?labels=${L('none')}`);
 	get('GET user', 'user', { subset: true });
-	get('GET repository', R, { subset: true });
+	get('GET repository', R, { subset: true, save: { repoId: 'id' } });
 	get('GET rate_limit', 'rate_limit', { subset: true });
 	add('invalid json', 'POST', `${R}/issues`, undefined, {
 		rawBody: '{nope',
@@ -224,6 +228,15 @@ export function steps() {
 	get('GET comments, next page', '{{next}}');
 	get('GET comments of an unknown issue', `${R}/issues/99999999/comments`);
 	get('GET the issue after the comments', I('a'));
+	// The image upload (an undocumented endpoint, the one gh uses): ONE request to uploads.github.com, Authorization: token <TOKEN>, the raw
+	// bytes as the body, the numeric id of the repository (saved by 'GET repository'). Answered 201 with { url }.
+	add(
+		'upload an image',
+		'POST',
+		'user-attachments/assets?name=conf.png&content_type=image/png&repository_id={{repoId}}',
+		undefined,
+		{ upload: PNG_1X1_BASE64 }
+	);
 	mk('create K (big comments)', 'k', { title: T('K') });
 	add('POST comment of 65537 characters', 'POST', `${I('k')}/comments`, { body: RAW('c', 65537) });
 	add('POST comment of 262144 characters', 'POST', `${I('k')}/comments`, { body: RAW('c', 262144) });
@@ -520,6 +533,13 @@ export async function runScenario({ call, repo, run, apiBase, track, source }) {
 			continue;
 		}
 		const opts = { headers, rawBody };
+		if (request.upload !== undefined) {
+			// The uploads host answers an other address than the API (the mock serves both); the scheme is `token`, the body the raw bytes.
+			route = `${apiBase === 'https://api.github.com' ? 'https://uploads.github.com' : apiBase}/${route}`;
+			opts.rawBody = Buffer.from(request.upload.bytesBase64, 'base64');
+			opts.headers = { ...(headers ?? {}), 'content-type': 'application/octet-stream' };
+			opts.scheme = 'token';
+		}
 		if (request.auth === 'none') opts.token = null;
 		else if (request.auth === 'bad') opts.token = 'github_pat_xxxxxxxxxxxxxxxxxxxxxxxx';
 		if (step.wait !== undefined) await new Promise(resolve => setTimeout(resolve, step.wait));

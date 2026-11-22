@@ -228,6 +228,8 @@ describe('the packaged module through a real app-core server', () => {
 			{
 				id: projectId,
 				name: 'proj',
+				favorite: false,
+				priority: 'normal',
 				path: projectDir,
 				exists: true,
 				openCount: 1,

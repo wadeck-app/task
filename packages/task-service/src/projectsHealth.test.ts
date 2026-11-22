@@ -34,7 +34,8 @@ describe('inspectRegisteredProjects', () => {
 		fs.mkdirSync(path.dirname(ownConfigFile(resolved.storage)), { recursive: true });
 		fs.writeFileSync(ownConfigFile(resolved.storage), 'statuses: [unclosed');
 
-		const [a, b, c] = inspectRegisteredProjects({ env: sandbox.env });
+		// Importance order: all normal, so by name (broken, gone, ok), not registration order.
+		const [c, b, a] = inspectRegisteredProjects({ env: sandbox.env });
 
 		expect(a).toEqual({ path: path.resolve(ok), exists: true, error: null });
 		expect(b).toEqual({ path: path.resolve(gone), exists: false, error: null });

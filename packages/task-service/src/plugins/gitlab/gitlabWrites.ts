@@ -37,6 +37,7 @@ import type {
 	BackendClaimResult,
 	BackendReleaseResult,
 	ReleaseOptions,
+	AddCommentOptions,
 	BackendCommentChange,
 	BackendCommentEdit,
 	CreateTaskInput,
@@ -1496,11 +1497,15 @@ export class GitLabWriter {
 		return found;
 	}
 
-	async addComment(
-		id: string,
-		text: string,
-		options?: WriteOptions & { author?: string }
-	): Promise<BackendCommentChange> {
+	async addComment(id: string, text: string, options?: AddCommentOptions): Promise<BackendCommentChange> {
+		if (options?.attachments !== undefined && options.attachments.length > 0) {
+			throw new UnsupportedByBackendError(
+				'gitlab',
+				'addComment with attachments',
+				'commentAttachments',
+				'Attaching images to a comment is only implemented for the github strategy. Leave --attach out, or put the image in the repository yourself and name it in the text.'
+			);
+		}
 		if (options?.author !== undefined) {
 			throw new UnsupportedByBackendError(
 				'gitlab',

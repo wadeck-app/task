@@ -5,14 +5,17 @@ import {
 	UNASSIGNED,
 	applyFilters,
 	facetOptions,
+	activeFilterCount,
+	favoriteProjects,
 	hasActiveFilters,
+	projectOptions,
 	parseListState,
 	priorityRanking,
 	serializeListState,
 	sortRows,
 	statusTone,
 } from './taskListModel.js';
-import type { ListState } from './taskListModel.js';
+import type { ListState, TaskListRow } from './taskListModel.js';
 
 const ids = (rows: Array<{ id: string }>): string[] => rows.map(r => r.id.slice(-1));
 const NOW_MS = Date.parse(NOW);
@@ -195,5 +198,124 @@ describe('address state', () => {
 		expect(parsed.state).toEqual(DEFAULT_STATE);
 		expect(parsed.warnings).toHaveLength(3);
 		expect(parsed.warnings.join(' ')).toContain('"colour"');
+	});
+});
+
+/** Rows of five projects: favorites (zeta, mid), high (hi), normal (plain), low (low). Two rows for zeta, none for mid. */
+function projectRow(id: string, project: string, favorite?: boolean, priority?: 'high' | 'normal' | 'low'): TaskListRow {
+	return {
+		id: `pppp000${id}`,
+		title: `Task ${id}`,
+		status: 'open',
+		projectName: project,
+		projectPath: `/w/${project}`,
+		...(favorite === undefined ? {} : { projectFavorite: favorite }),
+		...(priority === undefined ? {} : { projectPriority: priority }),
+	};
+}
+
+const PROJECT_ROWS: TaskListRow[] = [
+	projectRow('1', 'plain', false, 'normal'),
+	projectRow('2', 'zeta', true, 'normal'),
+	projectRow('3', 'hi', false, 'high'),
+	projectRow('4', 'low', false, 'low'),
+	projectRow('5', 'zeta', true, 'normal'),
+	projectRow('6', 'plain', false, 'normal'),
+];
+
+describe('project options (favorites, priority)', () => {
+	it('orders favorites first, then high, normal, low, then the name; counts rows; a project without a row is listed with 0', () => {
+		const projects = [
+			{ name: 'plain', favorite: false, priority: 'normal' as const, count: 2 },
+			{ name: 'mid', favorite: true, priority: 'low' as const, count: 0 },
+			{ name: 'zeta', favorite: true, priority: 'normal' as const, count: 2 },
+			{ name: 'hi', favorite: false, priority: 'high' as const, count: 1 },
+			{ name: 'low', favorite: false, priority: 'low' as const, count: 1 },
+		];
+
+		expect(projectOptions(PROJECT_ROWS, projects, []).map(o => [o.value, o.favorite, o.priority, o.count])).toEqual([
+			['zeta', true, 'normal', 2],
+			['mid', true, 'low', 0],
+			['hi', false, 'high', 1],
+			['plain', false, 'normal', 2],
+			['low', false, 'low', 1],
+		]);
+	});
+
+	it('without the projects of the server (older answer) it derives them from the rows, in the same order', () => {
+		expect(projectOptions(PROJECT_ROWS, undefined, []).map(o => [o.value, o.count])).toEqual([
+			['zeta', 2],
+			['hi', 1],
+			['plain', 2],
+			['low', 1],
+		]);
+	});
+
+	it('rows lacking the new fields are not favorite and normal, ordered by name', () => {
+		const old = GLOBAL_ROWS;
+
+		expect(projectOptions(old, undefined, []).map(o => [o.value, o.favorite, o.priority])).toEqual([
+			['alpha', false, 'normal'],
+			['beta', false, 'normal'],
+		]);
+		expect(favoriteProjects(projectOptions(old, undefined, []))).toEqual([]);
+	});
+
+	it('keeps a selected project that no row has, with 0 and no importance', () => {
+		expect(projectOptions(PROJECT_ROWS, undefined, ['ghost'])).toContainEqual({
+			value: 'ghost',
+			label: 'ghost',
+			count: 0,
+			favorite: false,
+			priority: 'normal',
+		});
+	});
+
+	it('favoriteProjects lists the favorites in order', () => {
+		const options = projectOptions(PROJECT_ROWS, undefined, []);
+
+		expect(favoriteProjects(options).map(o => o.value)).toEqual(['zeta']);
+	});
+});
+
+describe('favorites only', () => {
+	it('keeps the rows of favorite projects; a row without the field is not a favorite', () => {
+		expect(ids(applyFilters(PROJECT_ROWS, state({ favoritesOnly: true }), NOW_MS))).toEqual(['2', '5']);
+		expect(applyFilters(GLOBAL_ROWS, state({ favoritesOnly: true }), NOW_MS)).toEqual([]);
+	});
+
+	it('combines with the project filter, the text, the status and the range (AND)', () => {
+		const rows = [...PROJECT_ROWS, { ...projectRow('7', 'mid', true, 'normal'), status: 'done' }];
+
+		expect(ids(applyFilters(rows, state({ favoritesOnly: true, project: ['zeta', 'plain'] }), NOW_MS))).toEqual(['2', '5']);
+		expect(ids(applyFilters(rows, state({ favoritesOnly: true, status: ['done'] }), NOW_MS))).toEqual(['7']);
+		expect(ids(applyFilters(rows, state({ favoritesOnly: true, q: 'task 5' }), NOW_MS))).toEqual(['5']);
+		expect(applyFilters(rows, state({ favoritesOnly: true, project: ['hi'] }), NOW_MS)).toEqual([]);
+	});
+
+	it('is a filter: counted once, and active', () => {
+		expect(hasActiveFilters(state({ favoritesOnly: true }))).toBe(true);
+		expect(activeFilterCount(state({ favoritesOnly: true, project: ['a', 'b'] }))).toBe(2);
+	});
+
+	it('does not change the order of the rows (the default order is still the last update)', () => {
+		expect(ids(sortRows(applyFilters(ROWS, DEFAULT_STATE, NOW_MS), DEFAULT_STATE, {}))).toEqual(['2', '3', '4', '1', '6', '5']);
+	});
+
+	it('lives in the address as fav=1, round-trips, and the default view writes nothing', () => {
+		const wanted = state({ favoritesOnly: true, project: ['zeta'] });
+		const search = serializeListState(wanted, '?showAll=true');
+
+		expect(new URLSearchParams(search).get('fav')).toBe('1');
+		expect(parseListState(search)).toEqual({ state: wanted, present: true, warnings: [] });
+		expect(serializeListState(DEFAULT_STATE, '?fav=1')).toBe('');
+		expect(parseListState('?fav=1').present).toBe(true);
+	});
+
+	it('an address value other than 1 is ignored with a warning naming the accepted value', () => {
+		const parsed = parseListState('?fav=yes');
+
+		expect(parsed.state.favoritesOnly).toBe(false);
+		expect(parsed.warnings.join(' ')).toContain('fav=1');
 	});
 });

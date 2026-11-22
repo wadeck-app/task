@@ -15,6 +15,7 @@ import {
 	RemoteProjectMismatchError,
 	RemoteUnreachableError,
 	TaskNotFoundError,
+	UnsupportedByBackendError,
 	buildRequest,
 	decodeWireError,
 	normalizeClaimRequest,
@@ -24,6 +25,7 @@ import type {
 	BackendCapabilities,
 	BackendClaimInput,
 	BackendClaimResult,
+	AddCommentOptions,
 	BackendCommentChange,
 	BackendCommentEdit,
 	BackendReleaseResult,
@@ -394,7 +396,18 @@ export class RemoteBackend implements TaskBackend {
 	}
 
 	// ---- writes: comments ----
-	addComment(id: string, text: string, options?: WriteOptions & { author?: string }): Promise<BackendCommentChange> {
+	addComment(id: string, text: string, options?: AddCommentOptions): Promise<BackendCommentChange> {
+		if (options?.attachments !== undefined && options.attachments.length > 0) {
+			// Refused here: the protocol has no field for them, and a server that ignored one would drop the image silently.
+			return Promise.reject(
+				new UnsupportedByBackendError(
+					'remote',
+					'addComment with attachments',
+					'commentAttachments',
+					'The remote strategy cannot carry images. Attach them on a project that uses the github strategy, or leave --attach out.'
+				)
+			);
+		}
 		return this.call('addComment', {
 			params: { id },
 			body: { text, ...(options?.author === undefined ? {} : { author: options.author }) },

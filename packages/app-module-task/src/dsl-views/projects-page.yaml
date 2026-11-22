@@ -2,6 +2,7 @@
 # Projects are added, moved and removed with the project CLI (project add | paths | remove), never from here: the page has no
 # form and no action. Each row gives the registry id, the name, the main folder and the open tasks, and, when the project cannot
 # be read, why, with the command that fixes it. A shared registry that cannot be read is said in a badge (no project is listed then).
+# - Favorites and priority are READ here (they order every project list in task) and set in the project module / project CLI.
 # - The table has no row click: the readable projects are linked by the buttons below it (`openLinks`, built by the route).
 $sources:
     projects:
@@ -11,7 +12,7 @@ $type: PageContent
 sections:
     - $type: PageHeader
       title: Projects
-      subtitle: Projects of the shared project registry. Read only - manage them with the project CLI.
+      subtitle: Projects of the shared project registry, favorites first. Read only - manage them with the project CLI.
     # Nothing registered yet: the welcome text of the route (the exact next step) instead of a blank page.
     - $type: Badge
       $if: $sources.projects.noProjects
@@ -26,12 +27,23 @@ sections:
       $if: $sources.projects.registryProblem
       label: $sources.projects.registryProblem
       variant: danger
+    # Where favorites and priority are edited (task only reads them).
+    - $type: Badge
+      $if: $sources.projects.importanceNote
+      label: $sources.projects.importanceNote
+      variant: info
+    - $type: ButtonLink
+      label: Open the project module
+      to: /modules/project/projects
+      size: sm
     - $type: DataTable
       rows: $sources.projects.projectRows
       emptyMessage: No project is registered (project add <dir>)
       columns:
           - { key: 'id', label: 'Id', mono: true, nowrap: true }
           - { key: 'name', label: 'Project' }
+          - { key: 'favoriteText', label: 'Favorite', nowrap: true }
+          - { key: 'priorityText', label: 'Priority', nowrap: true }
           - { key: 'path', label: 'Directory', mono: true }
           - { key: 'openText', label: 'Open tasks', nowrap: true }
           - { key: 'problemText', label: 'Problem' }

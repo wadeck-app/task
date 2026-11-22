@@ -754,4 +754,30 @@ export const MOCK_LEDGER: readonly LedgerEntry[] = [
 		'what an API version older than 2026-03-10 returns for issue_field_values, and whether updated_at moves when a field value changes',
 		'only the version 2026-03-10 was probed; the strategy sends that version only when the priority lives in the field (the cache keys it per version) and does not rely on updated_at for these writes'
 	),
+	// ---- attachments (the image upload of a comment; an undocumented endpoint)
+	{
+		id: nextId(),
+		area: 'attachments',
+		behaviour:
+			'POST /user-attachments/assets?name&content_type&repository_id with Authorization: token <TOKEN> and the raw bytes answers 201 { url: https://github.com/user-attachments/assets/<uuid> } (the answer headers were not kept: the step compares status and body only)',
+		status: 'LIVE-VERIFIED',
+		date: '2026-11-22',
+		evidence: ['upload an image'],
+	},
+	live(
+		'attachments',
+		'GET the repository answers its numeric REST id (id), the value repository_id of the upload asks for',
+		'GET repository'
+	),
+	unverifiable(
+		'attachments',
+		'the upload with the Bearer scheme (instead of token) answers 404 Not Found (the fake sends the generic 404 body of the API)',
+		'observed by hand on 2026-11-22 with the real token (a misleading 404); the body of that answer was not recorded, so the fake reuses the generic 404 body'
+	),
+	documented(
+		'attachments',
+		'the upload answers 404 for a refused token, a repository id the token cannot write to, or a read-only token; 422 with the server message for a refused file (the fake: missing name or content_type, empty body); 429 with Retry-After for the rate limit (forced with failNext)',
+		'source code of the gh CLI (github.com/cli/cli, the user-attachments upload); the endpoint is not part of docs.github.com',
+		'the endpoint is undocumented and these refusals were not provoked live'
+	),
 ];

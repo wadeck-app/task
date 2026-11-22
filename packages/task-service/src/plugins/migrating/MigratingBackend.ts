@@ -6,6 +6,7 @@
 // capabilities, traits and the TaskBackend port only; it knows no storage kind.
 import { BackendRejectedError, UnsupportedByBackendError } from '@wadeck-app/task-core';
 import type {
+	AddCommentOptions,
 	BackendCapabilities,
 	BackendClaimInput,
 	BackendClaimResult,
@@ -425,12 +426,17 @@ export class MigratingBackend implements TaskBackend {
 
 	// ---- writes: comments ----
 
-	async addComment(
-		id: string,
-		text: string,
-		options?: WriteOptions & { author?: string }
-	): Promise<BackendCommentChange> {
+	async addComment(id: string, text: string, options?: AddCommentOptions): Promise<BackendCommentChange> {
 		this.needs('comments', 'adding a comment');
+		if (options?.attachments !== undefined && options.attachments.length > 0) {
+			// The copy of a comment to the other side would upload the images twice and the migration moves no image: refused, not dropped.
+			throw new UnsupportedByBackendError(
+				this.kind,
+				'adding a comment with attachments',
+				'commentAttachments',
+				'A project that is migrating writes to two strategies and task does not attach images to both. Finish or abort the migration (task migrate ...), then attach the image on a project whose strategy stores images (task strategy show), or leave --attach out.'
+			);
+		}
 		this.checkRevision(options, 'adding a comment');
 		return this.writes.run<BackendCommentChange>({
 			operation: 'addComment',

@@ -179,7 +179,7 @@ describe('global view commands (task list --all-projects, task projects summary)
 		it('--json: nothing registered is an empty answer, not an error', async () => {
 			const result = await runTaskCommand(['--json', 'list', '--all-projects'], root);
 			expect(result.exitCode).toBe(0);
-			expect(JSON.parse(result.output)).toEqual({ tasks: [], readableCount: 0, unreadable: [] });
+			expect(JSON.parse(result.output)).toEqual({ tasks: [], readableCount: 0, readableProjects: [], unreadable: [] });
 		});
 
 		it('says there is no task (not "no project") when projects are readable but empty', async () => {

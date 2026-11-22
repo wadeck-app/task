@@ -51,6 +51,10 @@ function parseStored(text: string): ListState | undefined {
 		if (!(UPDATED_RANGES as readonly unknown[]).includes(value['updated'])) return undefined;
 		state.updated = value['updated'] as UpdatedRange;
 	}
+	if (value['favoritesOnly'] !== undefined) {
+		if (typeof value['favoritesOnly'] !== 'boolean') return undefined;
+		state.favoritesOnly = value['favoritesOnly'];
+	}
 	for (const key of ['status', 'priority', 'assignee', 'project'] as const) {
 		if (value[key] !== undefined) {
 			if (!isStringList(value[key])) return undefined;
@@ -78,6 +82,10 @@ export function fitToScope(state: ListState, scope: ListScope): { state: ListSta
 			warnings.push(`The ${key} filter of the saved or linked view does not exist in this list and was ignored.`);
 			next[key] = [];
 		}
+	}
+	if (scope === 'project' && next.favoritesOnly) {
+		warnings.push('The favorite projects filter of the saved or linked view does not exist in this list and was ignored.');
+		next.favoritesOnly = false;
 	}
 	return { state: next, warnings };
 }

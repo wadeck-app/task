@@ -161,7 +161,15 @@ describe('the Projects page is a read-only list', () => {
 		const answer = await call('GET /projects', { query: { page: 'projects' } });
 
 		expect(answer.body['projectRows']).toEqual([
-			{ id: project.id, name: 'shop', path: path.resolve(registeredDir), openText: '0', problemText: '' },
+			{
+				id: project.id,
+				name: 'shop',
+				favoriteText: '',
+				priorityText: '',
+				path: path.resolve(registeredDir),
+				openText: '0',
+				problemText: '',
+			},
 		]);
 		for (const removed of ['projectForm', 'modeOptions', 'manageRows', 'registryNotice']) {
 			expect(answer.body, removed).not.toHaveProperty(removed);

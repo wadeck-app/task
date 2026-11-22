@@ -8,6 +8,8 @@ export interface ScenarioStep {
 		rawBody?: string;
 		headers?: Record<string, string>;
 		auth?: 'token' | 'none' | 'bad';
+		/** An image upload: the raw bytes as base64; sent to the uploads address with the `token` scheme. */
+		upload?: { bytesBase64: string };
 	};
 	save?: Record<string, string>;
 	saveHeaders?: Record<string, string>;

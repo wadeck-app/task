@@ -55,7 +55,7 @@ export function inspectKnownProjects(options: ListKnownProjectsOptions = {}): {
 	return { entries: projects.map(project => inspectProject(project)), registryProblem };
 }
 
-/** Health of every known project, in registry order. */
+/** Health of every known project, in importance order. */
 export function inspectRegisteredProjects(options: ListKnownProjectsOptions = {}): ProjectHealth[] {
 	return inspectKnownProjects(options).entries.map(entry => entry.health);
 }

@@ -4,6 +4,7 @@
 // fallback, a concurrency limit, and the guarantee that the token appears in no message, no log line and no cache file.
 // `fetch` and the clock are injectable: tests drive it against a fake server and a fake clock.
 import {
+	UnsupportedByBackendError,
 	BackendAuthError,
 	BackendDataError,
 	BackendLimitError,
@@ -52,6 +53,12 @@ export interface GitHubClientOptions {
 	maxRetryWaitMs?: number;
 	/** Injectable wait (tests). */
 	sleep?: (ms: number) => Promise<void>;
+	/**
+	 * The address the images of a comment are uploaded to, no trailing slash. Default: `https://uploads.github.com` for
+	 * `https://api.github.com`; a GitHub Enterprise Server address has no such endpoint (attachments are refused); any other
+	 * address (a test server) is its own upload address.
+	 */
+	uploadBaseUrl?: string;
 }
 
 export interface GetOptions {
@@ -266,6 +273,52 @@ export class GitHubClient {
 		return this.serialized(() => this.writeNow<T>(method, this.urlOf(path), body, version));
 	}
 
+	/**
+	 * Stores one image as a user-attachments asset and answers its URL. NOT part of the documented REST API (gh uses the same
+	 * endpoint; it may change): ONE request, `POST <uploads>/user-attachments/assets?name&content_type&repository_id`, the raw bytes as
+	 * the body, `Authorization: token <TOKEN>` (the `Bearer` scheme gets a misleading 404 there), answered 201 with `{ url }`. It goes
+	 * through the write queue like any content-creating request. A refusal is the typed failure of every other write: 404 (the token is
+	 * refused or cannot write to the repository), 422 (the server's reason) are GitHubHttpError, 429 a RateLimitedError.
+	 */
+	async upload(input: {
+		name: string;
+		mimeType: string;
+		bytes: Uint8Array;
+		repositoryId: number;
+	}): Promise<{ url: string }> {
+		const url = new URL(`${this.uploadOrigin()}/user-attachments/assets`);
+		url.searchParams.set('name', input.name);
+		url.searchParams.set('content_type', input.mimeType);
+		url.searchParams.set('repository_id', String(input.repositoryId));
+		const answer = await this.serialized(() =>
+			this.writeNow<{ url?: unknown }>('POST', url.toString(), undefined, API_VERSION, input.bytes)
+		);
+		const link = answer.body?.url;
+		if (typeof link !== 'string' || !/^https:\/\//.test(link)) {
+			throw new GitHubHttpError(
+				answer.status,
+				this.shortPath(url.toString()),
+				'no url',
+				`GitHub answered ${answer.status} for the upload of ${input.name} without the address of the image`
+			);
+		}
+		return { url: link };
+	}
+
+	private uploadOrigin(): string {
+		const given = this.options.uploadBaseUrl;
+		if (given !== undefined) return given.replace(/\/$/, '');
+		if (/\/api\/v3$/.test(this.options.baseUrl)) {
+			throw new UnsupportedByBackendError(
+				'github',
+				'addComment with attachments',
+				'commentAttachments',
+				'GitHub Enterprise Server has no attachment upload endpoint task can use (only github.com has one). Leave --attach out, or put the image in the repository yourself and name it in the text.'
+			);
+		}
+		return this.host === 'api.github.com' ? 'https://uploads.github.com' : this.origin;
+	}
+
 	/** One GraphQL call. GraphQL reports most failures in the body (`errors`), so they are returned, not thrown. */
 	async graphql<T>(query: string, variables: Record<string, unknown> = {}): Promise<GraphQlAnswer<T>> {
 		const answer = await this.serialized(() =>
@@ -282,14 +335,19 @@ export class GitHubClient {
 		method: string,
 		url: string,
 		body: unknown,
-		version: string = API_VERSION
+		version: string = API_VERSION,
+		bytes?: Uint8Array
 	): Promise<ClientResponse<T>> {
 		const stamp = new Date(this.now()).toISOString();
 		const maxWait = this.options.maxRetryWaitMs ?? 15_000;
 		try {
 			for (let attempt = 0; ; attempt++) {
 				try {
-					const raw = await this.send(url, undefined, false, version, { method, body });
+					const raw = await this.send(url, undefined, false, version, {
+						method,
+						body,
+						...(bytes === undefined ? {} : { raw: bytes }),
+					});
 					return {
 						status: raw.status,
 						body: raw.body as T,
@@ -465,7 +523,7 @@ export class GitHubClient {
 		etag: string | undefined,
 		allowNotFound: boolean,
 		version: string,
-		write?: { method: string; body: unknown }
+		write?: { method: string; body: unknown; raw?: Uint8Array }
 	): Promise<Raw> {
 		const resource = this.resourceOf(url);
 		const known = this.rates.get(resource);
@@ -490,7 +548,7 @@ export class GitHubClient {
 		etag: string | undefined,
 		allowNotFound: boolean,
 		version: string,
-		write?: { method: string; body: unknown }
+		write?: { method: string; body: unknown; raw?: Uint8Array }
 	): Promise<Raw> {
 		const method = write?.method ?? 'GET';
 		const started = performance.now();
@@ -506,19 +564,30 @@ export class GitHubClient {
 			for (let hops = 0; ; hops++) {
 				response = await this.doFetch(current, {
 					method,
-					...(write?.body === undefined ? {} : { body: JSON.stringify(write.body) }),
+					...(write?.raw !== undefined
+						? { body: write.raw as unknown as NonNullable<RequestInit['body']> }
+						: write?.body === undefined
+							? {}
+							: { body: JSON.stringify(write.body) }),
 					redirect: 'manual',
 					signal: controller.signal,
 					headers: {
-						authorization: `Bearer ${this.options.token}`,
+						// The upload endpoint takes the `token` scheme; `Bearer` there gives a misleading 404 (verified live).
+						authorization: `${write?.raw === undefined ? 'Bearer' : 'token'} ${this.options.token}`,
 						accept: 'application/vnd.github+json',
 						'x-github-api-version': version,
 						'user-agent': 'task-cli (github strategy)',
 						...(etag === undefined ? {} : { 'if-none-match': etag }),
-						...(write?.body === undefined ? {} : { 'content-type': 'application/json' }),
+						...(write?.raw !== undefined
+							? { 'content-type': 'application/octet-stream' }
+							: write?.body === undefined
+								? {}
+								: { 'content-type': 'application/json' }),
 					},
 				});
 				const location = response.headers.get('location');
+				// An upload is never redirected: the token and the bytes only go to the address the client was given.
+				if (write?.raw !== undefined) break;
 				if (!REDIRECT_STATUSES.has(response.status) || location === null) break;
 				// A renamed or moved repository answers 301 to its new address: followed, but only within the configured address.
 				if (hops >= 3) break;

@@ -8,9 +8,10 @@ import { TaskNotFoundError } from '../errors.js';
 import type { CommentChange, CommentEdit } from '../taskComments.js';
 import { TaskStore } from '../TaskStore.js';
 import type { LinkType, TaskRecord, TaskStatus, TaskStoreOptions, TaskSummary } from '../TaskStore.js';
-import { StaleRevisionError } from './backendErrors.js';
+import { StaleRevisionError, UnsupportedByBackendError } from './backendErrors.js';
 import { LOCAL_CAPABILITIES } from './capabilities.js';
 import type {
+	AddCommentOptions,
 	BackendClaimInput,
 	BackendClaimResult,
 	BackendReleaseResult,
@@ -289,11 +290,15 @@ export class LocalFileBackend implements TaskBackend {
 	}
 
 	// ---- writes: comments ----
-	async addComment(
-		id: string,
-		text: string,
-		options?: WriteOptions & { author?: string }
-	): Promise<BackendCommentChange> {
+	async addComment(id: string, text: string, options?: AddCommentOptions): Promise<BackendCommentChange> {
+		if (options?.attachments !== undefined && options.attachments.length > 0) {
+			throw new UnsupportedByBackendError(
+				'local',
+				'addComment with attachments',
+				'commentAttachments',
+				'task never commits or copies files for you, so a local project has nowhere to keep an image. Use a project on the github strategy (strategy.type: github) to attach images to comments, or put the image in the repository yourself and name it in the text.'
+			);
+		}
 		return withVersion(this.checked(id, options, () => this.store.addComment(id, text, options?.author)));
 	}
 

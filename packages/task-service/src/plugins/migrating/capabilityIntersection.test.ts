@@ -30,8 +30,13 @@ describe('intersectCapabilities: every capability has a rule', () => {
 		expect(Object.keys(INTERSECTION_RULES).sort()).toEqual([...BACKEND_CAPABILITY_NAMES].sort());
 	});
 
+	it('commentAttachments is never promised by a migrating pair (the wrapper would upload twice), whatever the sides', () => {
+		const github = { ...LOCAL_CAPABILITIES, commentAttachments: true };
+		expect(intersectCapabilities(github, github).capabilities.commentAttachments).toBe(false);
+	});
+
 	it('the table of this test covers every capability too (a new one needs its cases here)', () => {
-		expect([...Object.keys(ENUMS), ...BOOLEANS, 'linkTypes'].sort()).toEqual([...BACKEND_CAPABILITY_NAMES].sort());
+		expect([...Object.keys(ENUMS), ...BOOLEANS, 'linkTypes', 'commentAttachments'].sort()).toEqual([...BACKEND_CAPABILITY_NAMES].sort());
 	});
 
 	it('the same capabilities on both sides give the same capabilities and no conflict', () => {

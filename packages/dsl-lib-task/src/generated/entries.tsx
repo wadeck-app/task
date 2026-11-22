@@ -501,12 +501,13 @@ export const TaskListEntry: ComponentRegistryEntry = {
 	nodeSchema: null as never,
 	render: ({ node, ctx }: RegistryRenderProps) => {
 		const rows = coerceProp(resolveExpressionValue(node['rows'], ctx), 'TaskList.rows', 'array', true) as import('../components/TaskList.js').TaskListProps['rows']
+		const projects = coerceProp(resolveExpressionsDeep(node['projects'], ctx), 'TaskList.projects', 'array', false) as import('../components/TaskList.js').TaskListProps['projects']
 		const scope = coerceProp(resolveExpressionValue(node['scope'], ctx), 'TaskList.scope', 'primitive', false) as import('../components/TaskList.js').TaskListProps['scope']
 		const emptyMessage = coerceProp(resolveExpressionValue(node['emptyMessage'], ctx), 'TaskList.emptyMessage', 'string', false) as import('../components/TaskList.js').TaskListProps['emptyMessage']
 		const storageKey = coerceProp(resolveExpressionValue(node['storageKey'], ctx), 'TaskList.storageKey', 'string', false) as import('../components/TaskList.js').TaskListProps['storageKey']
 		const priorityOrder = coerceProp(resolveExpressionValue(node['priorityOrder'], ctx), 'TaskList.priorityOrder', 'array', false) as import('../components/TaskList.js').TaskListProps['priorityOrder']
 		const now = coerceProp(resolveExpressionValue(node['now'], ctx), 'TaskList.now', 'string', false) as import('../components/TaskList.js').TaskListProps['now']
-		return <TaskList rows={rows} scope={scope} emptyMessage={emptyMessage} storageKey={storageKey} priorityOrder={priorityOrder} now={now} />
+		return <TaskList rows={rows} projects={projects} scope={scope} emptyMessage={emptyMessage} storageKey={storageKey} priorityOrder={priorityOrder} now={now} />
 	},
 }
 
@@ -668,7 +669,7 @@ StatusBadgeEntry.knownKeys = ["appearance","icon","label","mono","size","tone"];
 StatusSelectEntry.knownKeys = ["action","actionPending","appearance","bodyKey","current","disabled","label","onAction","options","params","valueParam"];
 TabPanelsEntry.knownKeys = ["counts","defaultTab","tabs"];
 TaskChecklistEntry.knownKeys = ["actionPending","addAction","detachAction","detachIdParam","detachLabel","doneAction","emptyText","idParam","onAction","params","parentId","parentKey","placeholder","progress","reopenAction","reopenStatus","rows","statusParam","terminalStatus","titleKey"];
-TaskListEntry.knownKeys = ["emptyMessage","now","priorityOrder","rows","scope","storageKey"];
+TaskListEntry.knownKeys = ["emptyMessage","now","priorityOrder","projects","rows","scope","storageKey"];
 TaskPickerEntry.knownKeys = ["action","actionPending","apiBase","ariaLabel","bodyKey","choiceKey","choiceLabel","choices","clearable","debounceMs","disabled","excludeDescendantsOf","excludeIds","layout","limit","onAction","params","placeholder","projectParam"];
 TaskRowListEntry.knownKeys = ["actionPending","appearance","density","emptyText","maxRows","onAction","removeAction","removeLabel","rows","showId","showStatus"];
 TimelineEntry.knownKeys = ["emptyText","entries","groupByDay","order","showIcons"];

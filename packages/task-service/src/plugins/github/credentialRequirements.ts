@@ -96,6 +96,7 @@ export const CREDENTIAL_REQUIREMENTS: readonly GitHubCredentialRequirement[] = O
 	},
 	{
 		key: 'write',
+		// Comment images (task comment --attach) need no row of their own: the upload endpoint worked with Issues: Read and write (verified live 2026-11-22).
 		title: 'create and change tasks (status, title, description, type, labels, comments, parent, links)',
 		required: false,
 		fineGrained: ['Issues: Read and write'],

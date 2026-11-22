@@ -93,7 +93,7 @@ async function call(label, method, route, body, opts = {}) {
 		accept: 'application/vnd.github+json',
 		'x-github-api-version': '2022-11-28',
 	};
-	if (opts.token !== null) headers.authorization = `Bearer ${opts.token ?? token}`;
+	if (opts.token !== null) headers.authorization = `${opts.scheme ?? 'Bearer'} ${opts.token ?? token}`;
 	if (body !== undefined && opts.rawBody === undefined) headers['content-type'] = 'application/json';
 	Object.assign(headers, opts.headers ?? {});
 	const payload = opts.rawBody ?? (body === undefined ? undefined : JSON.stringify(body));

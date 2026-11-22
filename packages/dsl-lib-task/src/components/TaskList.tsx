@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, SlidersHorizontal, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, SlidersHorizontal, Star, X } from 'lucide-react';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
 	BUTTON_PRIMARY_CLASS,
@@ -10,6 +10,7 @@ import {
 	PILL_NEUTRAL_CLASS,
 } from '../ui/tokens.js';
 import { FacetFilter } from '../tasklist/FacetFilter.js';
+import { ProjectFilter } from '../tasklist/ProjectFilter.js';
 import {
 	COLUMNS,
 	TaskListHeader,
@@ -23,13 +24,16 @@ import {
 	activeFilterCount,
 	applyFilters,
 	facetOptions,
+	favoriteProjects,
 	hasActiveFilters,
+	projectOptions,
 	priorityRanking,
 	sortRows,
 } from '../tasklist/taskListModel.js';
-import type { SortKey, TaskListRow, UpdatedRange } from '../tasklist/taskListModel.js';
+import type { ProjectInfo, SortKey, TaskListRow, UpdatedRange } from '../tasklist/taskListModel.js';
 import { useListState } from '../tasklist/useListState.js';
 import type { ListScope } from '../tasklist/useListState.js';
+import { ChipRow } from './ChipRow.js';
 import { Notice } from './Notice.js';
 
 export type { TaskListRow } from '../tasklist/taskListModel.js';
@@ -41,13 +45,21 @@ export interface TaskListProps {
 	 * `projectName` / `projectPath`. Only `id`, `title` and `status` are required: a missing `updatedAt` (old data) sorts last.
 	 */
 	rows: TaskListRow[];
+	/**
+	 * The global list only: the projects of the answer (`projects` of `GET /tasks?allProjects=true`: `name`, `favorite`, `priority`,
+	 * `count`) in importance order, so a project with no task can be offered. Absent (older server): the projects are read from the rows.
+	 * The rows carry `projectFavorite` and `projectPriority`; a row without them is not a favorite and normal.
+	 *
+	 * @resolveDeep
+	 */
+	projects?: ProjectInfo[];
 	/** `project`: one project (columns Priority and Assignee). `all`: the global list (column and filter Project; no priority nor assignee). */
 	scope?: 'project' | 'all';
 	/** Shown instead of the list when `rows` is empty (not when the filters hide every row: that has its own message). */
 	emptyMessage?: string;
 	/**
 	 * Where the last view (sort and filters) of this list is remembered for the session: the project id, or `all`. The
-	 * address carries the view too (`q`, `sort`, `dir`, `status`, `priority`, `assignee`, `projectIn`, `updated`); a parameter
+	 * address carries the view too (`q`, `sort`, `dir`, `status`, `priority`, `assignee`, `projectIn`, `fav`, `updated`); a parameter
 	 * of the page (`showAll`, `parent`, `project`, `reload`) is never touched.
 	 */
 	storageKey?: string;
@@ -58,6 +70,55 @@ export interface TaskListProps {
 }
 
 const NARROW_ONLY = 'xl:hidden';
+
+/** Favorites shown as chips before "+N more". */
+const CHIPS_MAX = 6;
+
+/** The favorite projects as toggle chips next to the Project filter; the ones past the sixth are in the Project list. */
+function FavoriteChips({
+	favorites,
+	selected,
+	onToggle,
+	onMore,
+}: {
+	favorites: string[];
+	selected: string[];
+	onToggle: (name: string) => void;
+	onMore: () => void;
+}): React.ReactElement {
+	const shown = favorites.slice(0, CHIPS_MAX);
+	const hidden = favorites.length - shown.length;
+	return (
+		<div role="group" aria-label="Favorite projects" className="min-w-0">
+			<ChipRow
+				items={
+					<>
+						{shown.map(name => {
+							const on = selected.includes(name);
+							return (
+								<button
+									key={name}
+									type="button"
+									aria-pressed={on}
+									onClick={() => onToggle(name)}
+									className={`${PILL_NEUTRAL_CLASS} max-w-[12rem] ${on ? 'border-primary bg-primary-light' : ''}`}
+								>
+									<Star size={ICON_SIZE} fill="currentColor" aria-hidden="true" className="shrink-0 text-warning-text" />
+									<span className="truncate">{name}</span>
+								</button>
+							);
+						})}
+						{hidden > 0 ? (
+							<button type="button" onClick={onMore} className={PILL_NEUTRAL_CLASS}>
+								{`+${hidden} more`}
+							</button>
+						) : null}
+					</>
+				}
+			/>
+		</div>
+	);
+}
 
 function SortBar({
 	scope,
@@ -129,6 +190,7 @@ export function TaskList({
 	emptyMessage = 'No tasks.',
 	storageKey = scope === 'all' ? 'all' : 'project',
 	priorityOrder,
+	projects,
 	now,
 }: TaskListProps): React.ReactElement {
 	const { state, warnings, update, reset } = useListState(scope, storageKey);
@@ -137,6 +199,7 @@ export function TaskList({
 		return Number.isNaN(given) ? Date.now() : given;
 	});
 	const [filtersOpen, setFiltersOpen] = useState(false);
+	const [projectOpen, setProjectOpen] = useState(false);
 	const search = useRef<HTMLInputElement>(null);
 	const list: TaskListRow[] = Array.isArray(rows) ? rows : [];
 
@@ -160,7 +223,11 @@ export function TaskList({
 	const statusOptions = useMemo(() => facetOptions(list, 'status', state.status), [list, state.status]);
 	const priorityOptions = useMemo(() => facetOptions(list, 'priority', state.priority), [list, state.priority]);
 	const assigneeOptions = useMemo(() => facetOptions(list, 'assignee', state.assignee), [list, state.assignee]);
-	const projectOptions = useMemo(() => facetOptions(list, 'project', state.project), [list, state.project]);
+	const projectChoices = useMemo(
+		() => projectOptions(list, Array.isArray(projects) ? projects : undefined, state.project),
+		[list, projects, state.project]
+	);
+	const favorites = useMemo(() => favoriteProjects(projectChoices), [projectChoices]);
 
 	if (list.length === 0) {
 		return (
@@ -175,6 +242,12 @@ export function TaskList({
 	const column = COLUMNS[scope].find(item => item.key === state.sort);
 	const filterCount = activeFilterCount(state);
 	const active = hasActiveFilters(state);
+	// Shown while a favorite exists, or while the address asks for it (it must be possible to turn it off).
+	const showFavoritesToggle = scope === 'all' && (favorites.length > 0 || state.favoritesOnly);
+	const toggleProject = (name: string): void =>
+		update({
+			project: state.project.includes(name) ? state.project.filter(item => item !== name) : [...state.project, name],
+		});
 	const clear = (
 		<button type="button" onClick={reset} className={PILL_NEUTRAL_CLASS}>
 			<X size={ICON_SIZE} aria-hidden="true" />
@@ -206,6 +279,17 @@ export function TaskList({
 					}}
 					className={`${FIELD_CLASS} min-w-0 flex-1 xl:max-w-sm`}
 				/>
+				{showFavoritesToggle ? (
+					<button
+						type="button"
+						aria-pressed={state.favoritesOnly}
+						onClick={() => update({ favoritesOnly: !state.favoritesOnly })}
+						className={`${PILL_NEUTRAL_CLASS} ${state.favoritesOnly ? 'border-primary bg-primary-light' : ''}`}
+					>
+						<Star size={ICON_SIZE} fill={state.favoritesOnly ? 'currentColor' : 'none'} aria-hidden="true" />
+						Favorites only
+					</button>
+				) : null}
 				<button
 					type="button"
 					aria-expanded={filtersOpen}
@@ -235,7 +319,23 @@ export function TaskList({
 						<FacetFilter label="Assignee" options={assigneeOptions} selected={state.assignee} onChange={assignee => update({ assignee })} />
 					</>
 				) : (
-					<FacetFilter label="Project" options={projectOptions} selected={state.project} onChange={project => update({ project })} />
+					<>
+						<ProjectFilter
+							options={projectChoices}
+							selected={state.project}
+							onChange={project => update({ project })}
+							open={projectOpen}
+							onOpenChange={setProjectOpen}
+						/>
+						{favorites.length > 0 ? (
+							<FavoriteChips
+								favorites={favorites.map(option => option.value)}
+								selected={state.project}
+								onToggle={toggleProject}
+								onMore={() => setProjectOpen(true)}
+							/>
+						) : null}
+					</>
 				)}
 				<select
 					aria-label="Updated"

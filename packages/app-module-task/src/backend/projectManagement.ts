@@ -13,12 +13,22 @@ export function listRows(projects: readonly ProjectListing[]): Record<string, un
 	return projects.map(project => ({
 		id: project.id,
 		name: project.name,
+		// Text columns: "Favorite" or nothing, "high" / "low" or nothing (normal is the absence of a level).
+		favoriteText: project.favorite ? 'Favorite' : '',
+		priorityText: project.priority === 'normal' ? '' : project.priority,
 		path: project.path,
 		openText: project.openCount === null ? '-' : String(project.openCount),
 		// The reason carries its own fix (config file to repair, project CLI command).
 		problemText: project.error ?? '',
 	}));
 }
+
+/**
+ * Said on the Projects page: task only READS favorites and priority (they order every project list), they are set in the project module
+ * or with the project CLI.
+ */
+export const IMPORTANCE_NOTE =
+	'Favorites come first, then high, normal and low priority. Set them in the project module, or with the project CLI (project favorite <ref>, project priority <ref> <level>).';
 
 /** Links to the tasks of the readable projects: a table cannot navigate on a row click here. */
 export function openLinks(projects: readonly ProjectListing[]): DslNode[] {

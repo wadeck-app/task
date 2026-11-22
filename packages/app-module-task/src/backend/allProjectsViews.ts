@@ -90,10 +90,20 @@ export function allTasksBody(found: TasksAcrossProjects, showAll: boolean): Reco
 			? { label: 'Hide closed tasks', href: allProjectsTasksHref(false) }
 			: { label: 'Show closed tasks', href: allProjectsTasksHref(true) },
 		...skippedFields(unreadable),
+		// Every readable project in importance order with its row count, so a filter can offer one that has no row.
+		projects: found.readableProjects.map(project => ({
+			name: project.name,
+			favorite: project.favorite,
+			priority: project.priority,
+			count: found.tasks.filter(task => task.project.id === project.id).length,
+		})),
 		tasks: found.tasks.map(task => ({
 			...task,
 			projectName: task.project.name,
 			projectPath: task.project.path,
+			// A server without these fields (older) is read by the page as not favorite, normal.
+			projectFavorite: task.project.favorite,
+			projectPriority: task.project.priority,
 			titleText: shortTitle(task.title),
 			created: shortUtcTime(task.createdAt),
 			updated: task.updatedAt === undefined ? '' : shortUtcTime(task.updatedAt),

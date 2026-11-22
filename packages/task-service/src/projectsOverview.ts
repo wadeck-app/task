@@ -5,7 +5,7 @@ import type { TaskServiceContext } from './context.js';
 import { NoReadableProjectsError } from './errors.js';
 import type { ProjectFailure } from './errors.js';
 import { listTasks } from './listTasks.js';
-import type { ListKnownProjectsOptions } from './knownProjects.js';
+import type { ListKnownProjectsOptions, ProjectPriorityLevel } from './knownProjects.js';
 import { isRemoteFailure } from './describeError.js';
 import { describeProblem, inspectKnownProjects } from './projectsHealth.js';
 import { countTasksByStatus } from './taskStats.js';
@@ -17,6 +17,10 @@ export interface ProjectOverview {
 	id: string;
 	/** Registry name. */
 	name: string;
+	/** Favorite in the registry. */
+	favorite: boolean;
+	/** Registry priority, `normal` when none. */
+	priority: ProjectPriorityLevel;
 	path: string;
 	/** The directory exists. */
 	exists: boolean;
@@ -31,7 +35,7 @@ export interface ProjectOverview {
 }
 
 export interface ProjectsSummary {
-	/** Every registered project, in registration order, unreadable ones included. */
+	/** Every registered project, in importance order (favorites, priority, name), unreadable ones included. */
 	projects: ProjectOverview[];
 	/** Projects that could be read: the ones the totals count. */
 	readableCount: number;
@@ -72,6 +76,8 @@ export async function summarizeProjects(options: ListKnownProjectsOptions = {}):
 		const base = {
 			id: known.id,
 			name: known.name,
+			favorite: known.favorite,
+			priority: known.priority,
 			path: known.path,
 			exists: health.exists,
 		};
@@ -79,7 +85,7 @@ export async function summarizeProjects(options: ListKnownProjectsOptions = {}):
 			projects.push({ ...base, open: null, total: null, byStatus: [], error: health.error });
 			continue;
 		}
-		// Projects are read one after the other, in registration order: the answer order and the first failure do not depend on timing.
+		// Projects are read one after the other, in importance order: the answer order and the first failure do not depend on timing.
 		// The context is released as soon as its project is read, whatever the outcome.
 		let figures: Awaited<ReturnType<typeof summarizeProject>>;
 		try {
@@ -124,7 +130,7 @@ function throwIfNoneReadable(registered: number, readable: number, failures: Pro
 
 /** A task and the project it belongs to. */
 export interface ProjectTask extends TaskSummary {
-	project: { id: string; name: string; path: string };
+	project: ReadableProject;
 }
 
 export interface ListTasksAcrossProjectsInput {
@@ -134,11 +140,22 @@ export interface ListTasksAcrossProjectsInput {
 	env?: NodeJS.ProcessEnv;
 }
 
+/** A project whose tasks were read. */
+export interface ReadableProject {
+	id: string;
+	name: string;
+	path: string;
+	favorite: boolean;
+	priority: ProjectPriorityLevel;
+}
+
 export interface TasksAcrossProjects {
-	/** Sorted by project name (case-insensitive), then project path, then creation time. */
+	/** Sorted by project importance (as the projects are listed: favorites, priority, name), then project path, then creation time. */
 	tasks: ProjectTask[];
 	/** Projects that could be read. */
 	readableCount: number;
+	/** The projects that could be read, in importance order (the ones holding no task included: a filter needs them). */
+	readableProjects: ReadableProject[];
 	/** Projects that could not be read, with why: reported, never dropped. */
 	unreadable: Array<{ id: string; name: string; path: string; error: string }>;
 	/** Present only when the shared registry could not be read: why. */
@@ -153,6 +170,7 @@ export async function listTasksAcrossProjects(input: ListTasksAcrossProjectsInpu
 	const inspected = inspectKnownProjects({ env: input.env });
 	const tasks: ProjectTask[] = [];
 	const unreadable: TasksAcrossProjects['unreadable'] = [];
+	const readableProjects: ReadableProject[] = [];
 	const registered = inspected.entries;
 	for (const { known, health, context } of registered) {
 		if (context === null) {
@@ -174,20 +192,29 @@ export async function listTasksAcrossProjects(input: ListTasksAcrossProjectsInpu
 		} finally {
 			await context.dispose?.();
 		}
-		for (const task of listed) {
-			tasks.push({ ...task, project: { id: known.id, name: context.project.name, path: known.path } });
-		}
+		const project: ReadableProject = {
+			id: known.id,
+			name: context.project.name,
+			path: known.path,
+			favorite: known.favorite,
+			priority: known.priority,
+		};
+		readableProjects.push(project);
+		for (const task of listed) tasks.push({ ...task, project });
 	}
 	throwIfNoneReadable(registered.length, registered.length - unreadable.length, unreadable);
+	// `registered` is already in importance order; a stable sort on the project rank keeps it, then path, then creation.
+	const rank = new Map(registered.map((entry, index) => [entry.known.id, index]));
 	tasks.sort(
 		(a, b) =>
-			compareText(a.project.name, b.project.name) ||
+			(rank.get(a.project.id) ?? 0) - (rank.get(b.project.id) ?? 0) ||
 			compareText(a.project.path, b.project.path) ||
 			compareText(a.createdAt, b.createdAt)
 	);
 	return {
 		tasks,
 		readableCount: registered.length - unreadable.length,
+		readableProjects,
 		unreadable,
 		...(inspected.registryProblem === null ? {} : { registryProblem: inspected.registryProblem }),
 	};

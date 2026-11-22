@@ -32,6 +32,7 @@ export {
 	UnsupportedByBackendError,
 } from './backendErrors.js';
 export type {
+	AddCommentOptions,
 	BackendClaimInput,
 	BackendClaimResult,
 	BackendReleaseResult,

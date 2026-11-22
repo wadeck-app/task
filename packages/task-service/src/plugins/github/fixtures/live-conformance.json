@@ -175,6 +175,9 @@
 				"method": "GET",
 				"path": "repos/{{repo}}"
 			},
+			"save": {
+				"repoId": "id"
+			},
 			"subset": true,
 			"expect": {
 				"status": 200,
@@ -6893,6 +6896,25 @@
 					"performed_via_github_app": null,
 					"state_reason": "reopened",
 					"pinned_comment": null
+				}
+			}
+		},
+		{
+			"name": "upload an image",
+			"request": {
+				"method": "POST",
+				"path": "user-attachments/assets?name=conf.png&content_type=image/png&repository_id={{repoId}}",
+				"upload": {
+					"bytesBase64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+				}
+			},
+			"note": "verified live 2026-11-22 with a fine-grained PAT (Issues read and write): POST https://uploads.github.com/user-attachments/assets?name=&content_type=&repository_id= with Authorization: token <TOKEN> (Bearer gives a misleading 404), Accept application/vnd.github+json, Content-Type application/octet-stream, the raw bytes; answered 201 with a url under https://github.com/user-attachments/assets/<uuid>. Added by hand: the answer headers were not kept (headersNotRecorded).",
+			"headersNotRecorded": true,
+			"expect": {
+				"status": 201,
+				"headers": {},
+				"body": {
+					"url": "<web>/user-attachments/assets/<uuid>"
 				}
 			}
 		},

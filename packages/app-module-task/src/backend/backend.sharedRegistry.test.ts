@@ -221,7 +221,15 @@ describe('GET /projects: the projects of the shared registry', () => {
 		const { body } = await call('GET /projects');
 
 		expect(body['projectRows']).toEqual([
-			{ id: project.id, name: 'shop', path: path.resolve(shared), openText: '1', problemText: '' },
+			{
+				id: project.id,
+				name: 'shop',
+				favoriteText: '',
+				priorityText: '',
+				path: path.resolve(shared),
+				openText: '1',
+				problemText: '',
+			},
 		]);
 	});
 

@@ -33,6 +33,7 @@ const SHARED_WITH_THE_API: BackendCapabilities = {
 	labels: true,
 	meta: true,
 	comments: true,
+	commentAttachments: false,
 	priority: true,
 	assignee: true,
 	claim: true,

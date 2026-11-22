@@ -191,7 +191,7 @@ describe('task strategy show', () => {
 			fills: [],
 			tokens: [],
 		});
-		expect((report['capabilities'] as unknown[]).length).toBe(18);
+		expect((report['capabilities'] as unknown[]).length).toBe(19);
 	});
 
 	it('creates nothing in the data folder', async () => {

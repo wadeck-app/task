@@ -51,6 +51,18 @@ export type {
 } from './TypeValidationStrategy.js';
 export { OpenTypeStrategy, FixedListTypeStrategy, resolveTypeValidationStrategy } from './TypeValidationStrategy.js';
 export { TaskNotFoundError, AmbiguousTaskPrefixError, TaskConflictError } from './errors.js';
+export type { CommentAttachment, UploadedAttachment } from './commentAttachments.js';
+export {
+	ATTACHMENT_EXTENSIONS_TEXT,
+	ATTACHMENT_MAX_BYTES,
+	ATTACHMENT_MAX_COUNT,
+	ATTACHMENT_MIME_BY_EXTENSION,
+	PLACEHOLDER_ATTACHMENT_URL,
+	altOf,
+	checkAttachments,
+	composeCommentBody,
+	imageMimeOf,
+} from './commentAttachments.js';
 export type { CommentChange, CommentEdit, TaskComment } from './taskComments.js';
 export {
 	COMMENT_AUTHOR_MAX,
@@ -84,6 +96,7 @@ export { formatDuration } from './formatDuration.js';
 // The async port (stage 0 of the storage-strategies design): every caller reads and writes tasks through it.
 export type {
 	ActivitySupport,
+	AddCommentOptions,
 	BackendCapabilities,
 	BackendClaimInput,
 	BackendClaimResult,

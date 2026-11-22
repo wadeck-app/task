@@ -7,6 +7,8 @@ function project(name: string, extra: Partial<ProjectOverview> = {}): ProjectOve
 	return {
 		id: 'abcd1234',
 		name,
+		favorite: false,
+		priority: 'normal',
 		path: `/work/${name}`,
 		exists: true,
 		open: 2,

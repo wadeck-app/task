@@ -205,6 +205,7 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 				'packages/task-cli/src/appModuleManifest.ts': 'finds the app-module manifest next to the bundle',
 				'packages/task-cli/src/appModuleStaging.ts': 'copies the app-module to the config dir for app-core',
 				'packages/task-cli/src/cli/readText.ts': '--description-file / standard input',
+				'packages/task-cli/src/cli/readAttachments.ts': '--attach: the image files of a comment',
 				'packages/task-cli/src/commands/TaskCliCommand.ts': 'self-check temp dir, update state and logs',
 				'packages/task-cli/src/commands/updateLog.ts': 'the updater log files',
 				'packages/task-cli/src/commands/workerProcess.ts':

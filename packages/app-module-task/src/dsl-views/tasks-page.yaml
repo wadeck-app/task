@@ -96,11 +96,13 @@ sections:
       label: $sources.tasks.warning
       variant: warning
     # Both lists are task:TaskList: default order = last update (newest first), sortable headers, client-side filters, the view kept in
-    # the address (q, sort, dir, status, priority, assignee, projectIn, updated: none of the page's own showAll, parent, project, reload).
+    # the address (q, sort, dir, status, priority, assignee, projectIn, fav, updated: none of the page's own showAll, parent, project, reload).
     # The route sends the rows with updatedAt / updated; the global list has no priority nor assignee columns (no single set of priorities).
     - $type: task:TaskList
       $if: $sources.tasks.scopeText
       rows: $sources.tasks.tasks
+      # Every readable project in importance order (favorites, priority) with its row count: the Project filter offers one with no task.
+      projects: $sources.tasks.projects
       scope: all
       storageKey: all
       emptyMessage: No open tasks in any project yet ("Show closed tasks" includes the closed ones)

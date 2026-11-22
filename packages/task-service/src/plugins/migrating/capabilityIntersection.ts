@@ -72,6 +72,8 @@ export const INTERSECTION_RULES: { [K in keyof BackendCapabilities]-?: Rule<K> }
 	labels: both('labels'),
 	meta: both('meta'),
 	comments: both('comments'),
+	// A migrating project never attaches images (the copy to the other side would upload them twice): MigratingBackend refuses them.
+	commentAttachments: () => ({ value: false }),
 	priority: both('priority'),
 	assignee: both('assignee'),
 	claim: both('claim'),
@@ -123,6 +125,7 @@ export const NOTHING_PROMISED: BackendCapabilities = Object.freeze({
 	labels: false,
 	meta: false,
 	comments: false,
+	commentAttachments: false,
 	priority: false,
 	assignee: false,
 	claim: false,

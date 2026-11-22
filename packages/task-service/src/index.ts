@@ -120,6 +120,7 @@ export type {
 	ProjectOverview,
 	ProjectsSummary,
 	ProjectTask,
+	ReadableProject,
 	ListTasksAcrossProjectsInput,
 	TasksAcrossProjects,
 } from './projectsOverview.js';
@@ -137,8 +138,8 @@ export {
 	resolveProjectReference,
 } from './resolveProject.js';
 export type { ProjectOption } from '@wadeck-app/project-sdk';
-export type { KnownProject, KnownProjects, ListKnownProjectsOptions } from './knownProjects.js';
-export { listKnownProjects } from './knownProjects.js';
+export type { KnownProject, KnownProjects, ListKnownProjectsOptions, ProjectPriorityLevel, Rankable } from './knownProjects.js';
+export { compareByImportance, listKnownProjects } from './knownProjects.js';
 export type { TaskStorage } from './storage.js';
 export { ownConfigFile } from './storage.js';
 export type { Blocker, BlockerSummary, ChildrenSummary } from './taskProgress.js';

@@ -116,6 +116,9 @@ const BUDGET: Record<string, { total: number; writes: number }> = {
 	'set-parent': { total: 7, writes: 1 },
 	'link blockedBy': { total: 9, writes: 1 },
 	comment: { total: 7, writes: 1 },
+	// The images: the repository id (ONE read, the numeric id the upload asks for), one upload per image BEFORE the comment, then the
+	// comment (the issue is read first, like any write, so a missing task uploads nothing). The 2 writes are 1 upload + 1 comment: 7 (a plain comment) + the repository read + the upload; each further image costs 1 more.
+	'comment (1 image)': { total: 9, writes: 2 },
 	// An issue with comments and a blocker: the record read after the write has the comments and the blockers, the resolution has not.
 	'set-status (3 comments, 1 blocker)': { total: 8, writes: 1 },
 	'delete (tombstone)': { total: 9, writes: 2 },
@@ -146,6 +149,16 @@ describe('request budget of the github writes (ttl 0, fresh process per command)
 			await measure(ctx => linkTasks(ctx, { id: String(c), type: 'blockedBy', target: String(a) }))
 		);
 		results.set('comment', await measure(ctx => addComment(ctx, { id: String(a), text: 'hello' })));
+		results.set(
+			'comment (1 image)',
+			await measure(ctx =>
+				addComment(ctx, {
+					id: String(a),
+					text: 'with an image',
+					attachments: [{ name: 'shot.png', mimeType: 'image/png', bytes: new Uint8Array([1, 2, 3]) }],
+				})
+			)
+		);
 		const busy = fake.addIssue({ title: 'Busy task' });
 		for (const text of ['one', 'two', 'three']) fake.addComment(busy, text);
 		fake.addBlockedBy(busy, b);
@@ -184,7 +197,8 @@ describe('request budget of the github writes (ttl 0, fresh process per command)
 					`${name}: ${m.total} requests / ${m.writes} writes, budget ${BUDGET[name]!.total} / ${BUDGET[name]!.writes}`
 			);
 		expect(over).toEqual([]);
-	});
+		// Sixteen commands, each a fresh process over a loopback server: slower than the default limit on a busy machine.
+	}, 30_000);
 });
 
 describe('the request that resolves priorityStorage: auto (the default)', () => {

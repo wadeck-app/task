@@ -73,8 +73,20 @@ describe('task list --all-projects with the shared registry', () => {
 		};
 
 		const byTitle = Object.fromEntries(answer.tasks.map(task => [task.title, task.project]));
-		expect(byTitle['shop task']).toEqual({ id: shop.id, name: 'shop', path: shop.dir });
-		expect(byTitle['blog task']).toEqual({ id: blog.id, name: 'blog', path: blog.dir });
+		expect(byTitle['shop task']).toEqual({
+			id: shop.id,
+			name: 'shop',
+			path: shop.dir,
+			favorite: false,
+			priority: 'normal',
+		});
+		expect(byTitle['blog task']).toEqual({
+			id: blog.id,
+			name: 'blog',
+			path: blog.dir,
+			favorite: false,
+			priority: 'normal',
+		});
 		expect(stderr.join('')).toBe('');
 	});
 
@@ -108,10 +120,11 @@ describe('task projects summary with the shared registry', () => {
 		};
 
 		const lines = text.output.split('\n').filter(line => /^(shop|blog)\s/.test(line));
-		expect(lines.map(line => line.split(/\s+/)[0])).toEqual(['shop', 'blog']);
+		// Importance order: all normal, so by name.
+		expect(lines.map(line => line.split(/\s+/)[0])).toEqual(['blog', 'shop']);
 		expect(json.projects.map(p => [p['id'], p['name']])).toEqual([
-			[shop.id, 'shop'],
 			[blog.id, 'blog'],
+			[shop.id, 'shop'],
 		]);
 		for (const project of json.projects) {
 			expect(project).not.toHaveProperty('registered');
