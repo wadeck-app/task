@@ -6,7 +6,7 @@
 // hierarchy.ts, links.ts, comments.ts, setTaskText.ts, createTask.ts, deleteTasks.ts); serverEvents.parity.test.ts runs the same
 // scenario through both and compares them, so a change in one that is not in the other fails a test.
 import type { TaskBackend, TaskResolvedConfig, VersionedRecord } from '@wadeck-app/task-core';
-import { TaskNotFoundError } from '@wadeck-app/task-core';
+import { TaskNotFoundError, UnsupportedByBackendError } from '@wadeck-app/task-core';
 
 import type { TaskEvent, TaskProjectEnv } from '../events.js';
 import { TaskClosedError } from '../taskClosedError.js';
@@ -49,15 +49,24 @@ function parentChanged(
 		: [{ name: 'onTaskParentChanged', payload: { taskId, oldParentId, newParentId, ...env } }];
 }
 
-/** An optional operation of the served backend, or a loud error: the server only serves local projects, which carry them all. */
-function required<K extends 'setPriority' | 'clearPriority' | 'setAssignee' | 'clearAssignee' | 'claim' | 'release'>(
-	backend: TaskBackend,
-	name: K
-): NonNullable<TaskBackend[K]> {
+const CAPABILITY_OF = {
+	setPriority: 'priority',
+	clearPriority: 'priority',
+	setAssignee: 'assignee',
+	clearAssignee: 'assignee',
+	claim: 'claim',
+	release: 'claim',
+} as const;
+
+/** An optional operation of the served backend; a backend that lacks it refuses with UnsupportedByBackendError, which the wire carries (422). */
+function required<K extends keyof typeof CAPABILITY_OF>(backend: TaskBackend, name: K): NonNullable<TaskBackend[K]> {
 	const operation = backend[name];
 	if (typeof operation !== 'function') {
-		throw new Error(
-			`The served project's backend (${backend.kind}) does not implement ${name}; task serve serves local projects, which do (this is a bug)`
+		throw new UnsupportedByBackendError(
+			backend.kind,
+			name,
+			CAPABILITY_OF[name],
+			`The project served here is stored on the ${backend.kind} backend, which does not offer ${CAPABILITY_OF[name]}; use another project or storage for it.`
 		);
 	}
 	return operation.bind(backend) as NonNullable<TaskBackend[K]>;

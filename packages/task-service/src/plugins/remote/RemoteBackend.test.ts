@@ -1,6 +1,7 @@
 import {
 	BackendRejectedError,
 	BackendTimeoutError,
+	LOCAL_CAPABILITIES,
 	RemoteIncompatibleError,
 	RemoteProjectMismatchError,
 	RemoteTimeoutError,
@@ -386,5 +387,32 @@ describe('after the connection was released', () => {
 
 		expect(error).toBeInstanceOf(Error);
 		expect((error as Error).message).toContain('closed');
+	});
+});
+
+describe('the capabilities follow the storage behind the server', () => {
+	it('a server over a backend without claim says so in info, and the client reports it (events stay the server\'s)', async () => {
+		const info = {
+			protocol: { version: 2, min: 1, max: 2 },
+			project: { name: 'shop' },
+			capabilities: { ...LOCAL_CAPABILITIES, claim: false, priority: false, comments: false, events: 'client' },
+		};
+		const backend = new RemoteBackend({
+			transport: scripted(
+				() =>
+					new Response(JSON.stringify(info), {
+						status: 200,
+						headers: { 'x-task-protocol': '1', 'content-type': 'application/json' },
+					})
+			),
+		});
+
+		expect(backend.capabilities.claim).toBe(true);
+		await backend.info();
+
+		expect(backend.capabilities.claim).toBe(false);
+		expect(backend.capabilities.priority).toBe(false);
+		expect(backend.capabilities.comments).toBe(false);
+		expect(backend.capabilities.events).toBe('server');
 	});
 });

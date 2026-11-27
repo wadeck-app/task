@@ -337,7 +337,7 @@ describe('starting and stopping', () => {
 		}
 	});
 
-	it('refuses to serve a project that is not stored locally, naming the strategy and the fix', async () => {
+	it('refuses to serve a project that is itself behind another server, naming the strategy and the fix', async () => {
 		const ctx = ctxOf();
 		const forge = {
 			...ctx,
@@ -348,7 +348,7 @@ describe('starting and stopping', () => {
 
 		expect(result.exitCode).toBe(1);
 		expect(result.output).toContain('uses the remote strategy');
-		expect(result.output).toContain('Chaining');
+		expect(result.output).toContain('holds the tasks');
 	});
 
 	it('JSON errors are {error, hint}', async () => {

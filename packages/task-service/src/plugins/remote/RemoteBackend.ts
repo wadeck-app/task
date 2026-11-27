@@ -106,6 +106,8 @@ function isInfo(value: unknown): value is ServerInfo {
 export class RemoteBackend implements TaskBackend {
 	readonly kind = 'remote' as const;
 	private carried: BackendCapabilities = REMOTE_CAPABILITIES;
+	/** What the server's own backend said it can do (info): a server over github does not claim what a local one does. */
+	private served: BackendCapabilities | undefined;
 	private handshake: Promise<void> | undefined;
 
 	constructor(private readonly options: RemoteBackendOptions) {}
@@ -118,13 +120,19 @@ export class RemoteBackend implements TaskBackend {
 		return this.carried;
 	}
 
-	/** Narrows the capabilities to what a server of this protocol range can carry. */
-	private learn(range: { min: number; max: number } | undefined): void {
-		if (range === undefined) return;
-		this.carried =
-			range.max < 2
-				? { ...REMOTE_CAPABILITIES, priority: false, assignee: false, claim: false }
-				: REMOTE_CAPABILITIES;
+	/**
+	 * Narrows the capabilities to what the server's backend can do (`served`, from info) and to what a server of this protocol range
+	 * can carry. The events are always the server's.
+	 */
+	private learn(range: { min: number; max: number } | undefined, served?: BackendCapabilities): void {
+		if (served !== undefined) this.served = served;
+		const base: BackendCapabilities =
+			this.served === undefined ? REMOTE_CAPABILITIES : { ...this.served, events: 'server' };
+		if (range === undefined) {
+			this.carried = base;
+			return;
+		}
+		this.carried = range.max < 2 ? { ...base, priority: false, assignee: false, claim: false } : base;
 	}
 
 	// ---- the one request path ----
@@ -209,7 +217,7 @@ export class RemoteBackend implements TaskBackend {
 		this.handshake ??= this.exchange<ServerInfo>('info', {}).then(info => {
 			if (!isInfo(info))
 				throw new RemoteIncompatibleError(this.options.transport.baseUrl, PROTOCOL_VERSION, undefined);
-			this.learn(info.protocol);
+			this.learn(info.protocol, info.capabilities);
 			if (!serverServes(expected, info.project)) {
 				throw new RemoteProjectMismatchError(this.options.transport.baseUrl, expected, info.project);
 			}
@@ -227,7 +235,7 @@ export class RemoteBackend implements TaskBackend {
 		if (!isInfo(info)) {
 			throw new RemoteIncompatibleError(this.options.transport.baseUrl, PROTOCOL_VERSION, undefined);
 		}
-		this.learn(info.protocol);
+		this.learn(info.protocol, info.capabilities);
 		return info;
 	}
 

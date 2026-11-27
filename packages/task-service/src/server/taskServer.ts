@@ -86,13 +86,16 @@ const DEFAULTS = {
 
 const SERVER_NAME = 'task-serve' as const;
 
-/** Refuses a project this server must not serve: only a project whose own strategy is `local` has data of its own to serve. */
+/**
+ * Refuses a project this server must not serve: one that is itself on the `remote` strategy (a server of a server is a loop waiting to
+ * happen and two hops of timeouts). Any other storage (local files, github, gitlab, migrating) is served: the client sees the port.
+ */
 export function assertServable(ctx: TaskServiceContext): void {
 	const kind = ctx.store.kind;
-	if (kind !== 'local') {
+	if (kind === 'remote') {
 		throw new TaskServerStartError(
-			`project "${ctx.project.name}" uses the ${kind} strategy; task serve serves projects whose tasks are stored locally`,
-			`Serve the project on the machine that holds the tasks (its strategy is local), or remove the strategy section of this project's config to serve its own files. Chaining a remote or forge project through this machine is not supported.`
+			`project "${ctx.project.name}" uses the remote strategy; task serve does not serve a project whose tasks live behind another server`,
+			`Run task serve on the machine that holds the tasks (any storage there: local files, github, gitlab), or point the clients at that machine.`
 		);
 	}
 }

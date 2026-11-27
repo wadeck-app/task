@@ -92,7 +92,7 @@ Detail: `docs/claude/storage-gitlab.md`
 
 ## Storage strategy: remote (`task serve`, stage 4)
 
-- The tasks live behind `task serve -p <project>` on another computer (the project there must be `local`); the client project has `strategy.type: remote` with `transport` (`plain-http`: `url`, `tokenEnv` or `tokenFile`, `timeoutSeconds`). The server is the single writer and the only emitter of events for those tasks.
+- The tasks live behind `task serve -p <project>` on another computer (the project there may use any storage except `remote`; the client reports the capabilities of that storage); the client project has `strategy.type: remote` with `transport` (`plain-http`: `url`, `tokenEnv` or `tokenFile`, `timeoutSeconds`). The server is the single writer and the only emitter of events for those tasks.
 - Plain HTTP, one shared bearer token (>= 16 characters, never on the command line), loopback by default; another host needs `--allow-lan` and prints a loud warning. Verified on loopback only.
 - The protocol lives in `task-core/src/remote/` (`protocol.ts` route table, single source for both ends; protocol 1 and 2, v2 only adds routes); server in `task-service/src/server/`, client in `plugins/remote/` over `plugins/plain-http/`. They meet only through task-core (architecture rules `server-*`, `node-network-outside-server`).
 - The server decides the time for claims (client sends `leaseMs`, never an instant). A v2 client against a v1 server fails priority/assignee/claim with `RemoteIncompatibleError` naming the fix.

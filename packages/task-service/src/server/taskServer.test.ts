@@ -781,20 +781,33 @@ describe('starting', () => {
 		expect((error as TaskServerStartError).hint).toContain('randomBytes');
 	});
 
-	it('refuses to serve a project whose own strategy is not local', async () => {
+	it('refuses to serve a project that is itself behind another server (a remote one)', async () => {
 		const f = await fixture();
-		const forge = {
+		const chained = {
 			...f.ctx,
-			store: new Proxy(f.ctx.store, { get: (t, p, r) => (p === 'kind' ? 'github' : Reflect.get(t, p, r)) }),
+			store: new Proxy(f.ctx.store, { get: (t, p, r) => (p === 'kind' ? 'remote' : Reflect.get(t, p, r)) }),
 		};
 
-		const error = await startTaskServer({ ctx: forge as TaskServiceContext, token: TEST_TOKEN }).catch(
+		const error = await startTaskServer({ ctx: chained as TaskServiceContext, token: TEST_TOKEN }).catch(
 			(e: unknown) => e
 		);
 
 		expect(error).toBeInstanceOf(TaskServerStartError);
-		expect((error as TaskServerStartError).message).toContain('github strategy');
-		expect((error as TaskServerStartError).hint).toContain('Chaining');
+		expect((error as TaskServerStartError).message).toContain('remote strategy');
+		expect((error as TaskServerStartError).hint).toContain('holds the tasks');
+	});
+
+	it('serves a project on any other storage (github, gitlab, migrating): the client sees the port', async () => {
+		const f = await fixture();
+		for (const kind of ['github', 'gitlab', 'migrating']) {
+			const forge = {
+				...f.ctx,
+				store: new Proxy(f.ctx.store, { get: (t, p, r) => (p === 'kind' ? kind : Reflect.get(t, p, r)) }),
+			};
+
+			const server = await startTaskServer({ ctx: forge as TaskServiceContext, token: TEST_TOKEN, port: 0 });
+			await server.close();
+		}
 	});
 
 	it('says that the port is taken, and what to do', async () => {
