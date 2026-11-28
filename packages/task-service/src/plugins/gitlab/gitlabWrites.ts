@@ -1503,7 +1503,7 @@ export class GitLabWriter {
 				'gitlab',
 				'addComment with attachments',
 				'commentAttachments',
-				'Attaching images to a comment is only implemented for the github strategy. Leave --attach out, or put the image in the repository yourself and name it in the text.'
+				'Attaching images to a comment is not implemented for the gitlab strategy: the upload endpoint (POST /projects/:id/uploads) refuses the strategy token (403 insufficient_granular_scope: a fine-grained token needs the extra permission Markdown Upload: Create, checked live on gitlab.com 2026-11-28). Leave --attach out, or put the image in the repository yourself and name it in the text.'
 			);
 		}
 		if (options?.author !== undefined) {
