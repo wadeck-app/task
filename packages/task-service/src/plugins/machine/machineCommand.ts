@@ -15,6 +15,12 @@ export const MACHINE_SHELLS = ['cmd', 'ps', 'bash', 'sh'] as const;
 export type MachineShell = (typeof MACHINE_SHELLS)[number];
 /** The longest command `machine run` accepts. */
 export const COMMAND_MAX_LENGTH = 2048;
+/**
+ * The most bytes (UTF-8) of input the FIRST release of machine carries to a command: the entry of the allow list declares
+ * `--stdin-max 64k` and the signed request carries the size. machine-owner plans 512 KiB later (spec
+ * .claude/specs/2026-11-13_machine-network/stdin-input.md in the machine repo, decision 114); raise this and the entry then.
+ */
+export const MACHINE_INPUT_MAX_BYTES = 64 * 1024;
 
 /** The problem with a peer name as a sentence (starting with what is wrong), or undefined. */
 export function peerProblem(value: unknown): string | undefined {
@@ -65,9 +71,15 @@ export function serveCommand(project: string): string {
 }
 
 /**
- * What the admin of the peer allows once, so that this transport can run: the exact command (and the shell, when the project names one).
- * Printed in the hint of a refusal; `<peer>` is the reference the user wrote.
+ * What the admin of the peer allows once, so that this transport can run: the exact command (and the shell, when the project names one)
+ * with the input it declares: JSON, at most 64k (`--stdin-max`), and the character families of the text (`--stdin-chars`: machine
+ * requires them to be named, `machine admin allow --help` lists them, they are NOT guessed here). Printed in the hint of a refusal;
+ * `<peer>` is the reference the user wrote.
  */
 export function allowEntryText(peer: string, project: string, shell: MachineShell | undefined): string {
-	return `machine admin allow ${peer}${shell === undefined ? '' : ` --shell ${shell}`} -- ${serveCommand(project)}`;
+	return `machine admin allow ${peer}${shell === undefined ? '' : ` --shell ${shell}`} --stdin json --stdin-max 64k --stdin-chars <families> -- "${serveCommand(project)}"`;
 }
+
+/** The sentence that goes with {@link allowEntryText}: where the character families are listed. */
+export const ALLOW_FAMILIES_NOTE =
+	'replace <families> with the character families that `machine admin allow --help` lists (a task text with accents needs the family that covers them)';

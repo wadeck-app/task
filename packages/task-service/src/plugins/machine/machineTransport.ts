@@ -18,7 +18,7 @@ import {
 } from '@wadeck-app/task-core';
 
 import type { TransportInstance } from '../kinds.js';
-import { allowEntryText, serveCommand } from './machineCommand.js';
+import { ALLOW_FAMILIES_NOTE, MACHINE_INPUT_MAX_BYTES, allowEntryText, serveCommand } from './machineCommand.js';
 import type { MachineShell } from './machineCommand.js';
 import { classifyMachineFailure, firstLine } from './machineRunner.js';
 import type { MachineOutcome, MachineRunner } from './machineRunner.js';
@@ -78,7 +78,7 @@ export function createMachineTransport(settings: MachineSettings, runner: Machin
 		new RemoteUnauthorizedError(
 			'forbidden',
 			`${settings.peer} refused to run the command for this project (${firstLine(text)})`,
-			`The allow list of ${settings.peer} does not contain this command. On the machine that holds the admin key run: ${allowEntry} (then retry; \`machine allowed ${settings.peer}\` shows what is allowed)`
+			`The allow list of ${settings.peer} does not contain this command with its input. On the machine that holds the admin key run: ${allowEntry} (${ALLOW_FAMILIES_NOTE}; then retry; \`machine allowed ${settings.peer}\` shows what is allowed)`
 		);
 
 	const unreachable = (text: string): MachineUnreachableError => {
@@ -161,12 +161,23 @@ export function createMachineTransport(settings: MachineSettings, runner: Machin
 				headers: { [PROTOCOL_HEADER]: String(PROTOCOL_MIN), ...init.headers },
 				...(body === undefined ? {} : { body }),
 			};
+			const stdin = JSON.stringify(envelope);
+			// The size is of the UTF-8 bytes (an accent is two), the unit of `--stdin-max`. Nothing is run for a request over the cap.
+			const bytes = Buffer.byteLength(stdin, 'utf8');
+			if (bytes > MACHINE_INPUT_MAX_BYTES) {
+				throw new BackendRejectedError(
+					'remote',
+					'machine run',
+					`the request is ${bytes} bytes and machine run carries at most ${MACHINE_INPUT_MAX_BYTES} bytes (64 KiB) of input to ${settings.peer}`,
+					'Send less at once: a shorter text (a comment or a description is cut into several, or kept shorter). A larger limit needs `--stdin-max` raised in the allow entry of the peer and the limit of this transport raised, once machine supports more than 64k'
+				);
+			}
 			const outcome = await runner.run({
 				peer: settings.peer,
 				shell: settings.shell,
 				wake: settings.wake,
 				command,
-				stdin: JSON.stringify(envelope),
+				stdin,
 				timeoutMs,
 			});
 			const answer = answerOf(outcome, method);

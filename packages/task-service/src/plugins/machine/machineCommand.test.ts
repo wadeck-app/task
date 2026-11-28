@@ -56,10 +56,10 @@ describe('the command and the allow entry', () => {
 
 	it('the allow entry is the exact command the admin must allow, with the shell when one is set', () => {
 		expect(allowEntryText('thinkcentre', 'shop', undefined)).toBe(
-			'machine admin allow thinkcentre -- task serve -p shop --stdio'
+			'machine admin allow thinkcentre --stdin json --stdin-max 64k --stdin-chars <families> -- "task serve -p shop --stdio"'
 		);
 		expect(allowEntryText('thinkcentre', 'shop', 'sh')).toBe(
-			'machine admin allow thinkcentre --shell sh -- task serve -p shop --stdio'
+			'machine admin allow thinkcentre --shell sh --stdin json --stdin-max 64k --stdin-chars <families> -- "task serve -p shop --stdio"'
 		);
 	});
 

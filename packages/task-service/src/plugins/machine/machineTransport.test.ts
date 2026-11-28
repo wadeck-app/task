@@ -8,6 +8,7 @@ import {
 } from '@wadeck-app/task-core';
 import { describe, expect, it } from 'vitest';
 
+import { MACHINE_INPUT_MAX_BYTES } from './machineCommand.js';
 import { createMachineTransport } from './machineTransport.js';
 import type { MachineSettings } from './machineTransport.js';
 import type { MachineCall, MachineOutcome, MachineRunner } from './machineRunner.js';
@@ -156,7 +157,12 @@ describe('what goes wrong, and the next step it names', () => {
 
 		expect(error).toBeInstanceOf(RemoteUnauthorizedError);
 		expect(error.message).toContain('refused by thinkcentre');
-		expect(error.hint).toContain('machine admin allow thinkcentre --shell sh -- task serve -p shop --stdio');
+		expect(error.hint).toContain(
+			'machine admin allow thinkcentre --shell sh --stdin json --stdin-max 64k --stdin-chars <families> -- "task serve -p shop --stdio"'
+		);
+		// The families are not invented: the hint sends the admin to the list that machine itself prints.
+		expect(error.hint).toContain('machine admin allow --help');
+		expect(error.hint).toContain('character families');
 	});
 
 	it('a peer that does not answer is reported as possibly asleep; wake: never says nothing tried to wake it', async () => {
@@ -259,7 +265,7 @@ describe('the instance', () => {
 		expect(lines.join('\n')).toContain('project on the peer: shop');
 		expect(lines.join('\n')).toContain('task serve -p shop --stdio');
 		expect(lines.join('\n')).toContain('nothing pings or polls');
-		expect(lines.join('\n')).toContain('machine admin allow thinkcentre -- task serve -p shop --stdio');
+		expect(lines.join('\n')).toContain('machine admin allow thinkcentre --stdin json --stdin-max 64k');
 	});
 
 	it('its address names the peer and the project (the host of an error is the peer)', () => {
@@ -275,5 +281,94 @@ describe('the instance', () => {
 
 		await expect(transport.fetch('/v1/info')).rejects.toThrow('was closed');
 		expect(runner.calls).toHaveLength(0);
+	});
+});
+
+// One accented letter (two bytes in UTF-8), made from its code so that this file stays free of non-English characters.
+const E_ACUTE = String.fromCharCode(0xe9);
+
+describe('the size of the request (the first machine carries at most 64 KiB of input per call)', () => {
+	/** A POST whose whole stdio envelope is exactly `bytes` bytes of UTF-8 once serialized. */
+	function envelopeSized(filler: string, bytes: number): { body: string; stdinBytes: number } {
+		const make = (text: string): string => JSON.stringify({ title: text });
+		const probe = {
+			method: 'POST',
+			path: '/v1/tasks',
+			headers: { 'X-Task-Protocol': '1', 'X-Test': '' },
+		};
+		const overhead = (text: string): number =>
+			Buffer.byteLength(JSON.stringify({ ...probe, body: JSON.parse(make(text)) }), 'utf8');
+		const fillerBytes = Buffer.byteLength(filler, 'utf8');
+		const base = overhead('');
+		const count = Math.floor((bytes - base) / fillerBytes);
+		const text = filler.repeat(count);
+		return { body: make(text), stdinBytes: overhead(text) };
+	}
+
+	async function send(body: string): Promise<{ runner: ReturnType<typeof runnerOf>; stdinBytes: number }> {
+		const runner = runnerOf(answer(201, { ok: true }));
+		const transport = createMachineTransport(SETTINGS, runner);
+		await transport
+			.fetch('/v1/tasks', { method: 'POST', headers: { 'X-Test': '' }, body })
+			.catch((error: unknown) => {
+				throw error;
+			});
+		return { runner, stdinBytes: Buffer.byteLength(runner.calls[0]!.stdin, 'utf8') };
+	}
+
+	it('a request of exactly 64 KiB is sent, one byte more is refused before anything runs', async () => {
+		expect(MACHINE_INPUT_MAX_BYTES).toBe(65_536);
+		const exact = envelopeSized('a', MACHINE_INPUT_MAX_BYTES);
+		expect(exact.stdinBytes).toBe(MACHINE_INPUT_MAX_BYTES);
+
+		const sent = await send(exact.body);
+		expect(sent.stdinBytes).toBe(MACHINE_INPUT_MAX_BYTES);
+
+		const over = JSON.stringify({ title: 'a'.repeat(JSON.parse(exact.body).title.length + 1) });
+		const runner = runnerOf(answer(201, { ok: true }));
+		const error = await failureOf(
+			createMachineTransport(SETTINGS, runner).fetch('/v1/tasks', { method: 'POST', headers: { 'X-Test': '' }, body: over })
+		);
+
+		expect(error).toBeInstanceOf(BackendRejectedError);
+		expect(error.message).toContain(`${MACHINE_INPUT_MAX_BYTES + 1} bytes`);
+		expect(error.message).toContain('65536 bytes');
+		expect(error.hint).toContain('--stdin-max');
+		expect(runner.calls).toHaveLength(0);
+	});
+
+	it('counts UTF-8 BYTES, not characters: an accent is two, so fewer accented characters fit', async () => {
+		const accents = envelopeSized(E_ACUTE, MACHINE_INPUT_MAX_BYTES);
+		const characters = (JSON.parse(accents.body) as { title: string }).title.length;
+		expect(characters).toBeLessThan(MACHINE_INPUT_MAX_BYTES / 2 + 1);
+		expect(accents.stdinBytes).toBeLessThanOrEqual(MACHINE_INPUT_MAX_BYTES);
+		expect(accents.stdinBytes).toBeGreaterThan(MACHINE_INPUT_MAX_BYTES - 2);
+
+		const sent = await send(accents.body);
+		expect(sent.stdinBytes).toBe(accents.stdinBytes);
+
+		// The same number of CHARACTERS as ASCII would be half the bytes; one more accent crosses the cap.
+		const over = JSON.stringify({ title: E_ACUTE.repeat(characters + 1) });
+		const runner = runnerOf(answer(201, { ok: true }));
+		const error = await failureOf(
+			createMachineTransport(SETTINGS, runner).fetch('/v1/tasks', { method: 'POST', headers: { 'X-Test': '' }, body: over })
+		);
+
+		expect(error).toBeInstanceOf(BackendRejectedError);
+		expect(runner.calls).toHaveLength(0);
+	});
+
+	it('the refusal never contains the content of the request', async () => {
+		const secret = 'SECRET-COMMENT-TEXT';
+		const runner = runnerOf(answer(201, { ok: true }));
+
+		const error = await failureOf(
+			createMachineTransport(SETTINGS, runner).fetch('/v1/tasks', {
+				method: 'POST',
+				body: JSON.stringify({ title: secret + 'x'.repeat(MACHINE_INPUT_MAX_BYTES) }),
+			})
+		);
+
+		expect(`${error.message} ${error.hint ?? ''}`).not.toContain(secret);
 	});
 });

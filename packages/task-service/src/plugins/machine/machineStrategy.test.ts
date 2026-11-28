@@ -11,6 +11,7 @@ import { createBuiltinRegistry } from '../builtinPlugins.js';
 import type { TaskPluginKinds } from '../kinds.js';
 import { remotePlugin } from '../remote/remotePlugin.js';
 import { createMachinePlugin } from './machinePlugin.js';
+import { createNodeMachineRunner } from './nodeMachineRunner.js';
 import type { MachineCall, MachineRunner } from './machineRunner.js';
 
 // A project config that says `transport: machine`, through the real resolution, `strategy show` and `strategy check`.
@@ -53,8 +54,24 @@ describe('a project on the machine transport', () => {
 		expect(JSON.stringify(result.lines)).toContain('transport.options.project');
 	});
 
-	it('strategy check with the real runner says that machine has no stdin channel yet (PENDING), with the next step', async () => {
-		const result = await checkStrategy(target(CONFIG));
+	it('strategy check with a machine CLI that has no stdin channel yet says so, with the next step (no process is started)', async () => {
+		const spawn = vi.fn(() => {
+			throw new Error('no process may be started in this test');
+		});
+		const base = createBuiltinRegistry();
+		const registry = createPluginRegistry<TaskPluginKinds>([
+			{ ref: 'plugins.local.default', plugin: base.lookup('local', 'strategy'), aliases: ['local'] },
+			{ ref: 'plugins.remote.default', plugin: remotePlugin, aliases: ['remote'] },
+			{
+				ref: 'plugins.machine.default',
+				plugin: createMachinePlugin(createNodeMachineRunner({ spawn, detectStdin: () => Promise.resolve(false) })),
+				aliases: ['machine'],
+			},
+		]);
+
+		const result = await checkStrategy(target(CONFIG, registry as never));
+
+		expect(spawn).not.toHaveBeenCalled();
 
 		const text = JSON.stringify(result.lines);
 		expect(text).toContain('this machine CLI has no stdin channel for run yet');

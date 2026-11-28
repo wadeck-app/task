@@ -3,7 +3,7 @@
 // strategy is unchanged (same protocol, same backend); only the way a request travels differs, so whatever storage the project uses on
 // the peer (local files, github, gitlab) is invisible here.
 //
-// PARTIAL until the machine CLI can carry a request on the stdin of `machine run`: see nodeMachineRunner.ts (MACHINE_STDIN_ARGS). Until then
+// PARTIAL until the installed machine CLI has `run --stdin`: see nodeMachineRunner.ts (it detects this from the local help). Until then
 // the real runner refuses with a message saying so; nothing is faked.
 import type { TransportPlugin } from '../kinds.js';
 import { MACHINE_SHELLS, peerProblem, projectProblem } from './machineCommand.js';
