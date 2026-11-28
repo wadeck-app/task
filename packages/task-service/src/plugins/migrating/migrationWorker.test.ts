@@ -273,7 +273,12 @@ describe.each(PAIR_KINDS)('the migration worker over $name', kind => {
 
 		const first = await run();
 
-		expect(first).toMatchObject({ status: 'paused', moved: 1 });
+		// A CI run once got { paused, moved: 0 } here (Linux, cause not proven): the message carries the pair and the worker log, so a
+		// recurrence shows which task the first move was and what the worker did, instead of a bare diff.
+		expect(
+			first,
+			`pair ${kind.name}; log: ${JSON.stringify(logLines(toolkit).map(line => [line['kind'] ?? line['event'], line['text'] ?? line['message']]))}; states: ${states().join(',')}`
+		).toMatchObject({ status: 'paused', moved: 1 });
 		expect(store.readState()?.status).toBe('paused');
 		expect(states().filter(value => value === 'in-b')).toHaveLength(1);
 		expect(toolkit.files.texts.has(LOCK)).toBe(false);
