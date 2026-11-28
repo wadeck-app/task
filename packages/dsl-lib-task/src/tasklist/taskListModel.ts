@@ -29,6 +29,8 @@ export interface TaskListRow {
 	statusSince?: string;
 	/** The address of the task page (project query included). */
 	href?: string;
+	/** The registry id of the project (global list): what the project filter keys on. Absent on an older server: the name is used. */
+	projectId?: string;
 	projectName?: string;
 	projectPath?: string;
 	/** The project is a favorite in the registry (global list). Absent on an older server: not a favorite. */
@@ -41,6 +43,8 @@ export type ProjectPriority = 'high' | 'normal' | 'low';
 
 /** A project the server lists with its importance (`projects` of the global answer); `count` is its number of rows on the server. */
 export interface ProjectInfo {
+	/** The registry id: what the filter and the address carry. Absent on an older server: the name is used. */
+	id?: string;
 	name: string;
 	favorite?: boolean;
 	priority?: ProjectPriority;
@@ -61,6 +65,7 @@ export interface ListState {
 	priority: string[];
 	/** Names, and `UNASSIGNED` for the tasks nobody holds. */
 	assignee: string[];
+	/** Project ids (the name only for a row of an older server); a name in an old address is turned into its id by `resolveProjectSelection`. */
 	project: string[];
 	/** Only the tasks of favorite projects (global list). */
 	favoritesOnly: boolean;
@@ -275,8 +280,16 @@ function facetValue(row: TaskListRow, key: FacetKey): string | undefined {
 		case 'assignee':
 			return row.assignee === undefined || row.assignee === '' ? UNASSIGNED : row.assignee;
 		case 'project':
-			return row.projectName === undefined || row.projectName === '' ? undefined : row.projectName;
+			return projectValue(row);
 	}
+}
+
+/** What the project filter keys on for a row: the project id, else (an older server) its name; undefined when it names none. */
+function projectValue(row: TaskListRow): string | undefined {
+	if (row.projectId !== undefined && row.projectId !== '') {
+		return row.projectId;
+	}
+	return row.projectName === undefined || row.projectName === '' ? undefined : row.projectName;
 }
 
 function matchesText(row: TaskListRow, text: string): boolean {
@@ -366,8 +379,9 @@ export function compareProjectOptions(a: ProjectOption, b: ProjectOption): numbe
 
 /**
  * The projects of the global list for the Project filter: the `projects` the server gives (so a project with no row is offered), else
- * the ones the rows name. Counts are the rows each project has. A field the server does not send means not favorite, normal.
- * `selected` names no row has stay listed with a count of 0 (a shared link never hides its own filter).
+ * the ones the rows name. The value is the project id (the name on an older server), the label its name. Counts are the rows each
+ * project has. A field the server does not send means not favorite, normal. `selected` values no project has stay listed with a
+ * count of 0 (a shared link never hides its own filter).
  */
 export function projectOptions(
 	rows: readonly TaskListRow[],
@@ -375,29 +389,73 @@ export function projectOptions(
 	selected: readonly string[] = []
 ): ProjectOption[] {
 	const found = new Map<string, ProjectOption>();
-	const upsert = (name: string, favorite: boolean | undefined, priority: ProjectPriority | undefined): ProjectOption => {
-		const known = found.get(name);
+	const upsert = (
+		value: string,
+		label: string,
+		favorite: boolean | undefined,
+		priority: ProjectPriority | undefined
+	): ProjectOption => {
+		const known = found.get(value);
 		if (known !== undefined) {
 			return known;
 		}
-		const option: ProjectOption = { value: name, label: name, count: 0, favorite: favorite === true, priority: priority ?? 'normal' };
-		found.set(name, option);
+		const option: ProjectOption = { value, label, count: 0, favorite: favorite === true, priority: priority ?? 'normal' };
+		found.set(value, option);
 		return option;
 	};
 	for (const project of projects ?? []) {
 		if (typeof project.name === 'string' && project.name !== '') {
-			upsert(project.name, project.favorite, project.priority);
+			upsert(project.id !== undefined && project.id !== '' ? project.id : project.name, project.name, project.favorite, project.priority);
 		}
 	}
 	for (const row of rows) {
-		if (row.projectName !== undefined && row.projectName !== '') {
-			upsert(row.projectName, row.projectFavorite, row.projectPriority).count++;
+		const value = projectValue(row);
+		if (value !== undefined) {
+			upsert(value, row.projectName === undefined || row.projectName === '' ? value : row.projectName, row.projectFavorite, row.projectPriority).count++;
 		}
 	}
-	for (const name of selected) {
-		upsert(name, undefined, undefined);
+	for (const value of selected) {
+		upsert(value, value, undefined, undefined);
 	}
 	return [...found.values()].sort(compareProjectOptions);
+}
+
+/** The project filter of a saved or linked view against the projects that exist now. */
+export interface ProjectSelection {
+	/** The values to keep: ids (a name of an old view turned into its id), without repeats. */
+	values: string[];
+	/** One sentence for each value that names no project (or several), which was dropped. */
+	warnings: string[];
+	/** `values` differs from what was asked: the state must be rewritten. */
+	changed: boolean;
+}
+
+/**
+ * Settles the project filter: a value that is a project id stays; a value that is the name of exactly one project (the address of
+ * an older version of this list carried names) becomes its id; any other value is dropped WITH a warning (it would empty the list
+ * with no sign of why). `known` are the options of `projectOptions` WITHOUT the selected values.
+ */
+export function resolveProjectSelection(selected: readonly string[], known: readonly ProjectOption[]): ProjectSelection {
+	const values: string[] = [];
+	const warnings: string[] = [];
+	for (const asked of selected) {
+		if (known.some(option => option.value === asked)) {
+			values.push(asked);
+			continue;
+		}
+		const named = known.filter(option => option.label.toLowerCase() === asked.toLowerCase());
+		if (named.length === 1) {
+			values.push(named[0]!.value);
+		} else {
+			warnings.push(
+				named.length === 0
+					? `The project "${asked}" of the saved or linked view is not a known project and was ignored.`
+					: `The project "${asked}" of the saved or linked view names ${named.length} projects and was ignored: pick it again in the Project list.`
+			);
+		}
+	}
+	const unique = [...new Set(values)];
+	return { values: unique, warnings, changed: unique.length !== selected.length || unique.some((value, index) => value !== selected[index]) };
 }
 
 /** The favorite projects of `options`, in their order. */

@@ -4,15 +4,16 @@ import type { ProjectInfo, TaskListRow } from './taskListModel.js';
 /** The projects of the global list with favorites and priority: seven favorites, one high, two normal (mango has no task), one low. */
 export const PROJECT_INFOS: Array<Required<ProjectInfo>> = [
 	...['apple', 'banana', 'cherry', 'damson', 'elder', 'fig', 'grape'].map(name => ({
+		id: `id-${name}`,
 		name,
 		favorite: true,
 		priority: 'normal' as const,
 		count: 1,
 	})),
-	{ name: 'hotel', favorite: false, priority: 'high', count: 1 },
-	{ name: 'mango', favorite: false, priority: 'normal', count: 0 },
-	{ name: 'nine', favorite: false, priority: 'normal', count: 2 },
-	{ name: 'lemon', favorite: false, priority: 'low', count: 1 },
+	{ id: 'id-hotel', name: 'hotel', favorite: false, priority: 'high', count: 1 },
+	{ id: 'id-mango', name: 'mango', favorite: false, priority: 'normal', count: 0 },
+	{ id: 'id-nine', name: 'nine', favorite: false, priority: 'normal', count: 2 },
+	{ id: 'id-lemon', name: 'lemon', favorite: false, priority: 'low', count: 1 },
 ];
 
 /** Short UTC text like the route's `shortUtcTime`. */
@@ -35,6 +36,7 @@ export const FAVORITE_ROWS: TaskListRow[] = PROJECT_INFOS.flatMap(project =>
 		updatedAt,
 		updated: short(updatedAt),
 		href: `/modules/task/tasks/p/${project.name}/ff${position}`,
+		projectId: project.id,
 		projectName: project.name,
 		projectPath: `/w/${project.name}`,
 		projectFavorite: project.favorite,

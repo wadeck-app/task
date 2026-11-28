@@ -27,10 +27,11 @@ import {
 	favoriteProjects,
 	hasActiveFilters,
 	projectOptions,
+	resolveProjectSelection,
 	priorityRanking,
 	sortRows,
 } from '../tasklist/taskListModel.js';
-import type { ProjectInfo, SortKey, TaskListRow, UpdatedRange } from '../tasklist/taskListModel.js';
+import type { ProjectInfo, ProjectOption, SortKey, TaskListRow, UpdatedRange } from '../tasklist/taskListModel.js';
 import { useListState } from '../tasklist/useListState.js';
 import type { ListScope } from '../tasklist/useListState.js';
 import { ChipRow } from './ChipRow.js';
@@ -46,7 +47,7 @@ export interface TaskListProps {
 	 */
 	rows: TaskListRow[];
 	/**
-	 * The global list only: the projects of the answer (`projects` of `GET /tasks?allProjects=true`: `name`, `favorite`, `priority`,
+	 * The global list only: the projects of the answer (`projects` of `GET /tasks?allProjects=true`: `id`, `name`, `favorite`, `priority`,
 	 * `count`) in importance order, so a project with no task can be offered. Absent (older server): the projects are read from the rows.
 	 * The rows carry `projectFavorite` and `projectPriority`; a row without them is not a favorite and normal.
 	 *
@@ -81,9 +82,9 @@ function FavoriteChips({
 	onToggle,
 	onMore,
 }: {
-	favorites: string[];
+	favorites: ProjectOption[];
 	selected: string[];
-	onToggle: (name: string) => void;
+	onToggle: (value: string) => void;
 	onMore: () => void;
 }): React.ReactElement {
 	const shown = favorites.slice(0, CHIPS_MAX);
@@ -93,18 +94,18 @@ function FavoriteChips({
 			<ChipRow
 				items={
 					<>
-						{shown.map(name => {
-							const on = selected.includes(name);
+						{shown.map(({ value, label }) => {
+							const on = selected.includes(value);
 							return (
 								<button
-									key={name}
+									key={value}
 									type="button"
 									aria-pressed={on}
-									onClick={() => onToggle(name)}
+									onClick={() => onToggle(value)}
 									className={`${PILL_NEUTRAL_CLASS} max-w-[12rem] ${on ? 'border-primary bg-primary-light' : ''}`}
 								>
 									<Star size={ICON_SIZE} fill="currentColor" aria-hidden="true" className="shrink-0 text-warning-text" />
-									<span className="truncate">{name}</span>
+									<span className="truncate">{label}</span>
 								</button>
 							);
 						})}
@@ -229,6 +230,22 @@ export function TaskList({
 	);
 	const favorites = useMemo(() => favoriteProjects(projectChoices), [projectChoices]);
 
+	// The project filter of an old address holds NAMES (and may hold a project that is gone): ids stay, a name becomes its id, any
+	// other value is dropped with a warning that stays on the page. Not before the rows are there (nothing is known yet).
+	const knownProjects = useMemo(() => projectOptions(list, Array.isArray(projects) ? projects : undefined, []), [list, projects]);
+	const [projectWarnings, setProjectWarnings] = useState<string[]>([]);
+	useEffect(() => {
+		if (scope !== 'all' || list.length === 0 || state.project.length === 0) {
+			return;
+		}
+		const settled = resolveProjectSelection(state.project, knownProjects);
+		if (!settled.changed) {
+			return;
+		}
+		setProjectWarnings(current => [...new Set([...current, ...settled.warnings])]);
+		update({ project: settled.values });
+	}, [scope, list.length, state.project, knownProjects, update]);
+
 	if (list.length === 0) {
 		return (
 			<p data-testid="tasklist-empty" className="m-0 rounded-lg border border-border bg-surface px-3 py-4 text-sm text-muted">
@@ -244,9 +261,9 @@ export function TaskList({
 	const active = hasActiveFilters(state);
 	// Shown while a favorite exists, or while the address asks for it (it must be possible to turn it off).
 	const showFavoritesToggle = scope === 'all' && (favorites.length > 0 || state.favoritesOnly);
-	const toggleProject = (name: string): void =>
+	const toggleProject = (value: string): void =>
 		update({
-			project: state.project.includes(name) ? state.project.filter(item => item !== name) : [...state.project, name],
+			project: state.project.includes(value) ? state.project.filter(item => item !== value) : [...state.project, value],
 		});
 	const clear = (
 		<button type="button" onClick={reset} className={PILL_NEUTRAL_CLASS}>
@@ -257,7 +274,7 @@ export function TaskList({
 
 	return (
 		<div data-testid="tasklist" className={`flex min-w-0 flex-col ${GAP_BLOCKS}`}>
-			{warnings.map(text => (
+			{[...warnings, ...projectWarnings].map(text => (
 				<Notice key={text} label={text} variant="warning" />
 			))}
 			<div className={`flex min-w-0 flex-wrap items-center ${GAP_CONTROLS}`}>
@@ -329,7 +346,7 @@ export function TaskList({
 						/>
 						{favorites.length > 0 ? (
 							<FavoriteChips
-								favorites={favorites.map(option => option.value)}
+								favorites={favorites}
 								selected={state.project}
 								onToggle={toggleProject}
 								onMore={() => setProjectOpen(true)}

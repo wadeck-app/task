@@ -92,6 +92,7 @@ export function allTasksBody(found: TasksAcrossProjects, showAll: boolean): Reco
 		...skippedFields(unreadable),
 		// Every readable project in importance order with its row count, so a filter can offer one that has no row.
 		projects: found.readableProjects.map(project => ({
+			id: project.id,
 			name: project.name,
 			favorite: project.favorite,
 			priority: project.priority,
@@ -99,6 +100,8 @@ export function allTasksBody(found: TasksAcrossProjects, showAll: boolean): Reco
 		})),
 		tasks: found.tasks.map(task => ({
 			...task,
+			// The registry id: what a project filter keys on (a name can change, the id cannot).
+			projectId: task.project.id,
 			projectName: task.project.name,
 			projectPath: task.project.path,
 			// A server without these fields (older) is read by the page as not favorite, normal.

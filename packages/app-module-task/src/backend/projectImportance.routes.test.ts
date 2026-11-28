@@ -132,7 +132,12 @@ describe('favorites and priority of the registry (read only)', () => {
 			{ name: 'bravo', favorite: false, priority: 'normal', count: 0 },
 			{ name: 'charlie', favorite: false, priority: 'normal', count: 0 },
 			{ name: 'alpha', favorite: false, priority: 'low', count: 1 },
-		]);
+		].map(project => ({ ...project, id: expect.stringMatching(/^[0-9a-f-]{8,}$/) })));
+		// Every row carries the id of ITS project (the filter keys on it), the one the list of projects gives for that name.
+		const idOf = new Map((body['projects'] as Array<{ id: string; name: string }>).map(project => [project.name, project.id]));
+		for (const row of body['tasks'] as Array<Record<string, any>>) {
+			expect(row.projectId).toBe(idOf.get(row.projectName));
+		}
 	});
 
 	it('GET /types?allProjects=true offers its projects in importance order', async () => {

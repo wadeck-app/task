@@ -109,7 +109,7 @@ describe('TaskList global scope: favorite chips', () => {
 		await user.click(apple);
 		expect(apple).toHaveAttribute('aria-pressed', 'true');
 		expect(count()).toBe('1 of 11 tasks');
-		expect(new URLSearchParams(window.location.search).getAll('projectIn')).toEqual(['apple']);
+		expect(new URLSearchParams(window.location.search).getAll('projectIn')).toEqual(['id-apple']);
 		await user.click(apple);
 		expect(count()).toBe('11 of 11 tasks');
 	});
@@ -174,7 +174,7 @@ describe('TaskList global scope: Project list', () => {
 		const group = await openProjects(user);
 		await user.type(within(group).getByRole('searchbox', { name: 'Search projects' }), 'an');
 		await user.click(within(group).getByRole('button', { name: 'Select matching (2)' }));
-		expect(new URLSearchParams(window.location.search).getAll('projectIn').sort()).toEqual(['banana', 'mango']);
+		expect(new URLSearchParams(window.location.search).getAll('projectIn').sort()).toEqual(['id-banana', 'id-mango']);
 		expect(count()).toBe('1 of 11 tasks');
 		await user.click(within(group).getByRole('button', { name: 'Clear project' }));
 		expect(window.location.search).toBe('');
@@ -189,6 +189,36 @@ describe('TaskList global scope: Project list', () => {
 		const group = await openProjects(user);
 		await user.type(within(group).getByRole('searchbox', { name: 'Search projects' }), 'zzz');
 		expect(within(group).getByText('No project matches.')).toBeInTheDocument();
+	});
+
+	it('an address of the older version (a project NAME) selects that project, and is rewritten with its id', async () => {
+		window.history.replaceState(null, '', '/modules/task/tasks?projectIn=banana');
+		setup();
+		await screen.findByTestId('tasklist');
+		expect(count()).toBe('1 of 11 tasks');
+		expect(new URLSearchParams(window.location.search).getAll('projectIn')).toEqual(['id-banana']);
+		expect(screen.queryByText(/not a known project/)).toBeNull();
+	});
+
+	it('a project that no longer exists is dropped WITH a visible warning (never an empty list with no reason)', async () => {
+		window.history.replaceState(null, '', '/modules/task/tasks?projectIn=ghost&projectIn=id-apple');
+		setup();
+		await screen.findByTestId('tasklist');
+		expect(screen.getByText(/The project "ghost" of the saved or linked view is not a known project and was ignored./)).toBeInTheDocument();
+		expect(count()).toBe('1 of 11 tasks');
+		expect(new URLSearchParams(window.location.search).getAll('projectIn')).toEqual(['id-apple']);
+	});
+
+	it('a project renamed in the registry keeps its filter: the id stays, the label is the new name', async () => {
+		const user = userEvent.setup();
+		const renamed = PROJECT_INFOS.map(project => (project.id === 'id-apple' ? { ...project, name: 'apricot' } : project));
+		const rows = FAVORITE_ROWS.map(row => (row.projectId === 'id-apple' ? { ...row, projectName: 'apricot' } : row));
+		window.history.replaceState(null, '', '/modules/task/tasks?projectIn=id-apple');
+		setup({ rows, projects: renamed });
+		expect(count()).toBe('1 of 11 tasks');
+		expect(within(chips()).getByRole('button', { name: 'apricot' })).toHaveAttribute('aria-pressed', 'true');
+		await user.click(within(chips()).getByRole('button', { name: 'apricot' }));
+		expect(count()).toBe('11 of 11 tasks');
 	});
 
 	it('works on rows alone (older server: no projects list, no favorite fields)', async () => {

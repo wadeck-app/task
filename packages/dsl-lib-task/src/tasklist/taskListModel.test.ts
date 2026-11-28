@@ -9,6 +9,7 @@ import {
 	favoriteProjects,
 	hasActiveFilters,
 	projectOptions,
+	resolveProjectSelection,
 	parseListState,
 	priorityRanking,
 	serializeListState,
@@ -317,5 +318,66 @@ describe('favorites only', () => {
 
 		expect(parsed.state.favoritesOnly).toBe(false);
 		expect(parsed.warnings.join(' ')).toContain('fav=1');
+	});
+});
+
+describe('the project filter keys on the project id', () => {
+	const row = (id: string, projectId: string | undefined, projectName: string): TaskListRow => ({
+		id: `iiii000${id}`,
+		title: `T${id}`,
+		status: 'open',
+		...(projectId === undefined ? {} : { projectId }),
+		projectName,
+	});
+	const rows = [row('1', 'p-1', 'shop'), row('2', 'p-2', 'shop'), row('3', 'p-1', 'shop renamed'), row('4', undefined, 'old')];
+
+	it('filters on the id, so two projects with the same name stay apart and a rename keeps the row', () => {
+		expect(ids(applyFilters(rows, state({ project: ['p-1'] }), NOW_MS))).toEqual(['1', '3']);
+		expect(ids(applyFilters(rows, state({ project: ['p-2'] }), NOW_MS))).toEqual(['2']);
+	});
+
+	it('a row of an older server (no id) is filtered on its name', () => {
+		expect(ids(applyFilters(rows, state({ project: ['old'] }), NOW_MS))).toEqual(['4']);
+	});
+
+	it('options have the id as value and the name as label', () => {
+		const options = projectOptions(rows, [{ id: 'p-2', name: 'shop', count: 1 }], []);
+
+		expect(options.map(o => [o.value, o.label, o.count])).toEqual([
+			['old', 'old', 1],
+			['p-1', 'shop', 2],
+			['p-2', 'shop', 1],
+		]);
+	});
+
+	describe('resolveProjectSelection', () => {
+		const known = projectOptions(
+			[row('1', 'p-1', 'alpha'), row('2', 'p-2', 'beta'), row('3', 'p-3', 'Dup'), row('4', 'p-4', 'dup')],
+			undefined,
+			[]
+		);
+
+		it('keeps ids, leaves a clean selection unchanged', () => {
+			expect(resolveProjectSelection(['p-1', 'p-2'], known)).toEqual({ values: ['p-1', 'p-2'], warnings: [], changed: false });
+		});
+
+		it('turns the name of exactly one project into its id (an old address), case-insensitively, without repeats', () => {
+			expect(resolveProjectSelection(['Alpha', 'p-1', 'beta'], known)).toEqual({
+				values: ['p-1', 'p-2'],
+				warnings: [],
+				changed: true,
+			});
+		});
+
+		it('drops an unknown value and a name shared by several projects, each WITH a warning', () => {
+			const settled = resolveProjectSelection(['ghost', 'dup', 'p-2'], known);
+
+			expect(settled.values).toEqual(['p-2']);
+			expect(settled.changed).toBe(true);
+			expect(settled.warnings).toEqual([
+				'The project "ghost" of the saved or linked view is not a known project and was ignored.',
+				'The project "dup" of the saved or linked view names 2 projects and was ignored: pick it again in the Project list.',
+			]);
+		});
 	});
 });
