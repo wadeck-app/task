@@ -72,6 +72,15 @@ describe('KanbanBoard contribution mode: loading its own data', () => {
 		expect(screen.queryByText('No tasks yet')).toBeNull();
 	});
 
+	it('a problem that already ends with a full stop is not followed by a second one before our own sentence', async () => {
+		stubFetch(() => jsonResponse({ error: 'The board key is wrong.', hint: 'Fix config.yml.' }, 400));
+		setup();
+
+		const alert = await screen.findByRole('alert');
+		expect(alert).toHaveTextContent('The board key is wrong. Fix config.yml. Reload the page');
+		expect(alert.textContent).not.toContain('..');
+	});
+
 	it('after a failed load the stream still brings the board when the version changes', async () => {
 		let fail = true;
 		stubFetch(() => (fail ? jsonResponse({ error: 'boom' }, 500) : jsonResponse(answer({ version: 'v2' }))));

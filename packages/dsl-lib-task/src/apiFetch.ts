@@ -33,6 +33,11 @@ export function problemText(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
+/** {@link problemText} without its closing full stops, to place inside a sentence of ours ("...: <problem>. Reload..."): no "..". */
+export function problemClause(error: unknown): string {
+	return problemText(error).replace(/[.\s]+$/, '');
+}
+
 async function failureOf(response: Response): Promise<ApiProblem> {
 	const text = await response.text().catch(() => '');
 	try {

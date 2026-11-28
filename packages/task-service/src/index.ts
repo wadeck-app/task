@@ -115,7 +115,7 @@ export {
 export { getTaskConfigDir, getTaskLogDir } from './configDir.js';
 export type { ProjectHealth } from './projectsHealth.js';
 export type { InspectedProject } from './projectsHealth.js';
-export { describeProblem, inspectKnownProjects } from './projectsHealth.js';
+export { describeProblem, inspectKnownProjects, messageWithHint } from './projectsHealth.js';
 export type {
 	ProjectOverview,
 	ProjectsSummary,

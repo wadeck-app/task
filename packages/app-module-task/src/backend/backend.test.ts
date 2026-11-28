@@ -3385,6 +3385,26 @@ describe('registered projects that cannot be used', () => {
 		expect(answer.body['selectedProblem']).toMatch(/\.\s+Fix the cause above/);
 	});
 
+	it('a board naming an unknown status gives one full stop between the problem and its hint, never two', async () => {
+		const broken = await h.world.createProject('boardbroken', {
+			configYml: [
+				'statuses:',
+				'  - backlog',
+				'  - name: done',
+				'    terminal: true',
+				'board:',
+				'  columns:',
+				'    - name: A',
+				'      statuses: [nope]',
+				'',
+			].join('\n'),
+		});
+		const answer = await h.call('GET /projects', { query: { project: broken } });
+		const text = String(answer.body['selectedProblem']);
+		expect(text).toContain('Valid statuses: backlog, done. Use a name listed under statuses');
+		expect(text).not.toContain('..');
+	});
+
 	it('GET /projects offers no form for the selected project when it cannot be read (its submit could only fail)', async () => {
 		h.world.breakConfig(project);
 		const answer = await h.call('GET /projects', { query: { project } });

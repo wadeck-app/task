@@ -23,10 +23,18 @@ export interface InspectedProject {
 	context: TaskServiceContext | null;
 }
 
+/**
+ * A message and its hint on one text. A message that already ends with a full stop (a config error names its problem as a
+ * sentence) must not get a second one: ".." next to the fix reads as a typo.
+ */
+export function messageWithHint(message: string, hint: string | undefined): string {
+	return hint === undefined ? message : `${message.replace(/[.\s]+$/, '')}. ${hint}`;
+}
+
 /** The message of an error with its hint, on one text: what a list shows next to an unreadable project. */
 export function describeProblem(error: unknown): string {
 	const { message, hint } = describeError(error);
-	return hint === undefined ? message : `${message}. ${hint}`;
+	return messageWithHint(message, hint);
 }
 
 /** Checks one project (storage, config valid, data not split) and opens it when it can be used. */

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getJson, isAbort, problemText } from '../apiFetch.js';
+import { getJson, isAbort, problemClause } from '../apiFetch.js';
 import { parseCardLayout } from './cardLayout.js';
 import { isColumnSort, isFinishedFor, normalizeColumns } from './boardModel.js';
 import type { BoardColumnData, BoardLayoutData, BoardStatusData } from './boardModel.js';
@@ -259,8 +259,8 @@ export function useLiveBoard(options: LiveBoardOptions): LiveBoard {
 				setLoading(false);
 				setProblem(
 					first
-						? `The board could not be loaded: ${problemText(error)}. Reload the page; if it persists, check that app-core is running and the project can be read (task strategy check).`
-						: `The board could not be refreshed: ${problemText(error)}. The cards shown may be out of date; it tries again at the next change.`
+						? `The board could not be loaded: ${problemClause(error)}. Reload the page; if it persists, check that app-core is running and the project can be read (task strategy check).`
+						: `The board could not be refreshed: ${problemClause(error)}. The cards shown may be out of date; it tries again at the next change.`
 				);
 				return false;
 			} finally {

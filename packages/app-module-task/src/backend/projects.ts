@@ -4,6 +4,7 @@ import {
 	describeError,
 	listKnownProjects,
 	listTasks,
+	messageWithHint,
 	openTaskContext,
 	resolveProjectReference,
 } from '@wadeck-app/task-service';
@@ -42,7 +43,7 @@ export interface ProjectListing {
 /** The message of a failure with its hint on one text, as shown next to a project that cannot be read. */
 function problemOf(error: unknown): string {
 	const { message, hint } = error instanceof RequestError ? error : describeError(error);
-	return hint === undefined ? message : `${message}. ${hint}`;
+	return messageWithHint(message, hint);
 }
 
 /** The checks every use of a known project starts with, then its context. */

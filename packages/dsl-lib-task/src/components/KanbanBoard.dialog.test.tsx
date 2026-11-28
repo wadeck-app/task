@@ -184,6 +184,23 @@ describe('the editors are dialogs over the board', () => {
 		expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
 	});
 
+	it('columns: a cleared column name is sent as it is and the answer of the route (must not be empty) stays in the open dialog', async () => {
+		const user = userEvent.setup();
+		setup();
+		await user.click(trigger('Configure columns'));
+		fireEvent.change(nameField(0), { target: { value: '' } });
+		putStatus = 400;
+		await user.click(screen.getByRole('button', { name: 'Save' }));
+
+		const alert = await screen.findByRole('alert');
+		expect(alert).toHaveTextContent('The columns were not saved');
+		expect(screen.getByTestId('columns-editor')).toBeInTheDocument();
+		expect(nameField(0).value).toBe('');
+		const put = calls.filter(call => call.method === 'PUT');
+		expect(put).toHaveLength(1);
+		expect(JSON.parse(put[0]!.body!).columns[0].name).toBe('');
+	});
+
 	it('cards: a failed Save keeps the dialog open with the error', async () => {
 		const user = userEvent.setup();
 		setup();

@@ -1,7 +1,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { inspectRegisteredProjects } from './projectsHealth.js';
+import { BoardConfigError } from './boardConfig.js';
+import { describeProblem, inspectRegisteredProjects } from './projectsHealth.js';
 import { ownConfigFile } from './storage.js';
 import { resolveProject } from './resolveProject.js';
 import { createSharedRegistrySandbox } from './testHelpers.js';
@@ -41,5 +42,27 @@ describe('inspectRegisteredProjects', () => {
 		expect(b).toEqual({ path: path.resolve(gone), exists: false, error: null });
 		expect(c).toMatchObject({ path: path.resolve(broken), exists: true });
 		expect(c!.error).toContain('config.yml');
+	});
+});
+
+describe('describeProblem', () => {
+	it('puts one full stop between a message that already ends with one and its hint', () => {
+		const error = new BoardConfigError(
+			'config.yml',
+			'board.columns[0].statuses[0]',
+			'"x" is not a status of this project. Valid statuses: a, b.',
+			'Use a name listed under statuses.'
+		);
+
+		const text = describeProblem(error);
+
+		expect(text).toContain('Valid statuses: a, b. Use a name listed under statuses.');
+		expect(text).not.toContain('..');
+	});
+
+	it('adds the full stop when the message has none', () => {
+		const error = new BoardConfigError('config.yml', 'board', 'must be a mapping', 'Write columns.');
+
+		expect(describeProblem(error)).toBe('config.yml: board: must be a mapping. Write columns.');
 	});
 });

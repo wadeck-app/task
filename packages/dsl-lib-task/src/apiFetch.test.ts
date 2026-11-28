@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiProblem, getJson, isAbort } from './apiFetch.js';
+import { ApiProblem, getJson, isAbort, problemClause } from './apiFetch.js';
 import { jsonResponse, stubFetch } from './testHelpers.js';
 import { configureTaskUi, resetTaskUiConfig } from './runtime-config.js';
 
@@ -70,5 +70,12 @@ describe('getJson', () => {
 
 		expect(isAbort(await pending)).toBe(true);
 		expect(isAbort(new Error('x'))).toBe(false);
+	});
+});
+
+describe('problemClause', () => {
+	it('drops the closing full stops and spaces only, never a letter (a word ending in s stays whole)', () => {
+		expect(problemClause(new Error('These are the open tasks.. '))).toBe('These are the open tasks');
+		expect(problemClause(new Error('Could not load the columns'))).toBe('Could not load the columns');
 	});
 });
