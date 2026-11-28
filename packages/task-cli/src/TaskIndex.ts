@@ -223,6 +223,8 @@ export async function runTaskCommand(args: string[], cwd: string): Promise<Comma
 				out: text => process.stdout.write(`${text}\n`),
 				warn: text => process.stderr.write(`${text}\n`),
 				stop: stop.signal,
+				// `--stdio` reads its one request here (never touched by the HTTP form).
+				stdin: process.stdin,
 				version: VERSION,
 				// Request lines (info) only with TASK_DEBUG=1; warnings and errors always.
 				log: (level, message) => {

@@ -180,6 +180,8 @@ export { MigrationRefusedError, MigrationStateError } from './migrate/migrateErr
 // `task serve`: the server side of the remote strategy (stage 4).
 export type { RunningTaskServer, TaskServerOptions } from './server/taskServer.js';
 export { TaskServerStartError, assertServable, startTaskServer } from './server/taskServer.js';
+export type { StdioAnswer, StdioServerOptions } from './server/stdioServer.js';
+export { STDIO_ENVELOPE_ALLOWANCE, serveStdioRequest } from './server/stdioServer.js';
 export { MIN_TOKEN_LENGTH } from './server/serverAuth.js';
 export { eventSinkFor, eventsRaisedByServer } from './eventsRaisedByServer.js';
 export type { ServerTokenInput, TokenOrigin } from './server/serverToken.js';

@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -374,5 +375,104 @@ describe('starting and stopping', () => {
 describe('TaskServerStartError is what the dispatcher prints', () => {
 	it('carries a hint', () => {
 		expect(new TaskServerStartError('m', 'h').hint).toBe('h');
+	});
+});
+
+describe('task serve --stdio', () => {
+	const stream = (text: string): AsyncIterable<Buffer | string> => Readable.from([text]);
+	const request = (path: string, extra: object = {}): string =>
+		JSON.stringify({ method: 'GET', path, headers: { 'X-Task-Protocol': '1' }, ...extra });
+
+	it('parses alone, and is refused with every option of the HTTP server (no network, no token), naming them and the fix', () => {
+		expect(parseServeArgs(['--stdio'])).toMatchObject({ stdio: true });
+		expect(parseServeArgs([])).not.toHaveProperty('stdio', true);
+
+		for (const mix of [['--port', '0'], ['--host', 'nas.lan'], ['--allow-lan'], ['--token-env', 'X'], ['--token-file', '/t']]) {
+			const parsed = parseServeArgs(['--stdio', ...mix]);
+			expect('exitCode' in parsed && parsed.exitCode).toBe(1);
+			expect('output' in parsed && parsed.output).toContain(`--stdio cannot be combined with ${mix[0]}`);
+			expect('output' in parsed && parsed.output).toContain('Use --stdio alone');
+		}
+	});
+
+	it('answers ONE request: exit 0, one JSON line on stdout with the status inside, no port, no token needed', async () => {
+		const start = vi.fn();
+
+		const result = await runServe(['--stdio'], false, {
+			...deps({ env: {} }),
+			stdin: stream(request('/v1/info')),
+			start,
+		});
+
+		expect(result.exitCode).toBe(0);
+		expect(result.output.includes('\n')).toBe(false);
+		expect(JSON.parse(result.output)).toMatchObject({
+			status: 200,
+			headers: { 'X-Task-Protocol': '1' },
+			body: { server: { name: 'task-serve', version: '2026.11.09-001' }, project: { id: project.id } },
+		});
+		expect(start).not.toHaveBeenCalled();
+		expect(out).toEqual([]);
+	});
+
+	it('a failed request is still exit 0 with its status inside (400 for a request that is not a request)', async () => {
+		const result = await runServe(['--stdio'], false, { ...deps(), stdin: stream('not json') });
+
+		expect(result.exitCode).toBe(0);
+		expect(JSON.parse(result.output)).toMatchObject({ status: 400, body: { error: { type: 'invalid-request' } } });
+	});
+
+	it('a write raises its events through the sink of this process and flushes it', async () => {
+		const delivered: string[] = [];
+		let flushes = 0;
+		const sink: EventSink = {
+			deliver: event => {
+				delivered.push(event.name);
+				return Promise.resolve({ delivered: true });
+			},
+			flush: () => {
+				flushes++;
+				return Promise.resolve();
+			},
+		};
+
+		const result = await runServe(['--stdio'], false, {
+			...deps({ makeSink: () => sink }),
+			stdin: stream(
+				request('/v1/tasks', { method: 'POST', body: { title: 'From stdin', status: 'backlog' } })
+			),
+		});
+
+		expect(JSON.parse(result.output)).toMatchObject({ status: 201, body: { events: { delivered: 1 } } });
+		expect(delivered).toEqual(['onTaskCreated']);
+		expect(flushes).toBe(1);
+	});
+
+	it('a project behind another server is a process failure: stderr text with the fix, exit 1, and no sink is built', async () => {
+		const ctx = ctxOf();
+		const chained = {
+			...ctx,
+			store: new Proxy(ctx.store, { get: (t, p, r) => (p === 'kind' ? 'remote' : Reflect.get(t, p, r)) }),
+		} as TaskServiceContext;
+		const makeSink = vi.fn();
+
+		const result = await runServe(['--stdio'], false, { ...deps({ ctx: chained, makeSink }), stdin: stream(request('/v1/info')) });
+
+		expect(result.exitCode).toBe(1);
+		expect(result.output).toContain('uses the remote strategy');
+		expect(makeSink).not.toHaveBeenCalled();
+	});
+
+	it('an unreadable stdin is a process failure (exit 1), not an answer', async () => {
+		const result = await runServe(['--stdio'], false, {
+			...deps(),
+			// eslint-disable-next-line require-yield
+			stdin: (async function* () {
+				throw new Error('stdin closed');
+			})(),
+		});
+
+		expect(result.exitCode).toBe(1);
+		expect(result.output).toContain('stdin closed');
 	});
 });

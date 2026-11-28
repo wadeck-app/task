@@ -7,29 +7,14 @@
 import * as http from 'node:http';
 import type { AddressInfo } from 'node:net';
 
-import {
-	EVENTS_HEADER,
-	EVENTS_SUPPRESS,
-	PROTOCOL_HEADER,
-	PROTOCOL_MAX,
-	PROTOCOL_MIN,
-	PROTOCOL_VERSION,
-	ProtocolPathError,
-	WireProtocolError,
-	encodeWireError,
-	matchRoute,
-} from '@wadeck-app/task-core';
-import type { EventsOutcome, PortOperation, RouteMatch, ServerInfo } from '@wadeck-app/task-core';
+import { PROTOCOL_HEADER, PROTOCOL_MIN, WireProtocolError, encodeWireError } from '@wadeck-app/task-core';
 
 import type { TaskServiceContext } from '../context.js';
-import { projectEnv } from '../context.js';
 import { TaskServiceError } from '../errors.js';
-import { deliverEvents } from '../events.js';
-import type { EventSink, TaskEvent } from '../events.js';
+import type { EventSink } from '../events.js';
 import { MIN_TOKEN_LENGTH, createFailureLimiter, createTokenCheck } from './serverAuth.js';
-import { runOperation } from './serverOperations.js';
-import { validateInput } from './requestValidation.js';
-import { createWriteQueue } from './writeQueue.js';
+import { createRequestHandler } from './requestHandler.js';
+import type { ServiceResponse } from './requestHandler.js';
 
 /** The server could not start (address in use, token too short, a project that cannot be served). `hint` is the fix. */
 export class TaskServerStartError extends TaskServiceError {}
@@ -84,8 +69,6 @@ const DEFAULTS = {
 	shutdownGraceMs: 10_000,
 };
 
-const SERVER_NAME = 'task-serve' as const;
-
 /**
  * Refuses a project this server must not serve: one that is itself on the `remote` strategy (a server of a server is a loop waiting to
  * happen and two hops of timeouts). Any other storage (local files, github, gitlab, migrating) is served: the client sees the port.
@@ -129,64 +112,21 @@ export async function startTaskServer(options: TaskServerOptions): Promise<Runni
 	const sleep = options.sleep ?? ((ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms)));
 	const sink = options.eventSink;
 	const now = options.now ?? ((): Date => new Date());
-	// The protocol version each request named (and its answer repeats): a v1 client reads its own version back.
-	const negotiated = new WeakMap<http.ServerResponse, number>();
 	const tokenCheck = createTokenCheck(token);
 	const limiter = createFailureLimiter(options.failedAuthDelayMs ?? DEFAULTS.failedAuthDelayMs);
-	const queue = createWriteQueue();
 	// Nothing that reaches a client may hold the token, nor the server's own folder.
 	const secrets = [token, ctx.storage.dataDir];
 	const inFlight = new Set<Promise<void>>();
 	let closing = false;
-	let eventTail: Promise<void> = Promise.resolve();
-
-	const info = (): ServerInfo => ({
-		protocol: { version: PROTOCOL_VERSION, min: PROTOCOL_MIN, max: PROTOCOL_MAX },
-		server: { name: SERVER_NAME, version: options.version ?? 'unknown' },
-		project: { ...(ctx.project.id === undefined ? {} : { id: ctx.project.id }), name: ctx.project.name },
-		capabilities: ctx.store.capabilities,
-		statuses: [...ctx.config.statuses],
-		terminalStatuses: [...ctx.config.terminalStatuses],
-		types: [...ctx.config.types],
-		events: { enabled: sink !== undefined },
+	// The whole pipeline (routes, validation, the single-writer queue, events) is the one the stdio server shares: requestHandler.ts.
+	const handler = createRequestHandler({
+		ctx,
+		eventSink: sink,
+		version: options.version,
+		now,
+		log,
+		redact: secrets,
 	});
-
-	/** Hands the events to the sink in the order the writes completed; the answer waits for the outcome, the write queue does not. */
-	const deliverInOrder = (events: readonly TaskEvent[], suppressed: boolean): Promise<EventsOutcome> => {
-		const enabled = sink !== undefined;
-		if (sink === undefined || suppressed || events.length === 0) {
-			return Promise.resolve({ enabled, delivered: 0, undelivered: [] });
-		}
-		const run = eventTail.then(() => deliverEvents(sink, events));
-		eventTail = run.then(
-			() => undefined,
-			() => undefined
-		);
-		return run.then(
-			outcome => ({
-				enabled,
-				delivered: outcome.delivered,
-				undelivered: outcome.undelivered.map(item => ({
-					event: item.event.name,
-					reason: item.reason,
-					status: item.status,
-				})),
-			}),
-			(error: unknown) => {
-				// A sink is meant to report, not throw: if it does, the change is saved and the events are in an unknown state.
-				log('error', `event delivery failed: ${messageOf(error)}`);
-				return {
-					enabled,
-					delivered: 0,
-					undelivered: events.map(event => ({
-						event: event.name,
-						reason: `the event sink failed: ${messageOf(error)}`,
-						status: 'unknown' as const,
-					})),
-				};
-			}
-		);
-	};
 
 	const readBody = async (req: http.IncomingMessage): Promise<unknown> => {
 		const declared = Number(headerValue(req.headers['content-length']) ?? '0');
@@ -242,165 +182,47 @@ export async function startTaskServer(options: TaskServerOptions): Promise<Runni
 		);
 	};
 
-	const checkProtocol = (req: http.IncomingMessage, res: http.ServerResponse): number => {
-		const raw = headerValue(req.headers[PROTOCOL_HEADER.toLowerCase()]);
-		const version = raw === undefined ? NaN : Number(raw);
-		if (!Number.isInteger(version) || version < PROTOCOL_MIN || version > PROTOCOL_MAX) {
-			throw new WireProtocolError(
-				'incompatible',
-				raw === undefined
-					? `the header ${PROTOCOL_HEADER} is required (this server speaks protocol ${PROTOCOL_MIN}..${PROTOCOL_MAX})`
-					: `protocol ${raw} is not supported (this server speaks ${PROTOCOL_MIN}..${PROTOCOL_MAX})`,
-				'Update task on the older of the two machines to the same version, then run: task strategy check',
-				{ supported: { min: PROTOCOL_MIN, max: PROTOCOL_MAX } }
-			);
-		}
-		negotiated.set(res, version);
-		return version;
-	};
-
-	const expectedRevisionOf = (req: http.IncomingMessage): string | undefined => {
-		const raw = headerValue(req.headers['if-match']);
-		if (raw === undefined || raw.trim() === '*') return undefined;
-		return raw
-			.trim()
-			.replace(/^W\//, '')
-			.replace(/^"(.*)"$/, '$1');
-	};
-
-	const eventsSuppressed = (req: http.IncomingMessage): boolean => {
-		const raw = headerValue(req.headers[EVENTS_HEADER.toLowerCase()]);
-		if (raw === undefined) return false;
-		if (raw.trim() === EVENTS_SUPPRESS) return true;
-		throw new WireProtocolError(
-			'invalid-request',
-			`${EVENTS_HEADER}: "${raw}" is not a known value`,
-			`The only value is "${EVENTS_SUPPRESS}".`
-		);
-	};
-
-	const send = (
-		res: http.ServerResponse,
-		status: number,
-		body: unknown,
-		extra: Record<string, string> = {}
-	): void => {
+	/** The answer on the wire: the adapter's own headers around the ones the handler gives (the protocol version, Allow). */
+	const send = (res: http.ServerResponse, response: ServiceResponse): void => {
 		if (res.headersSent) return;
-		const text = JSON.stringify(body);
-		res.writeHead(status, {
+		const text = JSON.stringify(response.body);
+		const { [PROTOCOL_HEADER]: protocol, ...extra } = response.headers;
+		const close: Record<string, string> =
+			response.status === 401 || response.status === 413 || response.status === 415 ? { Connection: 'close' } : {};
+		res.writeHead(response.status, {
 			'Content-Type': 'application/json; charset=utf-8',
 			'Content-Length': Buffer.byteLength(text),
-			[PROTOCOL_HEADER]: String(negotiated.get(res) ?? PROTOCOL_MIN),
+			[PROTOCOL_HEADER]: protocol ?? String(PROTOCOL_MIN),
 			'Cache-Control': 'no-store',
 			'X-Content-Type-Options': 'nosniff',
 			...extra,
+			...close,
 		});
 		res.end(text);
 	};
 
+	const lowerHeaders = (req: http.IncomingMessage): Record<string, string | undefined> => {
+		const headers: Record<string, string | undefined> = {};
+		for (const name of Object.keys(req.headers)) headers[name.toLowerCase()] = headerValue(req.headers[name]);
+		return headers;
+	};
+
 	const handle = async (req: http.IncomingMessage, res: http.ServerResponse): Promise<void> => {
-		const startedAt = Date.now();
-		let status = 500;
-		let label = `${req.method ?? '?'} ${(req.url ?? '').split('?')[0]}`;
-		try {
-			if (closing)
-				throw new WireProtocolError('unavailable', 'the server is shutting down', 'Retry in a moment.');
-			await authenticate(req);
-			const version = checkProtocol(req, res);
-			let match: RouteMatch | { methodNotAllowed: string[] } | undefined;
-			try {
-				match = matchRoute(req.method ?? 'GET', req.url ?? '/');
-			} catch (error) {
-				if (error instanceof ProtocolPathError) {
-					throw new WireProtocolError(
-						'invalid-request',
-						error.message,
-						'Percent-encode the parts of the path.'
-					);
-				}
-				throw error;
-			}
-			if (match === undefined) {
-				throw new WireProtocolError(
-					'unknown-route',
-					`no such route: ${label}`,
-					'Check the version of task on both machines.'
-				);
-			}
-			if ('methodNotAllowed' in match) {
-				status = 405;
-				send(
-					res,
-					405,
-					encodeWireError(
-						new WireProtocolError(
-							'not-allowed',
-							`${label} is not allowed (allowed: ${match.methodNotAllowed.join(', ')})`,
-							'Use one of the allowed methods.'
-						),
-						{ redact: secrets }
-					).body,
-					{ Allow: match.methodNotAllowed.join(', ') }
-				);
-				return;
-			}
-			label = `${match.spec.method} ${match.spec.path}`;
-			// A route a later protocol added is only served to a request that names that version: a peer that sends the older one has
-			// no code for it, and a request made by hand must say which dialect it speaks.
-			if (version < match.spec.since) {
-				throw new WireProtocolError(
-					'incompatible',
-					`${label} needs protocol ${match.spec.since}, the request names protocol ${version}`,
-					`Send ${PROTOCOL_HEADER}: ${match.spec.since} for this route (this server speaks ${PROTOCOL_MIN}..${PROTOCOL_MAX}).`,
-					{ supported: { min: PROTOCOL_MIN, max: PROTOCOL_MAX } }
-				);
-			}
-			const body = await readBody(req);
-			if (match.op === 'info') {
-				status = 200;
-				send(res, 200, info());
-				return;
-			}
-			const op = match.op as PortOperation;
-			const input = validateInput(op, { params: match.params, query: match.query, body }, ctx.config);
-			const env = projectEnv(ctx);
-			if (!match.spec.write) {
-				const { result } = await runOperation(op, input, { backend: ctx.store, config: ctx.config, env, now });
-				status = 200;
-				send(res, 200, result);
-				return;
-			}
-			const expectedRevision = expectedRevisionOf(req);
-			const suppressed = eventsSuppressed(req);
-			const { result, delivery } = await queue.run(async () => {
-				const outcome = await runOperation(op, input, {
-					backend: ctx.store,
-					config: ctx.config,
-					env,
-					now,
-					...(expectedRevision === undefined ? {} : { expectedRevision }),
-				});
-				// Registered while the write still holds the queue, so the events leave in the order the changes were made.
-				return { result: outcome.result, delivery: deliverInOrder(outcome.events, suppressed) };
-			});
-			status = op === 'create' ? 201 : 200;
-			send(res, status, { result, events: await delivery });
-		} catch (error) {
-			// The peer left before it finished its request: nobody to answer, and not a fault of the server.
-			if ((error as NodeJS.ErrnoException).code === 'ECONNRESET' || res.destroyed) {
-				status = 499;
-				log('warn', `${label}: the client went away before its request was complete`);
-				return;
-			}
-			const { status: code, body } = encodeWireError(error, { redact: secrets });
-			status = code;
-			if (code === 500) log('error', `${label}: ${body.error.message}`);
-			const close: Record<string, string> =
-				code === 401 || code === 413 || code === 415 ? { Connection: 'close' } : {};
-			send(res, code, body, close);
-		} finally {
-			log('info', `${label} -> ${status} (${Date.now() - startedAt} ms)`);
-		}
+		const response = await handler.handle({
+			method: req.method ?? 'GET',
+			path: req.url ?? '/',
+			headers: lowerHeaders(req),
+			readBody: () => readBody(req),
+			isGone: () => res.destroyed,
+			// First of all, before the protocol is even looked at: shutting down, then the token.
+			admit: async () => {
+				if (closing)
+					throw new WireProtocolError('unavailable', 'the server is shutting down', 'Retry in a moment.');
+				await authenticate(req);
+			},
+		});
+		if (response.gone === true) return;
+		send(res, response);
 	};
 
 	const server = http.createServer(
@@ -415,7 +237,7 @@ export async function startTaskServer(options: TaskServerOptions): Promise<Runni
 				// handle() answers its own failures; this is the last line of defence, so that nothing becomes an unhandled rejection.
 				log('error', `request handler failed: ${messageOf(error)}`);
 				try {
-					if (!res.headersSent) send(res, 500, encodeWireError(error, { redact: secrets }).body);
+					if (!res.headersSent) send(res, { status: 500, headers: {}, body: encodeWireError(error, { redact: secrets }).body });
 					else res.destroy();
 				} catch {
 					res.destroy();
@@ -458,7 +280,7 @@ export async function startTaskServer(options: TaskServerOptions): Promise<Runni
 				closing = true;
 				const stopped = new Promise<void>(resolve => server.close(() => resolve()));
 				server.closeIdleConnections();
-				const drained = Promise.all([...inFlight]).then(() => queue.idle());
+				const drained = Promise.all([...inFlight]).then(() => handler.idle());
 				let timer: ReturnType<typeof setTimeout> | undefined;
 				const expired = new Promise<'expired'>(resolve => {
 					timer = setTimeout(() => resolve('expired'), shutdownGraceMs);
@@ -473,8 +295,7 @@ export async function startTaskServer(options: TaskServerOptions): Promise<Runni
 				}
 				server.closeAllConnections();
 				await stopped;
-				await eventTail;
-				await sink?.flush?.();
+				await handler.flushEvents();
 			})();
 			return closed;
 		},

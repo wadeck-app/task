@@ -2,8 +2,21 @@
 // foreground until it is stopped (Ctrl+C, SIGTERM): task has no daemon manager and this does not daemonize; run it with the means of
 // your shell or service manager.
 import { PROTOCOL_VERSION } from '@wadeck-app/task-core';
-import { describeError, resolveServerToken, startTaskServer } from '@wadeck-app/task-service';
-import type { EventSink, RunningTaskServer, TaskServerOptions, TaskServiceContext } from '@wadeck-app/task-service';
+import {
+	assertServable,
+	describeError,
+	resolveServerToken,
+	serveStdioRequest,
+	startTaskServer,
+} from '@wadeck-app/task-service';
+import type {
+	EventSink,
+	RunningTaskServer,
+	StdioAnswer,
+	StdioServerOptions,
+	TaskServerOptions,
+	TaskServiceContext,
+} from '@wadeck-app/task-service';
 
 import { SERVE_HELP } from '../cli/help.js';
 import { errorOutput, failure } from '../cli/output.js';
@@ -18,6 +31,8 @@ export interface ServeOptions {
 	allowLan: boolean;
 	tokenEnv: string | undefined;
 	tokenFile: string | undefined;
+	/** `--stdio`: one request on stdin, one answer on stdout, no network and no token. Absent unless given. */
+	stdio?: true;
 }
 
 /** `task serve --help` needs no project. */
@@ -29,8 +44,13 @@ export function serveHelp(): CommandResult {
 	return { exitCode: 0, output: SERVE_HELP };
 }
 
-const USAGE =
-	'Usage: task serve [-p <project>] [--port <n>] [--host <address>] [--allow-lan] [--token-env <NAME> | --token-file <path>] [--json]';
+const USAGE = [
+	'Usage: task serve [-p <project>] [--port <n>] [--host <address>] [--allow-lan] [--token-env <NAME> | --token-file <path>] [--json]',
+	'       task serve [-p <project>] --stdio',
+].join('\n');
+
+/** The options that only mean something for the HTTP server: `--stdio` has no network and no token. */
+const HTTP_ONLY_OPTIONS = ['--port', '--host', '--allow-lan', '--token-env', '--token-file'];
 
 /** An option that takes a value, as `--name value` or `--name=value`. */
 function takeValue(rest: readonly string[], index: number, name: string): { value: string; next: number } | string {
@@ -49,10 +69,15 @@ export function parseServeArgs(rest: readonly string[], jsonMode = false): Serve
 		tokenEnv: undefined,
 		tokenFile: undefined,
 	};
+	const given: string[] = [];
 	for (let index = 0; index < rest.length;) {
 		const arg = rest[index]!;
 		const name = arg.split('=')[0]!;
-		if (arg === '--allow-lan') {
+		if (HTTP_ONLY_OPTIONS.includes(name)) given.push(name);
+		if (arg === '--stdio') {
+			options.stdio = true;
+			index++;
+		} else if (arg === '--allow-lan') {
 			options.allowLan = true;
 			index++;
 		} else if (name === '--port' || name === '--host' || name === '--token-env' || name === '--token-file') {
@@ -88,6 +113,13 @@ export function parseServeArgs(rest: readonly string[], jsonMode = false): Serve
 			return errorOutput(jsonMode, `unexpected argument: ${arg}`, USAGE);
 		}
 	}
+	if (options.stdio === true && given.length > 0) {
+		return errorOutput(
+			jsonMode,
+			`--stdio cannot be combined with ${[...new Set(given)].join(', ')}: it opens no port and has no token`,
+			'Use --stdio alone to serve one request read on stdin, or drop --stdio to listen on a port.'
+		);
+	}
 	return options;
 }
 
@@ -113,16 +145,51 @@ export interface ServeDeps {
 	log: (level: 'info' | 'warn' | 'error', message: string) => void;
 	/** Test seam: starts the server. Default: `startTaskServer`. */
 	start?: (options: TaskServerOptions) => Promise<RunningTaskServer>;
+	/** `--stdio`: where the request is read (the process stdin). */
+	stdin?: AsyncIterable<Buffer | string>;
+	/** Test seam: serves one request. Default: `serveStdioRequest`. */
+	serveStdio?: (source: AsyncIterable<Buffer | string>, options: StdioServerOptions) => Promise<StdioAnswer>;
 }
 
 function hostLabel(host: string): string {
 	return host.includes(':') ? `[${host}]` : host;
 }
 
+/**
+ * `task serve --stdio`: ONE request read on stdin, ONE answer printed on stdout (JSON, one line). The exit code is 0 whenever an answer
+ * was produced (the HTTP-style status is inside it); a failure of the process itself (a project that cannot be served, an unreadable
+ * stdin) is a message on stderr and a non-zero exit. No token: the caller that runs this command is the trust boundary (see
+ * task-service/src/server/stdioServer.ts and docs/threat-model-task-serve.md).
+ */
+async function runServeStdio(jsonMode: boolean, deps: ServeDeps): Promise<CommandResult> {
+	const source = deps.stdin;
+	if (source === undefined) {
+		return errorOutput(jsonMode, 'no stdin to read the request from', 'This is a bug of task: --stdio was started without stdin.');
+	}
+	const serve = deps.serveStdio ?? serveStdioRequest;
+	try {
+		// A project that cannot be served is refused BEFORE a sink exists (nothing is declared to the queue for a refused start).
+		assertServable(deps.ctx);
+		const answer = await serve(source, {
+			ctx: deps.ctx,
+			eventSink: deps.makeSink(),
+			version: deps.version,
+			log: (level, message) => {
+				deps.log(level, `serve: ${message}`);
+				if (level !== 'info') deps.warn(`${level === 'error' ? 'error' : 'warning'}: ${message}`);
+			},
+		});
+		return { exitCode: 0, output: JSON.stringify(answer) };
+	} catch (error) {
+		return failure(jsonMode, error);
+	}
+}
+
 export async function runServe(rest: readonly string[], jsonMode: boolean, deps: ServeDeps): Promise<CommandResult> {
 	const parsed = parseServeArgs(rest, jsonMode);
 	if ('exitCode' in parsed) return parsed;
 	const options = parsed;
+	if (options.stdio === true) return runServeStdio(jsonMode, deps);
 	const host = options.host.replace(/^\[|\]$/g, '');
 	const loopback = isLoopbackHost(host);
 

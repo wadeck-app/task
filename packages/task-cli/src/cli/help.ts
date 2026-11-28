@@ -502,9 +502,10 @@ export const SERVE_HELP = `task serve - serve this project's tasks to other comp
 
 Usage:
   task serve [-p <project>] [--port <n>] [--host <address>] [--allow-lan] [--token-env <NAME> | --token-file <path>] [--json]
+  task serve [-p <project>] --stdio
   task serve --help
 
-What it does: serves the tasks of ONE project (the one -p, TASK_PROJECT or the cwd selects; its strategy must be local) over HTTP/JSON, protocol 2 (clients on protocol 1 keep working),
+What it does: serves the tasks of ONE project (the one -p, TASK_PROJECT or the cwd selects; any storage except a remote project: local files, github, gitlab) over HTTP/JSON, protocol 2 (clients on protocol 1 keep working),
 to computers whose project says 'strategy: type: remote' (task strategy --help). This server is the single writer of the project: it runs the
 writes one at a time and raises the queue events of the changes itself (the computers that connect raise none). It runs in the foreground until
 Ctrl+C or SIGTERM, finishing the writes in flight; task has no daemon manager and this does not detach: use the means of your shell or service manager.
@@ -517,6 +518,11 @@ Options:
   --token-env <NAME>    NAME of the environment variable that holds the bearer token (default TASK_SERVE_TOKEN)
   --token-file <path>   Absolute path of a file that holds the token (POSIX: mode 600). Instead of --token-env
   --json                One JSON line on stdout when it listens: {listening, url, host, port, lan, protocol, project, auth, events}
+  --stdio               No network, no token: reads ONE request on stdin, prints ONE answer on stdout, exits 0 (the status is inside the answer; exit 1 only when
+                        the process itself fails, with the reason on stderr). For a caller that already authenticated its peer and allow-listed this command
+                        (machine run <peer> -- task serve -p <project> --stdio). Cannot be combined with --port, --host, --allow-lan or the token options.
+                        Request:  {"method":"GET","path":"/v1/tasks/<id>","headers":{"X-Task-Protocol":"1"},"body":<json, optional>}
+                        Answer:   {"status":200,"headers":{"X-Task-Protocol":"1"},"body":<json>}   (same routes, validation, errors and events as over HTTP)
 
 The token: required (no anonymous mode), at least 16 characters, never on the command line. Make one, for example:
   node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))"
