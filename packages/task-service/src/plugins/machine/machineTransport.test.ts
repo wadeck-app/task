@@ -179,7 +179,7 @@ describe('what goes wrong, and the next step it names', () => {
 		expect(never.hint).toContain('machine wake thinkcentre');
 	});
 
-	it('"no answer" is unreachable too, and an unknown machine failure keeps its first line with a ping hint', async () => {
+	it('"no answer" is unreachable too; an unknown machine is a configuration mistake (machine list), any other failure keeps its first line with a ping hint', async () => {
 		const silent = await failureOf(
 			createMachineTransport(SETTINGS, runnerOf({ kind: 'failed', stderr: 'no answer from 10.0.0.2:47921 within 3000 ms' })).fetch('/v1/info')
 		);
@@ -191,7 +191,14 @@ describe('what goes wrong, and the next step it names', () => {
 		expect(other).toBeInstanceOf(MachineUnreachableError);
 		expect(other.message).toContain('unknown machine "thinkcentre"');
 		expect(other.message).not.toContain('more');
-		expect(other.hint).toContain('machine ping thinkcentre');
+		expect(other.hint).toContain('machine list');
+		expect(other.hint).not.toContain('machine ping');
+
+		const odd = await failureOf(
+			createMachineTransport(SETTINGS, runnerOf({ kind: 'failed', stderr: 'something odd happened\nmore' })).fetch('/v1/info')
+		);
+		expect(odd.message).toContain('something odd happened');
+		expect(odd.hint).toContain('machine ping thinkcentre');
 	});
 
 	it('our own timeout and the timeout of machine run are both a RemoteTimeoutError; a write says it may have been applied', async () => {

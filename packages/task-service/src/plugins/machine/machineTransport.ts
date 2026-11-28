@@ -97,6 +97,14 @@ export function createMachineTransport(settings: MachineSettings, runner: Machin
 			case 'unreachable':
 				return unreachable(text);
 			default:
+				// A machine this computer does not know is a configuration mistake, not a network one: pinging it would mislead.
+				if (/unknown machine/i.test(text)) {
+					return new MachineUnreachableError(
+						settings.peer,
+						firstLine(text),
+						`The peer "${settings.peer}" (transport.options.peer) is not a machine known here: use a name, alias or id from \`machine list\` (the line above names the known machines), then: task strategy check`
+					);
+				}
 				return new MachineUnreachableError(
 					settings.peer,
 					firstLine(text) || 'machine run failed without a message',
