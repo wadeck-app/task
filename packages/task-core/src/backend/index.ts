@@ -21,6 +21,7 @@ export {
 	BackendRejectedError,
 	BackendTimeoutError,
 	BackendUnreachableError,
+	MachineUnreachableError,
 	PartialWriteError,
 	RateLimitedError,
 	RemoteIncompatibleError,

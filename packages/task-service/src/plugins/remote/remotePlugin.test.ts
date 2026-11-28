@@ -85,7 +85,7 @@ describe('the remote plugin: declaration', () => {
 	it.each([
 		[{ transport: { type: 'plain-http', options: {} } }, undefined],
 		[{ project: 'shop', transport: {} }, undefined],
-		[{}, 'transport: required (how to reach the server: { type: plain-http, options: { url, tokenEnv } })'],
+		[{}, 'transport: required (how to reach the server: { type: plain-http, options: { url, tokenEnv } } or { type: machine, options: { peer, project } })'],
 		[{ transport: 'http://x' }, 'transport: must be a mapping with type and options, found "http://x"'],
 		[
 			{ transport: {}, project: '' },

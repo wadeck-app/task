@@ -2,7 +2,7 @@ import { isPlugin } from '../plugin-host/index.js';
 import { createBuiltinRegistry } from './builtinPlugins.js';
 
 describe('the built-in plugins', () => {
-	it('registers strategies github, gitlab, local, migrating and remote and transport plain-http, each by ref and alias', () => {
+	it('registers strategies github, gitlab, local, migrating and remote and transports machine and plain-http, each by ref and alias', () => {
 		const registry = createBuiltinRegistry();
 
 		expect(registry.list('strategy').map(entry => [entry.ref, entry.aliases])).toEqual([
@@ -13,6 +13,7 @@ describe('the built-in plugins', () => {
 			['plugins.remote.default', ['remote']],
 		]);
 		expect(registry.list('transport').map(entry => [entry.ref, entry.aliases])).toEqual([
+			['plugins.machine.default', ['machine']],
 			['plugins.plain-http.default', ['plain-http']],
 		]);
 		expect(registry.lookup('local', 'strategy')).toBe(registry.lookup('plugins.local.default', 'strategy'));

@@ -143,6 +143,7 @@ export {
 	LOCAL_TRAITS,
 	NO_TRAITS,
 	LocalFileBackend,
+	MachineUnreachableError,
 	PartialWriteError,
 	RateLimitedError,
 	RemoteIncompatibleError,

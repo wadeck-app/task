@@ -21,6 +21,13 @@ function isMapping(value: unknown): value is Record<string, unknown> {
 export function remoteLocation(options: Record<string, unknown>): string | undefined {
 	const transport = options['transport'];
 	const transportOptions = isMapping(transport) ? transport['options'] : undefined;
+	// Through the machine CLI the storage is the project on the peer, not an address.
+	if (isMapping(transport) && transport['type'] === 'machine' && isMapping(transportOptions)) {
+		const { peer, project } = transportOptions;
+		return typeof peer === 'string' && typeof project === 'string'
+			? `remote machine://${peer.toLowerCase()}/${project.toLowerCase()}`
+			: undefined;
+	}
 	const url = isMapping(transportOptions) ? transportOptions['url'] : undefined;
 	if (typeof url !== 'string') return undefined;
 	try {
@@ -49,7 +56,7 @@ export const remotePlugin: StrategyPlugin = {
 		}
 		const { project, transport } = options;
 		if (transport === undefined) {
-			return 'transport: required (how to reach the server: { type: plain-http, options: { url, tokenEnv } })';
+			return 'transport: required (how to reach the server: { type: plain-http, options: { url, tokenEnv } } or { type: machine, options: { peer, project } })';
 		}
 		if (!isMapping(transport)) {
 			return `transport: must be a mapping with type and options, found ${describeFound(transport)}`;
@@ -68,7 +75,7 @@ export const remotePlugin: StrategyPlugin = {
 				project:
 					'id (or unique id prefix) or name of the project the server serves; checked at the first call, so a wrong address cannot write to another project (optional)',
 				transport:
-					'{ type: plain-http, options: { url, tokenEnv | tokenFile, timeoutSeconds } }: how to reach the server (required)',
+					'{ type: plain-http, options: { url, tokenEnv | tokenFile, timeoutSeconds } } or { type: machine, options: { peer, project, wake, shell, timeoutSeconds } } (the machine CLI; its stdin channel is PENDING): how to reach the server (required)',
 			},
 			snippet: [
 				'strategy:',

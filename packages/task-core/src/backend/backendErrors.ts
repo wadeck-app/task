@@ -226,6 +226,27 @@ export class RemoteUnreachableError extends BackendUnreachableError {
 	}
 }
 
+/**
+ * A peer reached through the `machine` transport did not answer, or the command it ran failed. Same family as
+ * {@link RemoteUnreachableError} (nothing was read; a failed write is reported as unreachable too), with a next step that talks about the
+ * peer (asleep, allow list, task version) instead of a "task serve" port. `hint` is built by the transport, which knows the peer, the
+ * project and the wake policy.
+ */
+export class MachineUnreachableError extends RemoteUnreachableError {
+	override readonly hint: string;
+
+	constructor(
+		readonly peer: string,
+		reason: string,
+		hint: string
+	) {
+		super(`machine://${peer}`, reason);
+		this.name = 'MachineUnreachableError';
+		requireHint('MachineUnreachableError', hint);
+		this.hint = hint;
+	}
+}
+
 /** The server did not answer in time. A write that timed out MAY have been applied: the hint says how to find out. */
 export class RemoteTimeoutError extends BackendTimeoutError {
 	override readonly hint: string;

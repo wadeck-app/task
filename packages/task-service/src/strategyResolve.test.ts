@@ -167,7 +167,7 @@ describe('resolveStrategy: the transport slot of a declared remote strategy', ()
 		const error = failure({ type: 'remote', options: { transport: { type: 'carrier-pigeon' } } });
 
 		expect(error.path).toBe('strategy.options.transport.type');
-		expect(error.hint).toBe('Registered transport plugins: plain-http (plugins.plain-http.default)');
+		expect(error.hint).toBe('Registered transport plugins: machine (plugins.machine.default), plain-http (plugins.plain-http.default)');
 	});
 
 	it('an omitted transport type is plain-http, so its required options are asked for', () => {
@@ -190,7 +190,7 @@ describe('resolveStrategy: the transport slot of a declared remote strategy', ()
 
 	it('the remote strategy needs its transport slot, and refuses an unknown option, naming the key', () => {
 		expect(failure({ type: 'remote', options: {} }).message).toBe(
-			`${FILE}: strategy.options.transport: required (how to reach the server: { type: plain-http, options: { url, tokenEnv } })`
+			`${FILE}: strategy.options.transport: required (how to reach the server: { type: plain-http, options: { url, tokenEnv } } or { type: machine, options: { peer, project } })`
 		);
 		expect(
 			failure({
