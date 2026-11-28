@@ -241,8 +241,9 @@ describe('the follow commands over a backend', () => {
 		const sigint = spyOnSigint();
 		const follow = runTaskListFollow(backend, () => true, { intervalMs: 5 });
 
-		await sleep(20);
-		expect(sigint.handler()).toBeTypeOf('function');
+		// The listener is installed AFTER the initial read of the backend (follow.ts), so wait for it instead of sleeping a fixed
+		// time: a slow first read of the task files must not fail this test.
+		await vi.waitFor(() => expect(sigint.handler()).toBeTypeOf('function'));
 		expect(sigint.removed()).toBe(false);
 		sigint.handler()!();
 		await follow;
