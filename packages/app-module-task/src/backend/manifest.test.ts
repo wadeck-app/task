@@ -1108,7 +1108,7 @@ describe('manifest: the labels the breadcrumb shows (app-core-cli >= 2026.10.19-
 // A mutating route that produces queue events answers `undeliveredText`: the page that fires it must show it where the
 // user is looking (the answer is kept under the action's resultKey). A route that emits nothing is listed here, so a NEW
 // mutating action fails this test until it either shows the text or is declared event-free on purpose. The text is a
-// task:Notice, never a Badge: it wraps, where a Badge keeps one line and the replay command runs off the column.
+// Notice, never a Badge: it wraps, where a Badge keeps one line and the replay command runs off the column.
 describe('views: every mutating action that produces queue events shows what the queue did not receive', () => {
 	const EVENT_FREE_URLS = [
 		// The delete preview deletes nothing.
@@ -1174,7 +1174,7 @@ describe('views: every mutating action that produces queue events shows what the
 			const bound = `$ctx.${action.key}.undeliveredText`.replace(/[$.]/g, String.raw`\$&`);
 			expect(text, `${action.page}: ${action.name}`).toMatch(
 				new RegExp(
-					String.raw`- \$type: task:Notice\n\s+\$if: ${bound}\n\s+label: ${bound}\n\s+variant: warning`
+					String.raw`- \$type: Notice\n\s+\$if: ${bound}\n\s+label: ${bound}\n\s+variant: warning`
 				)
 			);
 		}
@@ -1314,7 +1314,7 @@ describe('board: page and project-module contribution', () => {
 		expect(component['$if']).toBe('$sources.board.columns');
 	});
 
-	it('the board page shows a config/read error as a task:Notice, never a Badge pill', () => {
+	it('the board page shows a config/read error as a Notice, never a Badge pill', () => {
 		const tree = load(readFileSync(join(viewsDir, 'board-page.yaml'), 'utf8')) as {
 			sections: Array<Record<string, unknown>>;
 		};
@@ -1324,7 +1324,7 @@ describe('board: page and project-module contribution', () => {
 			'$sources.projects.unknownProjectText',
 		]) {
 			const node = tree.sections.find(section => section['label'] === bound);
-			expect(node, bound).toMatchObject({ $type: 'task:Notice', variant: 'danger' });
+			expect(node, bound).toMatchObject({ $type: 'Notice', variant: 'danger' });
 		}
 	});
 

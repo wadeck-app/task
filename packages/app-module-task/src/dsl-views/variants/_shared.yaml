@@ -1,7 +1,7 @@
 # Reusable fragments of the task page designs, referenced anywhere in a design as `{ $use: <name> }`. Each fragment is ONE
 # node (or the one object `params.task`). Every control publishes its answer under the resultKey of its action; the single
 # block `feedback.all` shows the error and the "events not delivered" notices of all of them, once per design. They are
-# task:Notice, never a Badge: a Badge keeps one line, and the replay text of an undelivered event (a command with a JSON
+# Notice, never a Badge: a Badge keeps one line, and the replay text of an undelivered event (a command with a JSON
 # payload) runs off the screen.
 
 # The {placeholders} of every action url: the task of the page and the project (already URL-encoded by the route).
@@ -14,111 +14,111 @@ feedback.all:
     $type: VerticalStack
     gap: gap-2
     items:
-        - $type: task:Notice
+        - $type: Notice
           $if: $ctx.statusResult.errorText
           label: $ctx.statusResult.errorText
           variant: danger
-        - $type: task:Notice
+        - $type: Notice
           $if: $ctx.statusResult.undeliveredText
           label: $ctx.statusResult.undeliveredText
           variant: warning
-        - $type: task:Notice
+        - $type: Notice
           $if: $ctx.typeResult.errorText
           label: $ctx.typeResult.errorText
           variant: danger
-        - $type: task:Notice
+        - $type: Notice
           $if: $ctx.typeResult.undeliveredText
           label: $ctx.typeResult.undeliveredText
           variant: warning
-        - $type: task:Notice
+        - $type: Notice
           $if: $ctx.priorityResult.errorText
           label: $ctx.priorityResult.errorText
           variant: danger
-        - $type: task:Notice
+        - $type: Notice
           $if: $ctx.priorityResult.undeliveredText
           label: $ctx.priorityResult.undeliveredText
           variant: warning
         # claimTask and releaseTask share one key: the forms of the Assignee popover.
-        - $type: task:Notice
+        - $type: Notice
           $if: $ctx.assigneeResult.errorText
           label: $ctx.assigneeResult.errorText
           variant: danger
-        - $type: task:Notice
+        - $type: Notice
           $if: $ctx.assigneeResult.undeliveredText
           label: $ctx.assigneeResult.undeliveredText
           variant: warning
-        - $type: task:Notice
+        - $type: Notice
           $if: $ctx.labelResult.errorText
           label: $ctx.labelResult.errorText
           variant: danger
-        - $type: task:Notice
+        - $type: Notice
           $if: $ctx.labelResult.undeliveredText
           label: $ctx.labelResult.undeliveredText
           variant: warning
-        - $type: task:Notice
+        - $type: Notice
           $if: $ctx.metaResult.errorText
           label: $ctx.metaResult.errorText
           variant: danger
-        - $type: task:Notice
+        - $type: Notice
           $if: $ctx.metaResult.undeliveredText
           label: $ctx.metaResult.undeliveredText
           variant: warning
-        - $type: task:Notice
+        - $type: Notice
           $if: $ctx.parentResult.errorText
           label: $ctx.parentResult.errorText
           variant: danger
-        - $type: task:Notice
+        - $type: Notice
           $if: $ctx.parentResult.undeliveredText
           label: $ctx.parentResult.undeliveredText
           variant: warning
-        - $type: task:Notice
+        - $type: Notice
           $if: $ctx.linkResult.errorText
           label: $ctx.linkResult.errorText
           variant: danger
-        - $type: task:Notice
+        - $type: Notice
           $if: $ctx.linkResult.undeliveredText
           label: $ctx.linkResult.undeliveredText
           variant: warning
         # The x of a link row (removeLinkRow, own result key): drawn here, outside the relation groups, which vanish with the last link.
-        - $type: task:Notice
+        - $type: Notice
           $if: $ctx.linkRowResult.errorText
           label: $ctx.linkRowResult.errorText
           variant: danger
-        - $type: task:Notice
+        - $type: Notice
           $if: $ctx.linkRowResult.undeliveredText
           label: $ctx.linkRowResult.undeliveredText
           variant: warning
-        - $type: task:Notice
+        - $type: Notice
           $if: $ctx.textResult.errorText
           label: $ctx.textResult.errorText
           variant: danger
-        - $type: task:Notice
+        - $type: Notice
           $if: $ctx.textResult.undeliveredText
           label: $ctx.textResult.undeliveredText
           variant: warning
-        - $type: task:Notice
+        - $type: Notice
           $if: $ctx.subtaskResult.errorText
           label: $ctx.subtaskResult.errorText
           variant: danger
-        - $type: task:Notice
+        - $type: Notice
           $if: $ctx.subtaskResult.undeliveredText
           label: $ctx.subtaskResult.undeliveredText
           variant: warning
         # The detach button of a sub-task row (detachChild): its own key, drawn here so the answer outlives the row.
-        - $type: task:Notice
+        - $type: Notice
           $if: $ctx.detachResult.errorText
           label: $ctx.detachResult.errorText
           variant: danger
-        - $type: task:Notice
+        - $type: Notice
           $if: $ctx.detachResult.undeliveredText
           label: $ctx.detachResult.undeliveredText
           variant: warning
         # addComment, editComment and removeComment share one key: the comment actions of the Activity block.
-        - $type: task:Notice
+        - $type: Notice
           $if: $ctx.commentResult.errorText
           label: $ctx.commentResult.errorText
           variant: danger
-        - $type: task:Notice
+        - $type: Notice
           $if: $ctx.commentResult.undeliveredText
           label: $ctx.commentResult.undeliveredText
           variant: warning
@@ -145,7 +145,7 @@ title.edit:
         $use: params.task
 # Blocked by N open tasks: said once, in the header (the blockers themselves are the "Blocked by" relation).
 blocked.notice:
-    $type: task:Notice
+    $type: Notice
     $if: $sources.detail.blockedText
     label: $sources.detail.blockedText
     variant: warning
@@ -213,7 +213,7 @@ delete.dialog:
         - $type: VerticalStack
           gap: gap-4
           items:
-              - $type: task:Notice
+              - $type: Notice
                 label: $sources.detail.deleteImpactText
                 variant: warning
               # Two buttons, each saying what happens to the children: a view reads no form state, so a switch could not change the
@@ -378,7 +378,7 @@ assignee.takeover:
         - $type: VerticalStack
           gap: gap-4
           items:
-              - $type: task:Notice
+              - $type: Notice
                 label: $sources.detail.takeOverText
                 variant: warning
               - $type: Form

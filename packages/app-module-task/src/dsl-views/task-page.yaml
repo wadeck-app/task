@@ -16,7 +16,7 @@
 # id, when it was opened, and on the right a direct Delete button); a main column (description, sub-tasks, relations, activity)
 # and a sticky right sidebar WITHOUT card or background: the Type and Status pills on one line (type to the left, no labels),
 # then rows with the label on the left and the value on the right, separated by dividers (Parent, Labels, Metadata, Updated).
-# The sidebar stacks ABOVE the main column below 1024 px (task:SplitLayout sideFirstWhenStacked).
+# The sidebar stacks ABOVE the main column below 1024 px (SplitLayout sideFirstWhenStacked).
 # Each fact (id, status, type, parent, labels, dates, title, body, activity, comments) is shown ONCE, where it is edited (a test
 # counts). The status is ONE task:StatusSelect pill, never a stepper or a visible list. No word "terminal" anywhere: the colour of
 # the pill and of the dots (green closed, red closed negatively) says it.
@@ -40,7 +40,7 @@
 # - `&inlineErrors=true`: the DSL drops the answer of a failed request, so the routes answer a failure as data (`errorText`,
 #   one line with the hint) and the page shows it;
 # - `resultKey` publishes the answer as $ctx.<key>: the error, and what the queue did not receive (`undeliveredText`),
-#   are shown by the feedback block of the design (task:Notice, which wraps; a Badge keeps one line).
+#   are shown by the feedback block of the design (Notice, which wraps; a Badge keeps one line).
 # The sources are fed by `projectQuery` (the project, else `blank=true`): the shell keeps the last answer of a source it
 # skips, so an unknown or unreadable project must replace the previous task with an empty answer, not skip the request.
 $sources:
@@ -185,35 +185,35 @@ $actions:
 $type: PageContent
 maxWidth: full
 sections:
-  - $type: task:Notice
+  - $type: Notice
     $if: $sources.projects.noProjects
     label: $sources.projects.noProjectsText
     variant: info
-  - $type: task:Notice
+  - $type: Notice
     $if: $sources.projects.selectedProblem
     label: $sources.projects.selectedProblem
     variant: danger
-  - $type: task:Notice
+  - $type: Notice
     $if: $sources.projects.unknownProjectText
     label: $sources.projects.unknownProjectText
     variant: danger
-  - $type: task:Notice
+  - $type: Notice
     $if: $ctx.deleteResult.errorText
     label: $ctx.deleteResult.errorText
     variant: danger
-  - $type: task:Notice
+  - $type: Notice
     $if: $ctx.deleteResult.deletedText
     label: $ctx.deleteResult.deletedText
     variant: success
-  - $type: task:Notice
+  - $type: Notice
     $if: $ctx.deleteResult.undeliveredText
     label: $ctx.deleteResult.undeliveredText
     variant: warning
-  - $type: task:Notice
+  - $type: Notice
     $if: $sources.detail.errorText
     label: $sources.detail.errorText
     variant: danger
-  - $type: task:Notice
+  - $type: Notice
     $if: $sources.detail.warningText
     label: $sources.detail.warningText
     variant: warning
@@ -283,7 +283,7 @@ sections:
                           - $type: VerticalStack
                             gap: gap-4
                             items:
-                              - $type: task:Notice
+                              - $type: Notice
                                 label: $sources.detail.deleteImpactText
                                 variant: warning
                               - $type: Form
@@ -306,14 +306,15 @@ sections:
                                     label: $sources.detail.deleteCascadeLabel
                                     variant: danger-outline
                                     type: submit
-                  - $type: task:Notice
+                  - $type: Notice
                     $if: $sources.detail.blockedText
                     label: $sources.detail.blockedText
                     variant: warning
-              - $type: task:SplitLayout
+              - $type: SplitLayout
                 sidePosition: right
                 sideWidth: normal
                 sticky: true
+                stickyTop: top-32
                 sideFirstWhenStacked: true
                 main:
                   - $type: VerticalStack
@@ -322,107 +323,107 @@ sections:
                       - $type: VerticalStack
                         gap: gap-2
                         items:
-                          - $type: task:Notice
+                          - $type: Notice
                             $if: $ctx.statusResult.errorText
                             label: $ctx.statusResult.errorText
                             variant: danger
-                          - $type: task:Notice
+                          - $type: Notice
                             $if: $ctx.statusResult.undeliveredText
                             label: $ctx.statusResult.undeliveredText
                             variant: warning
-                          - $type: task:Notice
+                          - $type: Notice
                             $if: $ctx.typeResult.errorText
                             label: $ctx.typeResult.errorText
                             variant: danger
-                          - $type: task:Notice
+                          - $type: Notice
                             $if: $ctx.typeResult.undeliveredText
                             label: $ctx.typeResult.undeliveredText
                             variant: warning
-                          - $type: task:Notice
+                          - $type: Notice
                             $if: $ctx.priorityResult.errorText
                             label: $ctx.priorityResult.errorText
                             variant: danger
-                          - $type: task:Notice
+                          - $type: Notice
                             $if: $ctx.priorityResult.undeliveredText
                             label: $ctx.priorityResult.undeliveredText
                             variant: warning
-                          - $type: task:Notice
+                          - $type: Notice
                             $if: $ctx.assigneeResult.errorText
                             label: $ctx.assigneeResult.errorText
                             variant: danger
-                          - $type: task:Notice
+                          - $type: Notice
                             $if: $ctx.assigneeResult.undeliveredText
                             label: $ctx.assigneeResult.undeliveredText
                             variant: warning
-                          - $type: task:Notice
+                          - $type: Notice
                             $if: $ctx.labelResult.errorText
                             label: $ctx.labelResult.errorText
                             variant: danger
-                          - $type: task:Notice
+                          - $type: Notice
                             $if: $ctx.labelResult.undeliveredText
                             label: $ctx.labelResult.undeliveredText
                             variant: warning
-                          - $type: task:Notice
+                          - $type: Notice
                             $if: $ctx.metaResult.errorText
                             label: $ctx.metaResult.errorText
                             variant: danger
-                          - $type: task:Notice
+                          - $type: Notice
                             $if: $ctx.metaResult.undeliveredText
                             label: $ctx.metaResult.undeliveredText
                             variant: warning
-                          - $type: task:Notice
+                          - $type: Notice
                             $if: $ctx.parentResult.errorText
                             label: $ctx.parentResult.errorText
                             variant: danger
-                          - $type: task:Notice
+                          - $type: Notice
                             $if: $ctx.parentResult.undeliveredText
                             label: $ctx.parentResult.undeliveredText
                             variant: warning
-                          - $type: task:Notice
+                          - $type: Notice
                             $if: $ctx.linkResult.errorText
                             label: $ctx.linkResult.errorText
                             variant: danger
-                          - $type: task:Notice
+                          - $type: Notice
                             $if: $ctx.linkResult.undeliveredText
                             label: $ctx.linkResult.undeliveredText
                             variant: warning
-                          - $type: task:Notice
+                          - $type: Notice
                             $if: $ctx.linkRowResult.errorText
                             label: $ctx.linkRowResult.errorText
                             variant: danger
-                          - $type: task:Notice
+                          - $type: Notice
                             $if: $ctx.linkRowResult.undeliveredText
                             label: $ctx.linkRowResult.undeliveredText
                             variant: warning
-                          - $type: task:Notice
+                          - $type: Notice
                             $if: $ctx.textResult.errorText
                             label: $ctx.textResult.errorText
                             variant: danger
-                          - $type: task:Notice
+                          - $type: Notice
                             $if: $ctx.textResult.undeliveredText
                             label: $ctx.textResult.undeliveredText
                             variant: warning
-                          - $type: task:Notice
+                          - $type: Notice
                             $if: $ctx.subtaskResult.errorText
                             label: $ctx.subtaskResult.errorText
                             variant: danger
-                          - $type: task:Notice
+                          - $type: Notice
                             $if: $ctx.subtaskResult.undeliveredText
                             label: $ctx.subtaskResult.undeliveredText
                             variant: warning
-                          - $type: task:Notice
+                          - $type: Notice
                             $if: $ctx.detachResult.errorText
                             label: $ctx.detachResult.errorText
                             variant: danger
-                          - $type: task:Notice
+                          - $type: Notice
                             $if: $ctx.detachResult.undeliveredText
                             label: $ctx.detachResult.undeliveredText
                             variant: warning
-                          - $type: task:Notice
+                          - $type: Notice
                             $if: $ctx.commentResult.errorText
                             label: $ctx.commentResult.errorText
                             variant: danger
-                          - $type: task:Notice
+                          - $type: Notice
                             $if: $ctx.commentResult.undeliveredText
                             label: $ctx.commentResult.undeliveredText
                             variant: warning
@@ -667,7 +668,7 @@ sections:
                                           - $type: VerticalStack
                                             gap: gap-4
                                             items:
-                                              - $type: task:Notice
+                                              - $type: Notice
                                                 label: $sources.detail.takeOverText
                                                 variant: warning
                                               - $type: Form

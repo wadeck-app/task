@@ -19,7 +19,6 @@ import { KeyValueList } from '../components/KeyValueList.js'
 import { LabelChips } from '../components/LabelChips.js'
 import { LabelCombobox } from '../components/LabelCombobox.js'
 import { MetaEditor } from '../components/MetaEditor.js'
-import { Notice } from '../components/Notice.js'
 import { Panel } from '../components/Panel.js'
 import { ProgressSummary } from '../components/ProgressSummary.js'
 import { ProjectAccordion } from '../components/ProjectAccordion.js'
@@ -27,7 +26,6 @@ import { PropertyList } from '../components/PropertyList.js'
 import { PropertyPopover } from '../components/PropertyPopover.js'
 import { PropertyRow } from '../components/PropertyRow.js'
 import { SegmentedControl } from '../components/SegmentedControl.js'
-import { SplitLayout } from '../components/SplitLayout.js'
 import { StatusBadge } from '../components/StatusBadge.js'
 import { StatusSelect } from '../components/StatusSelect.js'
 import { TabPanels } from '../components/TabPanels.js'
@@ -38,6 +36,7 @@ import { TaskRowList } from '../components/TaskRowList.js'
 import { Timeline } from '../components/Timeline.js'
 import { TitleText } from '../components/TitleText.js'
 import { WidthFrame } from '../components/WidthFrame.js'
+declare const process: { env: { NODE_ENV?: string } }
 
 export const ActionSelectEntry: ComponentRegistryEntry = {
 	name: 'ActionSelect', category: 'atomic', tags: ["select","status","type","action","choice"],
@@ -289,16 +288,6 @@ export const MetaEditorEntry: ComponentRegistryEntry = {
 	},
 }
 
-export const NoticeEntry: ComponentRegistryEntry = {
-	name: 'Notice', category: 'atomic', tags: ["notice","message","feedback","alert"],
-	nodeSchema: null as never,
-	render: ({ node, ctx }: RegistryRenderProps) => {
-		const label = coerceProp(resolveExpressionValue(node['label'], ctx), 'Notice.label', 'string', true) as import('../components/Notice.js').NoticeProps['label']
-		const variant = coerceProp(resolveExpressionValue(node['variant'], ctx), 'Notice.variant', 'primitive', false) as import('../components/Notice.js').NoticeProps['variant']
-		return <Notice label={label} variant={variant} />
-	},
-}
-
 export const PanelEntry: ComponentRegistryEntry = {
 	name: 'Panel', category: 'disposition', tags: ["panel","section","card","collapsible"],
 	nodeSchema: null as never,
@@ -405,21 +394,6 @@ export const SegmentedControlEntry: ComponentRegistryEntry = {
 		const onAction = coerceProp(resolveExpressionValue(node['onAction'], ctx) ?? pageActionHandler(ctx), 'SegmentedControl.onAction', 'function', false) as import('../components/SegmentedControl.js').SegmentedControlProps['onAction']
 		const actionPending = coerceProp(resolveExpressionValue(node['actionPending'], ctx) ?? ctx['$actionPending'], 'SegmentedControl.actionPending', 'object', false) as import('../components/SegmentedControl.js').SegmentedControlProps['actionPending']
 		return <SegmentedControl options={options} value={value} action={action} valueParam={valueParam} params={params} appearance={appearance} size={size} fullWidth={fullWidth} ariaLabel={ariaLabel} onAction={onAction} actionPending={actionPending} />
-	},
-}
-
-export const SplitLayoutEntry: ComponentRegistryEntry = {
-	name: 'SplitLayout', category: 'disposition', tags: ["layout","split","sidebar","responsive"],
-	nodeSchema: null as never,
-	render: ({ node, registry, ctx }: RegistryRenderProps) => {
-		const main = node['main'] as unknown[] | undefined
-		const side = node['side'] as unknown[] | undefined
-		const sidePosition = coerceProp(resolveExpressionValue(node['sidePosition'], ctx), 'SplitLayout.sidePosition', 'primitive', false) as import('../components/SplitLayout.js').SplitLayoutProps['sidePosition']
-		const sideWidth = coerceProp(resolveExpressionValue(node['sideWidth'], ctx), 'SplitLayout.sideWidth', 'primitive', false) as import('../components/SplitLayout.js').SplitLayoutProps['sideWidth']
-		const sticky = coerceProp(resolveExpressionValue(node['sticky'], ctx), 'SplitLayout.sticky', 'primitive', false) as import('../components/SplitLayout.js').SplitLayoutProps['sticky']
-		const gap = coerceProp(resolveExpressionValue(node['gap'], ctx), 'SplitLayout.gap', 'primitive', false) as import('../components/SplitLayout.js').SplitLayoutProps['gap']
-		const sideFirstWhenStacked = coerceProp(resolveExpressionValue(node['sideFirstWhenStacked'], ctx), 'SplitLayout.sideFirstWhenStacked', 'primitive', false) as import('../components/SplitLayout.js').SplitLayoutProps['sideFirstWhenStacked']
-		return <SplitLayout main={main ? renderChildren(main, registry, ctx) : null} side={side ? renderChildren(side, registry, ctx) : null} sidePosition={sidePosition} sideWidth={sideWidth} sticky={sticky} gap={gap} sideFirstWhenStacked={sideFirstWhenStacked} />
 	},
 }
 
@@ -610,7 +584,6 @@ export const allEntries: ComponentRegistryEntry[] = [
 	LabelChipsEntry,
 	LabelComboboxEntry,
 	MetaEditorEntry,
-	NoticeEntry,
 	PanelEntry,
 	ProgressSummaryEntry,
 	ProjectAccordionEntry,
@@ -618,7 +591,6 @@ export const allEntries: ComponentRegistryEntry[] = [
 	PropertyPopoverEntry,
 	PropertyRowEntry,
 	SegmentedControlEntry,
-	SplitLayoutEntry,
 	StatusBadgeEntry,
 	StatusSelectEntry,
 	TabPanelsEntry,
@@ -633,46 +605,44 @@ export const allEntries: ComponentRegistryEntry[] = [
 
 // ─── Auto-detected metadata (allowedChildren, providesContext, requiresContext) ─
 // Generated from @slot JSDoc tags and createContext/useContext calls in component sources.
-ActionSelectEntry.knownKeys = ["action","actionPending","allowEmpty","appearance","ariaLabel","disabled","onAction","options","params","placeholder","value","valueParam"];
+ActionSelectEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["action","actionPending","allowEmpty","appearance","ariaLabel","disabled","onAction","options","params","placeholder","value","valueParam"] : [];
 ActivityFeedEntry.allowedChildren = {"commentsContent":["layout","display","composite","atomic","form"],"composer":["layout","display","composite","atomic","form"]};
-ActivityFeedEntry.knownKeys = ["commentsContent","composer","counts","defaultFilter","emptyText","filters","now","pageSize","rows"];
-BreadcrumbTrailEntry.knownKeys = ["currentLabel","items","maxItems","separator"];
-CaptionEntry.knownKeys = ["mono","text","tone"];
+ActivityFeedEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["commentsContent","composer","counts","defaultFilter","emptyText","filters","now","pageSize","rows"] : [];
+BreadcrumbTrailEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["currentLabel","items","maxItems","separator"] : [];
+CaptionEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["mono","text","tone"] : [];
 ChipRowEntry.allowedChildren = {"items":["atomic","composite","display"]};
-ChipRowEntry.knownKeys = ["align","gap","items","justify"];
-CommentComposerEntry.knownKeys = ["action","actionPending","author","buttonLabel","maxLength","onAction","params","placeholder"];
-CommentThreadEntry.knownKeys = ["actionPending","comments","editAction","emptyText","newestFirst","now","onAction","params","readOnly","removeAction"];
-ControlButtonEntry.knownKeys = ["action","actionPending","disabled","hint","icon","label","onAction","params","variant"];
-InlineTextEntry.knownKeys = ["action","actionPending","allowEmpty","ariaLabel","collapsedLines","maxLength","multiline","onAction","params","placeholder","readOnly","textClass","value","valueParam"];
-KanbanBoardEntry.knownKeys = ["actionPending","allStatuses","apiBase","boardPath","cardPath","columns","config","configPath","emptyText","eventsPath","finishedNote","hiddenNote","idParam","moveAction","movePath","onAction","params","pollSeconds","projectParam","readOnly","version"];
-KeyValueListEntry.knownKeys = ["density","emptyText","entries"];
-LabelChipsEntry.knownKeys = ["actionPending","addAction","colors","emptyText","labelKeys","labelParam","labels","onAction","params","placeholder","readOnly","removeAction","size"];
-LabelComboboxEntry.knownKeys = ["actionPending","addAction","apiBase","colors","emptyText","labelKeys","labelParam","labels","onAction","params","placeholder","projectParam","readOnly","removeAction","size","suggestions"];
-MetaEditorEntry.knownKeys = ["actionPending","collapseAfter","emptyText","entries","keyParam","keySuggestions","onAction","params","readOnly","removeAction","setAction","valueParam"];
-NoticeEntry.knownKeys = ["label","variant"];
+ChipRowEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["align","gap","items","justify"] : [];
+CommentComposerEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["action","actionPending","author","buttonLabel","maxLength","onAction","params","placeholder"] : [];
+CommentThreadEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["actionPending","comments","editAction","emptyText","newestFirst","now","onAction","params","readOnly","removeAction"] : [];
+ControlButtonEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["action","actionPending","disabled","hint","icon","label","onAction","params","variant"] : [];
+InlineTextEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["action","actionPending","allowEmpty","ariaLabel","collapsedLines","maxLength","multiline","onAction","params","placeholder","readOnly","textClass","value","valueParam"] : [];
+KanbanBoardEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["actionPending","allStatuses","apiBase","boardPath","cardPath","columns","config","configPath","emptyText","eventsPath","finishedNote","hiddenNote","idParam","moveAction","movePath","onAction","params","pollSeconds","projectParam","readOnly","version"] : [];
+KeyValueListEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["density","emptyText","entries"] : [];
+LabelChipsEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["actionPending","addAction","colors","emptyText","labelKeys","labelParam","labels","onAction","params","placeholder","readOnly","removeAction","size"] : [];
+LabelComboboxEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["actionPending","addAction","apiBase","colors","emptyText","labelKeys","labelParam","labels","onAction","params","placeholder","projectParam","readOnly","removeAction","size","suggestions"] : [];
+MetaEditorEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["actionPending","collapseAfter","emptyText","entries","keyParam","keySuggestions","onAction","params","readOnly","removeAction","setAction","valueParam"] : [];
 PanelEntry.allowedChildren = {"actions":["layout","display","composite","atomic"],"items":["layout","table","form","display","composite","atomic"]};
-PanelEntry.knownKeys = ["actions","appearance","collapsible","count","defaultOpen","items","title"];
-ProgressSummaryEntry.knownKeys = ["appearance","done","text","tone","total"];
-ProjectAccordionEntry.knownKeys = ["projects"];
+PanelEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["actions","appearance","collapsible","count","defaultOpen","items","title"] : [];
+ProgressSummaryEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["appearance","done","text","tone","total"] : [];
+ProjectAccordionEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["projects"] : [];
 PropertyListEntry.allowedChildren = {"items":["composite"]};
-PropertyListEntry.knownKeys = ["density","dividers","hideTipsOnNarrow","items","labelPlacement","labelWidth"];
+PropertyListEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["density","dividers","hideTipsOnNarrow","items","labelPlacement","labelWidth"] : [];
 PropertyListEntry.providesContext = ["PropertyLayoutContext"];
 PropertyPopoverEntry.allowedChildren = {"items":["layout","display","composite","atomic","form"]};
-PropertyPopoverEntry.knownKeys = ["action","actionLabel","actionPending","align","appearance","bodyKey","closeOnActions","disabled","empty","icon","items","label","onAction","options","params","tone","value","valueParam","valueText"];
+PropertyPopoverEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["action","actionLabel","actionPending","align","appearance","bodyKey","closeOnActions","disabled","empty","icon","items","label","onAction","options","params","tone","value","valueParam","valueText"] : [];
 PropertyPopoverEntry.providesContext = ["InsidePopoverContext"];
 PropertyRowEntry.allowedChildren = {"items":["layout","display","composite","atomic","form"]};
-PropertyRowEntry.knownKeys = ["align","hint","items","label"];
+PropertyRowEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["align","hint","items","label"] : [];
 PropertyRowEntry.requiresContext = ["PropertyLayoutContext"];
-SegmentedControlEntry.knownKeys = ["action","actionPending","appearance","ariaLabel","fullWidth","onAction","options","params","size","value","valueParam"];
-SplitLayoutEntry.knownKeys = ["gap","main","side","sideFirstWhenStacked","sidePosition","sideWidth","sticky"];
-StatusBadgeEntry.knownKeys = ["appearance","icon","label","mono","size","tone"];
-StatusSelectEntry.knownKeys = ["action","actionPending","appearance","bodyKey","current","disabled","label","onAction","options","params","valueParam"];
-TabPanelsEntry.knownKeys = ["counts","defaultTab","tabs"];
-TaskChecklistEntry.knownKeys = ["actionPending","addAction","detachAction","detachIdParam","detachLabel","doneAction","emptyText","idParam","onAction","params","parentId","parentKey","placeholder","progress","reopenAction","reopenStatus","rows","statusParam","terminalStatus","titleKey"];
-TaskListEntry.knownKeys = ["emptyMessage","now","priorityOrder","projects","rows","scope","storageKey"];
-TaskPickerEntry.knownKeys = ["action","actionPending","apiBase","ariaLabel","bodyKey","choiceKey","choiceLabel","choices","clearable","debounceMs","disabled","excludeDescendantsOf","excludeIds","layout","limit","onAction","params","placeholder","projectParam"];
-TaskRowListEntry.knownKeys = ["actionPending","appearance","density","emptyText","maxRows","onAction","removeAction","removeLabel","rows","showId","showStatus"];
-TimelineEntry.knownKeys = ["emptyText","entries","groupByDay","order","showIcons"];
-TitleTextEntry.knownKeys = ["expandable","lines","size","text","tooltip"];
+SegmentedControlEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["action","actionPending","appearance","ariaLabel","fullWidth","onAction","options","params","size","value","valueParam"] : [];
+StatusBadgeEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["appearance","icon","label","mono","size","tone"] : [];
+StatusSelectEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["action","actionPending","appearance","bodyKey","current","disabled","label","onAction","options","params","valueParam"] : [];
+TabPanelsEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["counts","defaultTab","tabs"] : [];
+TaskChecklistEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["actionPending","addAction","detachAction","detachIdParam","detachLabel","doneAction","emptyText","idParam","onAction","params","parentId","parentKey","placeholder","progress","reopenAction","reopenStatus","rows","statusParam","terminalStatus","titleKey"] : [];
+TaskListEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["emptyMessage","now","priorityOrder","projects","rows","scope","storageKey"] : [];
+TaskPickerEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["action","actionPending","apiBase","ariaLabel","bodyKey","choiceKey","choiceLabel","choices","clearable","debounceMs","disabled","excludeDescendantsOf","excludeIds","layout","limit","onAction","params","placeholder","projectParam"] : [];
+TaskRowListEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["actionPending","appearance","density","emptyText","maxRows","onAction","removeAction","removeLabel","rows","showId","showStatus"] : [];
+TimelineEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["emptyText","entries","groupByDay","order","showIcons"] : [];
+TitleTextEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["expandable","lines","size","text","tooltip"] : [];
 WidthFrameEntry.allowedChildren = {"items":["layout","table","form","display","composite","atomic"]};
-WidthFrameEntry.knownKeys = ["expandable","items","width"];
+WidthFrameEntry.knownKeys = process.env.NODE_ENV !== 'production' ? ["expandable","items","width"] : [];

@@ -87,7 +87,7 @@ describe('the page frame', () => {
 		expect(page.maxWidth).toBe('full');
 	});
 
-	// task:Notice everywhere (same radius, padding and text as the controls; a dsl-ui Badge is a one-line 22px pill). The answer of the
+	// Notice everywhere (same radius, padding and text as the controls; a dsl-ui Badge is a one-line 22px pill). The answer of the
 	// delete comes BEFORE "task not found": once the task is gone the page cannot draw it, and the reader meets what happened first.
 	it('keeps the notices OUTSIDE the view, so the page has its error and empty states (and the delete answer survives the task)', () => {
 		const expected: [string, string, string][] = [
@@ -101,7 +101,7 @@ describe('the page frame', () => {
 			['$sources.detail.warningText', '$sources.detail.warningText', 'warning'],
 		];
 		expect(notices.map(n => [n.$if, n.label, n.variant, n.$type])).toEqual(
-			expected.map(([condition, label, variant]) => [condition, label, variant, 'task:Notice'])
+			expected.map(([condition, label, variant]) => [condition, label, variant, 'Notice'])
 		);
 	});
 
@@ -245,7 +245,7 @@ describe('every fact is shown once (single source of truth)', () => {
 	it.each(designs)(
 		'%s: the type and the status are two pills of ONE row, the type to the LEFT, at the top of the sidebar',
 		(name, view) => {
-			const split = nodesOf(view).find(n => n.$type === 'task:SplitLayout')!;
+			const split = nodesOf(view).find(n => n.$type === 'SplitLayout')!;
 			const sideStack = (split.side as Node[])[0]!;
 			const first = (sideStack.items as Node[])[0]!;
 			expect(first.$type, name).toBe('task:ChipRow');
@@ -534,7 +534,7 @@ describe('priority, assignee and claim', () => {
 		const dialog = nodes.find(n => n.$type === 'Dialog' && n.title === 'Take this task over?')!;
 		expect(dialog.$if).toBe('$sources.detail.leaseHeld');
 		const inner = nodesOf(dialog);
-		expect(inner.find(n => n.$type === 'task:Notice')).toMatchObject({
+		expect(inner.find(n => n.$type === 'Notice')).toMatchObject({
 			label: '$sources.detail.takeOverText',
 			variant: 'warning',
 		});
@@ -616,12 +616,12 @@ describe('the delete: a direct button with the existing confirmation dialog', ()
 });
 
 describe('the sidebar: GitHub look without card, Jira rows (label left, value right on ONE line)', () => {
-	const split = nodesOf(base).find(n => n.$type === 'task:SplitLayout')!;
+	const split = nodesOf(base).find(n => n.$type === 'SplitLayout')!;
 	const side = nodesOf(split.side);
 
 	it('is a sticky right column that stacks ABOVE the main column on small screens', () => {
 		expect(split).toMatchObject({ sidePosition: 'right', sticky: true, sideFirstWhenStacked: true });
-		expect(nodesOf(base).filter(n => n.$type === 'task:SplitLayout')).toHaveLength(1);
+		expect(nodesOf(base).filter(n => n.$type === 'SplitLayout')).toHaveLength(1);
 	});
 
 	it('has no card, no background and no collapsible section: no task:Panel at all', () => {
@@ -708,9 +708,9 @@ describe('feedback: the error and the undelivered events of every action are sho
 		'commentResult',
 	];
 	it.each(designs)(
-		'%s: one task:Notice for the error and one for the undelivered events of each result key',
+		'%s: one Notice for the error and one for the undelivered events of each result key',
 		(name, view) => {
-			const shownNotices = nodesOf(view).filter(n => n.$type === 'task:Notice' || n.$type === 'Badge');
+			const shownNotices = nodesOf(view).filter(n => n.$type === 'Notice' || n.$type === 'Badge');
 			for (const key of RESULT_KEYS) {
 				for (const [field, variant] of [
 					['errorText', 'danger'],
@@ -719,7 +719,7 @@ describe('feedback: the error and the undelivered events of every action are sho
 					const shown = shownNotices.filter(n => n.label === `$ctx.${key}.${field}`);
 					expect(shown, `${name}: $ctx.${key}.${field}`).toHaveLength(1);
 					expect(shown[0], `${name}: ${key} ${field}`).toMatchObject({
-						$type: 'task:Notice',
+						$type: 'Notice',
 						$if: `$ctx.${key}.${field}`,
 						variant,
 					});
@@ -733,14 +733,14 @@ describe('feedback: the error and the undelivered events of every action are sho
 	it.each(designs)(
 		'%s: the detach Notice sits in the main column feedback block, with the other answers',
 		(name, view) => {
-			const split = nodesOf(view).find(n => n.$type === 'task:SplitLayout')!;
+			const split = nodesOf(view).find(n => n.$type === 'SplitLayout')!;
 			expect(
 				nodesOf(split.main).filter(n => n.label === '$ctx.detachResult.errorText'),
 				name
 			).toHaveLength(1);
 			expect(
 				// The answers are in the main column; the only Notice of the sidebar is the take-over warning inside its dialog.
-				nodesOf(split.side).filter(n => n.$type === 'task:Notice' && String(n.label).startsWith('$ctx.')),
+				nodesOf(split.side).filter(n => n.$type === 'Notice' && String(n.label).startsWith('$ctx.')),
 				name
 			).toEqual([]);
 		}
@@ -751,7 +751,7 @@ describe('feedback: the error and the undelivered events of every action are sho
 		(name, view) => {
 			const result = /^\$ctx\.\w+\.(undeliveredText|errorText)$/;
 			const plain = nodesOf(view).filter(
-				n => n.$type !== 'task:Notice' && typeof n.label === 'string' && result.test(n.label)
+				n => n.$type !== 'Notice' && typeof n.label === 'string' && result.test(n.label)
 			);
 			expect(
 				plain.map(n => `${String(n.$type)} ${String(n.label)}`),
@@ -1043,6 +1043,8 @@ describe('constructs of the shell', () => {
 // Built-in node types the installed shell is known to render: the ones the pages already use plus those checked in the shell
 // (dsl-ui >= 318). Adding a type here is a decision: check it in the shell first.
 const BUILTIN = new Set([
+	'Notice',
+	'SplitLayout',
 	'PageContent',
 	'Section',
 	'Card',

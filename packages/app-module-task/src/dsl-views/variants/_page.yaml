@@ -14,7 +14,7 @@
 # id, when it was opened, and on the right a direct Delete button); a main column (description, sub-tasks, relations, activity)
 # and a sticky right sidebar WITHOUT card or background: the Type and Status pills on one line (type to the left, no labels),
 # then rows with the label on the left and the value on the right, separated by dividers (Parent, Labels, Metadata, Updated).
-# The sidebar stacks ABOVE the main column below 1024 px (task:SplitLayout sideFirstWhenStacked).
+# The sidebar stacks ABOVE the main column below 1024 px (SplitLayout sideFirstWhenStacked).
 # Each fact (id, status, type, parent, labels, dates, title, body, activity, comments) is shown ONCE, where it is edited (a test
 # counts). The status is ONE task:StatusSelect pill, never a stepper or a visible list. No word "terminal" anywhere: the colour of
 # the pill and of the dots (green closed, red closed negatively) says it.
@@ -38,7 +38,7 @@
 # - `&inlineErrors=true`: the DSL drops the answer of a failed request, so the routes answer a failure as data (`errorText`,
 #   one line with the hint) and the page shows it;
 # - `resultKey` publishes the answer as $ctx.<key>: the error, and what the queue did not receive (`undeliveredText`),
-#   are shown by the feedback block of the design (task:Notice, which wraps; a Badge keeps one line).
+#   are shown by the feedback block of the design (Notice, which wraps; a Badge keeps one line).
 # The sources are fed by `projectQuery` (the project, else `blank=true`): the shell keeps the last answer of a source it
 # skips, so an unknown or unreadable project must replace the previous task with an empty answer, not skip the request.
 $sources:
@@ -184,43 +184,43 @@ $type: PageContent
 # Shown above the view, so the page has the same error and empty states by construction.
 # NO task:project-header slot here (a "Project" link at the top is forbidden: the breadcrumb is for that).
 $notices:
-    # task:Notice for every message (same radius, padding and text size as the controls; wraps, unlike a Badge).
+    # Notice for every message (same radius, padding and text size as the controls; wraps, unlike a Badge).
     # Nothing registered yet: the welcome text of the route (the exact next step) instead of a blank page.
-    - $type: task:Notice
+    - $type: Notice
       $if: $sources.projects.noProjects
       label: $sources.projects.noProjectsText
       variant: info
     # The selected project cannot be read (not initialized, corrupt config...): the reason and the fix, not a blank page.
-    - $type: task:Notice
+    - $type: Notice
       $if: $sources.projects.selectedProblem
       label: $sources.projects.selectedProblem
       variant: danger
     # The address names a project the registry does not know (a stale bookmark): said, with the next step, not a blank page.
-    - $type: task:Notice
+    - $type: Notice
       $if: $sources.projects.unknownProjectText
       label: $sources.projects.unknownProjectText
       variant: danger
     # The delete dialog: its answer stays on screen after the task is gone (the designs are not drawn without a task). It comes
     # BEFORE "task not found", which the reload after the deletion causes: what happened is read first.
-    - $type: task:Notice
+    - $type: Notice
       $if: $ctx.deleteResult.errorText
       label: $ctx.deleteResult.errorText
       variant: danger
-    - $type: task:Notice
+    - $type: Notice
       $if: $ctx.deleteResult.deletedText
       label: $ctx.deleteResult.deletedText
       variant: success
-    - $type: task:Notice
+    - $type: Notice
       $if: $ctx.deleteResult.undeliveredText
       label: $ctx.deleteResult.undeliveredText
       variant: warning
     # The task does not exist (or the id is ambiguous): what was asked and what to do.
-    - $type: task:Notice
+    - $type: Notice
       $if: $sources.detail.errorText
       label: $sources.detail.errorText
       variant: danger
     # Repairable inconsistencies of this task (dangling parent...), with the command that fixes them.
-    - $type: task:Notice
+    - $type: Notice
       $if: $sources.detail.warningText
       label: $sources.detail.warningText
       variant: warning
@@ -254,10 +254,11 @@ $view:
                                 - $use: created.date
                           - $use: delete.dialog
                     - $use: blocked.notice
-              - $type: task:SplitLayout
+              - $type: SplitLayout
                 sidePosition: right
                 sideWidth: normal
                 sticky: true
+                stickyTop: top-32
                 sideFirstWhenStacked: true
                 main:
                     - $type: VerticalStack

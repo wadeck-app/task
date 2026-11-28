@@ -264,7 +264,12 @@ export const PACKAGE_RULES: Record<PackageName, PackageRule> = {
 			...NO_REGISTRY_WRITE,
 			NO_PROJECT_DATA_DIR,
 			NO_COMPUTED_IMPORT,
-			{ pattern: /\bprocess\.(?:env|argv|exit|cwd)\b/, why: 'no Node process API in browser code' },
+			// `process.env.NODE_ENV` alone is allowed: the generated entries (dsl-renderer's generator) guard their dev-only key lists with it and
+			// the bundle build folds it away (checked: every knownKeys list is `[]` in dist-module/dsl-lib/entries.mjs). Any other process API stays refused.
+			{
+				pattern: /\bprocess\.(?:env(?!\.NODE_ENV\b)|argv|exit|cwd)\b/,
+				why: 'no Node process API in browser code (only process.env.NODE_ENV, which the bundle build replaces)',
+			},
 		],
 	},
 };

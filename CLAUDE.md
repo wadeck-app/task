@@ -182,7 +182,7 @@ Detail: `docs/claude/queue-events.md` (payload table, declaration, outcome mappi
 - `packages/dsl-lib-task` holds React components loaded as `task:<Name>` (`createTaskLibEntries({ apiBase, routeBase })`, manifest `dslLib.shared`). Browser code only: react, react-dom, dsl-ui, dsl-renderer, lucide-react and relative imports; never task-service, task-core or a `node:` module.
 - Entries are GENERATED (`npm run entries --workspace=packages/dsl-lib-task`, committed, freshness-tested); the stylesheet by `npm run css`. Object props holding expressions need `@resolveDeep` in their JSDoc.
 - Actions: controls call `onAction(name, params, { body })` (body needs dsl-ui >= 318); the default handler is `pageActionHandler` (publishes `resultKey`). A label or key with `/` or `%` travels as base64url (`label-keys`, `meta-keys`).
-- Visual tokens in `src/ui/tokens.ts` (control height `h-8`, `gap-2` / `gap-4`); `controlTokens.test.tsx` fails on another height or gap. A row of several chips is a `ChipRow`; feedback texts are `task:Notice`, never a Badge; pickers keep the input on top and results below.
+- Visual tokens in `src/ui/tokens.ts` (control height `h-8`, `gap-2` / `gap-4`); `controlTokens.test.tsx` fails on another height or gap. A row of several chips is a `ChipRow`; feedback texts are dsl-ui `Notice`, never a Badge; pickers keep the input on top and results below.
 - Navigation uses plain `<a href>`.
 
 Detail: `docs/claude/task-components.md` (component table, props, transfer checklist)

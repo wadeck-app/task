@@ -48,31 +48,31 @@ sections:
       label: $sources.projects.noProjectsText
       variant: info
     # The selected project cannot be read (invalid config, broken parent chain...): the reason and the fix, not a blank page.
-    - $type: task:Notice
+    - $type: Notice
       $if: $sources.projects.selectedProblem
       label: $sources.projects.selectedProblem
       variant: danger
     # The address names a project the registry does not know: said, with the next step, not a blank page.
-    - $type: task:Notice
+    - $type: Notice
       $if: $sources.projects.unknownProjectText
       label: $sources.projects.unknownProjectText
       variant: danger
-    # task:Notice, not a Badge: a Badge is a one-line pill and cramps a long message (path, cause, fix).
-    - $type: task:Notice
+    # Notice, not a Badge: a Badge is a one-line pill and cramps a long message (path, cause, fix).
+    - $type: Notice
       $if: $sources.board.errorText
       label: $sources.board.errorText
       variant: danger
     # Tasks in a status the config does not list: they are not on the board, and this says which and how to fix it.
-    - $type: task:Notice
+    - $type: Notice
       $if: $sources.board.warning
       label: $sources.board.warning
       variant: warning
     # The answer of a move: the failure with its fix, and the queue events that were not delivered.
-    - $type: task:Notice
+    - $type: Notice
       $if: $ctx.boardResult.errorText
       label: $ctx.boardResult.errorText
       variant: danger
-    - $type: task:Notice
+    - $type: Notice
       $if: $ctx.boardResult.undeliveredText
       label: $ctx.boardResult.undeliveredText
       variant: warning

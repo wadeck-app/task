@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { LayoutTemplate, Settings2 } from 'lucide-react';
-import { useAbExperiments, useAbTest, useRegisterAbTests } from '@wadeck-app/dsl-ui';
+import { Notice, useAbExperiments, useAbTest, useRegisterAbTests } from '@wadeck-app/dsl-ui';
 import { deleteJson, isAbort, postJson, problemText, putJson } from '../apiFetch.js';
 import { getApiBase } from '../runtime-config.js';
 import { isUnreadableAnswer } from '../actionProblem.js';
@@ -18,7 +18,6 @@ import {
 } from '../ui/tokens.js';
 import { useAction } from '../useAction.js';
 import type { ActionFailure, ActionHandler } from '../useAction.js';
-import { Notice } from './Notice.js';
 import type { BoardView, ZoneProps } from '../kanban/BoardParts.js';
 import {
 	applyMoves,

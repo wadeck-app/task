@@ -35,7 +35,7 @@ import type { ProjectInfo, ProjectOption, SortKey, TaskListRow, UpdatedRange } f
 import { useListState } from '../tasklist/useListState.js';
 import type { ListScope } from '../tasklist/useListState.js';
 import { ChipRow } from './ChipRow.js';
-import { Notice } from './Notice.js';
+import { Notice } from '@wadeck-app/dsl-ui';
 
 export type { TaskListRow } from '../tasklist/taskListModel.js';
 

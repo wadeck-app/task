@@ -67,7 +67,7 @@ describe('the packaged dsl-lib', () => {
 
 	it('exports the library types and no dsl-ui entry', () => {
 		const names = entries.map(e => e.name);
-		expect(names).toContain('SplitLayout');
+		expect(names).toContain('ChipRow');
 		expect(names).not.toContain('VariantSwitcher');
 		expect(names).not.toContain('Badge');
 	});
@@ -138,14 +138,14 @@ describe('the packaged dsl-lib', () => {
 	});
 
 	it('renders a component from the bundle', () => {
-		const split = entries.find(e => e.name === 'SplitLayout')!;
+		const split = entries.find(e => e.name === 'ChipRow')!;
 		render(
 			<React.Fragment>
-				{split.render({ node: { $type: 'SplitLayout', main: [], side: [] }, registry: {}, ctx: {} } as never)}
+				{split.render({ node: { $type: 'ChipRow', items: [] }, registry: {}, ctx: {} } as never)}
 			</React.Fragment>
 		);
 
-		expect(screen.getByTestId('split-layout')).toBeInTheDocument();
+		expect(screen.getByTestId('chip-row')).toBeInTheDocument();
 	});
 });
 

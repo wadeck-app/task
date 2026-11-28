@@ -1,6 +1,6 @@
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, GripVertical, Plus, Trash2 } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
-import { Notice } from '../components/Notice.js';
+import { Notice } from '@wadeck-app/dsl-ui';
 import { Dialog } from '../ui/Dialog.js';
 import { TONE_DOT, toneOf } from '../tones.js';
 import {

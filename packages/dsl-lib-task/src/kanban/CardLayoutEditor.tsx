@@ -1,6 +1,6 @@
 import { ArrowDown, ArrowUp } from 'lucide-react';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Notice } from '../components/Notice.js';
+import { Notice } from '@wadeck-app/dsl-ui';
 import { Dialog } from '../ui/Dialog.js';
 import {
 	BUTTON_PRIMARY_CLASS,

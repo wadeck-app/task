@@ -5,9 +5,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { LabelCombobox } from '../components/LabelCombobox.js';
 import { MetaEditor } from '../components/MetaEditor.js';
 import { PropertyPopover } from '../components/PropertyPopover.js';
-import { Notice } from '../components/Notice.js';
 import { StatusBadge } from '../components/StatusBadge.js';
-import { CONTROL_H, CONTROL_RADIUS, CONTROL_TEXT, PILL_RADIUS, PILL_TEXT } from './tokens.js';
+import { CONTROL_H, PILL_RADIUS, PILL_TEXT } from './tokens.js';
 
 const SRC = path.resolve(import.meta.dirname, '..');
 
@@ -150,14 +149,5 @@ describe('badges and notices in a header row follow the control tokens', () => {
 		);
 		expect(heights).toEqual([[CONTROL_H], [CONTROL_H], [CONTROL_H]]);
 		expect(screen.getByText('a1b2c3d4').className).toContain('font-mono');
-	});
-
-	it('a Notice uses the control radius and the control text size, with the horizontal padding of a control', () => {
-		render(<Notice label="Blocked by 1 open task" variant="warning" />);
-
-		const notice = screen.getByRole('status');
-		expect(notice).toHaveClass(CONTROL_RADIUS);
-		expect(notice).toHaveClass(CONTROL_TEXT);
-		expect(notice).toHaveClass('px-3');
 	});
 });
